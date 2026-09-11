@@ -14,17 +14,18 @@ The implementation plan is:
 
 Execute the approved plan exactly within scope.
 
-1. Synchronize the repository and read `AGENTS.md`, the approved design/contracts specifications, the approval record, and the implementation plan.
+1. Read current remote `main` through authenticated GitHub API and read `AGENTS.md`, the approved design/contracts specifications, the approval record, and the implementation plan from that exact remote state.
 2. Use Superpowers `subagent-driven-development` (preferred) or `executing-plans`, with TDD and verification-before-completion.
-3. Start with **Task 0** and create/switch to branch:
+3. Start with **Task 0** and branch:
 
 `feat/foundation-safe-resolve-slice`
 
-4. Task 0 must prove Codex can perform the complete Git delivery path itself: branch creation/switch, workspace edit, commit, push, cleanup commit, push, and remote-tracking verification. Do not ask the user to run PowerShell/Git manually.
-5. If sandboxed Git writes are denied, request the minimum out-of-sandbox/elevated Git execution allowed by `AGENTS.md`. If the host still refuses it, stop before product implementation and report the exact blocker.
-6. If Task 0 passes, continue the plan task-by-task. Keep all implementation changes on the feature branch.
-7. Follow red/green TDD steps and run the specified verification commands before each completion claim.
-8. Open a pull request to `main` when the plan completion gate is satisfied. Never merge autonomously.
+4. Prefer normal Git if it works. If the Windows sandbox keeps `.git` read-only but `gh` is authenticated and GitHub API is readable/writable, use the **GitHub API transport fallback in `AGENTS.md`** instead of stopping.
+5. Under API transport, do not implement inside the stale/dirty `Z:\RAMBLA-reel-director` checkout. Preserve it and materialize a clean plain working tree from the exact remote `main` commit in a separate non-Git directory under `Z:\RAMBLA-reel-data\codex-work\`.
+6. Task 0 must prove Codex can perform the complete delivery path itself without user-run PowerShell/Git: create the remote feature branch from current `main`, publish a smoke-file commit through GitHub API, publish a cleanup commit deleting the smoke file, and verify the remote branch after both operations.
+7. If Task 0 passes by either normal Git or API transport, continue the plan task-by-task. Keep every published implementation commit on the feature branch.
+8. Follow red/green TDD steps and run the specified verification commands before each completion claim. Under API transport, verify intended changed files/content and the remote branch parent before every non-forced ref update.
+9. Open a pull request to `main` when the plan completion gate is satisfied. Never merge autonomously.
 
 ## Authorized scope
 
@@ -36,7 +37,7 @@ Do **not** install or integrate real AI models, cloud providers, ComfyUI, genera
 
 Stop and report when either:
 
-- Task 0 cannot establish reliable Codex-driven Git writes/pushes; or
-- the entire approved plan is implemented, verified, pushed on the feature branch, and a reviewable pull request to `main` exists.
+- neither normal Git delivery nor the authenticated GitHub API transport in `AGENTS.md` can establish a reliable Codex-driven remote branch/commit/PR path; or
+- the entire approved plan is implemented, verified, published on the feature branch, and a reviewable pull request to `main` exists.
 
 Do not merge the pull request autonomously.
