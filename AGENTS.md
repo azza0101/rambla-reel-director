@@ -11,7 +11,12 @@ Before any task:
 3. Read `docs/ARCHITECTURE.md`.
 4. Read `docs/DECISIONS.md`.
 5. Read `docs/NEXT_TASK.md`.
-6. Do not contradict approved decisions in `docs/DECISIONS.md`.
+6. If `docs/NEXT_TASK.md` or another approved document points to a current specification, plan, review, or task file, read that file before acting.
+7. Do not contradict approved decisions in `docs/DECISIONS.md`.
+8. Treat the repository as the source of truth over prior chat context whenever repository instructions exist.
+9. Do not require the user to remind you to read these files: automatically re-read them at the start of every new task after synchronizing `main`.
+
+If local chat context conflicts with the current repository state, stop and follow the repository unless the user explicitly overrides it.
 
 ## Delivery workflow
 
@@ -34,5 +39,4 @@ Before any task:
 
 ## Current phase
 
-Design proposal only. No application code, product dependencies, models, or Resolve integration may be added until the design is approved.
-
+Technical specification review. No application code, product dependencies, models, or Resolve integration may be added until the specification and implementation plan are approved.
