@@ -39,6 +39,18 @@ If local chat context conflicts with the current repository state, stop and foll
 - Never merge autonomously.
 - Apply review corrections on the same branch.
 
+### Git writes from the Windows sandbox
+
+The Windows sandbox may allow normal workspace file edits while denying writes inside `.git` such as `FETCH_HEAD` or `index.lock`.
+
+- Do not ask the user to manually run PowerShell or Git commands merely to work around this sandbox limitation.
+- Keep ordinary file edits, analysis, and tests in the sandbox.
+- If a required Git operation fails specifically because the sandbox cannot write `.git` or cannot access Git credentials/network, request explicit elevated/out-of-sandbox execution for the minimum necessary Git command(s) in the intended repository.
+- Scope elevated Git operations to the exact repository, branch, and files required by the current task.
+- Before committing, verify the diff and `git diff --check`; after pushing, verify the resulting HEAD, remote tracking state, and clean working tree.
+- Never use elevation to bypass project safety gates, modify unrelated files, or install unrelated software.
+- If elevated execution is unavailable, stop with the workspace changes intact and report the exact blocked Git operation; do not ask the user to recreate the work manually and do not create an alternate repository unless explicitly authorized.
+
 ## Safety boundaries
 
 - Never modify the original Resolve timeline. The source timeline is `REEL_MASTER`; generated work targets a copy such as `REEL_AI_v01`.
@@ -51,4 +63,4 @@ If local chat context conflicts with the current repository state, stop and foll
 
 ## Current phase
 
-Technical specification review. No application code, product dependencies, models, or Resolve integration may be added until the specification and implementation plan are approved.
+Technical specification completion and review. No application code, product dependencies, models, or Resolve integration may be added until the specification and implementation plan are approved.
