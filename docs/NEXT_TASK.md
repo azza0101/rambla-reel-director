@@ -1,23 +1,36 @@
-# Next Task — Design approval gate
+# Next Task — Technical specification review gate
 
-Current phase: **architecture proposal review**.
+Current phase: **technical specification review**.
+
+Architecture decisions have been approved and recorded in `docs/DECISIONS.md`.
+
+The draft MVP technical design now lives at:
+
+`docs/superpowers/specs/2026-09-11-rambla-reel-director-mvp-design.md`
 
 No product implementation, dependency installation, model installation, Resolve integration, or panel scaffolding is authorized yet.
 
-## User decisions required
+## Required next action
 
-1. Approve or revise the recommended modular-monolith / ports-and-adapters architecture.
-2. Approve the exact MVP boundary and first vertical slice.
-3. Choose the initial Resolve path to validate: Python API first, or Python API plus optional MCP adapter from the start.
-4. Confirm whether the global asset library is part of MVP or deferred; client-local plus online sources are already proposed.
-5. Approve filesystem-first versioned JSON persistence for runs and Edit Plans.
-6. Confirm the panel compatibility target: Resolve Studio version(s), operating system, and permitted panel technology.
-7. Confirm cloud policy for MVP: interfaces only, or one working cloud provider alongside local providers.
+Review the technical design for:
 
-## After approval
+- contradictions with approved decisions
+- missing invariants
+- ambiguous interfaces
+- unsafe Resolve mutation paths
+- client-isolation/privacy gaps
+- unrealistic local-AI assumptions
+- schema/versioning weaknesses
+- MVP scope creep
+- missing test/acceptance criteria
 
-1. Convert the approved architecture into a complete technical specification with frozen schemas, interfaces, state machines, invariants, and acceptance criteria.
-2. Request explicit review and approval of that specification.
-3. Only then write a detailed implementation plan.
-4. Only after plan approval begin implementation on a separate branch with tests and a pull request.
+If issues are found, revise the spec only. Do not implement product code.
 
+If the spec is internally consistent and sufficiently concrete, report that it is ready for explicit human approval.
+
+## After explicit spec approval
+
+1. Invoke the Superpowers `writing-plans` workflow.
+2. Produce a detailed implementation plan from the approved spec.
+3. Request explicit review/approval of that plan.
+4. Only after plan approval begin implementation on a separate branch using tests and pull requests.
