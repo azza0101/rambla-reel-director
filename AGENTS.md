@@ -39,17 +39,19 @@ If local chat context conflicts with the current repository state, stop and foll
 - Never merge autonomously.
 - Apply review corrections on the same branch.
 
-### Git writes from the Windows sandbox
+### Git writes and network access from the Windows sandbox
 
-The Windows sandbox may allow normal workspace file edits while denying writes inside `.git` such as `FETCH_HEAD` or `index.lock`.
+The Windows sandbox may allow normal workspace file edits while denying writes inside `.git`, network access, or access to host Git credentials.
 
 - Do not ask the user to manually run PowerShell or Git commands merely to work around this sandbox limitation.
 - Keep ordinary file edits, analysis, and tests in the sandbox.
-- If a required Git operation fails specifically because the sandbox cannot write `.git` or cannot access Git credentials/network, request explicit elevated/out-of-sandbox execution for the minimum necessary Git command(s) in the intended repository.
-- Scope elevated Git operations to the exact repository, branch, and files required by the current task.
+- First prefer a narrowly scoped permission request that keeps execution sandboxed: request only the filesystem write access needed for the repository/.git plus network access needed for GitHub.
+- Use full elevated/out-of-sandbox execution only when scoped additional permissions cannot satisfy the operation, for example when the host credential helper is required.
+- Scope any permission request to the exact repository, branch, Git command family, and network destination required by the current task.
+- If the current task permission profile rejects escalation before showing an approval prompt, do not loop. Report that the task permission mode itself is blocking escalation and ask the user only to change the Codex permission mode/restart the task UI; do not ask them to run shell commands manually.
 - Before committing, verify the diff and `git diff --check`; after pushing, verify the resulting HEAD, remote tracking state, and clean working tree.
 - Never use elevation to bypass project safety gates, modify unrelated files, or install unrelated software.
-- If elevated execution is unavailable, stop with the workspace changes intact and report the exact blocked Git operation; do not ask the user to recreate the work manually and do not create an alternate repository unless explicitly authorized.
+- If Git delivery remains unavailable after the permission mode is repaired, stop with workspace changes intact and report the exact blocked operation; do not create an alternate repository unless explicitly authorized.
 
 ## Safety boundaries
 
