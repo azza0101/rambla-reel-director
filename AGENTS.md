@@ -59,7 +59,9 @@ If local `.git` writes remain blocked but `gh` is installed, authenticated, and 
 Rules for this fallback:
 
 - GitHub remote state is authoritative. Read the exact `main` SHA through `gh api` before starting.
-- Do not implement from a stale or dirty checkout. Preserve any existing local modifications, then materialize a clean plain working tree from the exact remote commit into a separate non-Git workspace outside `Z:\RAMBLA-reel-director`, preferably under `Z:\RAMBLA-reel-data\codex-work\<task-name>\`.
+- Do not implement from a stale or dirty checkout. Preserve any existing local modifications, then materialize a clean plain working tree from the exact remote commit into a separate non-Git workspace outside `Z:\RAMBLA-reel-director`.
+- Prefer `Z:\RAMBLA-reel-data\codex-work\<task-name>\` when writable. If the Windows host still denies that path after a scoped permission grant, do **not** stop for that reason alone: use a directory already writable by the current Codex sandbox, preferably a dedicated child such as `C:\Users\Utente\Documents\ChatGPT\REEL SOFT\.codex-work\<task-name>\` or another current-workspace/temp child proven writable. Record the actual path used.
+- An API worktree is transient source workspace only. It may be inside a writable Codex workspace even if an ancestor is an unrelated/empty Git repository, but the worktree itself MUST contain no `.git`, and no local Git commands may be used there. GitHub API state remains authoritative.
 - The plain working tree may be created from the GitHub archive API or equivalent authenticated GitHub API reads. It MUST contain no invented files or content.
 - Create the implementation branch remotely from the verified `main` SHA through GitHub API. For the current approved slice the branch is `feat/foundation-safe-resolve-slice`.
 - Publish logical commits through GitHub's Git Data API (`blobs` -> `tree` -> `commit` -> non-forced branch-ref update) or an equivalent authenticated GitHub API operation. Before each ref update, re-read the remote branch head and verify it still equals the expected parent. Never force-push.
@@ -83,4 +85,4 @@ If neither local Git delivery nor authenticated GitHub API transport is availabl
 
 ## Current phase
 
-The MVP technical specification and the first implementation plan are explicitly approved. Implementation is authorized only for the scope defined by `docs/superpowers/plans/2026-09-11-foundation-safe-resolve-vertical-slice.md` and its approval record. Start with Task 0 to prove the Codex-driven delivery path before product edits. Local Git is preferred when available; authenticated GitHub API transport is explicitly approved when Windows sandbox policy keeps `.git` read-only. Do not broaden scope beyond the approved plan, and do not merge autonomously.
+The MVP technical specification and the first implementation plan are explicitly approved. Implementation is authorized only for the scope defined by `docs/superpowers/plans/2026-09-11-foundation-safe-resolve-vertical-slice.md` and its approval record. Task 0 has been proven through authenticated GitHub API transport; continue from Task 1 using the same remote feature branch and an API worktree in a sandbox-writable location. Do not broaden scope beyond the approved plan, and do not merge autonomously.
