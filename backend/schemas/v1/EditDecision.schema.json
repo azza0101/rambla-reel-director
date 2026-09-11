@@ -1,0 +1,403 @@
+{
+  "$defs": {
+    "Anchor": {
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "Anchor",
+      "type": "object"
+    },
+    "BrollParameters": {
+      "additionalProperties": false,
+      "properties": {
+        "crop_anchor": {
+          "enum": [
+            "CENTER",
+            "FACE_SAFE",
+            "CUSTOM"
+          ],
+          "title": "Crop Anchor",
+          "type": "string"
+        },
+        "custom_anchor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Anchor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fit": {
+          "enum": [
+            "COVER",
+            "CONTAIN"
+          ],
+          "title": "Fit",
+          "type": "string"
+        },
+        "opacity": {
+          "default": 1,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Opacity",
+          "type": "number"
+        },
+        "source_offset_frame": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "title": "Source Offset Frame",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "fit",
+        "crop_anchor",
+        "custom_anchor",
+        "source_offset_frame"
+      ],
+      "title": "BrollParameters",
+      "type": "object"
+    },
+    "CaptionEmphasisParameters": {
+      "additionalProperties": false,
+      "properties": {
+        "alignment_word_ids": {
+          "items": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "title": "Alignment Word Ids",
+          "type": "array"
+        },
+        "emphasis": {
+          "enum": [
+            "COLOR",
+            "WEIGHT",
+            "SCALE",
+            "BACKGROUND"
+          ],
+          "title": "Emphasis",
+          "type": "string"
+        },
+        "keyword_text": {
+          "title": "Keyword Text",
+          "type": "string"
+        },
+        "style_token": {
+          "title": "Style Token",
+          "type": "string"
+        }
+      },
+      "required": [
+        "style_token",
+        "emphasis",
+        "keyword_text",
+        "alignment_word_ids"
+      ],
+      "title": "CaptionEmphasisParameters",
+      "type": "object"
+    },
+    "EditorialInsertParameters": {
+      "additionalProperties": false,
+      "properties": {
+        "background": {
+          "enum": [
+            "AUTO",
+            "TRANSPARENT",
+            "SOLID"
+          ],
+          "title": "Background",
+          "type": "string"
+        },
+        "fit": {
+          "enum": [
+            "COVER",
+            "CONTAIN"
+          ],
+          "title": "Fit",
+          "type": "string"
+        },
+        "opacity": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Opacity",
+          "type": "number"
+        },
+        "presentation": {
+          "enum": [
+            "FULL_FRAME",
+            "CARD"
+          ],
+          "title": "Presentation",
+          "type": "string"
+        }
+      },
+      "required": [
+        "presentation",
+        "fit",
+        "background",
+        "opacity"
+      ],
+      "title": "EditorialInsertParameters",
+      "type": "object"
+    },
+    "FrameRange": {
+      "additionalProperties": false,
+      "properties": {
+        "end_frame": {
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
+          "title": "End Frame",
+          "type": "integer"
+        },
+        "start_frame": {
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
+          "title": "Start Frame",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start_frame",
+        "end_frame"
+      ],
+      "title": "FrameRange",
+      "type": "object"
+    },
+    "PunchInParameters": {
+      "additionalProperties": false,
+      "properties": {
+        "anchor_x": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Anchor X",
+          "type": "number"
+        },
+        "anchor_y": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Anchor Y",
+          "type": "number"
+        },
+        "easing": {
+          "enum": [
+            "CUT",
+            "EASE_IN_OUT"
+          ],
+          "title": "Easing",
+          "type": "string"
+        },
+        "scale": {
+          "maximum": 1.35,
+          "minimum": 1.02,
+          "title": "Scale",
+          "type": "number"
+        }
+      },
+      "required": [
+        "scale",
+        "anchor_x",
+        "anchor_y",
+        "easing"
+      ],
+      "title": "PunchInParameters",
+      "type": "object"
+    },
+    "StickerParameters": {
+      "additionalProperties": false,
+      "properties": {
+        "opacity": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Opacity",
+          "type": "number"
+        },
+        "position": {
+          "$ref": "#/$defs/Anchor"
+        },
+        "rotation_deg": {
+          "title": "Rotation Deg",
+          "type": "number"
+        },
+        "safe_zone": {
+          "enum": [
+            "TOP",
+            "CENTER",
+            "BOTTOM",
+            "CUSTOM"
+          ],
+          "title": "Safe Zone",
+          "type": "string"
+        },
+        "scale": {
+          "exclusiveMinimum": 0,
+          "title": "Scale",
+          "type": "number"
+        }
+      },
+      "required": [
+        "position",
+        "scale",
+        "rotation_deg",
+        "opacity",
+        "safe_zone"
+      ],
+      "title": "StickerParameters",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "action": {
+      "enum": [
+        "BROLL",
+        "EDITORIAL_INSERT",
+        "PUNCH_IN",
+        "STICKER",
+        "CAPTION_EMPHASIS"
+      ],
+      "title": "Action",
+      "type": "string"
+    },
+    "candidate_refs": {
+      "items": {
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "title": "Candidate Refs",
+      "type": "array"
+    },
+    "confidence": {
+      "maximum": 1,
+      "minimum": 0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "frame": {
+      "anyOf": [
+        {
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Frame"
+    },
+    "id": {
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "title": "Id",
+      "type": "string"
+    },
+    "intent": {
+      "title": "Intent",
+      "type": "string"
+    },
+    "parameters": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BrollParameters"
+        },
+        {
+          "$ref": "#/$defs/EditorialInsertParameters"
+        },
+        {
+          "$ref": "#/$defs/PunchInParameters"
+        },
+        {
+          "$ref": "#/$defs/StickerParameters"
+        },
+        {
+          "$ref": "#/$defs/CaptionEmphasisParameters"
+        }
+      ],
+      "title": "Parameters"
+    },
+    "provenance": {
+      "additionalProperties": true,
+      "title": "Provenance",
+      "type": "object"
+    },
+    "queries": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Queries",
+      "type": "array"
+    },
+    "range": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FrameRange"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "reason": {
+      "title": "Reason",
+      "type": "string"
+    },
+    "review_state": {
+      "enum": [
+        "PROPOSED",
+        "APPROVED",
+        "MODIFIED",
+        "DISABLED",
+        "NEEDS_REPLACEMENT"
+      ],
+      "title": "Review State",
+      "type": "string"
+    },
+    "selected_asset_ref": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Selected Asset Ref"
+    }
+  },
+  "required": [
+    "id",
+    "action",
+    "range",
+    "frame",
+    "intent",
+    "reason",
+    "confidence",
+    "queries",
+    "candidate_refs",
+    "selected_asset_ref",
+    "parameters",
+    "review_state",
+    "provenance"
+  ],
+  "title": "EditDecision",
+  "type": "object"
+}

@@ -1,0 +1,67 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "category": {
+      "enum": [
+        "VALIDATION",
+        "CAPABILITY",
+        "PROVIDER",
+        "NETWORK",
+        "TIMEOUT",
+        "CANCELLED",
+        "CONFLICT",
+        "SECURITY",
+        "STORAGE",
+        "RESOLVE",
+        "INTERNAL"
+      ],
+      "title": "Category",
+      "type": "string"
+    },
+    "code": {
+      "title": "Code",
+      "type": "string"
+    },
+    "details": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Details"
+    },
+    "diagnostic_id": {
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "title": "Diagnostic Id",
+      "type": "string"
+    },
+    "message": {
+      "title": "Message",
+      "type": "string"
+    },
+    "retryable": {
+      "title": "Retryable",
+      "type": "boolean"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "code",
+    "category",
+    "retryable",
+    "message",
+    "diagnostic_id",
+    "details"
+  ],
+  "title": "TypedError",
+  "type": "object"
+}
