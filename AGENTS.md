@@ -48,10 +48,28 @@ The Windows sandbox may allow normal workspace file edits while denying writes i
 - First prefer a narrowly scoped permission request that keeps execution sandboxed: request only the filesystem write access needed for the repository/.git plus network access needed for GitHub.
 - Use full elevated/out-of-sandbox execution only when scoped additional permissions cannot satisfy the operation, for example when the host credential helper is required.
 - Scope any permission request to the exact repository, branch, Git command family, and network destination required by the current task.
-- If the current task permission profile rejects escalation before showing an approval prompt, do not loop. Report that the task permission mode itself is blocking escalation and ask the user only to change the Codex permission mode/restart the task UI; do not ask them to run shell commands manually.
-- Before committing, verify the diff and `git diff --check`; after pushing, verify the resulting HEAD, remote tracking state, and clean working tree.
+- If the current task permission profile rejects escalation before showing an approval prompt, do not loop.
+- Before committing, verify the intended file set and run the task's verification commands; after publishing, verify the resulting remote branch head and PR state.
 - Never use elevation to bypass project safety gates, modify unrelated files, or install unrelated software.
-- If Git delivery remains unavailable after the permission mode is repaired, stop with workspace changes intact and report the exact blocked operation; do not create an alternate repository unless explicitly authorized.
+
+### GitHub API transport fallback
+
+If local `.git` writes remain blocked but `gh` is installed, authenticated, and GitHub API access works, the GitHub API transport is an approved delivery path. Do not stop solely because `.git/FETCH_HEAD` or `.git/index.lock` is read-only.
+
+Rules for this fallback:
+
+- GitHub remote state is authoritative. Read the exact `main` SHA through `gh api` before starting.
+- Do not implement from a stale or dirty checkout. Preserve any existing local modifications, then materialize a clean plain working tree from the exact remote commit into a separate non-Git workspace outside `Z:\RAMBLA-reel-director`, preferably under `Z:\RAMBLA-reel-data\codex-work\<task-name>\`.
+- The plain working tree may be created from the GitHub archive API or equivalent authenticated GitHub API reads. It MUST contain no invented files or content.
+- Create the implementation branch remotely from the verified `main` SHA through GitHub API. For the current approved slice the branch is `feat/foundation-safe-resolve-slice`.
+- Publish logical commits through GitHub's Git Data API (`blobs` -> `tree` -> `commit` -> non-forced branch-ref update) or an equivalent authenticated GitHub API operation. Before each ref update, re-read the remote branch head and verify it still equals the expected parent. Never force-push.
+- A task commit must contain only the files intended by that task. Run tests and diff/content verification in the plain working tree before publishing the corresponding API commit.
+- Remote verification replaces local tracking verification: confirm the branch ref points to the new commit, inspect changed files/compare against `main`, and verify the intended content through GitHub API.
+- Open/update the pull request through `gh`/GitHub API. Never merge autonomously.
+- Task 0 is satisfied when Codex proves the full API delivery cycle itself: create the remote feature branch from current `main`, publish a smoke-file commit, publish a cleanup commit that removes the smoke file, and verify the remote branch after both operations without user-run shell commands.
+- Keep the stale/dirty `Z:\RAMBLA-reel-director` checkout untouched until a host process can safely resynchronize it later. The API worktree and remote branch are the active implementation surfaces while this fallback is in use.
+
+If neither local Git delivery nor authenticated GitHub API transport is available, stop with workspace changes intact and report the exact blocked operation; do not create an alternate repository unless explicitly authorized.
 
 ## Safety boundaries
 
@@ -65,4 +83,4 @@ The Windows sandbox may allow normal workspace file edits while denying writes i
 
 ## Current phase
 
-The MVP technical specification and the first implementation plan are explicitly approved. Implementation is authorized only for the scope defined by `docs/superpowers/plans/2026-09-11-foundation-safe-resolve-vertical-slice.md` and its approval record. Start with Task 0 to prove the Codex-driven Git delivery path before product edits. Do not broaden scope beyond the approved plan, and do not merge autonomously.
+The MVP technical specification and the first implementation plan are explicitly approved. Implementation is authorized only for the scope defined by `docs/superpowers/plans/2026-09-11-foundation-safe-resolve-vertical-slice.md` and its approval record. Start with Task 0 to prove the Codex-driven delivery path before product edits. Local Git is preferred when available; authenticated GitHub API transport is explicitly approved when Windows sandbox policy keeps `.git` read-only. Do not broaden scope beyond the approved plan, and do not merge autonomously.
