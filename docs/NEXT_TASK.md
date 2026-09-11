@@ -1,62 +1,57 @@
-# Next Task — Execute first implementation plan
+# Next Task — Tonight live Resolve fast track
 
-Current phase: **implementation authorized for the approved first vertical slice**.
+Current phase: **working live software required tonight**.
 
-The MVP technical specification is approved and the first implementation plan was explicitly approved by the user on 2026-09-11. Approval is recorded at:
+The user explicitly reprioritized the project on 2026-09-11: use mature open-source foundations where sensible, prefer the real installed DaVinci Resolve over letting a fake adapter block progress, and deliver a functioning RAMBLA slice tonight.
 
-`docs/approvals/2026-09-11-foundation-safe-resolve-plan-approved.md`
+The active fast-track plan is:
 
-The implementation plan is:
+`docs/superpowers/plans/2026-09-11-tonight-live-resolve-fast-track.md`
+
+The original approved foundation plan remains valid deferred work:
 
 `docs/superpowers/plans/2026-09-11-foundation-safe-resolve-vertical-slice.md`
 
 ## Current delivery status
 
-Task 0 has passed through the authenticated GitHub API transport fallback.
+Authenticated GitHub API transport is proven and remains the delivery path while local `.git` is read-only.
 
-Verified remote branch:
+Remote implementation branch:
 
 `feat/foundation-safe-resolve-slice`
 
-Evidence:
+Published implementation includes:
 
-- Task-0 base main: `a47674ced3777d967094417f3156b4dbbae35738`
-- smoke commit: `7c3fd9f93f538be3b471ba4f427409df236e6ae4`
-- cleanup commit / feature-branch head after Task 0: `70f538089fffd674ce51e3577b701b115e7abf82`
-- after cleanup, the feature branch had zero file differences from its Task-0 base main
+- Task 0 API delivery-path smoke: complete
+- Task 1 isolated FastAPI backend scaffold: complete
+- Task 2 contracts/hashing/schema export: published; complete only the two current review blockers if their fix is already in progress, then stop contract expansion tonight
 
-Local `.git` remains read-only in the Windows sandbox. Continue using the GitHub API transport described in `AGENTS.md`; do not treat the local Git limitation as a blocker.
+Draft PR: `#1`.
 
 ## Required next action
 
-Continue the approved plan from **Task 1**.
+1. Read current remote `main`, the feature branch, `AGENTS.md`, this file, and the fast-track plan through authenticated GitHub API.
+2. Stay in economical single-agent mode. Use `superpowers:executing-plans`, TDD where it materially reduces risk, and verification-before-completion. Do not spawn reviewer/subagent swarms; ChatGPT is the external reviewer through PR #1.
+3. Preserve the existing API worktree and Task 2 local work. Do not touch the stale/dirty `Z:\RAMBLA-reel-director` checkout.
+4. If the Task 2 review fix is already underway, finish the two known blockers, test, publish one fix commit, then pivot immediately to the fast track.
+5. Start FT1: probe the user's **real Resolve** before building more fake infrastructure.
+6. Primary candidate Resolve control plane: MIT-licensed `samuelgursky/davinci-resolve-mcp`. Install/configure it only in an isolated environment; never ComfyUI/global Python. Pin the exact upstream version/commit that passes the local live probe.
+7. Do not install multiple competing Resolve stacks unless the primary candidate hits a concrete blocker.
+8. Execute FT2 safe live mutation only on a disposable/generated timeline. `REEL_MASTER` must remain unchanged.
+9. Execute FT3 minimal user-facing surface using the existing FastAPI backend: Probe Resolve, Dry Run PUNCH_IN, Apply to Duplicate.
+10. Only after FT1–FT3 are green, attempt the optional MIT AutoBroll/Pexels stretch goal if required credentials/transcript already exist.
+11. Publish logical commits through GitHub API after tests/live verification. Never force-update or merge.
 
-1. Read current remote `main`, current feature-branch head, `AGENTS.md`, the approved specifications, approval record, and implementation plan through authenticated GitHub API.
-2. Use Superpowers `subagent-driven-development` (preferred) or `executing-plans`, with TDD and verification-before-completion.
-3. Keep using remote branch:
+## Tonight completion gate
 
-`feat/foundation-safe-resolve-slice`
+A successful tonight slice must demonstrate on the actual machine:
 
-4. Materialize the exact remote feature-branch tree into a clean plain working directory with no `.git`.
-5. Prefer `Z:\RAMBLA-reel-data\codex-work\foundation-safe-resolve-slice` only if writable. If the host denies that path after permission approval, use a sandbox-writable current-workspace/temp child according to the fallback in `AGENTS.md`; do not modify the stale/dirty `Z:\RAMBLA-reel-director` checkout.
-6. Execute Task 1 and later tasks strictly in plan order with red/green TDD. Run the specified tests before each completion claim.
-7. Publish each logical task commit through GitHub API only after verifying the current remote branch parent equals the expected parent. Never force-update the branch.
-8. After every API commit, verify the remote branch ref and changed-file set/content.
-9. Open a pull request to `main` when the plan completion gate is satisfied. Never merge autonomously.
+- live Resolve structured read-back;
+- zero-mutation Dry Run;
+- collision-safe generated duplicate timeline;
+- one deterministic PUNCH_IN applied only to the duplicate;
+- read-back verification of the transform and unchanged source;
+- direct user-triggerable RAMBLA surface;
+- no ComfyUI/global Python modification.
 
-## Authorized scope
-
-This plan authorizes only the foundation/safety vertical slice: local backend, contracts/hashing, immutable artifacts, orchestration/review/Dry Run, HTTP/SSE, fake Resolve Apply/retry safety, client/path isolation/retention, Resolve capability probe, and one controlled real `PUNCH_IN` applied only to a generated duplicate timeline.
-
-Do **not** install or integrate real AI models, cloud providers, ComfyUI, generated video, broad retrieval/provider integrations, or final panel breadth during this plan.
-
-## Completion gate
-
-Stop and report when either:
-
-- authenticated GitHub API transport itself becomes unavailable or remote publication cannot be made safely without force/update races; or
-- the entire approved plan is implemented, verified, published on the feature branch, and a reviewable pull request to `main` exists.
-
-A denied preferred local API-worktree path is not by itself a stop condition if another sandbox-writable plain workspace exists.
-
-Do not merge the pull request autonomously.
+Fake Resolve, full ArtifactStore/orchestration, SSE/idempotency breadth and final UI are deferred debt, not removed requirements.
