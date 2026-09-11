@@ -83,6 +83,18 @@ If neither local Git delivery nor authenticated GitHub API transport is availabl
 - Keep client assets isolated. Never mix assets across clients automatically.
 - Keep the backend independently runnable and testable without Resolve or the panel.
 
+## Tonight reuse-first fast track
+
+The user explicitly requires a functioning live slice tonight and authorized reprioritizing toward the real installed Resolve and mature open-source foundations.
+
+- Follow `docs/superpowers/plans/2026-09-11-tonight-live-resolve-fast-track.md` before resuming the remaining foundation-plan order.
+- Prefer reuse over reimplementation when the upstream is suitable and permissively licensed.
+- Primary live Resolve candidate is MIT-licensed `samuelgursky/davinci-resolve-mcp`; probe it first and pin the exact working version/commit. Do not install several competing stacks without a concrete failure.
+- `legifx/resolve-ai-editor` and `shanawazvibecode/AutoBroll` are MIT-licensed optional accelerators for launcher/panel/bridge and B-roll paths respectively.
+- StoryToolkitAI is GPLv3: it may be used as a separate external tool/reference, but its code must not be copied/embedded into RAMBLA during this fast track.
+- Fake Resolve is deferred rather than deleted. Real Resolve proof is allowed to precede the fake adapter suite, but all live mutation must remain duplicate-only and Edit-Plan-gated.
+- Use economical single-agent execution for Codex. ChatGPT reviews through PR #1; do not spend Codex quota on parallel reviewer/subagent swarms unless a task genuinely requires them.
+
 ## Current phase
 
-The MVP technical specification and the first implementation plan are explicitly approved. Implementation is authorized only for the scope defined by `docs/superpowers/plans/2026-09-11-foundation-safe-resolve-vertical-slice.md` and its approval record. Task 0 has been proven through authenticated GitHub API transport; continue from Task 1 using the same remote feature branch and an API worktree in a sandbox-writable location. Do not broaden scope beyond the approved plan, and do not merge autonomously.
+The MVP technical specification and original foundation plan remain approved. The user has now explicitly reprioritized delivery toward the approved tonight live-Resolve fast track in `docs/superpowers/plans/2026-09-11-tonight-live-resolve-fast-track.md`. Preserve completed Task 0/1 and current Task 2 work, finish only the active Task 2 review fix if already underway, then execute the fast track on the existing remote feature branch. Do not merge autonomously.
