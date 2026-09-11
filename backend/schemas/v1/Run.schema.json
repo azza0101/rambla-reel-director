@@ -72,6 +72,84 @@
       "title": "ArtifactManifestEntry",
       "type": "object"
     },
+    "EditControls": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_actions": {
+          "items": {
+            "enum": [
+              "BROLL",
+              "EDITORIAL_INSERT",
+              "PUNCH_IN",
+              "STICKER",
+              "CAPTION_EMPHASIS"
+            ],
+            "type": "string"
+          },
+          "title": "Allowed Actions",
+          "type": "array"
+        },
+        "allowed_sources": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Sources",
+          "type": "array"
+        },
+        "density": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Density",
+          "type": "number"
+        },
+        "max_decisions": {
+          "minimum": 1,
+          "title": "Max Decisions",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "density",
+        "allowed_sources",
+        "allowed_actions",
+        "max_decisions"
+      ],
+      "title": "EditControls",
+      "type": "object"
+    },
+    "StepLease": {
+      "additionalProperties": false,
+      "properties": {
+        "acquired_at": {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+          "title": "Acquired At",
+          "type": "string"
+        },
+        "expires_at": {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "heartbeat_at": {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+          "title": "Heartbeat At",
+          "type": "string"
+        },
+        "owner_id": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "title": "Owner Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "owner_id",
+        "acquired_at",
+        "heartbeat_at",
+        "expires_at"
+      ],
+      "title": "StepLease",
+      "type": "object"
+    },
     "StepState": {
       "additionalProperties": false,
       "properties": {
@@ -105,14 +183,12 @@
         "lease": {
           "anyOf": [
             {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/$defs/StepLease"
             },
             {
               "type": "null"
             }
-          ],
-          "title": "Lease"
+          ]
         },
         "selected_output_refs": {
           "items": {
@@ -242,9 +318,7 @@
       "type": "string"
     },
     "controls_snapshot": {
-      "additionalProperties": true,
-      "title": "Controls Snapshot",
-      "type": "object"
+      "$ref": "#/$defs/EditControls"
     },
     "created_at": {
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",

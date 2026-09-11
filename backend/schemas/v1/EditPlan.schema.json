@@ -141,6 +141,51 @@
       "title": "CaptionEmphasisParameters",
       "type": "object"
     },
+    "EditControls": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_actions": {
+          "items": {
+            "enum": [
+              "BROLL",
+              "EDITORIAL_INSERT",
+              "PUNCH_IN",
+              "STICKER",
+              "CAPTION_EMPHASIS"
+            ],
+            "type": "string"
+          },
+          "title": "Allowed Actions",
+          "type": "array"
+        },
+        "allowed_sources": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Sources",
+          "type": "array"
+        },
+        "density": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Density",
+          "type": "number"
+        },
+        "max_decisions": {
+          "minimum": 1,
+          "title": "Max Decisions",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "density",
+        "allowed_sources",
+        "allowed_actions",
+        "max_decisions"
+      ],
+      "title": "EditControls",
+      "type": "object"
+    },
     "EditDecision": {
       "additionalProperties": false,
       "properties": {
@@ -212,9 +257,7 @@
           "title": "Parameters"
         },
         "provenance": {
-          "additionalProperties": true,
-          "title": "Provenance",
-          "type": "object"
+          "$ref": "#/$defs/ProvenanceRecord"
         },
         "queries": {
           "items": {
@@ -346,6 +389,185 @@
       "title": "FrameRange",
       "type": "object"
     },
+    "PlanValidation": {
+      "additionalProperties": false,
+      "properties": {
+        "checked_at": {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+          "title": "Checked At",
+          "type": "string"
+        },
+        "issues": {
+          "items": {
+            "$ref": "#/$defs/ValidationIssue"
+          },
+          "title": "Issues",
+          "type": "array"
+        },
+        "plan_hash": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Plan Hash",
+          "type": "string"
+        },
+        "valid": {
+          "title": "Valid",
+          "type": "boolean"
+        },
+        "validator_version": {
+          "title": "Validator Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "valid",
+        "plan_hash",
+        "checked_at",
+        "validator_version",
+        "issues"
+      ],
+      "title": "PlanValidation",
+      "type": "object"
+    },
+    "ProvenanceRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "acquired_at": {
+          "anyOf": [
+            {
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Acquired At"
+        },
+        "attribution": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attribution"
+        },
+        "content_hash": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Content Hash"
+        },
+        "license_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "License Ref"
+        },
+        "source_id": {
+          "title": "Source Id",
+          "type": "string"
+        },
+        "source_kind": {
+          "title": "Source Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_kind",
+        "source_id"
+      ],
+      "title": "ProvenanceRecord",
+      "type": "object"
+    },
+    "ProviderTrace": {
+      "additionalProperties": false,
+      "properties": {
+        "finished_at": {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+          "title": "Finished At",
+          "type": "string"
+        },
+        "input_hashes": {
+          "items": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "title": "Input Hashes",
+          "type": "array"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "model_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Model Version"
+        },
+        "policy_decision_id": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Policy Decision Id"
+        },
+        "provider": {
+          "title": "Provider",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "started_at": {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+          "title": "Started At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "model",
+        "model_version",
+        "request_id",
+        "started_at",
+        "finished_at",
+        "input_hashes",
+        "policy_decision_id"
+      ],
+      "title": "ProviderTrace",
+      "type": "object"
+    },
     "PunchInParameters": {
       "additionalProperties": false,
       "properties": {
@@ -426,6 +648,47 @@
       ],
       "title": "StickerParameters",
       "type": "object"
+    },
+    "ValidationIssue": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "decision_id": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Decision Id"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "ERROR",
+            "WARNING"
+          ],
+          "title": "Severity",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "severity",
+        "decision_id",
+        "message"
+      ],
+      "title": "ValidationIssue",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -458,9 +721,7 @@
       "type": "string"
     },
     "controls_snapshot": {
-      "additionalProperties": true,
-      "title": "Controls Snapshot",
-      "type": "object"
+      "$ref": "#/$defs/EditControls"
     },
     "decisions": {
       "items": {
@@ -481,8 +742,7 @@
     },
     "provider_trace": {
       "items": {
-        "additionalProperties": true,
-        "type": "object"
+        "$ref": "#/$defs/ProviderTrace"
       },
       "title": "Provider Trace",
       "type": "array"
@@ -526,9 +786,7 @@
       "type": "string"
     },
     "validation": {
-      "additionalProperties": true,
-      "title": "Validation",
-      "type": "object"
+      "$ref": "#/$defs/PlanValidation"
     },
     "version": {
       "minimum": 1,

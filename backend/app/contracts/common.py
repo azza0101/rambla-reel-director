@@ -38,6 +38,7 @@ UtcTimestamp: TypeAlias = Annotated[
     StringConstraints(pattern=_UTC_TIMESTAMP_PATTERN),
     AfterValidator(_valid_utc_timestamp),
 ]
+ActionName: TypeAlias = Literal["BROLL", "EDITORIAL_INSERT", "PUNCH_IN", "STICKER", "CAPTION_EMPHASIS"]
 FrameIndex: TypeAlias = Annotated[int, Field(ge=-(2**63), le=2**63 - 1)]
 Confidence: TypeAlias = Annotated[float, Field(ge=0, le=1)]
 ArtifactRef: TypeAlias = Annotated[str, StringConstraints(min_length=1)]
@@ -113,3 +114,37 @@ class ArtifactManifestEntry(ContractModel):
     dependency_hashes: dict[str, Sha256]
     created_at: UtcTimestamp
     state: Literal["CURRENT", "STALE"]
+
+
+class StepLease(ContractModel):
+    owner_id: Uuid
+    acquired_at: UtcTimestamp
+    heartbeat_at: UtcTimestamp
+    expires_at: UtcTimestamp
+
+
+class EditControls(ContractModel):
+    density: Confidence
+    allowed_sources: list[str]
+    allowed_actions: list[ActionName]
+    max_decisions: Annotated[int, Field(ge=1)]
+
+
+class ProviderTrace(ContractModel):
+    provider: str
+    model: str
+    model_version: str | None
+    request_id: Uuid
+    started_at: UtcTimestamp
+    finished_at: UtcTimestamp
+    input_hashes: list[Sha256]
+    policy_decision_id: Uuid | None
+
+
+class ProvenanceRecord(ContractModel):
+    source_kind: str
+    source_id: str
+    acquired_at: UtcTimestamp | None = None
+    content_hash: Sha256 | None = None
+    license_ref: str | None = None
+    attribution: str | None = None

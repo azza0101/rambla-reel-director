@@ -1,5 +1,213 @@
 {
   "$defs": {
+    "OperationCondition": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_hash": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Expected Hash"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "expected_hash"
+      ],
+      "title": "OperationCondition",
+      "type": "object"
+    },
+    "OperationJournalEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TypedError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Finished At"
+        },
+        "observed_postcondition": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OperationCondition"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "operation_id": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "title": "Operation Id",
+          "type": "string"
+        },
+        "sequence": {
+          "minimum": 0,
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Started At"
+        },
+        "state": {
+          "enum": [
+            "PLANNED",
+            "STARTED",
+            "SUCCEEDED",
+            "FAILED",
+            "AMBIGUOUS"
+          ],
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation_id",
+        "sequence",
+        "state",
+        "started_at",
+        "finished_at",
+        "observed_postcondition",
+        "error"
+      ],
+      "title": "OperationJournalEntry",
+      "type": "object"
+    },
+    "PreflightResult": {
+      "additionalProperties": false,
+      "properties": {
+        "approved_plan_hash": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Approved Plan Hash",
+          "type": "string"
+        },
+        "capability_matrix_hash": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Capability Matrix Hash",
+          "type": "string"
+        },
+        "checked_at": {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+          "title": "Checked At",
+          "type": "string"
+        },
+        "errors": {
+          "items": {
+            "$ref": "#/$defs/TypedError"
+          },
+          "title": "Errors",
+          "type": "array"
+        },
+        "passed": {
+          "title": "Passed",
+          "type": "boolean"
+        },
+        "source_timeline_hash": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Source Timeline Hash",
+          "type": "string"
+        }
+      },
+      "required": [
+        "passed",
+        "checked_at",
+        "approved_plan_hash",
+        "source_timeline_hash",
+        "capability_matrix_hash",
+        "errors"
+      ],
+      "title": "PreflightResult",
+      "type": "object"
+    },
+    "SourceTimelineIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "observed_name": {
+          "title": "Observed Name",
+          "type": "string"
+        },
+        "project_ref": {
+          "title": "Project Ref",
+          "type": "string"
+        },
+        "timeline_ref": {
+          "title": "Timeline Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_ref",
+        "timeline_ref",
+        "observed_name"
+      ],
+      "title": "SourceTimelineIdentity",
+      "type": "object"
+    },
+    "TargetTimelineIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "apply_attempt_id": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "title": "Apply Attempt Id",
+          "type": "string"
+        },
+        "observed_name": {
+          "title": "Observed Name",
+          "type": "string"
+        },
+        "project_ref": {
+          "title": "Project Ref",
+          "type": "string"
+        },
+        "timeline_ref": {
+          "title": "Timeline Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_ref",
+        "timeline_ref",
+        "observed_name",
+        "apply_attempt_id"
+      ],
+      "title": "TargetTimelineIdentity",
+      "type": "object"
+    },
     "TypedError": {
       "additionalProperties": false,
       "properties": {
@@ -66,6 +274,58 @@
       ],
       "title": "TypedError",
       "type": "object"
+    },
+    "VerificationCheck": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "passed": {
+          "title": "Passed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "passed",
+        "message"
+      ],
+      "title": "VerificationCheck",
+      "type": "object"
+    },
+    "VerificationResult": {
+      "additionalProperties": false,
+      "properties": {
+        "checked_at": {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+          "title": "Checked At",
+          "type": "string"
+        },
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/VerificationCheck"
+          },
+          "title": "Checks",
+          "type": "array"
+        },
+        "passed": {
+          "title": "Passed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "passed",
+        "checked_at",
+        "checks"
+      ],
+      "title": "VerificationResult",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -109,8 +369,7 @@
     },
     "operations": {
       "items": {
-        "additionalProperties": true,
-        "type": "object"
+        "$ref": "#/$defs/OperationJournalEntry"
       },
       "title": "Operations",
       "type": "array"
@@ -121,9 +380,7 @@
       "type": "string"
     },
     "preflight": {
-      "additionalProperties": true,
-      "title": "Preflight",
-      "type": "object"
+      "$ref": "#/$defs/PreflightResult"
     },
     "run_id": {
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
@@ -136,9 +393,7 @@
       "type": "string"
     },
     "source_identity": {
-      "additionalProperties": true,
-      "title": "Source Identity",
-      "type": "object"
+      "$ref": "#/$defs/SourceTimelineIdentity"
     },
     "started_at": {
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
@@ -158,26 +413,22 @@
     "target_identity": {
       "anyOf": [
         {
-          "additionalProperties": true,
-          "type": "object"
+          "$ref": "#/$defs/TargetTimelineIdentity"
         },
         {
           "type": "null"
         }
-      ],
-      "title": "Target Identity"
+      ]
     },
     "verification": {
       "anyOf": [
         {
-          "additionalProperties": true,
-          "type": "object"
+          "$ref": "#/$defs/VerificationResult"
         },
         {
           "type": "null"
         }
-      ],
-      "title": "Verification"
+      ]
     }
   },
   "required": [

@@ -10,10 +10,17 @@ from .common import ApplyAttemptId, AssetId, Confidence, ContractModel, Decision
 from .errors import TypedError
 
 
-class TimelineIdentity(ContractModel):
+class SourceTimelineIdentity(ContractModel):
     project_ref: str
     timeline_ref: str
     observed_name: str
+
+
+class TargetTimelineIdentity(ContractModel):
+    project_ref: str
+    timeline_ref: str
+    observed_name: str
+    apply_attempt_id: ApplyAttemptId
 
 
 class OperationCondition(ContractModel):
@@ -98,7 +105,7 @@ class ApplyOperation(ContractModel):
         "VERIFY",
         "DISCARD_GENERATED_TIMELINE",
     ]
-    target_identity: TimelineIdentity | None
+    target_identity: TargetTimelineIdentity | None
     precondition: OperationCondition
     payload: ApplyPayload
     expected_postcondition: OperationCondition
@@ -119,6 +126,36 @@ class ApplyOperation(ContractModel):
             raise ValueError("payload must match kind")
         return self
 
+class PreflightResult(ContractModel):
+    passed: bool
+    checked_at: UtcTimestamp
+    approved_plan_hash: Sha256
+    source_timeline_hash: Sha256
+    capability_matrix_hash: Sha256
+    errors: list[TypedError]
+
+
+class OperationJournalEntry(ContractModel):
+    operation_id: OperationId
+    sequence: Annotated[int, Field(ge=0)]
+    state: Literal["PLANNED", "STARTED", "SUCCEEDED", "FAILED", "AMBIGUOUS"]
+    started_at: UtcTimestamp | None
+    finished_at: UtcTimestamp | None
+    observed_postcondition: OperationCondition | None
+    error: TypedError | None
+
+
+class VerificationCheck(ContractModel):
+    code: str
+    passed: bool
+    message: str
+
+
+class VerificationResult(ContractModel):
+    passed: bool
+    checked_at: UtcTimestamp
+    checks: list[VerificationCheck]
+
 
 class ApplyReport(ContractModel):
     schema_version: Literal[SCHEMA_VERSION]
@@ -129,10 +166,10 @@ class ApplyReport(ContractModel):
     apply_attempt_id: ApplyAttemptId
     started_at: UtcTimestamp
     finished_at: UtcTimestamp | None
-    source_identity: JsonObject
-    target_identity: JsonObject | None
-    preflight: JsonObject
-    operations: list[JsonObject]
-    verification: JsonObject | None
+    source_identity: SourceTimelineIdentity
+    target_identity: TargetTimelineIdentity | None
+    preflight: PreflightResult
+    operations: list[OperationJournalEntry]
+    verification: VerificationResult | None
     status: Literal["SUCCEEDED", "FAILED", "AMBIGUOUS", "CLEANED_UP"]
     error: TypedError | None

@@ -13,10 +13,21 @@ def _plan_payload() -> dict[str, object]:
         "source_timeline_hash": "sha256:" + "a" * 64,
         "style_snapshot_ref": "artifacts/style.json",
         "policy_snapshot_ref": "artifacts/policy.json",
-        "controls_snapshot": {"preset": "fast"},
+        "controls_snapshot": {
+            "density": 0.5,
+            "allowed_sources": ["LOCAL"],
+            "allowed_actions": ["PUNCH_IN"],
+            "max_decisions": 10,
+        },
         "provider_trace": [],
         "decisions": [],
-        "validation": {"valid": True},
+        "validation": {
+            "valid": True,
+            "plan_hash": "sha256:" + "d" * 64,
+            "checked_at": "2026-09-11T11:59:00Z",
+            "validator_version": "1.0",
+            "issues": [],
+        },
         "approval": {
             "actor": "editor@example.test",
             "approved_at": "2026-09-11T12:00:00Z",

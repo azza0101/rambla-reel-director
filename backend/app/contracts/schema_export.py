@@ -21,6 +21,55 @@ TOP_LEVEL_MODELS: tuple[type[BaseModel], ...] = (
     ApplyReport,
 )
 
+_DISCRIMINATED_FIELDS = {
+    "EditDecision": (
+        "action",
+        "parameters",
+        {
+            "BROLL": "BrollParameters",
+            "EDITORIAL_INSERT": "EditorialInsertParameters",
+            "PUNCH_IN": "PunchInParameters",
+            "STICKER": "StickerParameters",
+            "CAPTION_EMPHASIS": "CaptionEmphasisParameters",
+        },
+    ),
+    "ApplyOperation": (
+        "kind",
+        "payload",
+        {
+            "DUPLICATE_TIMELINE": "DuplicateTimelinePayload",
+            "IMPORT_ASSET": "ImportAssetPayload",
+            "PLACE_MEDIA": "PlaceMediaPayload",
+            "SET_TRANSFORM": "SetTransformPayload",
+            "PLACE_OVERLAY": "PlaceOverlayPayload",
+            "APPLY_CAPTION_EMPHASIS": "ApplyCaptionEmphasisPayload",
+            "VERIFY": "VerifyPayload",
+            "DISCARD_GENERATED_TIMELINE": "DiscardGeneratedTimelinePayload",
+        },
+    ),
+}
+
+
+def _close_discriminator_coupling(model_name: str, schema: dict[str, object]) -> None:
+    coupling = _DISCRIMINATED_FIELDS.get(model_name)
+    if coupling is None:
+        return
+    discriminator, value_field, variants = coupling
+    schema["allOf"] = [
+        {
+            "if": {
+                "properties": {discriminator: {"const": discriminator_value}},
+                "required": [discriminator],
+            },
+            "then": {
+                "properties": {
+                    value_field: {"$ref": f"#/$defs/{definition_name}"}
+                }
+            },
+        }
+        for discriminator_value, definition_name in variants.items()
+    ]
+
 
 def export_schemas(destination: Path | None = None) -> list[Path]:
     """Write sorted UTF-8 schemas to the v1 schema directory and return paths."""
@@ -28,8 +77,10 @@ def export_schemas(destination: Path | None = None) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     paths: list[Path] = []
     for model in TOP_LEVEL_MODELS:
+        schema = model.model_json_schema()
+        _close_discriminator_coupling(model.__name__, schema)
         payload = json.dumps(
-            model.model_json_schema(), ensure_ascii=False, indent=2, sort_keys=True
+            schema, ensure_ascii=False, indent=2, sort_keys=True
         ) + "\n"
         path = output_dir / f"{model.__name__}.schema.json"
         path.write_text(payload, encoding="utf-8", newline="\n")

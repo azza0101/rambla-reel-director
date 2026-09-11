@@ -12,10 +12,12 @@ from .common import (
     Confidence,
     ContractModel,
     DecisionId,
+    EditControls,
     FrameIndex,
     FrameRange,
-    JsonObject,
     PlanId,
+    ProviderTrace,
+    ProvenanceRecord,
     RunId,
     SCHEMA_VERSION,
     Sha256,
@@ -94,7 +96,7 @@ class EditDecision(ContractModel):
     selected_asset_ref: AssetId | None
     parameters: DecisionParameters
     review_state: Literal["PROPOSED", "APPROVED", "MODIFIED", "DISABLED", "NEEDS_REPLACEMENT"]
-    provenance: JsonObject
+    provenance: ProvenanceRecord
 
     @model_validator(mode="after")
     def obeys_action_shape(self) -> "EditDecision":
@@ -113,11 +115,25 @@ class EditDecision(ContractModel):
             raise ValueError("asset-backed actions require selected_asset_ref")
         return self
 
-
 class ApprovalRecord(ContractModel):
     actor: str
     approved_at: UtcTimestamp
     approved_plan_hash: Sha256
+
+
+class ValidationIssue(ContractModel):
+    code: str
+    severity: Literal["ERROR", "WARNING"]
+    decision_id: DecisionId | None
+    message: str
+
+
+class PlanValidation(ContractModel):
+    valid: bool
+    plan_hash: Sha256
+    checked_at: UtcTimestamp
+    validator_version: str
+    issues: list[ValidationIssue]
 
 
 class EditPlan(ContractModel):
@@ -130,10 +146,10 @@ class EditPlan(ContractModel):
     source_timeline_hash: Sha256
     style_snapshot_ref: ArtifactRef
     policy_snapshot_ref: ArtifactRef
-    controls_snapshot: JsonObject
-    provider_trace: list[JsonObject]
+    controls_snapshot: EditControls
+    provider_trace: list[ProviderTrace]
     decisions: list[EditDecision]
-    validation: JsonObject
+    validation: PlanValidation
     approval: ApprovalRecord | None
     apply_result_ref: ArtifactRef | None
     content_hash: Sha256

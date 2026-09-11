@@ -182,6 +182,75 @@
       "title": "FrameRange",
       "type": "object"
     },
+    "ProvenanceRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "acquired_at": {
+          "anyOf": [
+            {
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Acquired At"
+        },
+        "attribution": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attribution"
+        },
+        "content_hash": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Content Hash"
+        },
+        "license_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "License Ref"
+        },
+        "source_id": {
+          "title": "Source Id",
+          "type": "string"
+        },
+        "source_kind": {
+          "title": "Source Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_kind",
+        "source_id"
+      ],
+      "title": "ProvenanceRecord",
+      "type": "object"
+    },
     "PunchInParameters": {
       "additionalProperties": false,
       "properties": {
@@ -265,6 +334,103 @@
     }
   },
   "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "BROLL"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "then": {
+        "properties": {
+          "parameters": {
+            "$ref": "#/$defs/BrollParameters"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "EDITORIAL_INSERT"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "then": {
+        "properties": {
+          "parameters": {
+            "$ref": "#/$defs/EditorialInsertParameters"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "PUNCH_IN"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "then": {
+        "properties": {
+          "parameters": {
+            "$ref": "#/$defs/PunchInParameters"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "STICKER"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "then": {
+        "properties": {
+          "parameters": {
+            "$ref": "#/$defs/StickerParameters"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "CAPTION_EMPHASIS"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "then": {
+        "properties": {
+          "parameters": {
+            "$ref": "#/$defs/CaptionEmphasisParameters"
+          }
+        }
+      }
+    }
+  ],
   "properties": {
     "action": {
       "enum": [
@@ -334,9 +500,7 @@
       "title": "Parameters"
     },
     "provenance": {
-      "additionalProperties": true,
-      "title": "Provenance",
-      "type": "object"
+      "$ref": "#/$defs/ProvenanceRecord"
     },
     "queries": {
       "items": {

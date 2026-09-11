@@ -6,14 +6,14 @@ from typing import Annotated, Literal
 
 from pydantic import Field
 
-from .common import ArtifactManifestEntry, ArtifactRef, ClientId, ContractModel, JsonObject, ProjectId, RunId, SCHEMA_VERSION, UtcTimestamp
+from .common import ArtifactManifestEntry, ArtifactRef, ClientId, ContractModel, EditControls, ProjectId, RunId, SCHEMA_VERSION, StepLease, UtcTimestamp
 from .errors import TypedError
 
 
 class StepState(ContractModel):
     state: Literal["pending", "running", "succeeded", "failed", "skipped", "stale"]
     attempt: Annotated[int, Field(ge=0)]
-    lease: JsonObject | None
+    lease: StepLease | None
     started_at: UtcTimestamp | None
     finished_at: UtcTimestamp | None
     error: TypedError | None
@@ -31,7 +31,7 @@ class Run(ContractModel):
     source_timeline_snapshot_ref: ArtifactRef | None
     style_snapshot_ref: ArtifactRef | None
     policy_snapshot_ref: ArtifactRef
-    controls_snapshot: JsonObject
+    controls_snapshot: EditControls
     provider_profile: str
     steps: dict[str, StepState]
     artifacts: list[ArtifactManifestEntry]

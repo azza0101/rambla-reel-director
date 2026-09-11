@@ -55,7 +55,7 @@ def test_punch_in_requires_range_and_rejects_frame() -> None:
                 "easing": "CUT",
             },
             review_state="PROPOSED",
-            provenance={"source": "manual"},
+            provenance={"source_kind": "MANUAL", "source_id": "fixture"},
         )
 
 
@@ -80,7 +80,7 @@ def test_caption_emphasis_requires_canonical_alignment_word_ids() -> None:
                 "alignment_word_ids": ["NOT-A-UUID"],
             },
             review_state="PROPOSED",
-            provenance={"source": "manual"},
+            provenance={"source_kind": "MANUAL", "source_id": "fixture"},
         )
 
 

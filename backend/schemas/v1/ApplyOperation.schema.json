@@ -261,9 +261,14 @@
       "title": "SetTransformPayload",
       "type": "object"
     },
-    "TimelineIdentity": {
+    "TargetTimelineIdentity": {
       "additionalProperties": false,
       "properties": {
+        "apply_attempt_id": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "title": "Apply Attempt Id",
+          "type": "string"
+        },
         "observed_name": {
           "title": "Observed Name",
           "type": "string"
@@ -280,9 +285,10 @@
       "required": [
         "project_ref",
         "timeline_ref",
-        "observed_name"
+        "observed_name",
+        "apply_attempt_id"
       ],
-      "title": "TimelineIdentity",
+      "title": "TargetTimelineIdentity",
       "type": "object"
     },
     "VerifyPayload": {
@@ -305,6 +311,160 @@
     }
   },
   "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "DUPLICATE_TIMELINE"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/DuplicateTimelinePayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "IMPORT_ASSET"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/ImportAssetPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "PLACE_MEDIA"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/PlaceMediaPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "SET_TRANSFORM"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/SetTransformPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "PLACE_OVERLAY"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/PlaceOverlayPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "APPLY_CAPTION_EMPHASIS"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/ApplyCaptionEmphasisPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "VERIFY"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/VerifyPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "DISCARD_GENERATED_TIMELINE"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/DiscardGeneratedTimelinePayload"
+          }
+        }
+      }
+    }
+  ],
   "properties": {
     "apply_attempt_id": {
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
@@ -390,7 +550,7 @@
     "target_identity": {
       "anyOf": [
         {
-          "$ref": "#/$defs/TimelineIdentity"
+          "$ref": "#/$defs/TargetTimelineIdentity"
         },
         {
           "type": "null"
