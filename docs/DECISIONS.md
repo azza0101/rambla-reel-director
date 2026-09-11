@@ -112,6 +112,15 @@ Approved Style DNA, approved plans, Apply journals/reports, and provenance neede
 
 MVP sign-off requires zero source-timeline mutation, cross-client leakage, unapproved cloud transmission, and non-idempotent Apply-retry failures. Editorial quality is measured on a frozen consented corpus with acceptance/modify/replace/disable metrics. After baseline measurement, the user approves a versioned benchmark gate; faster providers may not replace a higher-quality default if they fall below that gate.
 
+### D-028 — MVP technical specification approved
+
+On 2026-09-11 the user explicitly approved the complete MVP technical specification consisting of:
+
+- `docs/superpowers/specs/2026-09-11-rambla-reel-director-mvp-design.md`
+- `docs/superpowers/specs/2026-09-11-rambla-reel-director-mvp-contracts-v1.md`
+
+The implementation-planning gate is open. Product code remains blocked until the implementation plan is explicitly approved, per the repository workflow.
+
 ## Deferred / future decisions
 
 - Exact global-library design and sharing rules.
