@@ -84,6 +84,34 @@ Prefer a native Resolve Workflow Integration panel when supported by the install
 
 Code and non-sensitive docs/config remain in the repository. Client media, references, downloaded assets, model weights, caches, runs, previews, logs, and generated media live under a configurable local data root outside tracked source directories.
 
+### D-021 — Closed v1 schemas and canonical persisted types
+
+The MVP uses closed, versioned JSON contracts for persisted core entities and typed errors. The normative v1 shapes are frozen in `docs/superpowers/specs/2026-09-11-rambla-reel-director-mvp-contracts-v1.md`. Unknown major versions are rejected; migrations are explicit and never silently reinterpret artifacts.
+
+### D-022 — HTTP/SSE contract is deterministic and idempotent
+
+The localhost API uses `/v1`, typed JSON responses/errors, idempotency keys for every mutating command, optimistic version conflicts, and SSE with monotonic per-run event IDs plus replay via `Last-Event-ID`. SSE is notification/progress only; resource state remains authoritative.
+
+### D-023 — MVP ports are typed and capability-based
+
+Transcription, alignment, Director, embedding, reranking, optional visual judging, asset sources, artifact storage, and Resolve all use frozen typed method contracts and `Result<T, TypedError>` boundaries. Vendor exceptions never cross into domain services.
+
+### D-024 — Five editorial actions have fixed v1 semantics
+
+`BROLL`, `EDITORIAL_INSERT`, `PUNCH_IN`, `STICKER`, and `CAPTION_EMPHASIS` have explicit required parameters, layer/collision policy, validation rules, and verification postconditions. Unsupported Resolve capabilities exclude the affected action before plan freeze rather than silently approximating it.
+
+### D-025 — Dry Run has one meaning
+
+Dry Run executes Analyze through plan validation, emits a draft plan plus `dry_run_report.json`, performs zero Resolve mutation, and never freezes/approves the plan. Review, Freeze, and Apply are separate commands.
+
+### D-026 — Retention v1 is local-first and explicit
+
+Approved Style DNA, approved plans, Apply journals/reports, and provenance needed to justify applied edits are never auto-deleted. Non-approved run artifacts default to 30-day retention; temporary/quarantine/unselected-cache data use bounded TTLs; generated Resolve timelines are never auto-deleted. Destructive cleanup requires explicit authorization and audit.
+
+### D-027 — Benchmark v1 separates hard safety gates from editorial taste
+
+MVP sign-off requires zero source-timeline mutation, cross-client leakage, unapproved cloud transmission, and non-idempotent Apply-retry failures. Editorial quality is measured on a frozen consented corpus with acceptance/modify/replace/disable metrics. After baseline measurement, the user approves a versioned benchmark gate; faster providers may not replace a higher-quality default if they fall below that gate.
+
 ## Deferred / future decisions
 
 - Exact global-library design and sharing rules.
