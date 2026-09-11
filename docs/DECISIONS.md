@@ -1,8 +1,8 @@
 # Architecture Decision Log
 
-Only explicitly approved decisions belong in the approved section. Proposed choices stay separate until accepted.
+Only explicitly approved decisions belong in the approved section. Superseded or future choices stay separate until accepted.
 
-## Approved from the project brief
+## Approved
 
 ### D-001 — Edit Plan before mutation
 
@@ -40,25 +40,56 @@ Persist intermediate artifacts and structured logs. Steps must be independently 
 
 Implementation uses task branches, tests, commits, pushes, and pull requests to `main`. No autonomous merges.
 
-## Proposed — awaiting approval
+### D-010 — Modular monolith with ports and adapters
 
-### P-001 — Modular monolith with ports and adapters
+Use one local backend process with strict domain modules and typed ports/adapters. Borrow event-sourced discipline only where it adds value: immutable run artifacts, explicit state transitions, schema versions, and hashes. Do not introduce local microservices/workers until measurements justify process isolation.
 
-Adopt the recommended architecture in `docs/ARCHITECTURE.md`, with a single local backend process, strict domain modules, typed ports, and immutable run artifacts.
+### D-011 — FastAPI control plane, simple progress transport first
 
-### P-002 — FastAPI control plane
+Use FastAPI for the localhost control plane. Prefer ordinary HTTP plus Server-Sent Events for one-way progress/event streaming in the first implementation. Add WebSocket only when a concrete bidirectional real-time requirement appears.
 
-Use FastAPI for localhost HTTP plus WebSocket or server-sent progress events, subject to a short panel compatibility spike.
+### D-012 — Filesystem-first durable artifacts
 
-### P-003 — Filesystem-first run store
+Versioned JSON artifacts and structured logs are the MVP source of truth. A metadata index/database is optional and must not become authoritative; add one only when navigation/query performance requires it.
 
-Use versioned JSON artifacts and structured logs as the MVP source of truth, with a small metadata index only if measurements show it is needed.
+### D-013 — First vertical slice before feature breadth
 
-### P-004 — First vertical slice
+Prove one complete Analyze → Review → Approve → Duplicate → Apply flow before broadening effects, sources, or providers.
 
-Prove one complete Analyze → Review → Approve → Duplicate → Apply flow before broad provider and effect coverage.
+### D-014 — Capability-oriented Model Manager
 
-### P-005 — Capability-oriented local Model Manager
+Manage transcription, alignment, direction, embedding, reranking, and optional visual judging as separate capabilities. Support measured Fast and Low-VRAM profiles. Candidate model names are hypotheses until benchmarked.
 
-Manage separate transcription, alignment, direction, embedding, reranking, and optional judging capabilities with measured Fast and Low VRAM profiles.
+### D-015 — Resolve Python API first; MCP later as optional façade/adapter
 
+Validate and implement the first `ResolveAdapter` directly against the official Resolve scripting API. MCP is optional and may be added later for external agents or as another adapter, but the core product must not depend on it.
+
+### D-016 — Global asset library deferred from MVP
+
+MVP searches client-local assets first, then permitted online sources (initially Pexels/Pixabay). A cross-client/global asset library is deferred to avoid early isolation and provenance complexity.
+
+### D-017 — Cloud providers are non-blocking for the first local vertical slice
+
+Freeze provider interfaces in the technical specification, but first prove the local pipeline. After the local vertical slice is functional, add OpenAI and Claude providers as benchmark/quality options before calling MVP complete if they materially improve editorial acceptance. Cloud use remains explicit per client/run.
+
+### D-018 — Windows-first, Resolve Studio capability probe
+
+MVP targets the user's Windows workstation and DaVinci Resolve Studio. The exact installed Resolve version and Workflow Integration capabilities must be detected in the first compatibility spike rather than hard-coded into the domain design. The backend remains independent of panel technology and Resolve version-specific details.
+
+### D-019 — Panel technology is capability-gated
+
+Prefer a native Resolve Workflow Integration panel when supported by the installed Resolve build. Keep a thin external/local fallback possible for development and diagnostics; neither UI path may own domain logic.
+
+### D-020 — Runtime media/data live outside Git-tracked source
+
+Code and non-sensitive docs/config remain in the repository. Client media, references, downloaded assets, model weights, caches, runs, previews, logs, and generated media live under a configurable local data root outside tracked source directories.
+
+## Deferred / future decisions
+
+- Exact global-library design and sharing rules.
+- Automatic learning from user corrections.
+- Music and advanced sound-design automation.
+- Horizontal workflows and auto-reframing.
+- Generated-video providers.
+- Multi-user/cloud collaboration.
+- Whether any model/server deserves process isolation after profiling.
