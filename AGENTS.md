@@ -11,7 +11,7 @@ Before any task:
 3. Read `docs/ARCHITECTURE.md`.
 4. Read `docs/DECISIONS.md`.
 5. Read `docs/NEXT_TASK.md`.
-6. If `docs/NEXT_TASK.md` or another approved document points to a current specification, plan, review, or task file, read that file before acting.
+6. If `docs/NEXT_TASK.md` or another approved document points to a current specification, plan, review, approval, or task file, read that file before acting.
 7. Do not contradict approved decisions in `docs/DECISIONS.md`.
 8. Treat the repository as the source of truth over prior chat context whenever repository instructions exist.
 9. Do not require the user to remind you to read these files: automatically re-read them at the start of every new task after synchronization.
@@ -63,4 +63,4 @@ The Windows sandbox may allow normal workspace file edits while denying writes i
 
 ## Current phase
 
-Explicit technical specification approval gate. The complete MVP specification is the design document plus the normative `mvp-contracts-v1` supplement referenced by `docs/NEXT_TASK.md`. No application code, product dependencies, models, or Resolve integration may be added until the specification is explicitly approved and an implementation plan is then written and approved.
+The MVP technical specification and the first implementation plan are explicitly approved. Implementation is authorized only for the scope defined by `docs/superpowers/plans/2026-09-11-foundation-safe-resolve-vertical-slice.md` and its approval record. Start with Task 0 to prove the Codex-driven Git delivery path before product edits. Do not broaden scope beyond the approved plan, and do not merge autonomously.
