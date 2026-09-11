@@ -1,7 +1,15 @@
 # RAMBLA Reel Director — MVP Technical Design
 
 Date: 2026-09-11
-Status: **draft for human review; implementation is not yet authorized**
+Status: **reviewed draft; approval blocked by the open specification decisions
+in section 25; implementation is not yet authorized**
+
+Normative language in this document uses **MUST**, **MUST NOT**, **SHOULD**, and
+**MAY** in their ordinary requirements sense. Where an earlier descriptive
+sentence conflicts with a normative requirement, the normative requirement
+wins. Values marked `TBD_BY_SPIKE` are deliberately capability-gated and MUST
+be resolved by Slice 0 before work depending on them begins; they are not
+permission to guess during implementation.
 
 ## 1. Purpose
 
@@ -106,7 +114,7 @@ One local backend process owns orchestration and domain logic. External systems 
    - OpenAI/Claude provider adapters
    - Pexels/Pixabay asset-source adapters
    - filesystem artifact store
-   - optional ComfyUI generation adapter
+   - optional future ComfyUI generation adapter (outside MVP delivery)
 
 ## 4. Repository layout
 
@@ -183,6 +191,13 @@ All persisted objects include:
 - `updated_at` where mutable
 - provenance/source metadata
 - content hash where freezing/replay matters
+
+Persisted JSON MUST validate against a checked-in schema identified by
+`schema_version`. Unknown major versions MUST be rejected; additive unknown
+fields in a compatible minor version MAY be preserved but MUST NOT silently
+change domain behavior. Migrations MUST be explicit, deterministic, preserve
+the original artifact, and record source/target versions plus the migration
+tool version. IDs are opaque UUIDs; timestamps are UTC RFC 3339 strings.
 
 ### 5.1 Client
 
@@ -384,7 +399,16 @@ Review state:
 
 `proposed | approved | modified | disabled | needs_replacement`
 
-Approval freezes the full semantic content of the plan and stores a deterministic hash.
+Approval freezes the full semantic content of the plan and stores a
+deterministic hash. The hash input is UTF-8 RFC 8785 canonical JSON of the
+entire plan except `approval`, `apply_result`, and non-semantic storage
+metadata (`created_at`, `updated_at`, and filesystem paths derived from the
+artifact root). It includes `schema_version`, source/style/control snapshots,
+decisions, validation results, selected-asset hashes, and policy snapshot. The
+algorithm is SHA-256 and the stored form is `sha256:<lowercase-hex>`. Approval
+MUST record actor, UTC timestamp, and hash. Any semantic edit creates a new
+draft version and invalidates the prior approval; an approved artifact is
+never edited in place.
 
 ## 6. Run artifacts
 
@@ -411,13 +435,35 @@ runs/<run_id>/
   logs.jsonl
 ```
 
-Artifacts are immutable once a downstream step has consumed them. A rerun writes a new version and marks descendants stale.
+Artifacts are immutable once written successfully. Writers MUST use a
+temporary file in the same filesystem, flush it, then atomically rename it to
+the final versioned path. A manifest in `run.json` records logical artifact
+name, version, schema version, SHA-256, producing step attempt, and dependency
+hashes. A rerun writes a new version and marks descendants stale in the
+manifest; it never edits or deletes an earlier artifact. A consumer MUST reject
+an artifact whose recorded dependency hashes no longer match current selected
+upstream versions.
 
 ## 7. Orchestration state machine
 
 Each step uses:
 
 `pending | running | succeeded | failed | skipped | stale`
+
+Allowed transitions are:
+
+- `pending -> running | skipped`
+- `running -> succeeded | failed`
+- `failed -> running`
+- `succeeded | skipped -> stale` when a selected input changes
+- `stale -> running | skipped`
+
+Each execution has a monotonic attempt number. At most one attempt for a given
+`run_id` and step may be `running`; acquisition uses an atomic run lease with
+owner, acquired time, heartbeat, and expiry. Recovery of an expired lease is
+recorded, never inferred silently. A step becomes `succeeded` only after all
+outputs are durably written and validated. Cancellation is represented as a
+typed failure (`RUN_CANCELLED`) in MVP, not as an unrecorded process exit.
 
 Initial pipeline:
 
@@ -442,9 +488,24 @@ Initial pipeline:
 
 Dry Run ends after `validate_plan` or user review/freeze, depending on UI mode, and never executes steps 14–17.
 
+`review` is a user-controlled wait state, not a background compute step.
+`freeze_plan` requires every enabled decision to have a terminal review state
+and a successful validation against the exact plan version. `preflight_apply`
+requires an approved hash and acquires the apply lease. No Analyze or Dry Run
+command can enqueue or call steps 14–17.
+
 ## 8. Domain ports
 
 Interfaces are capability-based rather than vendor-based.
+
+All port calls MUST accept an operation/request ID and return a typed result or
+typed error; adapters MUST NOT leak vendor exceptions into domain services.
+Errors carry `code`, `category`, `retryable`, `message`, and redacted
+`diagnostic_id`. Retrying a mutating call with the same operation ID MUST be
+idempotent. Timeouts and cancellation are explicit inputs at adapter
+boundaries. Concrete request/response schemas are frozen in Slice 0 before the
+first real adapter is implemented and are exercised by the shared contract
+suite.
 
 ### ResolveAdapter
 
@@ -466,6 +527,29 @@ Minimum MVP capabilities:
 
 Every capability is explicitly discoverable. Unsupported features fail preflight before mutation.
 
+The minimum normative surface is:
+
+```text
+capabilities() -> ResolveCapabilities
+inspect_context() -> ResolveContext
+capture_timeline(TimelineRef) -> TimelineSnapshot
+extract_analysis_media(TimelineRef, ExtractionRequest) -> MediaArtifact
+preflight_apply(ApprovedPlanRef, TimelineSnapshotHash) -> PreflightResult
+duplicate_timeline(SourceTimelineIdentity, AllocatedTargetName, OperationId) -> TargetTimelineIdentity
+apply_operation(TargetTimelineIdentity, ApplyOperation, OperationId) -> OperationResult
+verify_apply(TargetTimelineIdentity, ExpectedTimelineState) -> VerificationResult
+discard_generated_timeline(TargetTimelineIdentity, OperationId) -> OperationResult
+```
+
+`SourceTimelineIdentity` and `TargetTimelineIdentity` use stable Resolve
+identifiers when exposed by the compatibility spike. If Resolve exposes no
+stable ID, the spike MUST define a compound identity and its collision/freshness
+limits; name alone is forbidden. Every mutating method requires the target
+identity returned by `duplicate_timeline`; the adapter MUST reject the captured
+source identity and any target not registered to the current apply attempt.
+Capability discovery is a persisted, versioned matrix, not a collection of
+best-effort runtime guesses.
+
 ### AI/provider ports
 
 - `TranscriptionProvider`
@@ -481,6 +565,13 @@ Every capability is explicitly discoverable. Unsupported features fail preflight
 - fetch preview metadata
 - fetch/download selected asset
 - expose licensing/provenance
+
+Search receives `client_id`, a frozen policy snapshot, locale, pagination
+token, and request ID. Results MUST be normalized before ranking. Download
+receives an already selected remote asset and writes only into the requesting
+client/run namespace. Provider terms that do not yield sufficient license and
+attribution evidence make the candidate ineligible rather than partially
+populated.
 
 Initial adapters:
 
@@ -610,6 +701,12 @@ Verify:
 
 Any failure aborts before mutation.
 
+Preflight is valid only for the approved plan hash, captured source identity
+and hash, capability-matrix version, selected-asset hashes, and current Resolve
+session observed at preflight. Any change forces a new preflight. Apply is
+serialized per Resolve project and uses an expiring lease; concurrent apply
+attempts for the same project are rejected.
+
 ### Phase B — Mutation and verification
 
 1. Duplicate source timeline.
@@ -618,11 +715,31 @@ Any failure aborts before mutation.
 4. Verify expected items/transforms/tracks.
 5. Persist apply report.
 
-If an operation fails mid-apply, report partial state clearly. MVP does not promise magical transactional rollback; instead it can discard the generated duplicate and retry from the untouched master.
+The first mutation permitted is duplication. After duplication, every mutation
+MUST target the returned target identity. The operation journal is durably
+written before and after each adapter call and records operation ID,
+precondition, outcome, and postcondition. A retry reconciles the journal and
+observed target state before issuing another mutation.
+
+If an operation fails mid-apply, report partial state clearly. MVP does not
+promise transactional rollback. Discarding the generated duplicate is a
+separate, explicit user-approved cleanup command, MUST verify that the identity
+belongs to this apply attempt, and MUST never be automatic after an ambiguous
+adapter timeout. Until cleanup is approved, retry may resume only when
+postconditions prove which operations completed; otherwise the attempt remains
+failed and requires a new duplicate. The untouched source is always retained.
 
 ## 14. Time model
 
 Internally, timeline operations are frame-based using the captured timeline timebase. Human-facing seconds/timecodes are derived representations.
+
+The canonical interval is half-open `[start_frame, end_frame)` using signed
+64-bit integer frame indices relative to the captured timeline start. A
+timebase is the reduced rational `frames_per_second_num/frames_per_second_den`
+plus drop-frame flag and timeline start timecode. Floating-point seconds MUST
+NOT be used for placement, hashing, or collision checks. Conversion and
+rounding rules are frozen in the timing schema and shared by validation and the
+Resolve adapter.
 
 Required invariants:
 
@@ -631,6 +748,12 @@ Required invariants:
 - stable frame ↔ timecode conversion
 - VFR source media must be normalized/mapped explicitly before frame-accurate assumptions
 - speech alignment confidence is persisted
+- `start_frame < end_frame` for ranged decisions
+- point decisions use `frame`, never a zero-length interval
+- all decision ranges lie within the captured timeline range
+- overlapping decisions are accepted only by an explicit action/track policy
+- source-media time mappings record source timebase, trims, speed changes, and
+  normalization provenance
 
 ## 15. Panel behavior
 
@@ -688,6 +811,13 @@ OpenAI and Claude share the `DirectorProvider` contract and are added as benchma
 
 `AUTO` routing is deferred until there is real confidence telemetry.
 
+Permission is deny-by-default and is evaluated immediately before every remote
+request against the frozen run policy. The request record contains provider,
+data classes sent, purpose, policy decision, and redacted response provenance.
+Transcripts, frames, filenames, and metadata are distinct data classes so a
+permission for one does not imply the others. Revocation prevents future
+requests but does not rewrite historical artifacts.
+
 ## 18. Security, privacy, provenance
 
 - Secrets only via local secret/config mechanisms; never Git.
@@ -696,6 +826,17 @@ OpenAI and Claude share the `DirectorProvider` contract and are added as benchma
 - Client asset isolation is enforced in domain queries, not just directory naming.
 - Logs must redact secrets and avoid unnecessary raw client content.
 - Generated assets retain generation provenance.
+- Cache, download, preview, embedding, and temporary paths are namespaced by
+  ownership scope and `client_id`; cache keys include the scope. Domain access
+  requires the requesting `client_id` even when a caller knows another asset ID
+  or path.
+- Local paths are canonicalized and checked against configured roots before
+  access. Symlinks, junctions, `..`, case differences, and alternate Windows
+  path forms MUST NOT bypass root or client boundaries.
+- Remote downloads use size/type limits, content sniffing, quarantine before
+  validation, and a content hash before becoming eligible assets.
+- Logs and provider traces store references/hashes instead of raw transcript or
+  media content unless a diagnostic mode is explicitly enabled for that run.
 
 ## 19. Observability
 
@@ -735,6 +876,11 @@ Shared compliance suites for each port:
 - GenerationProvider
 - ArtifactStore
 
+Every port's suite covers success, typed failure, timeout, cancellation,
+idempotent retry, unsupported capability, malformed vendor response, and
+redaction. Resolve contract tests additionally prove source-identity rejection
+for every mutating method and no mutation after failed preflight.
+
 ### Integration
 
 - fake Resolve adapter
@@ -767,6 +913,15 @@ Primary quality metric:
 `acceptance_rate = decisions_kept_without_material_change / reviewed_decisions`
 
 Also report replacement rate and disable rate separately so the metric cannot hide poor asset selection.
+
+`reviewed_decisions` excludes decisions that have not reached a terminal review
+state. “Material change” is versioned and initially means a changed action,
+selected asset, interval by more than the action-specific tolerance, or any
+parameter marked editorially material in the decision schema. Reports MUST
+include the metric-definition version and raw counts. MVP quality sign-off
+requires a checked-in benchmark protocol and human-approved thresholds; this
+spec deliberately does not invent a universal acceptance-rate target before a
+baseline is measured.
 
 ## 22. MVP delivery sequence
 
@@ -831,6 +986,26 @@ MVP is considered technically complete only when:
 12. Metrics report acceptance/replacement/disable rates and stage timings.
 13. Model/provider choice can be changed without changing domain schemas.
 14. No ComfyUI dependency is required for the core flow.
+15. Approved-plan hashes are stable across repeated serialization and reject
+    every semantic mutation covered by the schema.
+16. Crash/retry tests prove artifact atomicity, stale propagation, single-step
+    lease recovery, and Apply operation reconciliation.
+17. Every mutating Resolve contract test rejects the source identity, an
+    unregistered target, and an expired/mismatched preflight.
+18. Two-client adversarial tests prove isolation across catalog queries, direct
+    asset-ID lookup, caches, previews, downloads, embeddings, logs, and path
+    aliases/junctions.
+19. Timing property tests cover integer and NTSC rational rates, drop-frame
+    display, non-zero timeline starts, trims, speed changes, and declared VFR
+    normalization behavior.
+20. Cloud tests prove deny-by-default behavior and that each transmitted data
+    class requires explicit policy permission.
+21. The Slice 0 capability matrix resolves every `TBD_BY_SPIKE` required by the
+    selected first vertical slice; unsupported decision types fail preflight or
+    are excluded before approval.
+22. The benchmark protocol records fixture consent/provenance, metric version,
+    local hardware/software versions, warm/cold procedure, raw counts, and
+    human-approved MVP thresholds.
 
 ## 24. Known risks and mitigations
 
@@ -858,6 +1033,52 @@ Mitigation: schema versions, hashes, immutable artifacts, stale propagation, exp
 
 Mitigation: provenance as required schema data and explicit per-client cloud/source policy.
 
-## 25. Approval gate
+## 25. Technical-review disposition and open decisions
 
-This document freezes the intended MVP architecture once the user explicitly approves it. After approval, the next step is an implementation plan produced from this spec. No application implementation should begin before that plan is reviewed and approved.
+The review closed the safety and consistency gaps around canonical approval
+hashing, immutable artifacts, orchestration leases/transitions, typed adapter
+errors, Resolve target identity, Apply journaling/recovery, rational frame time,
+client-scoped storage, cloud data classes, and adversarial acceptance tests.
+
+The specification is internally consistent with D-001 through D-020, but it is
+**not yet sufficiently concrete for final approval**. The following decisions
+must be resolved in this document before the implementation-plan gate opens:
+
+1. **Freeze v1 schemas.** Define the closed JSON shapes and field types for
+   `Run`, `TimelineSnapshot`, `Transcript`, `Alignment`, `StyleDNA`,
+   `VisualAsset`, `EditPlan`, `ApplyOperation`, `ApplyReport`, policy snapshots,
+   manifests, and typed errors. The field sketches in section 5 are not exact
+   schemas.
+2. **Freeze API contracts.** Define the MVP HTTP resources/commands, request and
+   response schemas, status codes, idempotency semantics, concurrency behavior,
+   SSE event envelope, replay cursor, and reconnect behavior.
+3. **Freeze port contracts.** Replace capability bullet lists with exact typed
+   method inputs/outputs for every MVP port, including transcription,
+   alignment, direction, retrieval/reranking, artifact storage, and asset
+   sources. The Resolve surface above is only the minimum safety boundary.
+4. **Freeze decision and operation semantics.** Specify required parameters,
+   validation rules, track/layer policy, collision policy, and verification
+   postconditions for each of the five MVP action types.
+5. **Resolve Dry Run semantics.** Choose whether the named Dry Run product
+   command stops at validated draft or may include review/freeze; one command
+   must have one deterministic terminal state and artifact set.
+6. **Define retention/deletion policy.** Set lifecycle rules for client/run
+   artifacts, quarantined downloads, caches, logs, cloud request records, and
+   generated duplicate timelines. Cleanup authorization and audit behavior
+   must be explicit.
+7. **Approve the benchmark protocol and thresholds.** The protocol may measure
+   a baseline before numeric thresholds are chosen, but the authority, sample
+   set, minimum evidence, and rule for MVP sign-off must be explicit.
+
+Resolve-version-specific capability values may remain `TBD_BY_SPIKE` because
+D-018 and D-019 explicitly gate them on the compatibility probe. The data and
+interface contracts that do not depend on that probe may not be deferred to
+implementation or silently decided in an implementation plan.
+
+## 26. Approval gate
+
+This document freezes the intended MVP architecture and technical contracts
+only after section 25 is resolved and the user explicitly approves the revised
+specification. After approval, the next step is an implementation plan produced
+from this spec. No application implementation should begin before that plan is
+reviewed and approved.
