@@ -1,39 +1,42 @@
-# Next Task — Approve first implementation plan
+# Next Task — Execute first implementation plan
 
-Current phase: **implementation plan approval**.
+Current phase: **implementation authorized for the approved first vertical slice**.
 
-The MVP technical specification was explicitly approved by the user on 2026-09-11 and recorded as D-028 in `docs/DECISIONS.md`.
+The MVP technical specification is approved and the first implementation plan was explicitly approved by the user on 2026-09-11. Approval is recorded at:
 
-The first implementation plan is:
+`docs/approvals/2026-09-11-foundation-safe-resolve-plan-approved.md`
+
+The implementation plan is:
 
 `docs/superpowers/plans/2026-09-11-foundation-safe-resolve-vertical-slice.md`
 
-This plan intentionally implements only the control-plane and mutation-safety foundation plus one real `PUNCH_IN` vertical slice. It does not yet add real AI models, retrieval providers, generated media, cloud providers, or the final Resolve panel.
-
 ## Required next action
 
-Request explicit human approval of the first implementation plan.
+Execute the approved plan exactly within scope.
 
-If approval is granted:
+1. Synchronize the repository and read `AGENTS.md`, the approved design/contracts specifications, the approval record, and the implementation plan.
+2. Use Superpowers `subagent-driven-development` (preferred) or `executing-plans`, with TDD and verification-before-completion.
+3. Start with **Task 0** and create/switch to branch:
 
-1. Codex synchronizes the repository and reads `AGENTS.md`, the approved specifications, and the implementation plan.
-2. Codex uses a dedicated implementation branch `feat/foundation-safe-resolve-slice`.
-3. Task 0 first proves that branch creation, commit, push, and remote tracking work without asking the user to operate Git manually.
-4. If the Git delivery path passes, execute the plan task-by-task using Superpowers TDD/subagent workflow.
-5. Stop and report immediately if Task 0 cannot establish reliable Codex-driven Git writes/pushes.
-6. Keep every implementation change on the task branch and open a pull request to `main`; never merge autonomously.
+`feat/foundation-safe-resolve-slice`
 
-## Completion gate for this plan
+4. Task 0 must prove Codex can perform the complete Git delivery path itself: branch creation/switch, workspace edit, commit, push, cleanup commit, push, and remote-tracking verification. Do not ask the user to run PowerShell/Git manually.
+5. If sandboxed Git writes are denied, request the minimum out-of-sandbox/elevated Git execution allowed by `AGENTS.md`. If the host still refuses it, stop before product implementation and report the exact blocker.
+6. If Task 0 passes, continue the plan task-by-task. Keep all implementation changes on the feature branch.
+7. Follow red/green TDD steps and run the specified verification commands before each completion claim.
+8. Open a pull request to `main` when the plan completion gate is satisfied. Never merge autonomously.
 
-The plan is accepted only after:
+## Authorized scope
 
-- isolated local backend tests pass;
-- v1 contracts/hashing/artifact persistence tests pass;
-- Dry Run has zero Resolve mutation paths;
-- fake Resolve end-to-end Apply/retry tests pass;
-- client/path isolation and retention tests pass;
-- the installed Resolve version has a factual capability matrix;
-- a controlled manually seeded `PUNCH_IN` plan is applied only to a generated duplicate timeline while the source remains unchanged;
-- the branch is pushed and a reviewable pull request exists.
+This plan authorizes only the foundation/safety vertical slice: local backend, contracts/hashing, immutable artifacts, orchestration/review/Dry Run, HTTP/SSE, fake Resolve Apply/retry safety, client/path isolation/retention, Resolve capability probe, and one controlled real `PUNCH_IN` applied only to a generated duplicate timeline.
 
-Do not install or integrate local AI models until this plan has completed and been reviewed.
+Do **not** install or integrate real AI models, cloud providers, ComfyUI, generated video, broad retrieval/provider integrations, or final panel breadth during this plan.
+
+## Completion gate
+
+Stop and report when either:
+
+- Task 0 cannot establish reliable Codex-driven Git writes/pushes; or
+- the entire approved plan is implemented, verified, pushed on the feature branch, and a reviewable pull request to `main` exists.
+
+Do not merge the pull request autonomously.
