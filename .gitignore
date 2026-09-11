@@ -1,0 +1,94 @@
+# Secrets and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+secrets*.json
+
+# Local tooling and virtual environments
+.tools/
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# IDE and OS metadata
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Runtime output
+cache/
+logs/
+temp/
+tmp/
+downloads/
+proxies/
+renders/
+output/
+outputs/
+*.log
+
+# AI models and weights
+models/
+weights/
+checkpoints/
+*.ckpt
+*.safetensors
+*.gguf
+*.onnx
+*.pt
+*.pth
+
+# Private/client media and local libraries
+clients/**/assets/
+clients/**/library/
+clients/**/references/
+clients/**/projects/
+references/
+footage/
+media/
+broll/
+proxy/
+render/
+
+# Common heavy media formats
+*.mp4
+*.mov
+*.mxf
+*.avi
+*.mkv
+*.webm
+*.wav
+*.aif
+*.aiff
+*.mp3
+*.flac
+*.psd
+*.ai
+
+# Local databases and intermediate artifacts
+*.db
+*.sqlite
+*.sqlite3
+transcript.json
+style_context.json
+edit_plan.json
+broll_candidates.json
+selected_assets.json
+
+# Keep directory contracts documentable without committing contents
+!.gitkeep
+
