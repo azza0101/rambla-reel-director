@@ -28,10 +28,24 @@ Published implementation includes:
 
 Draft PR: `#1`.
 
+## Codex ↔ ChatGPT handoff channel
+
+Use GitHub issue `#2` (`RAMBLA agent handoff — Codex ↔ ChatGPT`) as the compact orchestration channel.
+
+At each stable checkpoint, blocker, or review request, Codex MUST post one concise `HANDOFF` comment to issue #2 using the protocol defined in that issue. Before starting the next logical stage, read the latest ChatGPT `REVIEW` reply in issue #2.
+
+- `APPROVED` + `needs_user: NO`: continue autonomously within the current approved plan.
+- `FIX`: apply only the requested fix, verify, and hand off again.
+- `USER_DECISION` or `needs_user: YES`: stop and request the user's approval in Codex UI.
+
+This handoff channel never bypasses local Codex permission prompts. Important destructive, credential, system-install, source-timeline, scope, merge/release, or other user-visible decisions still require the user.
+
+PR #1 remains the code-review surface; issue #2 is only the status/review-routing channel.
+
 ## Required next action
 
-1. Read current remote `main`, the feature branch, `AGENTS.md`, this file, and the fast-track plan through authenticated GitHub API.
-2. Stay in economical single-agent mode. Use `superpowers:executing-plans`, TDD where it materially reduces risk, and verification-before-completion. Do not spawn reviewer/subagent swarms; ChatGPT is the external reviewer through PR #1.
+1. Read current remote `main`, the feature branch, `AGENTS.md`, this file, issue #2, and the fast-track plan through authenticated GitHub API.
+2. Stay in economical single-agent mode. Use `superpowers:executing-plans`, TDD where it materially reduces risk, and verification-before-completion. Do not spawn reviewer/subagent swarms; ChatGPT is the external reviewer through PR #1 / issue #2.
 3. Preserve the existing API worktree and Task 2 local work. Do not touch the stale/dirty `Z:\RAMBLA-reel-director` checkout.
 4. If the Task 2 review fix is already underway, finish the two known blockers, test, publish one fix commit, then pivot immediately to the fast track.
 5. Start FT1: probe the user's **real Resolve** before building more fake infrastructure.
