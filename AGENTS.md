@@ -63,4 +63,4 @@ The Windows sandbox may allow normal workspace file edits while denying writes i
 
 ## Current phase
 
-Technical specification completion and review. No application code, product dependencies, models, or Resolve integration may be added until the specification and implementation plan are approved.
+Explicit technical specification approval gate. The complete MVP specification is the design document plus the normative `mvp-contracts-v1` supplement referenced by `docs/NEXT_TASK.md`. No application code, product dependencies, models, or Resolve integration may be added until the specification is explicitly approved and an implementation plan is then written and approved.
