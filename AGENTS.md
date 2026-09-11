@@ -14,7 +14,19 @@ Before any task:
 6. If `docs/NEXT_TASK.md` or another approved document points to a current specification, plan, review, or task file, read that file before acting.
 7. Do not contradict approved decisions in `docs/DECISIONS.md`.
 8. Treat the repository as the source of truth over prior chat context whenever repository instructions exist.
-9. Do not require the user to remind you to read these files: automatically re-read them at the start of every new task after synchronizing `main`.
+9. Do not require the user to remind you to read these files: automatically re-read them at the start of every new task after synchronization.
+
+### Sandboxed-task synchronization fallback
+
+Some Codex Windows sandboxes may be unable to write `.git/FETCH_HEAD` or access the host credential helper even when the source workspace has already been synchronized outside the sandbox. In that case, do not abort solely because `git pull` cannot run inside the sandbox if all of the following are true:
+
+- the task was launched from the intended source workspace;
+- the user or an external trusted process has just synchronized that source workspace against `origin/main`;
+- the exact expected `main` commit SHA is provided to the task;
+- `git rev-parse HEAD` inside the task matches that expected SHA;
+- the working tree is clean.
+
+When those conditions hold, record that synchronization was externally verified and continue reading the repository. Do not claim the sandbox itself performed the pull.
 
 If local chat context conflicts with the current repository state, stop and follow the repository unless the user explicitly overrides it.
 
