@@ -74,6 +74,36 @@ async def test_preview_cache_writes_public_sidecar_without_transient_urls(tmp_pa
     assert "Authorization" not in serialized
 
 
+@pytest.mark.asyncio
+async def test_selected_media_downloads_once_and_persists_public_provenance(tmp_path) -> None:
+    cache = AssetCache(tmp_path)
+    candidate = candidate_fixture()
+    calls = 0
+
+    async def fetch(url: str) -> bytes:
+        nonlocal calls
+        calls += 1
+        assert url == candidate.selected_rendition_url
+        return b"fake-mp4-content"
+
+    first = await cache.materialize_selected(candidate, fetch=fetch)
+    second = await cache.materialize_selected(candidate, fetch=fetch)
+    metadata = json.loads(first.metadata_path.read_text(encoding="utf-8"))
+    serialized = json.dumps(metadata)
+
+    assert first.path.suffix == ".mp4"
+    assert first.path.read_bytes() == b"fake-mp4-content"
+    assert first.cache_hit is False
+    assert second.cache_hit is True
+    assert calls == 1
+    assert metadata["provider"] == "pexels"
+    assert metadata["local_file"] == first.path.name
+    assert metadata["content_sha256"] == first.sha256
+    assert metadata["rendition"] == {"width": 1080, "height": 1920}
+    assert "cdn.pexels.com" not in serialized
+    assert "token=" not in serialized
+
+
 def test_public_provenance_contains_no_download_url() -> None:
     candidate = candidate_fixture()
     row = public_provenance(candidate)
