@@ -1,19 +1,22 @@
-"""Online B-roll sourcing orchestration.
+"""Online B-roll/evidence sourcing orchestration.
 
 Searches providers concurrently, materializes lightweight previews, Qwen-ranks
-a bounded pool, and exposes diverse crop-aware A/B proposals before optionally
-downloading only the selected full-resolution clip.
+a bounded mixed-source pool, exposes diverse crop-aware A/B proposals, and
+localizes promising short windows inside long-video candidates before any
+large acquisition occurs.
 """
 
 from __future__ import annotations
 
 import asyncio
+from dataclasses import asdict
 from typing import Any, Protocol
 
 from .asset_cache import AssetCache, CachedAsset, PreviewAsset, public_provenance
 from .online_assets import ProviderError, RemoteCandidate, dedupe_candidates
 from .proposals import select_proposals
 from .qwen_stack import QwenMultimodalRanker
+from .scene_locator import SceneEvidence, locate_windows
 
 
 class OnlineSource(Protocol):
@@ -25,11 +28,58 @@ class OnlineSource(Protocol):
         min_duration: float,
         max_duration: float,
         limit: int,
-    ) -> list[RemoteCandidate]: ...
+    ) -> list[Any]: ...
 
 
 class PreviewCache(Protocol):
-    async def materialize_preview(self, candidate: RemoteCandidate) -> PreviewAsset: ...
+    async def materialize_preview(self, candidate: Any) -> PreviewAsset: ...
+
+
+def _scene_evidence_rows(candidate: Any) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    for row in getattr(candidate, "scene_evidence", ()) or ():
+        if isinstance(row, SceneEvidence):
+            output.append(asdict(row))
+        elif isinstance(row, dict):
+            output.append(dict(row))
+    return output
+
+
+def _localize_proposal_scene(proposal: dict[str, Any], query: str) -> None:
+    raw = proposal.get("scene_evidence") or []
+    source_duration = float(proposal.get("source_duration") or 0.0)
+    if not raw or source_duration <= 0:
+        return
+    evidence: list[SceneEvidence] = []
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        try:
+            evidence.append(
+                SceneEvidence(
+                    timestamp_seconds=float(row["timestamp_seconds"]),
+                    text=str(row.get("text") or ""),
+                    image_path=(str(row["image_path"]) if row.get("image_path") else None),
+                    metadata_score=float(row.get("metadata_score", 0.0)),
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    if not evidence:
+        return
+    windows = locate_windows(
+        query,
+        evidence,
+        target_seconds=3.5,
+        source_duration=source_duration,
+    )
+    if not windows:
+        return
+    best = windows[0]
+    proposal["source_start_seconds"] = best.start_seconds
+    proposal["source_end_seconds"] = best.end_seconds
+    proposal["scene_window_score"] = best.score
+    proposal["scene_evidence_timestamps"] = list(best.evidence_timestamps)
 
 
 class OnlineSourcingEngine:
@@ -94,7 +144,7 @@ class OnlineSourcingEngine:
             ]
         )
         errors: list[dict[str, str]] = []
-        remote: list[RemoteCandidate] = []
+        remote: list[Any] = []
         for rows, error in outcomes:
             remote.extend(rows)
             if error:
@@ -105,7 +155,7 @@ class OnlineSourcingEngine:
 
         semaphore = asyncio.Semaphore(self.preview_concurrency)
 
-        async def materialize(candidate: RemoteCandidate):
+        async def materialize(candidate: Any):
             async with semaphore:
                 return candidate, await self.cache.materialize_preview(candidate)
 
@@ -113,7 +163,7 @@ class OnlineSourcingEngine:
             *(materialize(candidate) for candidate in unique), return_exceptions=True
         )
         assets: list[dict[str, Any]] = []
-        candidate_by_id: dict[str, RemoteCandidate] = {}
+        candidate_by_id: dict[str, Any] = {}
         asset_by_id: dict[str, dict[str, Any]] = {}
         cache_hits = 0
         for outcome in preview_outcomes:
@@ -146,6 +196,9 @@ class OnlineSourcingEngine:
                 "height": candidate.height,
                 "orientation": candidate.orientation,
                 "selected_full_download": False,
+                "scene_evidence": _scene_evidence_rows(candidate),
+                "source_duration": float(getattr(candidate, "source_duration", candidate.duration)),
+                "acquisition_mode": str(getattr(candidate, "acquisition_mode", "full_asset")),
             }
             assets.append(asset)
             asset_by_id[asset_id] = asset
@@ -155,14 +208,35 @@ class OnlineSourcingEngine:
         ranked = self.ranker.rank(clean_queries[0], assets)
         for row in ranked:
             source_asset = asset_by_id[row["id"]]
-            for key in ("width", "height", "orientation", "preview_sha256"):
+            for key in (
+                "width",
+                "height",
+                "orientation",
+                "preview_sha256",
+                "scene_evidence",
+                "source_duration",
+                "acquisition_mode",
+            ):
                 row[key] = source_asset[key]
             row.setdefault("providers", {})["retrieval"] = row.get("source", "online")
 
         proposals = select_proposals(ranked)
+        for key in ("proposal_A", "proposal_B", "proposal_C"):
+            proposal = proposals.get(key)
+            if isinstance(proposal, dict):
+                _localize_proposal_scene(proposal, clean_queries[0])
+
         selected_cache_hit = False
         selected = proposals["proposal_A"]
-        if self.download_selected and selected is not None and hasattr(self.cache, "materialize_selected"):
+        direct_full_asset = (
+            selected is not None
+            and selected.get("acquisition_mode", "full_asset") != "bounded_window"
+        )
+        if (
+            self.download_selected
+            and direct_full_asset
+            and hasattr(self.cache, "materialize_selected")
+        ):
             candidate = candidate_by_id.get(selected["id"])
             if candidate is not None:
                 try:
@@ -222,7 +296,7 @@ class OnlineSourcingEngine:
         orientation: str | None,
         min_duration: float,
         max_duration: float,
-    ) -> tuple[list[RemoteCandidate], dict[str, str] | None]:
+    ) -> tuple[list[Any], dict[str, str] | None]:
         try:
             rows = await source.search(
                 query,
