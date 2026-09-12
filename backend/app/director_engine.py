@@ -6,8 +6,11 @@ import hashlib
 import json
 import math
 import re
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Protocol
+
+from .coverage import CoverageSlot, plan_coverage_slots
 
 
 ACTIONS = {"TALKING_HEAD", "BROLL", "EDITORIAL_INSERT", "PUNCH_IN", "STICKER", "CAPTION_EMPHASIS"}
@@ -198,6 +201,37 @@ def _ranked_explicit_candidates(rows: list[dict[str, Any]], client_id: str) -> l
     return sorted(copied, key=lambda row: (-float(row["score"]), str(row.get("id", ""))))
 
 
+def _coverage_rows(
+    beat_outline: dict[str, Any],
+    fps: int,
+    source_frames: int,
+    coverage_slots_by_beat: dict[str, list[dict[str, Any]]] | None,
+) -> list[dict[str, Any]]:
+    if coverage_slots_by_beat is None:
+        source_slots: list[CoverageSlot | dict[str, Any]] = list(plan_coverage_slots(beat_outline["beats"]))
+    else:
+        source_slots = []
+        for beat in beat_outline["beats"]:
+            source_slots.extend(coverage_slots_by_beat.get(str(beat["id"]), []))
+
+    source_seconds = source_frames / fps
+    output: list[dict[str, Any]] = []
+    for source in source_slots:
+        row = asdict(source) if isinstance(source, CoverageSlot) else dict(source)
+        start_seconds = float(row["start_seconds"])
+        end_seconds = float(row["end_seconds"])
+        if not (0 <= start_seconds < end_seconds <= source_seconds + (0.5 / fps)):
+            raise ValueError("coverage slot timing is outside source")
+        row["start_seconds"] = round(start_seconds, 4)
+        row["end_seconds"] = round(end_seconds, 4)
+        row["start_frame"] = _frame(start_seconds, fps)
+        row["end_frame"] = min(source_frames, max(row["start_frame"] + 1, _frame(end_seconds, fps)))
+        row["queries"] = list(row.get("queries") or [])
+        row["minimum_proposals"] = int(row.get("minimum_proposals", 2))
+        output.append(row)
+    return sorted(output, key=lambda row: (row["start_frame"], row["end_frame"], str(row["id"])))
+
+
 def build_edit_plan(
     transcript: dict[str, Any],
     beat_outline: dict[str, Any],
@@ -208,6 +242,7 @@ def build_edit_plan(
     director: DirectorAdapter | None = None,
     reranker: Reranker | None = None,
     candidate_assets_by_beat: dict[str, list[dict[str, Any]]] | None = None,
+    coverage_slots_by_beat: dict[str, list[dict[str, Any]]] | None = None,
     confidence_review_threshold: float = 0.7,
 ) -> dict[str, Any]:
     fps = int(transcript["timeline_fps"])
@@ -220,6 +255,7 @@ def build_edit_plan(
     local_assets = LocalAssetProvider(assets).list_assets(client_id)
     explicit_by_beat = candidate_assets_by_beat or {}
     captions = _captions(transcript, fps, source_frames)
+    coverage_slots = _coverage_rows(beat_outline, fps, source_frames, coverage_slots_by_beat)
     beats = []
     used_online = False
 
@@ -304,6 +340,7 @@ def build_edit_plan(
             "external": "online-sourcing-v1" if used_online else "credential-gated",
         },
         "beats": beats,
+        "coverage_slots": coverage_slots,
         "captions": captions,
     }
     validate_edit_plan(plan)
@@ -316,13 +353,16 @@ def validate_edit_plan(plan: dict[str, Any]) -> None:
     if plan.get("schema_version") != "director-offline-1" or plan.get("status") != "DRAFT":
         raise ValueError("unsupported offline plan schema/status")
     frames = plan["source"]["duration_frames"]
-    if not isinstance(frames, int) or frames <= 0 or plan["source"]["fps"] <= 0:
+    fps = plan["source"]["fps"]
+    if not isinstance(frames, int) or frames <= 0 or fps <= 0:
         raise ValueError("invalid source timebase")
     cursor = 0
+    beat_ranges: dict[str, tuple[int, int]] = {}
     for beat in plan["beats"]:
         if beat["start_frame"] != cursor or beat["end_frame"] <= cursor:
             raise ValueError("beat coverage has a gap/overlap")
         cursor = beat["end_frame"]
+        beat_ranges[str(beat["id"])] = (beat["start_frame"], beat["end_frame"])
         if beat["action"] not in ACTIONS:
             raise ValueError("unknown editorial action")
         selected = beat["selected_asset"]
@@ -334,6 +374,24 @@ def validate_edit_plan(plan: dict[str, Any]) -> None:
             raise ValueError("BROLL requires a selected asset")
     if cursor != frames:
         raise ValueError("beat coverage does not reach source end")
+
+    last_slot_end = 0
+    for slot in sorted(plan.get("coverage_slots", []), key=lambda row: row["start_frame"]):
+        start = slot.get("start_frame")
+        end = slot.get("end_frame")
+        if not isinstance(start, int) or not isinstance(end, int) or not (0 <= start < end <= frames):
+            raise ValueError("coverage slot has invalid timing")
+        if start < last_slot_end:
+            raise ValueError("coverage slot overlap is not allowed")
+        last_slot_end = end
+        beat_range = beat_ranges.get(str(slot.get("beat_id")))
+        if beat_range is None:
+            raise ValueError("coverage slot references unknown beat")
+        if start < beat_range[0] or end > beat_range[1]:
+            raise ValueError("coverage slot falls outside owning beat")
+        if int(slot.get("minimum_proposals", 0)) < 1:
+            raise ValueError("coverage slot requires at least one proposal")
+
     if not plan["captions"]:
         raise ValueError("captions missing")
     for caption in plan["captions"]:
