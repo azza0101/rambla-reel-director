@@ -6,6 +6,7 @@ on:
       - feat/online-sourcing-engine-v1
       - feat/asr-resolve-benchmark-v2
       - feat/resolve-panel-safe-v1
+      - feat/resolve-bridge-adapter-offline-v1
   workflow_dispatch:
 
 jobs:
