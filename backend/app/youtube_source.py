@@ -1,8 +1,10 @@
 """YouTube discovery normalization for evidence-first sourcing.
 
-This module does not decide reuse rights and does not download media.  It turns
+This module does not decide reuse rights and does not download media. It turns
 an injected discovery result into stable public metadata plus lightweight scene
-evidence.  Bounded acquisition is handled separately by ``acquisition.py``.
+evidence. ``YouTubeOnlineSourceAdapter`` exposes that metadata through the same
+preview-ranking contract used by stock providers, while bounded acquisition is
+handled separately by ``acquisition.py``.
 """
 
 from __future__ import annotations
@@ -32,6 +34,33 @@ class YouTubeCandidate:
     thumbnail_url: str
     rights_state: str
     scene_evidence: tuple[SceneEvidence, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class YouTubeRemoteCandidate:
+    """Duck-compatible remote candidate enriched for long-video acquisition."""
+
+    provider: str
+    provider_id: str
+    query: str
+    source_page: str
+    creator_name: str | None
+    creator_page: str | None
+    title: str
+    description: str
+    duration: float
+    width: int
+    height: int
+    orientation: str
+    preview_url: str
+    selected_rendition_url: str
+    rendition_width: int
+    rendition_height: int
+    rights_state: str
+    provider_rank: int
+    scene_evidence: tuple[SceneEvidence, ...]
+    acquisition_mode: str
+    source_duration: float
 
 
 def _orientation(width: int, height: int) -> str:
@@ -145,3 +174,62 @@ class YouTubeSource:
             if len(output) >= limit:
                 break
         return output
+
+
+class YouTubeOnlineSourceAdapter:
+    """Expose YouTube discovery through the generic preview-ranking source port."""
+
+    def __init__(self, source: YouTubeSource):
+        self.source = source
+
+    async def search(
+        self,
+        query: str,
+        *,
+        orientation: str | None,
+        min_duration: float,
+        max_duration: float,
+        limit: int,
+    ) -> list[YouTubeRemoteCandidate]:
+        if orientation is not None and orientation not in {"portrait", "landscape", "square"}:
+            raise ValueError("unsupported orientation")
+        rows = await self.source.search(
+            query,
+            min_duration=min_duration,
+            max_duration=max_duration,
+            limit=limit,
+        )
+        output: list[YouTubeRemoteCandidate] = []
+        for rank, row in enumerate(rows):
+            if orientation is not None and row.orientation != orientation:
+                continue
+            if not row.thumbnail_url:
+                continue
+            output.append(
+                YouTubeRemoteCandidate(
+                    provider="youtube",
+                    provider_id=row.video_id,
+                    query=row.query,
+                    source_page=row.source_page,
+                    creator_name=row.creator_name,
+                    creator_page=None,
+                    title=row.title,
+                    description=row.title,
+                    duration=row.duration,
+                    width=row.width,
+                    height=row.height,
+                    orientation=row.orientation,
+                    preview_url=row.thumbnail_url,
+                    # This is a public source reference, not a direct media URL. The
+                    # online engine marks it bounded-window so direct full download is skipped.
+                    selected_rendition_url=row.source_page,
+                    rendition_width=row.width,
+                    rendition_height=row.height,
+                    rights_state=row.rights_state,
+                    provider_rank=rank,
+                    scene_evidence=row.scene_evidence,
+                    acquisition_mode="bounded_window",
+                    source_duration=row.duration,
+                )
+            )
+        return output[:limit]
