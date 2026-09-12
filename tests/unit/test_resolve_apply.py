@@ -26,7 +26,7 @@ def _plan_with_broll() -> dict:
     }
     outline = {
         "beats": [
-            {"id": "beat-1", "start_seconds": 0.0, "end_seconds": 4.0, "intent": "hook iniziale", "broll_queries": []},
+            {"id": "beat-1", "start_seconds": 0.0, "end_seconds": 4.0, "intent": "hook iniziale", "broll_queries": ["hands typing at computer"]},
             {"id": "beat-2", "start_seconds": 4.0, "end_seconds": 8.0, "intent": "conclusione", "broll_queries": []},
         ]
     }
