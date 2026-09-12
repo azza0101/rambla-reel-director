@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feat/online-sourcing-engine-v1
+      - feat/asr-resolve-benchmark-v1
   workflow_dispatch:
 
 jobs:
