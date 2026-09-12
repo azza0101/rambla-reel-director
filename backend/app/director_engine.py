@@ -54,7 +54,7 @@ class LocalAssetProvider:
 
 
 class StockProvider:
-    """Credential boundary; never silently invokes a cloud service."""
+    """Legacy credential boundary retained for compatibility with earlier callers."""
 
     def __init__(self, name: str, credential: str | None = None):
         if name not in {"pexels", "pixabay"}:
@@ -91,11 +91,20 @@ class TextReranker:
             haystack = " ".join([asset.get("description", ""), *asset.get("tags", []), asset.get("path", "")])
             matched = sorted(terms & _tokens(haystack))
             score = round(len(matched) / max(1, len(terms)), 4)
-            rows.append({"id": asset["id"], "client_id": asset["client_id"], "path": asset["path"],
-                         "description": asset.get("description", ""), "kind": asset.get("kind", "unknown"),
-                         "score": score, "embedding_score": None, "reranker_score": None,
-                         "providers": {"embedding": None, "reranker": None, "retrieval": "metadata-overlap-v1"},
-                         "reason": f"metadata overlap: {', '.join(matched) or 'none'}"})
+            rows.append(
+                {
+                    "id": asset["id"],
+                    "client_id": asset["client_id"],
+                    "path": asset["path"],
+                    "description": asset.get("description", ""),
+                    "kind": asset.get("kind", "unknown"),
+                    "score": score,
+                    "embedding_score": None,
+                    "reranker_score": None,
+                    "providers": {"embedding": None, "reranker": None, "retrieval": "metadata-overlap-v1"},
+                    "reason": f"metadata overlap: {', '.join(matched) or 'none'}",
+                }
+            )
         return sorted(rows, key=lambda row: (-row["score"], row["id"]))
 
 
@@ -103,7 +112,7 @@ class RuleDirector:
     def decide(self, beat: dict[str, Any], selected: dict[str, Any] | None) -> tuple[str, str, dict[str, Any]]:
         intent = beat["intent"].lower()
         if selected is not None:
-            return "BROLL", "Client-local visual evidence matches the semantic intent.", {"fit": "COVER"}
+            return "BROLL", "Available visual evidence matches the semantic intent.", {"fit": "COVER"}
         if "hook" in intent:
             return "PUNCH_IN", "Brief emphasis on the opening hook; retain the speaker.", {"scale": 1.08}
         if "reveal" in intent:
@@ -125,21 +134,43 @@ def _captions(transcript: dict[str, Any], fps: int, source_frames: int) -> list[
             for word in words:
                 current.append(word)
                 text = " ".join(item["text"].strip() for item in current)
-                if len(text) >= 42 or word["end"] - current[0]["start"] >= 3 or word["text"].strip().endswith((".", "?", "!")):
+                if (
+                    len(text) >= 42
+                    or word["end"] - current[0]["start"] >= 3
+                    or word["text"].strip().endswith((".", "?", "!"))
+                ):
                     chunks.append(current)
                     current = []
             if current:
                 chunks.append(current)
             for chunk in chunks:
                 text = " ".join(item["text"].strip() for item in chunk).strip()
-                captions.append({"start_frame": _frame(chunk[0]["start"], fps),
-                                 "end_frame": min(source_frames, max(_frame(chunk[-1]["end"], fps), _frame(chunk[0]["start"], fps) + 1)),
-                                 "text": text, "emphasis_candidates": [], "review_state": "ASR_UNREVIEWED"})
+                captions.append(
+                    {
+                        "start_frame": _frame(chunk[0]["start"], fps),
+                        "end_frame": min(
+                            source_frames,
+                            max(_frame(chunk[-1]["end"], fps), _frame(chunk[0]["start"], fps) + 1),
+                        ),
+                        "text": text,
+                        "emphasis_candidates": [],
+                        "review_state": "ASR_UNREVIEWED",
+                    }
+                )
         else:
             text = segment["text"].strip()
-            captions.append({"start_frame": _frame(segment["start"], fps),
-                             "end_frame": min(source_frames, max(_frame(segment["end"], fps), _frame(segment["start"], fps) + 1)),
-                             "text": text, "emphasis_candidates": [], "review_state": "ASR_UNREVIEWED"})
+            captions.append(
+                {
+                    "start_frame": _frame(segment["start"], fps),
+                    "end_frame": min(
+                        source_frames,
+                        max(_frame(segment["end"], fps), _frame(segment["start"], fps) + 1),
+                    ),
+                    "text": text,
+                    "emphasis_candidates": [],
+                    "review_state": "ASR_UNREVIEWED",
+                }
+            )
     return captions
 
 
@@ -158,46 +189,123 @@ def _outline_ranges(outline: dict[str, Any], fps: int, source_frames: int) -> li
     return list(zip(edges, edges[1:]))
 
 
+def _ranked_explicit_candidates(rows: list[dict[str, Any]], client_id: str) -> list[dict[str, Any]]:
+    copied = [dict(row) for row in rows]
+    if any(row.get("client_id") != client_id for row in copied):
+        raise ValueError("candidate violates client isolation")
+    if any("score" not in row for row in copied):
+        raise ValueError("explicit online candidates must already be ranked")
+    return sorted(copied, key=lambda row: (-float(row["score"]), str(row.get("id", ""))))
+
+
 def build_edit_plan(
-    transcript: dict[str, Any], beat_outline: dict[str, Any], assets: list[dict[str, Any]],
-    *, client_id: str, source_frames: int, director: DirectorAdapter | None = None,
+    transcript: dict[str, Any],
+    beat_outline: dict[str, Any],
+    assets: list[dict[str, Any]],
+    *,
+    client_id: str,
+    source_frames: int,
+    director: DirectorAdapter | None = None,
     reranker: Reranker | None = None,
+    candidate_assets_by_beat: dict[str, list[dict[str, Any]]] | None = None,
+    confidence_review_threshold: float = 0.7,
 ) -> dict[str, Any]:
     fps = int(transcript["timeline_fps"])
     if fps <= 0 or source_frames <= 0 or not client_id:
         raise ValueError("source timing and client identity required")
+    if not 0 <= confidence_review_threshold <= 1:
+        raise ValueError("invalid confidence review threshold")
     director = director or RuleDirector()
     reranker = reranker or TextReranker()
     local_assets = LocalAssetProvider(assets).list_assets(client_id)
+    explicit_by_beat = candidate_assets_by_beat or {}
     captions = _captions(transcript, fps, source_frames)
     beats = []
-    for outline, (start, end) in zip(beat_outline["beats"], _outline_ranges(beat_outline, fps, source_frames)):
+    used_online = False
+
+    for outline, (start, end) in zip(
+        beat_outline["beats"], _outline_ranges(beat_outline, fps, source_frames)
+    ):
         query = (outline.get("broll_queries") or [""])[0]
         semantic_query = f"{outline['intent']}; {query}" if query else ""
-        candidates = reranker.rank(query, local_assets) if query else []
-        selected = candidates[0] if candidates and candidates[0]["score"] >= 0.7 else None
+        explicit = explicit_by_beat.get(outline["id"])
+
+        if explicit is not None:
+            used_online = True
+            candidates = _ranked_explicit_candidates(explicit, client_id)
+            selected = candidates[0] if candidates else None
+            if selected is None:
+                review_state = "NO_SELECTION"
+            elif float(selected["score"]) < confidence_review_threshold:
+                review_state = "REVIEW_REQUIRED_LOW_CONFIDENCE"
+            else:
+                review_state = "AUTO_SELECTED"
+        else:
+            candidates = reranker.rank(query, local_assets) if query else []
+            selected = candidates[0] if candidates and candidates[0]["score"] >= 0.7 else None
+            review_state = "AUTO_SELECTED" if selected is not None else "NO_SELECTION"
+
         action, rationale, metadata = director.decide(outline, selected)
         if action != "BROLL":
             selected = None
+            if review_state == "AUTO_SELECTED":
+                review_state = "NO_SELECTION"
         provider_name = getattr(director, "last_provider", "deterministic-rule-v1")
         candidate_providers = candidates[0].get("providers", {}) if candidates else {}
-        beat_captions = [row["text"] for row in captions if row["start_frame"] < end and row["end_frame"] > start]
-        beats.append({"id": outline["id"], "start_frame": start, "end_frame": end, "intent": outline["intent"],
-                      "transcript": " ".join(segment["text"].strip() for segment in transcript["segments"]
-                                             if _frame(segment["start"], fps) < end and _frame(segment["end"], fps) > start),
-                      "action": action, "rationale": rationale, "parameters": metadata,
-                      "broll_query": semantic_query, "selected_asset": selected, "candidates": candidates,
-                      "providers": {"director": provider_name,
-                                    "embedding": candidate_providers.get("embedding"),
-                                    "reranker": candidate_providers.get("reranker"),
-                                    "retrieval": candidate_providers.get("retrieval", "client-local")},
-                      "caption_text": " ".join(beat_captions)})
-    plan = {"schema_version": "director-offline-1", "status": "DRAFT", "client_id": client_id,
-            "source": {"media": transcript.get("source", ""), "fps": fps, "start_frame": transcript.get("timeline_start_frame", 0), "duration_frames": source_frames},
-            "asr": {"adapter": "faster-whisper-artifact", "language": transcript.get("language", "und"), "review_state": "UNREVIEWED"},
-            "director": {"adapter": getattr(director, "provider_name", "deterministic-rule-v1")},
-            "retrieval": {"local_client_only": True, "external": "credential-gated"},
-            "beats": beats, "captions": captions}
+        beat_captions = [
+            row["text"] for row in captions if row["start_frame"] < end and row["end_frame"] > start
+        ]
+        beats.append(
+            {
+                "id": outline["id"],
+                "start_frame": start,
+                "end_frame": end,
+                "intent": outline["intent"],
+                "transcript": " ".join(
+                    segment["text"].strip()
+                    for segment in transcript["segments"]
+                    if _frame(segment["start"], fps) < end and _frame(segment["end"], fps) > start
+                ),
+                "action": action,
+                "rationale": rationale,
+                "parameters": metadata,
+                "broll_query": semantic_query,
+                "selected_asset": selected,
+                "candidates": candidates,
+                "review_state": review_state,
+                "providers": {
+                    "director": provider_name,
+                    "embedding": candidate_providers.get("embedding"),
+                    "reranker": candidate_providers.get("reranker"),
+                    "retrieval": candidate_providers.get("retrieval", "client-local"),
+                },
+                "caption_text": " ".join(beat_captions),
+            }
+        )
+
+    plan = {
+        "schema_version": "director-offline-1",
+        "status": "DRAFT",
+        "client_id": client_id,
+        "source": {
+            "media": transcript.get("source", ""),
+            "fps": fps,
+            "start_frame": transcript.get("timeline_start_frame", 0),
+            "duration_frames": source_frames,
+        },
+        "asr": {
+            "adapter": "faster-whisper-artifact",
+            "language": transcript.get("language", "und"),
+            "review_state": "UNREVIEWED",
+        },
+        "director": {"adapter": getattr(director, "provider_name", "deterministic-rule-v1")},
+        "retrieval": {
+            "local_client_only": not used_online,
+            "external": "online-sourcing-v1" if used_online else "credential-gated",
+        },
+        "beats": beats,
+        "captions": captions,
+    }
     validate_edit_plan(plan)
     canonical = json.dumps(plan, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     plan["content_hash"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
