@@ -11,47 +11,74 @@ from backend.app.online_assets import (
 )
 
 
-def _payload() -> dict:
+def _portrait_video() -> dict:
     return {
-        "videos": [
+        "id": 42,
+        "url": "https://www.pexels.com/video/42/?utm_source=test",
+        "duration": 8,
+        "width": 1080,
+        "height": 1920,
+        "user": {
+            "id": 7,
+            "name": "Alice",
+            "url": "https://www.pexels.com/@alice?ref=api",
+        },
+        "image": "https://images.pexels.com/videos/42/free-video-42.jpg?auto=compress",
+        "video_files": [
             {
-                "id": 42,
-                "url": "https://www.pexels.com/video/42/?utm_source=test",
-                "duration": 8,
+                "id": 1,
+                "width": 540,
+                "height": 960,
+                "quality": "sd",
+                "file_type": "video/mp4",
+                "link": "https://cdn.pexels.com/preview.mp4?token=temp",
+            },
+            {
+                "id": 2,
                 "width": 1080,
                 "height": 1920,
-                "user": {
-                    "id": 7,
-                    "name": "Alice",
-                    "url": "https://www.pexels.com/@alice?ref=api",
-                },
-                "image": "https://images.pexels.com/videos/42/free-video-42.jpg?auto=compress",
-                "video_files": [
-                    {
-                        "id": 1,
-                        "width": 540,
-                        "height": 960,
-                        "quality": "sd",
-                        "file_type": "video/mp4",
-                        "link": "https://cdn.pexels.com/preview.mp4?token=temp",
-                    },
-                    {
-                        "id": 2,
-                        "width": 1080,
-                        "height": 1920,
-                        "quality": "hd",
-                        "file_type": "video/mp4",
-                        "link": "https://cdn.pexels.com/full.mp4?token=temp",
-                    },
-                ],
-            }
-        ]
+                "quality": "hd",
+                "file_type": "video/mp4",
+                "link": "https://cdn.pexels.com/full.mp4?token=temp",
+            },
+        ],
     }
 
 
-def _transport(payload: dict, *, status: int = 200) -> httpx.MockTransport:
+def _landscape_video() -> dict:
+    return {
+        "id": 77,
+        "url": "https://www.pexels.com/video/77/",
+        "duration": 11,
+        "width": 1920,
+        "height": 1080,
+        "user": {"name": "Bob", "url": "https://www.pexels.com/@bob"},
+        "image": "https://images.pexels.com/videos/77/free-video-77.jpg",
+        "video_files": [
+            {
+                "id": 3,
+                "width": 1920,
+                "height": 1080,
+                "quality": "hd",
+                "file_type": "video/mp4",
+                "link": "https://cdn.pexels.com/landscape.mp4?token=temp",
+            }
+        ],
+    }
+
+
+def _payload(*, mixed: bool = False) -> dict:
+    videos = [_portrait_video()]
+    if mixed:
+        videos.append(_landscape_video())
+    return {"videos": videos}
+
+
+def _transport(payload: dict, *, status: int = 200, assert_no_orientation: bool = False) -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers.get("Authorization") == "SECRET"
+        if assert_no_orientation:
+            assert "orientation" not in request.url.params
         return httpx.Response(status, json=payload, request=request)
 
     return httpx.MockTransport(handler)
@@ -86,6 +113,25 @@ async def test_pexels_search_normalizes_vertical_video() -> None:
     assert row.rights_state == "provider_stock_terms"
     assert row.provider_rank == 0
     assert "SECRET" not in repr(row)
+
+
+@pytest.mark.asyncio
+async def test_pexels_mixed_aspect_search_omits_orientation_filter() -> None:
+    source = PexelsSource(
+        api_key="SECRET",
+        transport=_transport(_payload(mixed=True), assert_no_orientation=True),
+    )
+
+    rows = await source.search(
+        "named person interview",
+        orientation=None,
+        min_duration=1,
+        max_duration=20,
+        limit=10,
+    )
+
+    assert [row.provider_id for row in rows] == ["42", "77"]
+    assert {row.orientation for row in rows} == {"portrait", "landscape"}
 
 
 @pytest.mark.asyncio
@@ -143,6 +189,12 @@ async def test_filter_and_dedupe_are_deterministic() -> None:
         min_duration=2,
         max_duration=20,
     ) == []
+    assert filter_candidates(
+        duplicate,
+        orientation=None,
+        min_duration=2,
+        max_duration=20,
+    ) == [row]
     assert filter_candidates(
         duplicate,
         orientation="portrait",
