@@ -149,11 +149,11 @@ def dedupe_candidates(rows: Iterable[RemoteCandidate]) -> list[RemoteCandidate]:
 def filter_candidates(
     rows: Iterable[RemoteCandidate],
     *,
-    orientation: str,
+    orientation: str | None,
     min_duration: float,
     max_duration: float,
 ) -> list[RemoteCandidate]:
-    if orientation not in {"portrait", "landscape", "square"}:
+    if orientation is not None and orientation not in {"portrait", "landscape", "square"}:
         raise ValueError("unsupported orientation")
     if min_duration < 0 or max_duration <= 0 or min_duration > max_duration:
         raise ValueError("invalid duration bounds")
@@ -161,7 +161,7 @@ def filter_candidates(
     filtered = [
         row
         for row in rows
-        if row.orientation == orientation
+        if (orientation is None or row.orientation == orientation)
         and min_duration <= row.duration <= max_duration
         and row.width > 0
         and row.height > 0
@@ -194,7 +194,7 @@ class PexelsSource:
         self,
         query: str,
         *,
-        orientation: str,
+        orientation: str | None,
         min_duration: float,
         max_duration: float,
         limit: int,
@@ -203,7 +203,7 @@ class PexelsSource:
             raise ProviderError("pexels", "credential_required", "Pexels API key is not configured")
         if not isinstance(query, str) or not query.strip():
             raise ValueError("search query must be non-empty")
-        if orientation not in {"portrait", "landscape", "square"}:
+        if orientation is not None and orientation not in {"portrait", "landscape", "square"}:
             raise ValueError("unsupported orientation")
         if min_duration < 0 or max_duration <= 0 or min_duration > max_duration:
             raise ValueError("invalid duration bounds")
@@ -214,11 +214,12 @@ class PexelsSource:
             "Authorization": self.api_key,
             "User-Agent": "RAMBLA-Reel-Director/0.1",
         }
-        params = {
+        params: dict[str, str | int] = {
             "query": query.strip(),
-            "orientation": orientation,
             "per_page": min(limit, 80),
         }
+        if orientation is not None:
+            params["orientation"] = orientation
         try:
             async with httpx.AsyncClient(
                 transport=self.transport,
