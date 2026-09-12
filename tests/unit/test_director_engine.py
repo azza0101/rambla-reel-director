@@ -40,6 +40,21 @@ def test_plan_covers_every_source_frame_and_is_reproducible():
     validate_edit_plan(first)
 
 
+def test_plan_persists_short_coverage_slots_without_replacing_legacy_beats():
+    plan = build_edit_plan(TRANSCRIPT, OUTLINE, ASSETS, client_id="rambla", source_frames=150)
+
+    assert len(plan["coverage_slots"]) == 1
+    slot = plan["coverage_slots"][0]
+    assert slot["beat_id"] == "workflow"
+    assert slot["start_seconds"] == 2.0
+    assert slot["end_seconds"] == 4.0
+    assert slot["start_frame"] == 50
+    assert slot["end_frame"] == 100
+    assert slot["minimum_proposals"] == 2
+    assert len(plan["beats"]) == 3
+    validate_edit_plan(plan)
+
+
 def test_retrieval_never_crosses_client_boundary_and_keeps_ranking_evidence():
     plan = build_edit_plan(TRANSCRIPT, OUTLINE, ASSETS, client_id="rambla", source_frames=150)
     beat = plan["beats"][1]
@@ -68,6 +83,14 @@ def test_validator_rejects_gaps_and_cross_client_assets():
     leaked["beats"][1]["selected_asset"]["client_id"] = "other"
     with pytest.raises(ValueError, match="client"):
         validate_edit_plan(leaked)
+
+
+def test_validator_rejects_coverage_slot_outside_source():
+    plan = build_edit_plan(TRANSCRIPT, OUTLINE, ASSETS, client_id="rambla", source_frames=150)
+    broken = copy.deepcopy(plan)
+    broken["coverage_slots"][0]["end_frame"] = 151
+    with pytest.raises(ValueError, match="coverage slot"):
+        validate_edit_plan(broken)
 
 
 def test_generic_brand_overlap_does_not_insert_workflow_visual_everywhere():
