@@ -1,0 +1,817 @@
+{
+  "$defs": {
+    "Anchor": {
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "Anchor",
+      "type": "object"
+    },
+    "ApprovalRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "actor": {
+          "title": "Actor",
+          "type": "string"
+        },
+        "approved_at": {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+          "title": "Approved At",
+          "type": "string"
+        },
+        "approved_plan_hash": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Approved Plan Hash",
+          "type": "string"
+        }
+      },
+      "required": [
+        "actor",
+        "approved_at",
+        "approved_plan_hash"
+      ],
+      "title": "ApprovalRecord",
+      "type": "object"
+    },
+    "BrollParameters": {
+      "additionalProperties": false,
+      "properties": {
+        "crop_anchor": {
+          "enum": [
+            "CENTER",
+            "FACE_SAFE",
+            "CUSTOM"
+          ],
+          "title": "Crop Anchor",
+          "type": "string"
+        },
+        "custom_anchor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Anchor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fit": {
+          "enum": [
+            "COVER",
+            "CONTAIN"
+          ],
+          "title": "Fit",
+          "type": "string"
+        },
+        "opacity": {
+          "default": 1,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Opacity",
+          "type": "number"
+        },
+        "source_offset_frame": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "title": "Source Offset Frame",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "fit",
+        "crop_anchor",
+        "custom_anchor",
+        "source_offset_frame"
+      ],
+      "title": "BrollParameters",
+      "type": "object"
+    },
+    "CaptionEmphasisParameters": {
+      "additionalProperties": false,
+      "properties": {
+        "alignment_word_ids": {
+          "items": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "title": "Alignment Word Ids",
+          "type": "array"
+        },
+        "emphasis": {
+          "enum": [
+            "COLOR",
+            "WEIGHT",
+            "SCALE",
+            "BACKGROUND"
+          ],
+          "title": "Emphasis",
+          "type": "string"
+        },
+        "keyword_text": {
+          "title": "Keyword Text",
+          "type": "string"
+        },
+        "style_token": {
+          "title": "Style Token",
+          "type": "string"
+        }
+      },
+      "required": [
+        "style_token",
+        "emphasis",
+        "keyword_text",
+        "alignment_word_ids"
+      ],
+      "title": "CaptionEmphasisParameters",
+      "type": "object"
+    },
+    "EditControls": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_actions": {
+          "items": {
+            "enum": [
+              "BROLL",
+              "EDITORIAL_INSERT",
+              "PUNCH_IN",
+              "STICKER",
+              "CAPTION_EMPHASIS"
+            ],
+            "type": "string"
+          },
+          "title": "Allowed Actions",
+          "type": "array"
+        },
+        "allowed_sources": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Sources",
+          "type": "array"
+        },
+        "density": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Density",
+          "type": "number"
+        },
+        "max_decisions": {
+          "minimum": 1,
+          "title": "Max Decisions",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "density",
+        "allowed_sources",
+        "allowed_actions",
+        "max_decisions"
+      ],
+      "title": "EditControls",
+      "type": "object"
+    },
+    "EditDecision": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "enum": [
+            "BROLL",
+            "EDITORIAL_INSERT",
+            "PUNCH_IN",
+            "STICKER",
+            "CAPTION_EMPHASIS"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "candidate_refs": {
+          "items": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "title": "Candidate Refs",
+          "type": "array"
+        },
+        "confidence": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "frame": {
+          "anyOf": [
+            {
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Frame"
+        },
+        "id": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "intent": {
+          "title": "Intent",
+          "type": "string"
+        },
+        "parameters": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrollParameters"
+            },
+            {
+              "$ref": "#/$defs/EditorialInsertParameters"
+            },
+            {
+              "$ref": "#/$defs/PunchInParameters"
+            },
+            {
+              "$ref": "#/$defs/StickerParameters"
+            },
+            {
+              "$ref": "#/$defs/CaptionEmphasisParameters"
+            }
+          ],
+          "title": "Parameters"
+        },
+        "provenance": {
+          "$ref": "#/$defs/ProvenanceRecord"
+        },
+        "queries": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Queries",
+          "type": "array"
+        },
+        "range": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FrameRange"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "review_state": {
+          "enum": [
+            "PROPOSED",
+            "APPROVED",
+            "MODIFIED",
+            "DISABLED",
+            "NEEDS_REPLACEMENT"
+          ],
+          "title": "Review State",
+          "type": "string"
+        },
+        "selected_asset_ref": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Selected Asset Ref"
+        }
+      },
+      "required": [
+        "id",
+        "action",
+        "range",
+        "frame",
+        "intent",
+        "reason",
+        "confidence",
+        "queries",
+        "candidate_refs",
+        "selected_asset_ref",
+        "parameters",
+        "review_state",
+        "provenance"
+      ],
+      "title": "EditDecision",
+      "type": "object"
+    },
+    "EditorialInsertParameters": {
+      "additionalProperties": false,
+      "properties": {
+        "background": {
+          "enum": [
+            "AUTO",
+            "TRANSPARENT",
+            "SOLID"
+          ],
+          "title": "Background",
+          "type": "string"
+        },
+        "fit": {
+          "enum": [
+            "COVER",
+            "CONTAIN"
+          ],
+          "title": "Fit",
+          "type": "string"
+        },
+        "opacity": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Opacity",
+          "type": "number"
+        },
+        "presentation": {
+          "enum": [
+            "FULL_FRAME",
+            "CARD"
+          ],
+          "title": "Presentation",
+          "type": "string"
+        }
+      },
+      "required": [
+        "presentation",
+        "fit",
+        "background",
+        "opacity"
+      ],
+      "title": "EditorialInsertParameters",
+      "type": "object"
+    },
+    "FrameRange": {
+      "additionalProperties": false,
+      "properties": {
+        "end_frame": {
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
+          "title": "End Frame",
+          "type": "integer"
+        },
+        "start_frame": {
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
+          "title": "Start Frame",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start_frame",
+        "end_frame"
+      ],
+      "title": "FrameRange",
+      "type": "object"
+    },
+    "PlanValidation": {
+      "additionalProperties": false,
+      "properties": {
+        "checked_at": {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+          "title": "Checked At",
+          "type": "string"
+        },
+        "issues": {
+          "items": {
+            "$ref": "#/$defs/ValidationIssue"
+          },
+          "title": "Issues",
+          "type": "array"
+        },
+        "plan_hash": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Plan Hash",
+          "type": "string"
+        },
+        "valid": {
+          "title": "Valid",
+          "type": "boolean"
+        },
+        "validator_version": {
+          "title": "Validator Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "valid",
+        "plan_hash",
+        "checked_at",
+        "validator_version",
+        "issues"
+      ],
+      "title": "PlanValidation",
+      "type": "object"
+    },
+    "ProvenanceRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "acquired_at": {
+          "anyOf": [
+            {
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Acquired At"
+        },
+        "attribution": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attribution"
+        },
+        "content_hash": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Content Hash"
+        },
+        "license_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "License Ref"
+        },
+        "source_id": {
+          "title": "Source Id",
+          "type": "string"
+        },
+        "source_kind": {
+          "title": "Source Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_kind",
+        "source_id"
+      ],
+      "title": "ProvenanceRecord",
+      "type": "object"
+    },
+    "ProviderTrace": {
+      "additionalProperties": false,
+      "properties": {
+        "finished_at": {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+          "title": "Finished At",
+          "type": "string"
+        },
+        "input_hashes": {
+          "items": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "title": "Input Hashes",
+          "type": "array"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "model_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Model Version"
+        },
+        "policy_decision_id": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Policy Decision Id"
+        },
+        "provider": {
+          "title": "Provider",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "started_at": {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+          "title": "Started At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "model",
+        "model_version",
+        "request_id",
+        "started_at",
+        "finished_at",
+        "input_hashes",
+        "policy_decision_id"
+      ],
+      "title": "ProviderTrace",
+      "type": "object"
+    },
+    "PunchInParameters": {
+      "additionalProperties": false,
+      "properties": {
+        "anchor_x": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Anchor X",
+          "type": "number"
+        },
+        "anchor_y": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Anchor Y",
+          "type": "number"
+        },
+        "easing": {
+          "enum": [
+            "CUT",
+            "EASE_IN_OUT"
+          ],
+          "title": "Easing",
+          "type": "string"
+        },
+        "scale": {
+          "maximum": 1.35,
+          "minimum": 1.02,
+          "title": "Scale",
+          "type": "number"
+        }
+      },
+      "required": [
+        "scale",
+        "anchor_x",
+        "anchor_y",
+        "easing"
+      ],
+      "title": "PunchInParameters",
+      "type": "object"
+    },
+    "StickerParameters": {
+      "additionalProperties": false,
+      "properties": {
+        "opacity": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Opacity",
+          "type": "number"
+        },
+        "position": {
+          "$ref": "#/$defs/Anchor"
+        },
+        "rotation_deg": {
+          "title": "Rotation Deg",
+          "type": "number"
+        },
+        "safe_zone": {
+          "enum": [
+            "TOP",
+            "CENTER",
+            "BOTTOM",
+            "CUSTOM"
+          ],
+          "title": "Safe Zone",
+          "type": "string"
+        },
+        "scale": {
+          "exclusiveMinimum": 0,
+          "title": "Scale",
+          "type": "number"
+        }
+      },
+      "required": [
+        "position",
+        "scale",
+        "rotation_deg",
+        "opacity",
+        "safe_zone"
+      ],
+      "title": "StickerParameters",
+      "type": "object"
+    },
+    "ValidationIssue": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "decision_id": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Decision Id"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "ERROR",
+            "WARNING"
+          ],
+          "title": "Severity",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "severity",
+        "decision_id",
+        "message"
+      ],
+      "title": "ValidationIssue",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "apply_result_ref": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Apply Result Ref"
+    },
+    "approval": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ApprovalRecord"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "content_hash": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Content Hash",
+      "type": "string"
+    },
+    "controls_snapshot": {
+      "$ref": "#/$defs/EditControls"
+    },
+    "decisions": {
+      "items": {
+        "$ref": "#/$defs/EditDecision"
+      },
+      "title": "Decisions",
+      "type": "array"
+    },
+    "id": {
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "title": "Id",
+      "type": "string"
+    },
+    "policy_snapshot_ref": {
+      "minLength": 1,
+      "title": "Policy Snapshot Ref",
+      "type": "string"
+    },
+    "provider_trace": {
+      "items": {
+        "$ref": "#/$defs/ProviderTrace"
+      },
+      "title": "Provider Trace",
+      "type": "array"
+    },
+    "run_id": {
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_timeline_hash": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Source Timeline Hash",
+      "type": "string"
+    },
+    "source_timeline_snapshot_ref": {
+      "minLength": 1,
+      "title": "Source Timeline Snapshot Ref",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "DRAFT",
+        "IN_REVIEW",
+        "APPROVED",
+        "APPLYING",
+        "APPLIED",
+        "FAILED",
+        "SUPERSEDED"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "style_snapshot_ref": {
+      "minLength": 1,
+      "title": "Style Snapshot Ref",
+      "type": "string"
+    },
+    "validation": {
+      "$ref": "#/$defs/PlanValidation"
+    },
+    "version": {
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "run_id",
+    "version",
+    "status",
+    "source_timeline_snapshot_ref",
+    "source_timeline_hash",
+    "style_snapshot_ref",
+    "policy_snapshot_ref",
+    "controls_snapshot",
+    "provider_trace",
+    "decisions",
+    "validation",
+    "approval",
+    "apply_result_ref",
+    "content_hash"
+  ],
+  "title": "EditPlan",
+  "type": "object"
+}

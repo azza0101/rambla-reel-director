@@ -1,0 +1,575 @@
+{
+  "$defs": {
+    "ApplyCaptionEmphasisPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "alignment_word_ids": {
+          "items": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "title": "Alignment Word Ids",
+          "type": "array"
+        },
+        "emphasis": {
+          "enum": [
+            "COLOR",
+            "WEIGHT",
+            "SCALE",
+            "BACKGROUND"
+          ],
+          "title": "Emphasis",
+          "type": "string"
+        },
+        "range": {
+          "$ref": "#/$defs/FrameRange"
+        },
+        "style_token": {
+          "title": "Style Token",
+          "type": "string"
+        }
+      },
+      "required": [
+        "range",
+        "alignment_word_ids",
+        "style_token",
+        "emphasis"
+      ],
+      "title": "ApplyCaptionEmphasisPayload",
+      "type": "object"
+    },
+    "DiscardGeneratedTimelinePayload": {
+      "additionalProperties": false,
+      "properties": {
+        "actor": {
+          "title": "Actor",
+          "type": "string"
+        },
+        "confirmation_token": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "title": "Confirmation Token",
+          "type": "string"
+        }
+      },
+      "required": [
+        "actor",
+        "confirmation_token"
+      ],
+      "title": "DiscardGeneratedTimelinePayload",
+      "type": "object"
+    },
+    "DuplicateTimelinePayload": {
+      "additionalProperties": false,
+      "properties": {
+        "source_timeline_name": {
+          "title": "Source Timeline Name",
+          "type": "string"
+        },
+        "target_timeline_name": {
+          "title": "Target Timeline Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_timeline_name",
+        "target_timeline_name"
+      ],
+      "title": "DuplicateTimelinePayload",
+      "type": "object"
+    },
+    "FrameRange": {
+      "additionalProperties": false,
+      "properties": {
+        "end_frame": {
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
+          "title": "End Frame",
+          "type": "integer"
+        },
+        "start_frame": {
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
+          "title": "Start Frame",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start_frame",
+        "end_frame"
+      ],
+      "title": "FrameRange",
+      "type": "object"
+    },
+    "ImportAssetPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "content_hash": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Content Hash",
+          "type": "string"
+        }
+      },
+      "required": [
+        "asset_id",
+        "content_hash"
+      ],
+      "title": "ImportAssetPayload",
+      "type": "object"
+    },
+    "OperationCondition": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_hash": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Expected Hash"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "expected_hash"
+      ],
+      "title": "OperationCondition",
+      "type": "object"
+    },
+    "PlaceMediaPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "range": {
+          "$ref": "#/$defs/FrameRange"
+        },
+        "target_track_role": {
+          "title": "Target Track Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "asset_id",
+        "range",
+        "target_track_role"
+      ],
+      "title": "PlaceMediaPayload",
+      "type": "object"
+    },
+    "PlaceOverlayPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "opacity": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Opacity",
+          "type": "number"
+        },
+        "position_x": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Position X",
+          "type": "number"
+        },
+        "position_y": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Position Y",
+          "type": "number"
+        },
+        "range": {
+          "$ref": "#/$defs/FrameRange"
+        },
+        "scale": {
+          "exclusiveMinimum": 0,
+          "title": "Scale",
+          "type": "number"
+        }
+      },
+      "required": [
+        "asset_id",
+        "range",
+        "position_x",
+        "position_y",
+        "scale",
+        "opacity"
+      ],
+      "title": "PlaceOverlayPayload",
+      "type": "object"
+    },
+    "SetTransformPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "anchor_x": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Anchor X",
+          "type": "number"
+        },
+        "anchor_y": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Anchor Y",
+          "type": "number"
+        },
+        "easing": {
+          "enum": [
+            "CUT",
+            "EASE_IN_OUT"
+          ],
+          "title": "Easing",
+          "type": "string"
+        },
+        "range": {
+          "$ref": "#/$defs/FrameRange"
+        },
+        "scale": {
+          "maximum": 1.35,
+          "minimum": 1.02,
+          "title": "Scale",
+          "type": "number"
+        }
+      },
+      "required": [
+        "range",
+        "scale",
+        "anchor_x",
+        "anchor_y",
+        "easing"
+      ],
+      "title": "SetTransformPayload",
+      "type": "object"
+    },
+    "TargetTimelineIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "apply_attempt_id": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "title": "Apply Attempt Id",
+          "type": "string"
+        },
+        "observed_name": {
+          "title": "Observed Name",
+          "type": "string"
+        },
+        "project_ref": {
+          "title": "Project Ref",
+          "type": "string"
+        },
+        "timeline_ref": {
+          "title": "Timeline Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_ref",
+        "timeline_ref",
+        "observed_name",
+        "apply_attempt_id"
+      ],
+      "title": "TargetTimelineIdentity",
+      "type": "object"
+    },
+    "VerifyPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "operation_ids": {
+          "items": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "title": "Operation Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "operation_ids"
+      ],
+      "title": "VerifyPayload",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "DUPLICATE_TIMELINE"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/DuplicateTimelinePayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "IMPORT_ASSET"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/ImportAssetPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "PLACE_MEDIA"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/PlaceMediaPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "SET_TRANSFORM"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/SetTransformPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "PLACE_OVERLAY"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/PlaceOverlayPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "APPLY_CAPTION_EMPHASIS"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/ApplyCaptionEmphasisPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "VERIFY"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/VerifyPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "DISCARD_GENERATED_TIMELINE"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/DiscardGeneratedTimelinePayload"
+          }
+        }
+      }
+    }
+  ],
+  "properties": {
+    "apply_attempt_id": {
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "title": "Apply Attempt Id",
+      "type": "string"
+    },
+    "decision_id": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Decision Id"
+    },
+    "expected_postcondition": {
+      "$ref": "#/$defs/OperationCondition"
+    },
+    "id": {
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "title": "Id",
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "DUPLICATE_TIMELINE",
+        "IMPORT_ASSET",
+        "PLACE_MEDIA",
+        "SET_TRANSFORM",
+        "PLACE_OVERLAY",
+        "APPLY_CAPTION_EMPHASIS",
+        "VERIFY",
+        "DISCARD_GENERATED_TIMELINE"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "payload": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DuplicateTimelinePayload"
+        },
+        {
+          "$ref": "#/$defs/ImportAssetPayload"
+        },
+        {
+          "$ref": "#/$defs/PlaceMediaPayload"
+        },
+        {
+          "$ref": "#/$defs/SetTransformPayload"
+        },
+        {
+          "$ref": "#/$defs/PlaceOverlayPayload"
+        },
+        {
+          "$ref": "#/$defs/ApplyCaptionEmphasisPayload"
+        },
+        {
+          "$ref": "#/$defs/VerifyPayload"
+        },
+        {
+          "$ref": "#/$defs/DiscardGeneratedTimelinePayload"
+        }
+      ],
+      "title": "Payload"
+    },
+    "plan_id": {
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "title": "Plan Id",
+      "type": "string"
+    },
+    "precondition": {
+      "$ref": "#/$defs/OperationCondition"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "target_identity": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TargetTimelineIdentity"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "apply_attempt_id",
+    "plan_id",
+    "decision_id",
+    "kind",
+    "target_identity",
+    "precondition",
+    "payload",
+    "expected_postcondition"
+  ],
+  "title": "ApplyOperation",
+  "type": "object"
+}
