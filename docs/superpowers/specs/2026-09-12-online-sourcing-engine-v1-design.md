@@ -1,6 +1,6 @@
 # RAMBLA Online Sourcing Engine V1 — Design
 
-Status: **awaiting explicit user approval**
+Status: **APPROVED by user on 2026-09-12**
 
 Date: 2026-09-12
 
@@ -31,7 +31,7 @@ Local client assets remain supported, but as a **cache/reuse source**, not as a 
 
 ### B-Roll-Finder
 
-Reference architecture only. Its public repository describes the exact useful pattern: transcript -> AI shot list -> Pexels/Pixabay/YouTube candidate fetch -> ranking -> human review/auto-select -> cached downloads -> editor export. It currently exposes no repository license, therefore RAMBLA must **not copy source code** from it unless a compatible license is later added. We may reuse concepts and independently implement them.
+Reference architecture only. Its public repository describes the exact useful pattern: transcript -> AI shot list -> Pexels/Pixabay/YouTube candidate fetch -> ranking -> human review/auto-select -> cached downloads -> editor export. It currently exposes no repository license, therefore RAMBLA must **not copy substantial source code verbatim** from it unless a compatible license is later added. We may inspect behavior, interfaces, flow, and independently reimplement equivalent functionality.
 
 Useful ideas to reproduce independently:
 
