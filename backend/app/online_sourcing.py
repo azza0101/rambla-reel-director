@@ -17,6 +17,7 @@ from .online_assets import ProviderError, RemoteCandidate, dedupe_candidates
 from .proposals import select_proposals
 from .qwen_stack import QwenMultimodalRanker
 from .scene_locator import SceneEvidence, locate_windows
+from .taste_profile import TasteContext
 
 
 class OnlineSource(Protocol):
@@ -117,12 +118,16 @@ class OnlineSourcingEngine:
         min_duration: float,
         max_duration: float,
         orientation: str | None = None,
+        taste: TasteContext | None = None,
+        visual_route: str | None = None,
     ) -> dict[str, Any]:
         clean_queries = [q.strip() for q in queries if isinstance(q, str) and q.strip()]
         if not beat_id or not client_id:
             raise ValueError("beat and client identity are required")
+        if taste is not None and taste.client_id != client_id:
+            raise ValueError("taste context violates client isolation")
         if not clean_queries:
-            return self._empty(beat_id, [], [])
+            return self._empty(beat_id, [], [], taste=taste, visual_route=visual_route)
         if len(clean_queries) > self.max_queries:
             raise ValueError(f"queries exceed max_queries={self.max_queries}")
         if orientation is not None and orientation not in {"portrait", "landscape", "square"}:
@@ -151,7 +156,13 @@ class OnlineSourcingEngine:
                 errors.append(error)
         unique = dedupe_candidates(remote)[: self.max_preview_candidates]
         if not unique:
-            return self._empty(beat_id, clean_queries, errors)
+            return self._empty(
+                beat_id,
+                clean_queries,
+                errors,
+                taste=taste,
+                visual_route=visual_route,
+            )
 
         semaphore = asyncio.Semaphore(self.preview_concurrency)
 
@@ -200,10 +211,23 @@ class OnlineSourcingEngine:
                 "source_duration": float(getattr(candidate, "source_duration", candidate.duration)),
                 "acquisition_mode": str(getattr(candidate, "acquisition_mode", "full_asset")),
             }
+            # Stock is intrinsically a STOCK route. Other providers may expose a
+            # more precise route through the ranker/adapter; absent that, the
+            # requested route remains selection context rather than fabricated
+            # candidate evidence.
+            if str(candidate.provider).casefold() in {"pexels", "pixabay", "coverr"}:
+                asset["route"] = "STOCK"
             assets.append(asset)
             asset_by_id[asset_id] = asset
         if not assets:
-            return self._empty(beat_id, clean_queries, errors, cache_hits)
+            return self._empty(
+                beat_id,
+                clean_queries,
+                errors,
+                cache_hits,
+                taste=taste,
+                visual_route=visual_route,
+            )
 
         ranked = self.ranker.rank(clean_queries[0], assets)
         for row in ranked:
@@ -218,9 +242,17 @@ class OnlineSourcingEngine:
                 "acquisition_mode",
             ):
                 row[key] = source_asset[key]
+            if "route" in source_asset:
+                row.setdefault("route", source_asset["route"])
             row.setdefault("providers", {})["retrieval"] = row.get("source", "online")
 
-        proposals = select_proposals(ranked)
+        minimum = taste.default_proposal_count if taste is not None else 2
+        proposals = select_proposals(
+            ranked,
+            minimum=minimum,
+            taste=taste,
+            visual_route=visual_route,
+        )
         for key in ("proposal_A", "proposal_B", "proposal_C"):
             proposal = proposals.get(key)
             if isinstance(proposal, dict):
@@ -266,6 +298,9 @@ class OnlineSourcingEngine:
             "queries": clean_queries,
             "candidates": ranked,
             "proposals": proposals,
+            "visual_route": visual_route,
+            "taste_profile_version": taste.profile_version if taste is not None else None,
+            "taste_profile_hash": taste.profile_hash if taste is not None else None,
             "errors": _dedupe_errors(errors),
             "preview_cache_hits": cache_hits,
             "selected_cache_hit": selected_cache_hit,
@@ -277,12 +312,24 @@ class OnlineSourcingEngine:
         queries: list[str],
         errors: list[dict[str, str]],
         cache_hits: int = 0,
+        *,
+        taste: TasteContext | None = None,
+        visual_route: str | None = None,
     ) -> dict[str, Any]:
+        minimum = taste.default_proposal_count if taste is not None else 2
         return {
             "beat_id": beat_id,
             "queries": queries,
             "candidates": [],
-            "proposals": select_proposals([]),
+            "proposals": select_proposals(
+                [],
+                minimum=minimum,
+                taste=taste,
+                visual_route=visual_route,
+            ),
+            "visual_route": visual_route,
+            "taste_profile_version": taste.profile_version if taste is not None else None,
+            "taste_profile_hash": taste.profile_hash if taste is not None else None,
             "errors": _dedupe_errors(errors),
             "preview_cache_hits": cache_hits,
             "selected_cache_hit": False,
