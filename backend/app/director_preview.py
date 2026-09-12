@@ -98,7 +98,10 @@ def _proposal_card(proposal: dict[str, Any], *, label: str, selected_id: str | N
     source_page = _safe_public_href(proposal.get("source_page"))
     source = proposal.get("source", "unknown")
     qwen = proposal.get("qwen_score", proposal.get("embedding_score"))
+    semantic = proposal.get("semantic_score", proposal.get("score", qwen))
+    evidence_route = proposal.get("evidence_route_score")
     crop = proposal.get("crop_score")
+    taste = proposal.get("taste_score")
     final = proposal.get("final_score", proposal.get("score"))
     rights = proposal.get("rights_state", "unknown")
     creator = _creator_text(proposal) or "unknown"
@@ -119,11 +122,13 @@ def _proposal_card(proposal: dict[str, Any], *, label: str, selected_id: str | N
     )
     selected_badge = "<span class='badge selected'>SELECTED</span>" if selected else ""
     tracking = " · tracking/reframe" if proposal.get("needs_tracking") else ""
+    route_text = f" · route {_cell(evidence_route)}" if evidence_route is not None else ""
+    taste_text = f" · taste {_cell(taste)}" if taste is not None else ""
     return (
         f"<article class='candidate{' picked' if selected else ''}'>"
         f"{image}<div class='candidate-body'><span class='badge proposal'>{_cell(label)}</span>{selected_badge}"
         f"<strong>{_cell(proposal_id)}</strong><div>{_cell(source)} · {source_link}</div>"
-        f"<div>Qwen {_cell(qwen)} · crop {_cell(crop)} · final <b>{_cell(final)}</b>{_cell(tracking)}</div>"
+        f"<div>Qwen {_cell(qwen)} · semantic {_cell(semantic)}{route_text} · crop {_cell(crop)}{taste_text} · final <b>{_cell(final)}</b>{_cell(tracking)}</div>"
         f"{source_range}<div>creator {_cell(creator)} · rights {_cell(rights)}</div>"
         "</div></article>"
     )
@@ -194,9 +199,18 @@ def render_report(plan: dict[str, Any]) -> str:
         queries = " · ".join(str(value) for value in slot.get("queries", []) if value)
         start_seconds = float(slot.get("start_seconds", slot.get("start_frame", 0) / fps))
         end_seconds = float(slot.get("end_seconds", slot.get("end_frame", 0) / fps))
+        route = slot.get("visual_route")
+        taste_version = slot.get("taste_profile_version")
+        route_reason = slot.get("route_reason", "")
+        route_meta = ""
+        if route:
+            taste_label = f" · Taste v{_cell(taste_version)}" if taste_version is not None else ""
+            reason_label = f" · reason: {_cell(route_reason)}" if route_reason else ""
+            route_meta = f"<p><b>Route: {_cell(route)}</b>{taste_label}{reason_label}</p>"
         coverage_sections.append(
             f"<section class='beat-review coverage-review'><h3>{_cell(slot.get('id','coverage'))} · {_cell(slot.get('review_state',''))}</h3>"
             f"<p><b>{start_seconds:.2f}–{end_seconds:.2f}s</b> · {_cell(transcript)}</p>"
+            f"{route_meta}"
             f"<p>Intent: {_cell(slot.get('visual_intent',''))}</p>"
             f"<p>Search: <code>{_cell(queries)}</code></p>"
             f"<div class='candidate-grid'>{''.join(cards)}</div></section>"
