@@ -17,9 +17,13 @@ def render_report(plan: dict[str, Any]) -> str:
         selected = beat["selected_asset"]
         selected_text = "none" if selected is None else f"{selected['id']} ({selected['path']}; score {selected['score']})"
         alternates = "; ".join(f"{row['id']}: {row['score']} ({row['reason']})" for row in beat["candidates"] if selected is None or row["id"] != selected["id"])
+        providers = beat.get("providers", {})
+        provider_text = "; ".join(f"{role}: {name or 'none'}" for role, name in providers.items())
+        scores = "; ".join(f"{row['id']}: embedding={row.get('embedding_score')}, reranker={row.get('reranker_score')}, final={row['score']}"
+                           for row in beat["candidates"])
         values = [beat["id"], f"{beat['start_frame'] / fps:.2f}–{beat['end_frame'] / fps:.2f} s [{beat['start_frame']},{beat['end_frame']})",
                   beat["transcript"], beat["action"], beat["broll_query"], selected_text, alternates,
-                  beat["caption_text"], beat["rationale"]]
+                  scores, provider_text, beat["caption_text"], beat["rationale"]]
         rows.append("<tr>" + "".join(f"<td>{_cell(value)}</td>" for value in values) + "</tr>")
     caption_rows = "".join(
         f"<tr><td>{_cell(c['start_frame'])}–{_cell(c['end_frame'])}</td><td>{_cell(c['text'])}</td><td>{_cell(c.get('review_state', ''))}</td></tr>"
@@ -35,7 +39,7 @@ def render_report(plan: dict[str, Any]) -> str:
             "<p>ASR non revisionato. Nessuna modifica a DaVinci Resolve.</p>"
             "<h2>Editorial beats</h2><table><thead><tr>"
             "<th>ID</th><th>Range</th><th>Transcript</th><th>Action</th><th>Semantic query</th>"
-            "<th>Selected asset</th><th>Alternates</th><th>Caption text</th><th>Rationale</th>"
+            "<th>Selected asset</th><th>Alternates</th><th>Candidate scores</th><th>Providers</th><th>Caption text</th><th>Rationale</th>"
             "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
             "<h2>All captions</h2><table><thead><tr><th>Frames</th><th>Text</th><th>Review</th></tr></thead><tbody>"
             + caption_rows + "</tbody></table></html>")

@@ -93,7 +93,9 @@ class TextReranker:
             score = round(len(matched) / max(1, len(terms)), 4)
             rows.append({"id": asset["id"], "client_id": asset["client_id"], "path": asset["path"],
                          "description": asset.get("description", ""), "kind": asset.get("kind", "unknown"),
-                         "score": score, "reason": f"metadata overlap: {', '.join(matched) or 'none'}"})
+                         "score": score, "embedding_score": None, "reranker_score": None,
+                         "providers": {"embedding": None, "reranker": None, "retrieval": "metadata-overlap-v1"},
+                         "reason": f"metadata overlap: {', '.join(matched) or 'none'}"})
         return sorted(rows, key=lambda row: (-row["score"], row["id"]))
 
 
@@ -175,17 +177,26 @@ def build_edit_plan(
         candidates = reranker.rank(query, local_assets) if query else []
         selected = candidates[0] if candidates and candidates[0]["score"] >= 0.7 else None
         action, rationale, metadata = director.decide(outline, selected)
+        if action != "BROLL":
+            selected = None
+        provider_name = getattr(director, "last_provider", "deterministic-rule-v1")
+        candidate_providers = candidates[0].get("providers", {}) if candidates else {}
         beat_captions = [row["text"] for row in captions if row["start_frame"] < end and row["end_frame"] > start]
         beats.append({"id": outline["id"], "start_frame": start, "end_frame": end, "intent": outline["intent"],
                       "transcript": " ".join(segment["text"].strip() for segment in transcript["segments"]
                                              if _frame(segment["start"], fps) < end and _frame(segment["end"], fps) > start),
                       "action": action, "rationale": rationale, "parameters": metadata,
                       "broll_query": semantic_query, "selected_asset": selected, "candidates": candidates,
+                      "providers": {"director": provider_name,
+                                    "embedding": candidate_providers.get("embedding"),
+                                    "reranker": candidate_providers.get("reranker"),
+                                    "retrieval": candidate_providers.get("retrieval", "client-local")},
                       "caption_text": " ".join(beat_captions)})
     plan = {"schema_version": "director-offline-1", "status": "DRAFT", "client_id": client_id,
             "source": {"media": transcript.get("source", ""), "fps": fps, "start_frame": transcript.get("timeline_start_frame", 0), "duration_frames": source_frames},
             "asr": {"adapter": "faster-whisper-artifact", "language": transcript.get("language", "und"), "review_state": "UNREVIEWED"},
-            "director": {"adapter": "deterministic-rule-v1"}, "retrieval": {"local_client_only": True, "external": "credential-gated"},
+            "director": {"adapter": getattr(director, "provider_name", "deterministic-rule-v1")},
+            "retrieval": {"local_client_only": True, "external": "credential-gated"},
             "beats": beats, "captions": captions}
     validate_edit_plan(plan)
     canonical = json.dumps(plan, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
