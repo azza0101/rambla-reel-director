@@ -1,17 +1,18 @@
-"""Filesystem cache for remote B-roll previews and selected media.
+"""Filesystem cache for remote previews, selected stock media and evidence windows.
 
-Only public provider metadata is durable. Temporary/signed preview and media
-URLs remain transient so review artifacts cannot leak provider credentials.
+Only public provider/source metadata is durable. Temporary/signed preview and
+media URLs remain transient so review artifacts cannot leak credentials.
 """
 
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 
@@ -19,6 +20,7 @@ from .online_assets import RemoteCandidate
 
 
 FetchBytes = Callable[[str], Awaitable[bytes]]
+AcquireToPath = Callable[[Path], Awaitable[None] | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +49,29 @@ def _safe_public_url(value: str | None) -> str | None:
     if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
         return None
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+
+
+def _safe_evidence_source_url(value: str | None) -> str | None:
+    """Preserve stable public identifiers while removing transient credentials.
+
+    YouTube's stable ``v`` parameter is retained because it identifies the
+    source video. Other query parameters are discarded from durable metadata.
+    """
+
+    if not value:
+        return None
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return None
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        return None
+    hostname = parsed.hostname.lower()
+    query = ""
+    if hostname in {"youtube.com", "www.youtube.com", "m.youtube.com"}:
+        video_ids = [(key, val) for key, val in parse_qsl(parsed.query, keep_blank_values=False) if key == "v" and val]
+        query = urlencode(video_ids[:1])
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, ""))
 
 
 def public_provenance(candidate: RemoteCandidate) -> dict:
@@ -102,6 +127,7 @@ class AssetCache:
         self.root = Path(root).resolve()
         self.preview_root = self.root / "previews"
         self.media_root = self.root / "selected"
+        self.window_root = self.root / "windows"
         self.metadata_root = self.root / "metadata"
 
     def _preview_key(self, candidate: RemoteCandidate) -> str:
@@ -113,6 +139,17 @@ class AssetCache:
             f"{candidate.provider}\0{candidate.provider_id}\0"
             f"{candidate.rendition_width}x{candidate.rendition_height}"
         )
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _window_key(
+        provider: str,
+        provider_id: str,
+        start: float,
+        end: float,
+        kind: str,
+    ) -> str:
+        material = f"{provider}\0{provider_id}\0{start:.3f}\0{end:.3f}\0{kind}"
         return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
     async def materialize_preview(self, candidate: RemoteCandidate, *, fetch: FetchBytes | None = None) -> PreviewAsset:
@@ -155,6 +192,71 @@ class AssetCache:
             "content_sha256": digest,
             "rendition": {"width": candidate.rendition_width, "height": candidate.rendition_height},
         })
+        return CachedAsset(path, metadata_path, digest, False)
+
+    async def materialize_acquired_window(
+        self,
+        *,
+        provider: str,
+        provider_id: str,
+        source_page: str,
+        source_start_seconds: float,
+        source_end_seconds: float,
+        rights_state: str,
+        acquire: AcquireToPath,
+        kind: str = "video_window",
+    ) -> CachedAsset:
+        """Cache one bounded long-video window or still using an injected producer."""
+
+        if not provider or not provider_id:
+            raise ValueError("provider identity is required")
+        if source_start_seconds < 0 or source_end_seconds <= source_start_seconds:
+            raise ValueError("evidence window time range is invalid")
+        if kind not in {"video_window", "still"}:
+            raise ValueError("unsupported evidence cache kind")
+        safe_source = _safe_evidence_source_url(source_page)
+        if not safe_source:
+            raise ValueError("evidence source page is not public http/https")
+
+        key = self._window_key(
+            provider,
+            provider_id,
+            source_start_seconds,
+            source_end_seconds,
+            kind,
+        )
+        extension = ".mp4" if kind == "video_window" else ".jpg"
+        path = self.window_root / f"{key}{extension}"
+        metadata_path = self.metadata_root / f"window-{key}.json"
+        cached = self._read_valid_cache(path, metadata_path, "content_sha256")
+        if cached is not None:
+            return CachedAsset(path, metadata_path, cached, True)
+
+        self.window_root.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        if tmp.exists():
+            tmp.unlink()
+        result = acquire(tmp)
+        if inspect.isawaitable(result):
+            await result
+        if not tmp.is_file() or tmp.stat().st_size <= 0:
+            raise ValueError("evidence acquisition produced no file")
+        digest = _sha256_file(tmp)
+        tmp.replace(path)
+        self._write_metadata(
+            metadata_path,
+            {
+                "provider": provider,
+                "provider_id": provider_id,
+                "source_page": safe_source,
+                "source_start_seconds": round(float(source_start_seconds), 4),
+                "source_end_seconds": round(float(source_end_seconds), 4),
+                "rights_state": rights_state,
+                "kind": kind,
+                "local_file": path.name,
+                "content_sha256": digest,
+            },
+        )
         return CachedAsset(path, metadata_path, digest, False)
 
     def _atomic_write(self, path: Path, data: bytes) -> None:
