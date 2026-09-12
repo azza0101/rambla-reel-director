@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import inspect
 import json
 import os
@@ -28,6 +29,13 @@ class AcquisitionPort(Protocol):
 
 def _write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+
+
+def _rehash_plan(plan: dict[str, Any]) -> None:
+    snapshot = dict(plan)
+    snapshot.pop("content_hash", None)
+    canonical = json.dumps(snapshot, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    plan["content_hash"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 async def _source_outline(
@@ -55,7 +63,9 @@ async def _source_outline(
                 client_id=client_id,
                 queries=list(slot.queries)[: engine.max_queries],
                 min_duration=max(1.0, min(duration, 3.0)),
-                max_duration=90.0 if duration < 90 else duration * 4,
+                # Long-video evidence (interviews, social/repertory) must remain
+                # eligible even though the editorial insert itself is only 3–4 s.
+                max_duration=4 * 60 * 60,
                 orientation=None,
             )
         )
@@ -257,6 +267,10 @@ def run_online_from_artifacts(
         candidate_assets_by_beat=candidate_map,
         coverage_slots_by_beat=coverage_map,
     )
+    # Analyze is explicitly Resolve-independent. Persist that invariant in the
+    # review artifact so the integration gate can prove no timeline operation occurred.
+    plan["resolve_calls"] = 0
+    _rehash_plan(plan)
     plan_seconds = time.perf_counter() - plan_started
 
     output_dir.mkdir(parents=True, exist_ok=True)
