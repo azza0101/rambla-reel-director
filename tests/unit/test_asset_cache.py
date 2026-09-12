@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -101,6 +102,55 @@ async def test_selected_media_downloads_once_and_persists_public_provenance(tmp_
     assert metadata["content_sha256"] == first.sha256
     assert metadata["rendition"] == {"width": 1080, "height": 1920}
     assert "cdn.pexels.com" not in serialized
+    assert "token=" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_bounded_window_cache_acquires_once_and_keeps_source_timestamp(tmp_path) -> None:
+    cache = AssetCache(tmp_path)
+    calls = 0
+
+    async def acquire(output_path: Path) -> None:
+        nonlocal calls
+        calls += 1
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"short-window")
+
+    first = await cache.materialize_acquired_window(
+        provider="youtube",
+        provider_id="abc123",
+        source_page="https://www.youtube.com/watch?v=abc123&token=DO_NOT_KEEP",
+        source_start_seconds=75.0,
+        source_end_seconds=78.5,
+        rights_state="review_required",
+        acquire=acquire,
+        kind="video_window",
+    )
+    second = await cache.materialize_acquired_window(
+        provider="youtube",
+        provider_id="abc123",
+        source_page="https://www.youtube.com/watch?v=abc123&token=DO_NOT_KEEP",
+        source_start_seconds=75.0,
+        source_end_seconds=78.5,
+        rights_state="review_required",
+        acquire=acquire,
+        kind="video_window",
+    )
+    metadata = json.loads(first.metadata_path.read_text(encoding="utf-8"))
+    serialized = json.dumps(metadata)
+
+    assert first.path.suffix == ".mp4"
+    assert first.path.read_bytes() == b"short-window"
+    assert first.cache_hit is False
+    assert second.cache_hit is True
+    assert calls == 1
+    assert metadata["provider"] == "youtube"
+    assert metadata["provider_id"] == "abc123"
+    assert metadata["source_page"] == "https://www.youtube.com/watch?v=abc123"
+    assert metadata["source_start_seconds"] == 75.0
+    assert metadata["source_end_seconds"] == 78.5
+    assert metadata["rights_state"] == "review_required"
+    assert "DO_NOT_KEEP" not in serialized
     assert "token=" not in serialized
 
 
