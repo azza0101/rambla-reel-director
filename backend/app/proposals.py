@@ -1,7 +1,7 @@
 """Editorial proposal selection after semantic ranking.
 
-Qwen remains responsible for semantic similarity. This module adds cheap
-presentation constraints (crop feasibility), bounded Taste compatibility, and
+Qwen remains responsible for semantic similarity. This module adds explicit
+evidence-route correctness, crop feasibility, bounded Taste compatibility, and
 diversity so review surfaces receive meaningful A/B alternatives rather than
 one opaque winner.
 """
@@ -17,20 +17,38 @@ from .taste_profile import TasteContext
 _RELEVANCE_GAP_GUARD = 0.20
 
 
+def _evidence_route_score(row: dict[str, Any], visual_route: str | None) -> float:
+    """Score whether the candidate belongs to the requested evidence lane.
+
+    Route correctness is editorial evidence, not Taste. Unknown routes stay
+    neutral; generic stock is deliberately weak when an exact evidence route was
+    requested, but it remains eligible as fallback.
+    """
+
+    if not visual_route:
+        return 0.5
+    row_route = str(row.get("route") or "")
+    if not row_route:
+        return 0.5
+    if row_route == visual_route:
+        return 1.0
+    if row_route == "STOCK" and visual_route != "STOCK":
+        return 0.10
+    return 0.35
+
+
 def _taste_score(
     row: dict[str, Any],
     taste: TasteContext | None,
-    visual_route: str | None,
 ) -> tuple[float, dict[str, float]]:
     if taste is None:
         return 0.5, {"route_match": 0.5, "trusted_source": 0.5}
 
     row_route = str(row.get("route") or "")
-    route_match = (
-        1.0
-        if visual_route and row_route == visual_route
-        else float(taste.route_weights.get(row_route, 0.5))
-    )
+    # This component reflects the client's historical/declared route preference,
+    # while _evidence_route_score() separately represents the route requested by
+    # the current narration.
+    route_match = float(taste.route_weights.get(row_route, 0.5))
     trusted_source = (
         1.0
         if str(row.get("source_registry_key") or "") in taste.trusted_sources
@@ -65,13 +83,28 @@ def _proposal_row(
     result["needs_tracking"] = assessment.needs_tracking
     result["crop_usable"] = assessment.usable
     result["crop_reason"] = assessment.reason
-    taste_score, taste_components = _taste_score(result, taste, visual_route)
+    result["evidence_route_score"] = round(_evidence_route_score(result, visual_route), 4)
+    taste_score, taste_components = _taste_score(result, taste)
     result["taste_score"] = taste_score
     result["taste_components"] = taste_components
-    result["final_score"] = round(
-        0.72 * semantic_score + 0.18 * assessment.score + 0.10 * taste_score,
-        4,
-    )
+
+    if taste is None and visual_route is None:
+        # Preserve legacy ranking exactly when the Taste Engine is not active.
+        result["final_score"] = round(
+            0.8 * semantic_score + 0.2 * assessment.score,
+            4,
+        )
+    else:
+        # Evidence correctness precedes geometric convenience and Taste. Qwen
+        # remains the largest score component; the hard semantic-gap guard below
+        # prevents this policy layer from rescuing a clearly irrelevant asset.
+        result["final_score"] = round(
+            0.65 * semantic_score
+            + 0.15 * result["evidence_route_score"]
+            + 0.10 * assessment.score
+            + 0.10 * taste_score,
+            4,
+        )
     return result
 
 
@@ -95,7 +128,7 @@ def _distinct(candidate: dict[str, Any], selected: list[dict[str, Any]]) -> bool
 
 
 def _apply_relevance_gap_guard(prepared: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Keep Taste/crop as tie-breakers, never as a large relevance override."""
+    """Keep policy/crop/Taste as close-call factors, not relevance overrides."""
 
     if len(prepared) < 2:
         return prepared
@@ -118,12 +151,11 @@ def select_proposals(
     taste: TasteContext | None = None,
     visual_route: str | None = None,
 ) -> dict[str, Any]:
-    """Return A/B/(C) review proposals with crop- and Taste-aware scores.
+    """Return A/B/(C) proposals with explicit score components.
 
-    Semantic relevance remains dominant. Taste can reorder close candidates,
-    but a >20-point semantic gap restores the strongest relevant candidate to A.
-    Proposal B/C must be meaningfully distinct by source identity and preview
-    content hash when that evidence is available.
+    Semantic relevance stays dominant. The requested evidence route can decide
+    close calls ahead of crop convenience, Taste can refine close calls, and a
+    >20-point semantic gap always restores the strongest relevant candidate to A.
     """
 
     if minimum < 1:
