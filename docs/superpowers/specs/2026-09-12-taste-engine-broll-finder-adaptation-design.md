@@ -12,14 +12,16 @@ This design explicitly adapts ideas and, where useful, MIT-licensed implementati
 
 The Taste Engine does **not** replace RAMBLA Director, Qwen retrieval/reranking, online sourcing, CoverageSlot, SceneLocator, partial acquisition, or Resolve Apply. It sits across them as a policy/profile layer.
 
-## 2. Core principle: revealed taste outranks stated taste
+This design extends the approved Evidence Sourcing V2 direction. Where older `PROJECT_BRIEF.md` wording conflicts with V2 or this design (for example local-assets-first sourcing or portrait-only assumptions), the newer approved V2 + Taste Engine design is authoritative.
+
+## 2. Core principle: revealed taste is the primary signal; explicit guardrails override it
 
 RAMBLA should model two types of preference separately:
 
-1. **Revealed taste** — measured from videos the client actually published or explicitly marks as exemplars.
-2. **Declared taste / guardrails** — preferences and bans the user explicitly states.
+1. **Revealed taste** — measured from videos the client actually published or explicitly marks as exemplars. This is the strongest default signal for style and pacing.
+2. **Declared taste / guardrails** — preferences and bans the user explicitly states. These override measured history whenever they conflict.
 
-Declared guardrails always win when they conflict with historical behavior. Example: if past videos contain memes but the user says “no memes”, the route is disabled immediately.
+Example: if past videos contain memes but the user says “no memes”, the route is disabled immediately even if the fingerprint says memes were historically common.
 
 Taste is client-scoped. No profile data may leak across clients.
 
@@ -143,13 +145,15 @@ Taste affects:
 - preferred still/video behavior;
 - whether a candidate should be auto-selected or require user review.
 
-Taste must **not** make a semantically wrong clip win. Ranking order is:
+Taste must **not** make a semantically wrong clip win. Ranking priority is:
 
 1. factual/evidence correctness and relevance;
 2. rights/provenance acceptability;
 3. crop/technical usability;
 4. taste compatibility;
 5. diversity/novelty.
+
+A declared hard guardrail is applied before ranking and can remove a route/candidate entirely.
 
 ## 9. Trusted Source Registry
 
