@@ -1,16 +1,18 @@
-"""End-to-end online sourcing dry run with zero Resolve mutation."""
+"""End-to-end evidence sourcing dry run with zero Resolve mutation."""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import inspect
 import json
 import os
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
+from .acquisition import AcquisitionRequest
 from .asset_cache import AssetCache
 from .coverage import plan_coverage_slots
 from .director_engine import FasterWhisperArtifact, build_edit_plan
@@ -18,6 +20,10 @@ from .director_preview import render_report
 from .online_assets import PexelsSource
 from .online_sourcing import OnlineSourcingEngine
 from .qwen_stack import LocalQwenEmbedder, QwenConfig, QwenMultimodalRanker
+
+
+class AcquisitionPort(Protocol):
+    def acquire(self, request: AcquisitionRequest, output_path: Path) -> Any: ...
 
 
 def _write_json(path: Path, value: Any) -> None:
@@ -49,7 +55,7 @@ async def _source_outline(
                 client_id=client_id,
                 queries=list(slot.queries)[: engine.max_queries],
                 min_duration=max(1.0, min(duration, 3.0)),
-                max_duration=90.0,
+                max_duration=90.0 if duration < 90 else duration * 4,
                 orientation=None,
             )
         )
@@ -101,6 +107,102 @@ async def _source_outline(
     return candidate_map, annotated_results, coverage_by_beat
 
 
+async def _acquire_bounded_proposals(
+    sourcing_results: list[dict[str, Any]],
+    engine: OnlineSourcingEngine,
+    acquisition_adapter: AcquisitionPort,
+    *,
+    acquire_alternates: bool,
+) -> int:
+    """Materialize only selected localized long-video windows.
+
+    Proposal A is acquired by default. Proposal B is fetched only when the
+    caller explicitly requests alternate media, keeping bandwidth proportional
+    to editorial need rather than source duration.
+    """
+
+    cache = engine.cache
+    if not hasattr(cache, "materialize_acquired_window"):
+        raise ValueError("sourcing cache does not support bounded evidence windows")
+    keys = ("proposal_A", "proposal_B") if acquire_alternates else ("proposal_A",)
+    acquired = 0
+
+    for result in sourcing_results:
+        proposals = result.get("proposals") or {}
+        for key in keys:
+            proposal = proposals.get(key)
+            if not isinstance(proposal, dict):
+                continue
+            if proposal.get("acquisition_mode") != "bounded_window":
+                continue
+            start = proposal.get("source_start_seconds")
+            end = proposal.get("source_end_seconds")
+            source_page = proposal.get("source_page")
+            if not isinstance(start, (int, float)) or not isinstance(end, (int, float)) or not source_page:
+                continue
+            request = AcquisitionRequest(
+                source_url=str(source_page),
+                start_seconds=float(start),
+                end_seconds=float(end),
+                margin_seconds=2.0,
+                mode="video_window",
+            )
+
+            async def acquire_to(path: Path, req: AcquisitionRequest = request) -> None:
+                produced = acquisition_adapter.acquire(req, path)
+                if inspect.isawaitable(produced):
+                    await produced
+
+            cached = await cache.materialize_acquired_window(  # type: ignore[attr-defined]
+                provider=str(proposal.get("source") or "online"),
+                provider_id=str(proposal.get("provider_id") or proposal.get("id") or "unknown"),
+                source_page=str(source_page),
+                source_start_seconds=float(start),
+                source_end_seconds=float(end),
+                rights_state=str(proposal.get("rights_state") or "review_required"),
+                acquire=acquire_to,
+                kind="video_window",
+            )
+            proposal.update(
+                {
+                    "acquired_path": str(cached.path),
+                    "path": str(cached.path),
+                    "kind": "video",
+                    "content_sha256": cached.sha256,
+                    "selected_full_download": True,
+                    "acquisition_cache_hit": bool(cached.cache_hit),
+                }
+            )
+            acquired += 1
+    return acquired
+
+
+def _count_scene_localized(sourcing_results: list[dict[str, Any]]) -> int:
+    return sum(
+        int(
+            isinstance(result.get("proposals", {}).get(key), dict)
+            and isinstance(result["proposals"][key].get("source_start_seconds"), (int, float))
+            and isinstance(result["proposals"][key].get("source_end_seconds"), (int, float))
+        )
+        for result in sourcing_results
+        for key in ("proposal_A", "proposal_B", "proposal_C")
+    )
+
+
+def _downloaded_bytes(sourcing_results: list[dict[str, Any]]) -> int:
+    total = 0
+    for result in sourcing_results:
+        for key in ("proposal_A", "proposal_B", "proposal_C"):
+            proposal = result.get("proposals", {}).get(key)
+            if not isinstance(proposal, dict) or not proposal.get("acquired_path"):
+                continue
+            try:
+                total += Path(str(proposal["acquired_path"])).stat().st_size
+            except OSError:
+                continue
+    return total
+
+
 def run_online_from_artifacts(
     transcript_path: Path,
     outline_path: Path,
@@ -109,6 +211,8 @@ def run_online_from_artifacts(
     client_id: str,
     source_frames: int,
     sourcing_engine: OnlineSourcingEngine,
+    acquisition_adapter: AcquisitionPort | None = None,
+    acquire_alternates: bool = False,
 ) -> dict[str, Any]:
     if not client_id:
         raise ValueError("client_id is required")
@@ -128,6 +232,20 @@ def run_online_from_artifacts(
         _source_outline(outline, sourcing_engine, client_id=client_id)
     )
     sourcing_seconds = time.perf_counter() - sourcing_started
+
+    acquisition_seconds = 0.0
+    acquired_windows = 0
+    if acquisition_adapter is not None:
+        acquisition_started = time.perf_counter()
+        acquired_windows = asyncio.run(
+            _acquire_bounded_proposals(
+                sourcing_results,
+                sourcing_engine,
+                acquisition_adapter,
+                acquire_alternates=acquire_alternates,
+            )
+        )
+        acquisition_seconds = time.perf_counter() - acquisition_started
 
     plan_started = time.perf_counter()
     plan = build_edit_plan(
@@ -167,11 +285,15 @@ def run_online_from_artifacts(
         "coverage_slot_count": len(sourcing_results),
         "candidate_count": sum(len(row["candidates"]) for row in sourcing_results),
         "proposal_count": proposal_count,
+        "scene_localized_proposals": _count_scene_localized(sourcing_results),
+        "acquired_windows": acquired_windows,
+        "downloaded_bytes": _downloaded_bytes(sourcing_results),
         "preview_cache_hits": sum(int(row.get("preview_cache_hits", 0)) for row in sourcing_results),
         "selected_cache_hits": sum(int(bool(row.get("selected_cache_hit", False))) for row in sourcing_results),
         "downloaded_selected": downloaded_selected,
         "provider_errors": sum(len(row.get("errors", [])) for row in sourcing_results),
         "sourcing_seconds": round(sourcing_seconds, 4),
+        "acquisition_seconds": round(acquisition_seconds, 4),
         "plan_seconds": round(plan_seconds, 4),
         "total_seconds": round(time.perf_counter() - started, 4),
         "resolve_calls": 0,
