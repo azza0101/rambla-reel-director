@@ -6,7 +6,7 @@ import pytest
 from backend.app.qwen_stack import (
     QwenConfig, QwenDirector, QwenMultimodalRanker, QwenVisualJudge,
     LocalQwenASR, LocalQwenDirectorGenerator, LocalQwenEmbedder, LocalQwenReranker, QwenMetadataReranker,
-    ModelUnavailable, capabilities, offline_model_environment,
+    ModelUnavailable, RETRIEVAL_INSTRUCTION, capabilities, offline_model_environment,
 )
 
 
@@ -159,3 +159,49 @@ def test_model_cache_environment_is_runtime_local_and_restored(tmp_path):
         assert os.environ["HF_HUB_OFFLINE"] == "1"
         assert os.environ["TRANSFORMERS_OFFLINE"] == "1"
     assert {key: os.environ.get(key) for key in before} == before
+
+
+def _complete_embedding_config(tmp_path, *, with_code_root=False):
+    model = tmp_path / "Qwen3-VL-Embedding-2B"
+    model.mkdir()
+    (model / "config.json").write_text("{}", encoding="utf-8")
+    (model / "model.safetensors").write_bytes(b"weights")
+    code_root = None
+    if with_code_root:
+        code_root = tmp_path / "qwen-code"
+        module = code_root / "src" / "models"
+        module.mkdir(parents=True)
+        (module / "qwen3_vl_embedding.py").write_text("class Qwen3VLEmbedder: pass\n", encoding="utf-8")
+    return QwenConfig(model_root=tmp_path, embedding_code_root=code_root)
+
+
+def test_embedding_capability_accepts_explicit_official_source_root(tmp_path):
+    config = _complete_embedding_config(tmp_path, with_code_root=True)
+    state = capabilities(config)["embedding"]
+    assert state["weights_present"] is True
+    assert state["package_present"] is True
+    assert state["available"] is True
+
+
+def test_local_qwen_embedder_uses_official_process_payload(tmp_path):
+    config = _complete_embedding_config(tmp_path)
+
+    class FakeOfficialEmbedder:
+        def __init__(self):
+            self.seen = None
+
+        def process(self, payload):
+            self.seen = payload
+            return [[1.0, 0.0], [0.0, 1.0]]
+
+    fake = FakeOfficialEmbedder()
+    adapter = LocalQwenEmbedder(config, factory=lambda path: fake)
+    image_path = tmp_path / "frame.jpg"
+    vectors = adapter(["semantic query", str(image_path)])
+
+    assert fake.seen == [
+        {"text": "semantic query", "instruction": RETRIEVAL_INSTRUCTION},
+        {"image": str(image_path)},
+    ]
+    assert vectors == [[1.0, 0.0], [0.0, 1.0]]
+    assert adapter.completed_calls == 1
