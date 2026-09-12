@@ -7,10 +7,12 @@ import asyncio
 import json
 import os
 import time
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from .asset_cache import AssetCache
+from .coverage import plan_coverage_slots
 from .director_engine import FasterWhisperArtifact, build_edit_plan
 from .director_preview import render_report
 from .online_assets import PexelsSource
@@ -22,27 +24,92 @@ def _write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
 
 
-async def _source_outline(outline: dict[str, Any], engine: OnlineSourcingEngine, *, client_id: str):
-    tasks, beat_ids = [], []
-    for beat in outline["beats"]:
-        queries = [str(v).strip() for v in beat.get("broll_queries", []) if str(v).strip()]
-        if not queries:
-            continue
-        duration = max(0.1, float(beat["end_seconds"]) - float(beat["start_seconds"]))
-        beat_ids.append(beat["id"])
-        tasks.append(engine.source_beat(
-            beat_id=beat["id"], client_id=client_id, queries=queries[:engine.max_queries],
-            min_duration=max(1.0, min(duration * 0.5, 3.0)),
-            max_duration=max(15.0, min(duration * 4.0, 90.0)), orientation="portrait"))
-    if not tasks:
-        return {}, []
+async def _source_outline(
+    outline: dict[str, Any],
+    engine: OnlineSourcingEngine,
+    *,
+    client_id: str,
+) -> tuple[
+    dict[str, list[dict[str, Any]]],
+    list[dict[str, Any]],
+    dict[str, list[dict[str, Any]]],
+]:
+    """Source each short coverage slot, preserving beat-level compatibility."""
+
+    slots = plan_coverage_slots(outline["beats"])
+    if not slots:
+        return {}, [], {}
+
+    tasks = []
+    for slot in slots:
+        duration = slot.duration_seconds
+        tasks.append(
+            engine.source_beat(
+                beat_id=slot.id,
+                client_id=client_id,
+                queries=list(slot.queries)[: engine.max_queries],
+                min_duration=max(1.0, min(duration, 3.0)),
+                max_duration=90.0,
+                orientation=None,
+            )
+        )
     results = await asyncio.gather(*tasks)
-    return {beat_id: result["candidates"] for beat_id, result in zip(beat_ids, results)}, results
+
+    coverage_by_beat: dict[str, list[dict[str, Any]]] = {}
+    candidate_by_beat_and_id: dict[str, dict[str, dict[str, Any]]] = {}
+    annotated_results: list[dict[str, Any]] = []
+
+    for slot, result in zip(slots, results):
+        proposals = result.get("proposals") or {}
+        row = asdict(slot)
+        row.update(
+            {
+                "proposal_A": proposals.get("proposal_A"),
+                "proposal_B": proposals.get("proposal_B"),
+                "proposal_C": proposals.get("proposal_C"),
+                "selected_proposal_id": (
+                    proposals.get("proposal_A", {}).get("id")
+                    if isinstance(proposals.get("proposal_A"), dict)
+                    else None
+                ),
+                "review_state": proposals.get("review_state", "NO_VISUAL_FOUND"),
+                "sourcing_errors": result.get("errors", []),
+            }
+        )
+        coverage_by_beat.setdefault(slot.beat_id, []).append(row)
+
+        bucket = candidate_by_beat_and_id.setdefault(slot.beat_id, {})
+        for candidate in result.get("candidates", []):
+            candidate_id = str(candidate.get("id") or "")
+            if not candidate_id:
+                continue
+            current = bucket.get(candidate_id)
+            if current is None or float(candidate.get("score", 0.0)) > float(current.get("score", 0.0)):
+                bucket[candidate_id] = candidate
+
+        annotated = dict(result)
+        annotated["coverage_slot_id"] = slot.id
+        annotated["parent_beat_id"] = slot.beat_id
+        annotated["coverage_start_seconds"] = slot.start_seconds
+        annotated["coverage_end_seconds"] = slot.end_seconds
+        annotated_results.append(annotated)
+
+    candidate_map = {
+        beat_id: sorted(rows.values(), key=lambda item: (-float(item.get("score", 0.0)), str(item.get("id", ""))))
+        for beat_id, rows in candidate_by_beat_and_id.items()
+    }
+    return candidate_map, annotated_results, coverage_by_beat
 
 
-def run_online_from_artifacts(transcript_path: Path, outline_path: Path, output_dir: Path, *,
-                              client_id: str, source_frames: int,
-                              sourcing_engine: OnlineSourcingEngine) -> dict[str, Any]:
+def run_online_from_artifacts(
+    transcript_path: Path,
+    outline_path: Path,
+    output_dir: Path,
+    *,
+    client_id: str,
+    source_frames: int,
+    sourcing_engine: OnlineSourcingEngine,
+) -> dict[str, Any]:
     if not client_id:
         raise ValueError("client_id is required")
     if source_frames <= 0:
@@ -51,14 +118,27 @@ def run_online_from_artifacts(transcript_path: Path, outline_path: Path, output_
     transcript = FasterWhisperArtifact(transcript_path).load()
     outline = json.loads(outline_path.read_text(encoding="utf-8"))
     normalized = dict(transcript)
-    normalized["segments"] = [dict(s, text=" ".join(str(s["text"]).split())) for s in transcript["segments"]]
+    normalized["segments"] = [
+        dict(segment, text=" ".join(str(segment["text"]).split()))
+        for segment in transcript["segments"]
+    ]
 
     sourcing_started = time.perf_counter()
-    candidate_map, sourcing_results = asyncio.run(_source_outline(outline, sourcing_engine, client_id=client_id))
+    candidate_map, sourcing_results, coverage_map = asyncio.run(
+        _source_outline(outline, sourcing_engine, client_id=client_id)
+    )
     sourcing_seconds = time.perf_counter() - sourcing_started
+
     plan_started = time.perf_counter()
-    plan = build_edit_plan(normalized, outline, [], client_id=client_id, source_frames=source_frames,
-                           candidate_assets_by_beat=candidate_map)
+    plan = build_edit_plan(
+        normalized,
+        outline,
+        [],
+        client_id=client_id,
+        source_frames=source_frames,
+        candidate_assets_by_beat=candidate_map,
+        coverage_slots_by_beat=coverage_map,
+    )
     plan_seconds = time.perf_counter() - plan_started
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -68,13 +148,28 @@ def run_online_from_artifacts(transcript_path: Path, outline_path: Path, output_
     _write_json(output_dir / "online-candidates.json", sourcing_results)
     _write_json(output_dir / "edit-plan.json", plan)
     (output_dir / "review.html").write_text(render_report(plan), encoding="utf-8")
+
+    proposal_count = sum(
+        int(isinstance(result.get("proposals", {}).get(key), dict))
+        for result in sourcing_results
+        for key in ("proposal_A", "proposal_B", "proposal_C")
+    )
+    downloaded_selected = sum(
+        int(
+            isinstance(result.get("proposals", {}).get("proposal_A"), dict)
+            and bool(result["proposals"]["proposal_A"].get("selected_full_download"))
+        )
+        for result in sourcing_results
+    )
     benchmark = {
-        "schema_version": "online-sourcing-benchmark-1",
-        "sourced_beats": len(sourcing_results),
+        "schema_version": "online-sourcing-benchmark-2",
+        "sourced_beats": len({row.get("parent_beat_id") for row in sourcing_results}),
+        "coverage_slot_count": len(sourcing_results),
         "candidate_count": sum(len(row["candidates"]) for row in sourcing_results),
+        "proposal_count": proposal_count,
         "preview_cache_hits": sum(int(row.get("preview_cache_hits", 0)) for row in sourcing_results),
         "selected_cache_hits": sum(int(bool(row.get("selected_cache_hit", False))) for row in sourcing_results),
-        "downloaded_selected": sum(int(bool(row.get("candidates") and row["candidates"][0].get("selected_full_download"))) for row in sourcing_results),
+        "downloaded_selected": downloaded_selected,
         "provider_errors": sum(len(row.get("errors", [])) for row in sourcing_results),
         "sourcing_seconds": round(sourcing_seconds, 4),
         "plan_seconds": round(plan_seconds, 4),
@@ -85,20 +180,32 @@ def run_online_from_artifacts(transcript_path: Path, outline_path: Path, output_
     return plan
 
 
-def _real_engine(*, client_id: str, pexels_api_key: str, model_root: Path,
-                 embedding_code_root: Path | None, cache_root: Path,
-                 max_candidates: int) -> OnlineSourcingEngine:
+def _real_engine(
+    *,
+    client_id: str,
+    pexels_api_key: str,
+    model_root: Path,
+    embedding_code_root: Path | None,
+    cache_root: Path,
+    max_candidates: int,
+) -> OnlineSourcingEngine:
     config = QwenConfig(model_root=model_root, embedding_code_root=embedding_code_root)
     embedder = LocalQwenEmbedder(config)
     ranker = QwenMultimodalRanker(client_id=client_id, embed=embedder, rerank=None)
     return OnlineSourcingEngine(
-        sources=[PexelsSource(pexels_api_key)], cache=AssetCache(cache_root), ranker=ranker,
-        max_results_per_query=max_candidates, max_preview_candidates=max_candidates,
-        download_selected=True)
+        sources=[PexelsSource(pexels_api_key)],
+        cache=AssetCache(cache_root),
+        ranker=ranker,
+        max_results_per_query=max_candidates,
+        max_preview_candidates=max_candidates,
+        download_selected=True,
+    )
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Search Pexels, Qwen-rank previews and write a Resolve-independent RAMBLA review plan")
+    parser = argparse.ArgumentParser(
+        description="Search online evidence per short coverage slot, Qwen-rank previews and write a Resolve-independent review plan"
+    )
     parser.add_argument("--transcript", type=Path, required=True)
     parser.add_argument("--outline", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -114,19 +221,39 @@ def main() -> None:
     key = os.environ.get(args.pexels_key_env)
     if not key:
         raise SystemExit(f"credential required: set {args.pexels_key_env}")
-    engine = _real_engine(client_id=args.client_id, pexels_api_key=key,
-                          model_root=args.model_root, embedding_code_root=args.embedding_code_root,
-                          cache_root=args.output_dir / "asset-cache", max_candidates=args.max_candidates)
-    plan = run_online_from_artifacts(args.transcript, args.outline, args.output_dir,
-                                     client_id=args.client_id, source_frames=args.source_frames,
-                                     sourcing_engine=engine)
-    benchmark = json.loads((args.output_dir / "online-sourcing-benchmark.json").read_text(encoding="utf-8"))
-    print(json.dumps({"plan_hash": plan["content_hash"], "beats": len(plan["beats"]),
-                      "sourced_beats": benchmark["sourced_beats"],
-                      "candidate_count": benchmark["candidate_count"],
-                      "downloaded_selected": benchmark["downloaded_selected"],
-                      "total_seconds": benchmark["total_seconds"],
-                      "review": str(args.output_dir / "review.html")}))
+    engine = _real_engine(
+        client_id=args.client_id,
+        pexels_api_key=key,
+        model_root=args.model_root,
+        embedding_code_root=args.embedding_code_root,
+        cache_root=args.output_dir / "asset-cache",
+        max_candidates=args.max_candidates,
+    )
+    plan = run_online_from_artifacts(
+        args.transcript,
+        args.outline,
+        args.output_dir,
+        client_id=args.client_id,
+        source_frames=args.source_frames,
+        sourcing_engine=engine,
+    )
+    benchmark = json.loads(
+        (args.output_dir / "online-sourcing-benchmark.json").read_text(encoding="utf-8")
+    )
+    print(
+        json.dumps(
+            {
+                "plan_hash": plan["content_hash"],
+                "beats": len(plan["beats"]),
+                "coverage_slots": benchmark["coverage_slot_count"],
+                "proposal_count": benchmark["proposal_count"],
+                "candidate_count": benchmark["candidate_count"],
+                "downloaded_selected": benchmark["downloaded_selected"],
+                "total_seconds": benchmark["total_seconds"],
+                "review": str(args.output_dir / "review.html"),
+            }
+        )
+    )
 
 
 if __name__ == "__main__":
