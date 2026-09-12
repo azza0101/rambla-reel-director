@@ -10,7 +10,15 @@ from backend.app.online_sourcing import OnlineSourcingEngine
 from backend.app.qwen_stack import QwenMultimodalRanker
 
 
-def _candidate(provider_id: str, *, rank: int, query: str) -> RemoteCandidate:
+def _candidate(
+    provider_id: str,
+    *,
+    rank: int,
+    query: str,
+    width: int = 1080,
+    height: int = 1920,
+) -> RemoteCandidate:
+    orientation = "square" if width == height else "portrait" if height > width else "landscape"
     return RemoteCandidate(
         provider="pexels",
         provider_id=provider_id,
@@ -21,13 +29,13 @@ def _candidate(provider_id: str, *, rank: int, query: str) -> RemoteCandidate:
         title=f"Pexels video {provider_id}",
         description=f"candidate {provider_id}",
         duration=8.0,
-        width=1080,
-        height=1920,
-        orientation="portrait",
+        width=width,
+        height=height,
+        orientation=orientation,
         preview_url=f"https://images.pexels.com/{provider_id}.jpg",
         selected_rendition_url=f"https://cdn.pexels.com/{provider_id}.mp4",
-        rendition_width=1080,
-        rendition_height=1920,
+        rendition_width=width,
+        rendition_height=height,
         rights_state="provider_stock_terms",
         provider_rank=rank,
     )
@@ -36,11 +44,16 @@ def _candidate(provider_id: str, *, rank: int, query: str) -> RemoteCandidate:
 class FakeSource:
     def __init__(self):
         self.calls = []
+        self.orientations = []
 
     async def search(self, query, *, orientation, min_duration, max_duration, limit):
         self.calls.append(query)
+        self.orientations.append(orientation)
         if query == "query one":
-            return [_candidate("1", rank=0, query=query), _candidate("2", rank=1, query=query)]
+            return [
+                _candidate("1", rank=0, query=query, width=1920, height=1080),
+                _candidate("2", rank=1, query=query),
+            ]
         return [_candidate("2", rank=0, query=query), _candidate("3", rank=1, query=query)]
 
 
@@ -98,6 +111,7 @@ async def test_source_beat_dedupes_previews_and_qwen_ranks_local_paths(tmp_path)
     )
 
     assert source.calls == ["query one", "query two"]
+    assert source.orientations == [None, None]
     assert sorted(cache.calls) == ["1", "2", "3"]
     assert len(seen_embed_inputs) == 1
     assert seen_embed_inputs[0][0] == "query one"
@@ -107,6 +121,12 @@ async def test_source_beat_dedupes_previews_and_qwen_ranks_local_paths(tmp_path)
     assert result["candidates"][0]["source_page"].startswith("https://www.pexels.com/video/")
     assert result["candidates"][0]["embedding_score"] == 0.9939
     assert result["candidates"][0]["selected_full_download"] is False
+    assert result["candidates"][1]["orientation"] == "landscape"
+    assert result["proposals"]["proposal_A"] is not None
+    assert result["proposals"]["proposal_B"] is not None
+    assert result["proposals"]["proposal_A"]["id"] != result["proposals"]["proposal_B"]["id"]
+    assert "crop_score" in result["proposals"]["proposal_A"]
+    assert "qwen_score" in result["proposals"]["proposal_A"]
     assert result["errors"] == []
 
 
@@ -127,6 +147,7 @@ async def test_provider_failure_degrades_to_empty_candidates(tmp_path):
     )
 
     assert result["candidates"] == []
+    assert result["proposals"]["review_state"] == "NO_VISUAL_FOUND"
     assert result["errors"] == [{"provider": "pexels", "code": "timeout"}]
 
 
