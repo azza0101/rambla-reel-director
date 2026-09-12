@@ -389,8 +389,29 @@ def validate_edit_plan(plan: dict[str, Any]) -> None:
             raise ValueError("coverage slot references unknown beat")
         if start < beat_range[0] or end > beat_range[1]:
             raise ValueError("coverage slot falls outside owning beat")
-        if int(slot.get("minimum_proposals", 0)) < 1:
+        minimum_proposals = int(slot.get("minimum_proposals", 0))
+        if minimum_proposals < 1:
             raise ValueError("coverage slot requires at least one proposal")
+
+        proposal_ids: list[str] = []
+        for key in ("proposal_A", "proposal_B", "proposal_C"):
+            proposal = slot.get(key)
+            if proposal is None:
+                continue
+            if not isinstance(proposal, dict) or not str(proposal.get("id") or ""):
+                raise ValueError("coverage slot proposal is invalid")
+            if proposal.get("client_id") not in {None, plan["client_id"]}:
+                raise ValueError("coverage slot proposal violates client isolation")
+            proposal_id = str(proposal["id"])
+            if proposal_id in proposal_ids:
+                raise ValueError("coverage slot proposals must be distinct")
+            proposal_ids.append(proposal_id)
+
+        selected_proposal_id = slot.get("selected_proposal_id")
+        if selected_proposal_id is not None and str(selected_proposal_id) not in proposal_ids:
+            raise ValueError("selected proposal is not present in coverage slot proposals")
+        if slot.get("review_state") == "READY" and len(proposal_ids) < minimum_proposals:
+            raise ValueError("coverage slot READY state lacks required proposals")
 
     if not plan["captions"]:
         raise ValueError("captions missing")
