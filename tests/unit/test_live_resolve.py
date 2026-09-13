@@ -6,13 +6,15 @@ from backend.app.main import create_app
 from backend.app.resolve_live import allocate_generated_name, is_source_timeline
 
 
-def test_live_page_exposes_only_the_three_fast_track_actions() -> None:
+def test_default_page_is_safe_panel_not_legacy_live_fast_track() -> None:
     response = TestClient(create_app()).get("/")
 
     assert response.status_code == 200
-    assert "Probe Resolve" in response.text
-    assert "Dry Run PUNCH_IN" in response.text
-    assert "Apply to Duplicate" in response.text
+    assert "RAMBLA Reel Director" in response.text
+    assert "APPLY FROZEN" in response.text
+    assert "Probe Resolve" not in response.text
+    assert "Dry Run PUNCH_IN" not in response.text
+    assert "Apply to Duplicate" not in response.text
 
 
 def test_generated_name_uses_the_first_collision_safe_suffix() -> None:

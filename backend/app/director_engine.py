@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from .coverage import CoverageSlot, plan_coverage_slots
+from .taste_profile import ROUTES, TasteContext
+from .visual_routing import VisualRouteDecision
 
 
 ACTIONS = {"TALKING_HEAD", "BROLL", "EDITORIAL_INSERT", "PUNCH_IN", "STICKER", "CAPTION_EMPHASIS"}
@@ -232,6 +234,37 @@ def _coverage_rows(
     return sorted(output, key=lambda row: (row["start_frame"], row["end_frame"], str(row["id"])))
 
 
+def _route_payload(value: VisualRouteDecision | dict[str, Any]) -> dict[str, Any]:
+    return asdict(value) if isinstance(value, VisualRouteDecision) else dict(value)
+
+
+def _decorate_coverage_with_taste(
+    coverage_slots: list[dict[str, Any]],
+    *,
+    taste_context: TasteContext | None,
+    route_by_slot: dict[str, VisualRouteDecision | dict[str, Any]],
+) -> None:
+    for slot in coverage_slots:
+        route = route_by_slot.get(str(slot["id"]))
+        if route is not None:
+            payload = _route_payload(route)
+            route_name = str(payload.get("route") or "").strip()
+            if route_name not in ROUTES:
+                raise ValueError("coverage slot visual route is unsupported")
+            confidence = float(payload.get("confidence", 0.0))
+            if not 0.0 <= confidence <= 1.0:
+                raise ValueError("coverage slot route confidence is invalid")
+            slot["visual_route"] = route_name
+            slot["route_reason"] = str(payload.get("reason") or "")
+            slot["route_confidence"] = confidence
+            if payload.get("search_hint"):
+                slot["route_search_hint"] = str(payload["search_hint"])
+        if taste_context is not None:
+            slot["taste_profile_version"] = taste_context.profile_version
+            slot["taste_profile_hash"] = taste_context.profile_hash
+            slot["applicable_guardrails"] = dict(taste_context.guardrails)
+
+
 def build_edit_plan(
     transcript: dict[str, Any],
     beat_outline: dict[str, Any],
@@ -244,18 +277,28 @@ def build_edit_plan(
     candidate_assets_by_beat: dict[str, list[dict[str, Any]]] | None = None,
     coverage_slots_by_beat: dict[str, list[dict[str, Any]]] | None = None,
     confidence_review_threshold: float = 0.7,
+    taste_context: TasteContext | None = None,
+    route_by_slot: dict[str, VisualRouteDecision | dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     fps = int(transcript["timeline_fps"])
     if fps <= 0 or source_frames <= 0 or not client_id:
         raise ValueError("source timing and client identity required")
     if not 0 <= confidence_review_threshold <= 1:
         raise ValueError("invalid confidence review threshold")
+    if taste_context is not None and taste_context.client_id != client_id:
+        raise ValueError("taste context violates client isolation")
+
     director = director or RuleDirector()
     reranker = reranker or TextReranker()
     local_assets = LocalAssetProvider(assets).list_assets(client_id)
     explicit_by_beat = candidate_assets_by_beat or {}
     captions = _captions(transcript, fps, source_frames)
     coverage_slots = _coverage_rows(beat_outline, fps, source_frames, coverage_slots_by_beat)
+    _decorate_coverage_with_taste(
+        coverage_slots,
+        taste_context=taste_context,
+        route_by_slot=route_by_slot or {},
+    )
     beats = []
     used_online = False
 
@@ -343,6 +386,13 @@ def build_edit_plan(
         "coverage_slots": coverage_slots,
         "captions": captions,
     }
+    if taste_context is not None:
+        plan["taste_snapshot"] = {
+            "client_id": taste_context.client_id,
+            "profile_version": taste_context.profile_version,
+            "profile_hash": taste_context.profile_hash,
+        }
+
     validate_edit_plan(plan)
     canonical = json.dumps(plan, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     plan["content_hash"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -356,6 +406,16 @@ def validate_edit_plan(plan: dict[str, Any]) -> None:
     fps = plan["source"]["fps"]
     if not isinstance(frames, int) or frames <= 0 or fps <= 0:
         raise ValueError("invalid source timebase")
+
+    taste_snapshot = plan.get("taste_snapshot")
+    if taste_snapshot is not None:
+        if not isinstance(taste_snapshot, dict):
+            raise ValueError("taste snapshot is invalid")
+        if taste_snapshot.get("client_id") != plan["client_id"]:
+            raise ValueError("taste snapshot violates client isolation")
+        if int(taste_snapshot.get("profile_version", 0)) < 1 or not str(taste_snapshot.get("profile_hash") or ""):
+            raise ValueError("taste snapshot is invalid")
+
     cursor = 0
     beat_ranges: dict[str, tuple[int, int]] = {}
     for beat in plan["beats"]:
@@ -392,6 +452,23 @@ def validate_edit_plan(plan: dict[str, Any]) -> None:
         minimum_proposals = int(slot.get("minimum_proposals", 0))
         if minimum_proposals < 1:
             raise ValueError("coverage slot requires at least one proposal")
+
+        route = slot.get("visual_route")
+        if route is not None and route not in ROUTES:
+            raise ValueError("coverage slot visual route is unsupported")
+        if "route_confidence" in slot and not 0.0 <= float(slot["route_confidence"]) <= 1.0:
+            raise ValueError("coverage slot route confidence is invalid")
+
+        slot_taste_hash = slot.get("taste_profile_hash")
+        slot_taste_version = slot.get("taste_profile_version")
+        if slot_taste_hash is not None or slot_taste_version is not None:
+            if taste_snapshot is None:
+                raise ValueError("coverage slot taste snapshot has no top-level snapshot")
+            if (
+                str(slot_taste_hash) != str(taste_snapshot["profile_hash"])
+                or int(slot_taste_version or 0) != int(taste_snapshot["profile_version"])
+            ):
+                raise ValueError("coverage slot taste snapshot does not match plan taste snapshot")
 
         proposal_ids: list[str] = []
         for key in ("proposal_A", "proposal_B", "proposal_C"):
