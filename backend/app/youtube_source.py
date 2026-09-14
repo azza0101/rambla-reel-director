@@ -194,6 +194,11 @@ class YouTubeSource:
 class YouTubeOnlineSourceAdapter:
     """Expose YouTube discovery through the generic preview-ranking source port."""
 
+    supported_source_classes = (
+        "EXACT_RECEIPT", "EXACT_ENTITY_EVENT", "SOURCE_NATIVE_SOCIAL",
+        "ARCHIVAL_REPERTORY", "PRODUCT_UI_DEMO", "CULTURAL_REFERENCE",
+        "CLOSE_SEMANTIC_EDITORIAL",
+    )
     def __init__(self, source: YouTubeSource):
         self.source = source
 

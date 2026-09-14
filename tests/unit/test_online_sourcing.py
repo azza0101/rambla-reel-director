@@ -168,3 +168,139 @@ async def test_query_count_is_bounded(tmp_path):
             min_duration=1,
             max_duration=10,
         )
+
+
+class EditorialSource:
+    def __init__(self, source_class: str, ids: list[str], calls: list[str]):
+        self.supported_source_classes = (source_class,)
+        self.source_class = source_class
+        self.ids = ids
+        self.calls = calls
+
+    async def search(self, query, *, orientation, min_duration, max_duration, limit):
+        from dataclasses import replace
+
+        self.calls.append(self.source_class)
+        return [
+            replace(
+                _candidate(item, rank=index, query=query),
+                provider="web" if self.source_class != "GENERIC_STOCK" else "pexels",
+                source_class=self.source_class,
+            )
+            for index, item in enumerate(self.ids[:limit])
+        ]
+
+
+def _editorial_context():
+    from backend.app.evidence_intent import plan_evidence_intent
+    from backend.app.source_strategy import plan_source_strategy
+    from backend.app.taste_profile import TasteProfile, build_taste_context
+
+    taste = build_taste_context(TasteProfile(client_id="rambla", version=1, approved=True))
+    intent = plan_evidence_intent({"transcript": 'Ha scritto "non venderemo i dati"', "intent": "show claim"}, "official post", "RECEIPT", taste)
+    return taste, intent, plan_source_strategy(intent, "RECEIPT", taste)
+
+
+def _editorial_ranker():
+    return QwenMultimodalRanker(client_id="rambla", embed=lambda items: [[1.0, 0.0] for _ in items], rerank=None)
+
+
+@pytest.mark.asyncio
+async def test_editorial_sourcing_stops_before_stock_when_exact_ab_passes(tmp_path):
+    calls = []
+    taste, intent, strategy = _editorial_context()
+    engine = OnlineSourcingEngine(
+        sources=[
+            EditorialSource("EXACT_RECEIPT", ["receipt-a", "receipt-b"], calls),
+            EditorialSource("GENERIC_STOCK", ["stock"], calls),
+        ],
+        cache=FakeCache(tmp_path),
+        ranker=_editorial_ranker(),
+    )
+    result = await engine.source_beat(
+        beat_id="claim", client_id="rambla", queries=["claim"],
+        min_duration=2, max_duration=15, taste=taste, visual_route="RECEIPT",
+        evidence_intent=intent, source_strategy=strategy,
+    )
+    assert calls == ["EXACT_RECEIPT"]
+    assert result["searched_source_classes"] == ["EXACT_RECEIPT"]
+    assert result["proposals"]["proposal_A"]["source_class"] == "EXACT_RECEIPT"
+    assert result["proposals"]["proposal_B"]["id"] != result["proposals"]["proposal_A"]["id"]
+    assert result["source_strategy"]["classes"][0] == "EXACT_RECEIPT"
+
+
+@pytest.mark.asyncio
+async def test_editorial_sourcing_escalates_for_second_proposal_without_stock(tmp_path):
+    calls = []
+    taste, intent, strategy = _editorial_context()
+    engine = OnlineSourcingEngine(
+        sources=[
+            EditorialSource("EXACT_RECEIPT", ["receipt-a"], calls),
+            EditorialSource("EXACT_ENTITY_EVENT", ["event-b"], calls),
+            EditorialSource("GENERIC_STOCK", ["stock"], calls),
+        ],
+        cache=FakeCache(tmp_path),
+        ranker=_editorial_ranker(),
+    )
+    result = await engine.source_beat(
+        beat_id="claim", client_id="rambla", queries=["claim"],
+        min_duration=2, max_duration=15, taste=taste, visual_route="RECEIPT",
+        evidence_intent=intent, source_strategy=strategy,
+    )
+    assert calls == ["EXACT_RECEIPT", "EXACT_ENTITY_EVENT"]
+    assert result["proposals"]["review_state"] == "READY"
+    assert result["source_class_search_rounds"] == 2
+
+
+@pytest.mark.asyncio
+async def test_editorial_sourcing_reports_quality_floor_and_never_calls_resolve(tmp_path):
+    calls = []
+    taste, intent, strategy = _editorial_context()
+
+    class LowQualityRanker:
+        def rank(self, query, assets):
+            return [{**asset, "score": .9, "embedding_score": .9, "editorial_quality": .1} for asset in assets]
+
+    engine = OnlineSourcingEngine(
+        sources=[EditorialSource("EXACT_RECEIPT", ["bad"], calls)],
+        cache=FakeCache(tmp_path),
+        ranker=LowQualityRanker(),
+    )
+    result = await engine.source_beat(
+        beat_id="claim", client_id="rambla", queries=["claim"],
+        min_duration=2, max_duration=15, taste=taste, visual_route="RECEIPT",
+        evidence_intent=intent, source_strategy=strategy,
+    )
+    assert result["proposals"]["review_state"] == "NO_BROLL_QUALITY_FLOOR"
+    assert result["proposals"]["proposal_A"] is None
+    assert result["rejected_candidates"]
+    assert result["resolve_calls"] == 0
+
+
+@pytest.mark.asyncio
+async def test_editorial_sourcing_does_not_treat_thumbnail_as_final_window_evidence(tmp_path):
+    from dataclasses import asdict
+    from backend.app.youtube_source import YouTubeRemoteCandidate
+
+    taste, intent, strategy = _editorial_context()
+
+    class ThumbnailSource(EditorialSource):
+        async def search(self, query, *, orientation, min_duration, max_duration, limit):
+            rows = await super().search(query, orientation=orientation,
+                                        min_duration=min_duration, max_duration=max_duration,
+                                        limit=limit)
+            return [YouTubeRemoteCandidate(**asdict(row), scene_evidence=(),
+                                           acquisition_mode="bounded_window",
+                                           source_duration=row.duration) for row in rows]
+
+    engine = OnlineSourcingEngine(
+        sources=[ThumbnailSource("EXACT_RECEIPT", ["thumbnail-only"], [])],
+        cache=FakeCache(tmp_path), ranker=_editorial_ranker(),
+    )
+    result = await engine.source_beat(
+        beat_id="claim", client_id="rambla", queries=["claim"],
+        min_duration=2, max_duration=15, taste=taste, visual_route="RECEIPT",
+        evidence_intent=intent, source_strategy=strategy,
+    )
+    assert result["proposals"]["proposal_A"] is None
+    assert "semantic_relevance_below_floor" in result["rejected_candidates"][0]["rejection_reasons"]

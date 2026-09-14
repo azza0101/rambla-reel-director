@@ -206,6 +206,12 @@ def test_long_video_evidence_beats_stock_and_only_short_window_is_acquired(tmp_p
     assert benchmark["scene_localized_proposals"] >= 1
     assert benchmark["acquired_windows"] == 1
     assert benchmark["resolve_calls"] == 0
+    assert benchmark["eligible_candidate_count"] >= 0
+    assert benchmark["rejected_candidate_count"] >= 0
+    assert benchmark["quality_floor_no_broll_count"] >= 0
+    assert benchmark["source_class_search_rounds"] >= 0
+    assert benchmark["generic_stock_selected_count"] >= 0
+    assert benchmark["distinct_proposal_source_count"] >= 0
 
     html = (output / "review.html").read_text(encoding="utf-8")
     assert "youtube:yt1" in html

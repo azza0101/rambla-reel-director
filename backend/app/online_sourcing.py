@@ -12,6 +12,8 @@ import asyncio
 from dataclasses import asdict
 from typing import Any, Protocol
 
+from .evidence_intent import EvidenceIntent
+from .source_strategy import SourceStrategy, plan_source_strategy
 from .asset_cache import AssetCache, CachedAsset, PreviewAsset, public_provenance
 from .online_assets import ProviderError, RemoteCandidate, dedupe_candidates
 from .proposals import select_proposals
@@ -92,7 +94,7 @@ class OnlineSourcingEngine:
         ranker: QwenMultimodalRanker,
         max_results_per_query: int = 12,
         max_preview_candidates: int = 12,
-        max_queries: int = 4,
+        max_queries: int = 8,
         preview_concurrency: int = 6,
         download_selected: bool = False,
     ):
@@ -120,6 +122,8 @@ class OnlineSourcingEngine:
         orientation: str | None = None,
         taste: TasteContext | None = None,
         visual_route: str | None = None,
+        evidence_intent: EvidenceIntent | None = None,
+        source_strategy: SourceStrategy | None = None,
     ) -> dict[str, Any]:
         clean_queries = [q.strip() for q in queries if isinstance(q, str) and q.strip()]
         if not beat_id or not client_id:
@@ -134,6 +138,17 @@ class OnlineSourcingEngine:
             raise ValueError("unsupported orientation")
         if min_duration < 0 or max_duration <= 0 or min_duration > max_duration:
             raise ValueError("invalid duration bounds")
+
+        if evidence_intent is not None:
+            if taste is None:
+                raise ValueError("editorial sourcing requires a TasteContext")
+            strategy = source_strategy or plan_source_strategy(evidence_intent, visual_route or "CONCEPT", taste)
+            return await self._source_beat_editorial(
+                beat_id=beat_id, client_id=client_id, queries=clean_queries,
+                min_duration=min_duration, max_duration=max_duration, orientation=orientation,
+                taste=taste, visual_route=visual_route, evidence_intent=evidence_intent,
+                source_strategy=strategy,
+            )
 
         outcomes = await asyncio.gather(
             *[
@@ -199,6 +214,8 @@ class OnlineSourcingEngine:
                 "kind": "image",
                 "source": candidate.provider,
                 "source_page": candidate.source_page,
+                "source_class": str(getattr(candidate, "source_class", "CLOSE_SEMANTIC_EDITORIAL")),
+                "source_authenticity": getattr(candidate, "source_authenticity", None),
                 "provider_id": candidate.provider_id,
                 "creator": provenance.get("creator"),
                 "rights_state": candidate.rights_state,
@@ -240,6 +257,8 @@ class OnlineSourcingEngine:
                 "scene_evidence",
                 "source_duration",
                 "acquisition_mode",
+                "source_class",
+                "source_authenticity",
             ):
                 row[key] = source_asset[key]
             if "route" in source_asset:
@@ -306,6 +325,111 @@ class OnlineSourcingEngine:
             "selected_cache_hit": selected_cache_hit,
         }
 
+    async def _source_beat_editorial(
+        self,
+        *,
+        beat_id: str,
+        client_id: str,
+        queries: list[str],
+        min_duration: float,
+        max_duration: float,
+        orientation: str | None,
+        taste: TasteContext,
+        visual_route: str | None,
+        evidence_intent: EvidenceIntent,
+        source_strategy: SourceStrategy,
+    ) -> dict[str, Any]:
+        """Search source classes in order, stopping when distinct eligible A/B exist."""
+        accumulated: dict[str, dict[str, Any]] = {}
+        searched: list[str] = []
+        unsupported: list[str] = []
+        errors: list[dict[str, str]] = []
+        cache_hits = 0
+        chosen = select_proposals([], minimum=taste.default_proposal_count,
+                                  taste=taste, evidence_intent=evidence_intent)
+        for source_class in source_strategy.classes:
+            if len(searched) >= self.max_queries or len(accumulated) >= self.max_preview_candidates:
+                break
+            compatible = [
+                source for source in self.sources
+                if source_class in tuple(getattr(source, "supported_source_classes", ("CLOSE_SEMANTIC_EDITORIAL",)))
+            ]
+            if not compatible:
+                unsupported.append(source_class)
+                continue
+            query = source_strategy.query_families[source_class][0]
+            round_engine = OnlineSourcingEngine(
+                sources=compatible,
+                cache=self.cache,
+                ranker=self.ranker,
+                max_results_per_query=self.max_results_per_query,
+                max_preview_candidates=self.max_preview_candidates - len(accumulated),
+                max_queries=1,
+                preview_concurrency=self.preview_concurrency,
+                download_selected=False,
+            )
+            outcome = await round_engine.source_beat(
+                beat_id=beat_id, client_id=client_id, queries=[query],
+                min_duration=min_duration, max_duration=max_duration,
+                orientation=orientation,
+            )
+            searched.append(source_class)
+            errors.extend(outcome["errors"])
+            cache_hits += int(outcome["preview_cache_hits"])
+            for candidate in outcome["candidates"]:
+                if candidate.get("source_class") != source_class:
+                    continue
+                # A thumbnail score cannot certify a long-video insert. Only a
+                # score computed from the final selected window can pass the gate.
+                if (candidate.get("acquisition_mode") == "bounded_window"
+                        and candidate.get("final_segment_semantic_score") is None):
+                    candidate["final_segment_semantic_score"] = 0.0
+                accumulated.setdefault(str(candidate["id"]), candidate)
+            chosen = select_proposals(
+                list(accumulated.values()), minimum=taste.default_proposal_count,
+                taste=taste, visual_route=visual_route, evidence_intent=evidence_intent,
+            )
+            if chosen["review_state"] == "READY":
+                break
+        for key in ("proposal_A", "proposal_B", "proposal_C"):
+            proposal = chosen.get(key)
+            if isinstance(proposal, dict):
+                _localize_proposal_scene(proposal, queries[0])
+        rejected = chosen.get("rejected_candidates", [])
+        return {
+            "beat_id": beat_id,
+            "queries": queries,
+            "candidates": list(accumulated.values()),
+            "proposals": chosen,
+            "visual_route": visual_route,
+            "source_strategy": {
+                "classes": list(source_strategy.classes),
+                "query_families": {key: list(value) for key, value in source_strategy.query_families.items()},
+            },
+            "searched_source_classes": searched,
+            "unsupported_source_classes": unsupported,
+            "rejected_candidates": rejected,
+            "quality_floor_state": chosen["review_state"] if "QUALITY_FLOOR" in chosen["review_state"] else None,
+            "eligible_candidate_count": chosen["usable_candidate_count"],
+            "rejected_candidate_count": len(rejected),
+            "source_class_search_rounds": len(searched),
+            "generic_stock_selected_count": sum(
+                int(isinstance(chosen.get(key), dict) and chosen[key].get("source_class") == "GENERIC_STOCK")
+                for key in ("proposal_A", "proposal_B")
+            ),
+            "distinct_proposal_source_count": len({
+                chosen[key].get("provider_id")
+                for key in ("proposal_A", "proposal_B")
+                if isinstance(chosen.get(key), dict)
+            }),
+            "taste_profile_version": taste.profile_version,
+            "taste_profile_hash": taste.profile_hash,
+            "errors": _dedupe_errors(errors),
+            "preview_cache_hits": cache_hits,
+            "selected_cache_hit": False,
+            "resolve_calls": 0,
+        }
+
     def _empty(
         self,
         beat_id: str,
@@ -315,6 +439,8 @@ class OnlineSourcingEngine:
         *,
         taste: TasteContext | None = None,
         visual_route: str | None = None,
+        evidence_intent: EvidenceIntent | None = None,
+        source_strategy: SourceStrategy | None = None,
     ) -> dict[str, Any]:
         minimum = taste.default_proposal_count if taste is not None else 2
         return {
