@@ -74,3 +74,16 @@ async def test_youtube_source_does_not_require_portrait_orientation() -> None:
     rows = await source.search("evidence", min_duration=1, max_duration=1000, limit=10)
 
     assert {row.orientation for row in rows} == {"portrait", "landscape"}
+
+
+def test_youtube_source_class_defaults_to_related_editorial() -> None:
+    candidate = normalize_youtube_result(_row(), query="interview")
+    assert candidate.source_class == "CLOSE_SEMANTIC_EDITORIAL"
+    assert candidate.source_authenticity is None
+
+
+def test_youtube_preserves_explicit_discovery_class_and_authenticity() -> None:
+    row = {**_row(), "source_class": "EXACT_ENTITY_EVENT", "source_authenticity": 0.9}
+    candidate = normalize_youtube_result(row, query="interview")
+    assert candidate.source_class == "EXACT_ENTITY_EVENT"
+    assert candidate.source_authenticity == 0.9

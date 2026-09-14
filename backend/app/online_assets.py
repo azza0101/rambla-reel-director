@@ -36,6 +36,8 @@ class RemoteCandidate:
     rendition_height: int
     rights_state: str
     provider_rank: int
+    source_class: str = "GENERIC_STOCK"
+    source_authenticity: float | None = None
 
 
 class ProviderError(RuntimeError):
