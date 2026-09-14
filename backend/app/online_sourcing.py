@@ -36,6 +36,25 @@ class PreviewCache(Protocol):
     async def materialize_preview(self, candidate: Any) -> PreviewAsset: ...
 
 
+def _normalize_queries(values: list[str]) -> list[str]:
+    """Strip whitespace and remove equivalent queries while preserving priority."""
+
+    seen: set[str] = set()
+    output: list[str] = []
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        clean = " ".join(value.split())
+        if not clean:
+            continue
+        key = clean.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append(clean)
+    return output
+
+
 def _scene_evidence_rows(candidate: Any) -> list[dict[str, Any]]:
     output: list[dict[str, Any]] = []
     for row in getattr(candidate, "scene_evidence", ()) or ():
@@ -108,6 +127,10 @@ class OnlineSourcingEngine:
         self.max_queries = max_queries
         self.preview_concurrency = preview_concurrency
         self.download_selected = download_selected
+        self._search_cache: dict[
+            tuple[int, str, str | None, float, float, int], tuple[Any, ...]
+        ] = {}
+        self._search_cache_max_entries = 256
 
     async def source_beat(
         self,
@@ -121,7 +144,7 @@ class OnlineSourcingEngine:
         taste: TasteContext | None = None,
         visual_route: str | None = None,
     ) -> dict[str, Any]:
-        clean_queries = [q.strip() for q in queries if isinstance(q, str) and q.strip()]
+        clean_queries = _normalize_queries(queries)
         if not beat_id or not client_id:
             raise ValueError("beat and client identity are required")
         if taste is not None and taste.client_id != client_id:
@@ -344,6 +367,18 @@ class OnlineSourcingEngine:
         min_duration: float,
         max_duration: float,
     ) -> tuple[list[Any], dict[str, str] | None]:
+        cache_key = (
+            id(source),
+            query.casefold(),
+            orientation,
+            float(min_duration),
+            float(max_duration),
+            self.max_results_per_query,
+        )
+        cached = self._search_cache.get(cache_key)
+        if cached is not None:
+            return list(cached), None
+
         try:
             rows = await source.search(
                 query,
@@ -352,7 +387,10 @@ class OnlineSourcingEngine:
                 max_duration=max_duration,
                 limit=self.max_results_per_query,
             )
-            return rows, None
+            if len(self._search_cache) >= self._search_cache_max_entries:
+                self._search_cache.pop(next(iter(self._search_cache)))
+            self._search_cache[cache_key] = tuple(rows)
+            return list(rows), None
         except ProviderError as exc:
             return [], {"provider": exc.provider, "code": exc.code}
         except Exception as exc:
