@@ -38,6 +38,19 @@ class PreviewCache(Protocol):
     async def materialize_preview(self, candidate: Any) -> PreviewAsset: ...
 
 
+def _normalize_queries(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    output = []
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        clean = " ".join(value.split())
+        if clean and clean.casefold() not in seen:
+            seen.add(clean.casefold())
+            output.append(clean)
+    return output
+
+
 def _scene_evidence_rows(candidate: Any) -> list[dict[str, Any]]:
     output: list[dict[str, Any]] = []
     for row in getattr(candidate, "scene_evidence", ()) or ():
@@ -110,6 +123,9 @@ class OnlineSourcingEngine:
         self.max_queries = max_queries
         self.preview_concurrency = preview_concurrency
         self.download_selected = download_selected
+        self._search_cache: dict[tuple[Any, ...], tuple[Any, ...]] = {}
+        self._search_inflight: dict[tuple[Any, ...], asyncio.Task[list[Any]]] = {}
+        self._search_cache_max_entries = 256
 
     async def source_beat(
         self,
@@ -125,7 +141,7 @@ class OnlineSourcingEngine:
         evidence_intent: EvidenceIntent | None = None,
         source_strategy: SourceStrategy | None = None,
     ) -> dict[str, Any]:
-        clean_queries = [q.strip() for q in queries if isinstance(q, str) and q.strip()]
+        clean_queries = _normalize_queries(queries)
         if not beat_id or not client_id:
             raise ValueError("beat and client identity are required")
         if taste is not None and taste.client_id != client_id:
@@ -368,6 +384,8 @@ class OnlineSourcingEngine:
                 preview_concurrency=self.preview_concurrency,
                 download_selected=False,
             )
+            round_engine._search_cache = self._search_cache
+            round_engine._search_inflight = self._search_inflight
             outcome = await round_engine.source_beat(
                 beat_id=beat_id, client_id=client_id, queries=[query],
                 min_duration=min_duration, max_duration=max_duration,
@@ -471,19 +489,32 @@ class OnlineSourcingEngine:
         min_duration: float,
         max_duration: float,
     ) -> tuple[list[Any], dict[str, str] | None]:
+        cache_key = (id(source), query.casefold(), orientation,
+                     float(min_duration), float(max_duration), self.max_results_per_query)
+        cached = self._search_cache.get(cache_key)
+        if cached is not None:
+            return list(cached), None
+        task: asyncio.Task[list[Any]] | None = None
         try:
-            rows = await source.search(
-                query,
-                orientation=orientation,
-                min_duration=min_duration,
-                max_duration=max_duration,
-                limit=self.max_results_per_query,
-            )
-            return rows, None
+            task = self._search_inflight.get(cache_key)
+            if task is None:
+                task = asyncio.create_task(source.search(
+                    query, orientation=orientation, min_duration=min_duration,
+                    max_duration=max_duration, limit=self.max_results_per_query,
+                ))
+                self._search_inflight[cache_key] = task
+            rows = await task
+            if len(self._search_cache) >= self._search_cache_max_entries:
+                self._search_cache.pop(next(iter(self._search_cache)))
+            self._search_cache[cache_key] = tuple(rows)
+            return list(rows), None
         except ProviderError as exc:
             return [], {"provider": exc.provider, "code": exc.code}
         except Exception as exc:
             return [], {"provider": type(source).__name__, "code": type(exc).__name__}
+        finally:
+            if task is not None and self._search_inflight.get(cache_key) is task:
+                self._search_inflight.pop(cache_key, None)
 
 
 def _dedupe_errors(errors: list[dict[str, str]]) -> list[dict[str, str]]:

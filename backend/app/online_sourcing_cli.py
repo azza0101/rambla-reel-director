@@ -136,7 +136,12 @@ async def _source_outline(
         coverage_by_beat.setdefault(slot.beat_id, []).append(row)
 
         bucket = candidate_by_beat_and_id.setdefault(slot.beat_id, {})
-        for candidate in result.get("candidates", []):
+        eligible_candidates = (
+            [proposals[key] for key in ("proposal_A", "proposal_B", "proposal_C")
+             if isinstance(proposals.get(key), dict)]
+            if taste_context is not None else result.get("candidates", [])
+        )
+        for candidate in eligible_candidates:
             candidate_id = str(candidate.get("id") or "")
             if not candidate_id:
                 continue

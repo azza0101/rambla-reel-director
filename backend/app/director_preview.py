@@ -162,7 +162,7 @@ def render_report(plan: dict[str, Any]) -> str:
         selected = beat["selected_asset"]
         selected_text = "none" if selected is None else f"{selected['id']} ({selected['path']}; score {selected['score']})"
         alternates = "; ".join(
-            f"{row['id']}: {row['score']} ({row['reason']})"
+            f"{row['id']}: {row['score']} ({row.get('reason', '')})"
             for row in beat["candidates"]
             if selected is None or row["id"] != selected["id"]
         )

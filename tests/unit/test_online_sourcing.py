@@ -170,6 +170,20 @@ async def test_query_count_is_bounded(tmp_path):
         )
 
 
+@pytest.mark.asyncio
+async def test_equivalent_queries_and_repeated_search_reuse_provider_result(tmp_path):
+    source = FakeSource()
+    engine = OnlineSourcingEngine(
+        sources=[source], cache=FakeCache(tmp_path),
+        ranker=QwenMultimodalRanker(client_id="rambla", embed=lambda items: [[1.0, 0.0] for _ in items], rerank=None),
+    )
+    for _ in range(2):
+        await engine.source_beat(beat_id="beat", client_id="rambla",
+                                 queries=["query one", " QUERY   ONE "],
+                                 min_duration=1, max_duration=10)
+    assert source.calls == ["query one"]
+
+
 class EditorialSource:
     def __init__(self, source_class: str, ids: list[str], calls: list[str]):
         self.supported_source_classes = (source_class,)
