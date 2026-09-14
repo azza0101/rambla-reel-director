@@ -168,3 +168,54 @@ async def test_query_count_is_bounded(tmp_path):
             min_duration=1,
             max_duration=10,
         )
+
+
+@pytest.mark.asyncio
+async def test_duplicate_queries_are_normalized_before_provider_search(tmp_path):
+    source = FakeSource()
+    engine = OnlineSourcingEngine(
+        sources=[source],
+        cache=FakeCache(tmp_path),
+        ranker=QwenMultimodalRanker(
+            client_id="rambla",
+            embed=lambda items: [[1.0, 0.0] for _ in items],
+            rerank=None,
+        ),
+        max_queries=3,
+    )
+
+    result = await engine.source_beat(
+        beat_id="beat",
+        client_id="rambla",
+        queries=[" query one ", "QUERY ONE", "query two"],
+        min_duration=1,
+        max_duration=10,
+    )
+
+    assert source.calls == ["query one", "query two"]
+    assert result["queries"] == ["query one", "query two"]
+
+
+@pytest.mark.asyncio
+async def test_provider_search_is_memoized_across_beats(tmp_path):
+    source = FakeSource()
+    engine = OnlineSourcingEngine(
+        sources=[source],
+        cache=FakeCache(tmp_path),
+        ranker=QwenMultimodalRanker(
+            client_id="rambla",
+            embed=lambda items: [[1.0, 0.0] for _ in items],
+            rerank=None,
+        ),
+    )
+
+    for beat_id in ("beat-a", "beat-b"):
+        await engine.source_beat(
+            beat_id=beat_id,
+            client_id="rambla",
+            queries=["query one"],
+            min_duration=1,
+            max_duration=10,
+        )
+
+    assert source.calls == ["query one"]
