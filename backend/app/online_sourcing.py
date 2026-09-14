@@ -402,6 +402,7 @@ class OnlineSourcingEngine:
             "candidates": list(accumulated.values()),
             "proposals": chosen,
             "visual_route": visual_route,
+            "evidence_intent": asdict(evidence_intent),
             "source_strategy": {
                 "classes": list(source_strategy.classes),
                 "query_families": {key: list(value) for key, value in source_strategy.query_families.items()},

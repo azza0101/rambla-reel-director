@@ -18,9 +18,13 @@ from .asset_cache import AssetCache
 from .coverage import plan_coverage_slots
 from .director_engine import FasterWhisperArtifact, build_edit_plan
 from .director_preview import render_report
+from .evidence_intent import plan_evidence_intent
 from .online_assets import PexelsSource
 from .online_sourcing import OnlineSourcingEngine
 from .qwen_stack import LocalQwenEmbedder, QwenConfig, QwenMultimodalRanker
+from .source_strategy import plan_source_strategy
+from .taste_profile import TasteContext
+from .visual_routing import plan_visual_route
 
 
 class AcquisitionPort(Protocol):
@@ -43,6 +47,8 @@ async def _source_outline(
     engine: OnlineSourcingEngine,
     *,
     client_id: str,
+    transcript: dict[str, Any] | None = None,
+    taste_context: TasteContext | None = None,
 ) -> tuple[
     dict[str, list[dict[str, Any]]],
     list[dict[str, Any]],
@@ -55,8 +61,28 @@ async def _source_outline(
         return {}, [], {}
 
     tasks = []
+    route_by_slot: dict[str, Any] = {}
+    context_by_slot: dict[str, str] = {}
     for slot in slots:
         duration = slot.duration_seconds
+        editorial: dict[str, Any] = {}
+        if taste_context is not None:
+            context = " ".join(
+                str(segment.get("text") or "").strip()
+                for segment in (transcript or {}).get("segments", [])
+                if float(segment.get("start", 0)) < slot.end_seconds
+                and float(segment.get("end", 0)) > slot.start_seconds
+            )
+            planning_slot = {"transcript": context, "intent": slot.visual_intent}
+            route = plan_visual_route(planning_slot, context, taste_context)
+            route_by_slot[slot.id] = route
+            context_by_slot[slot.id] = context
+            intent = plan_evidence_intent(planning_slot, context, route, taste_context)
+            editorial = {
+                "taste": taste_context, "visual_route": route.route,
+                "evidence_intent": intent,
+                "source_strategy": plan_source_strategy(intent, route, taste_context),
+            }
         tasks.append(
             engine.source_beat(
                 beat_id=slot.id,
@@ -67,6 +93,7 @@ async def _source_outline(
                 # eligible even though the editorial insert itself is only 3–4 s.
                 max_duration=4 * 60 * 60,
                 orientation=None,
+                **editorial,
             )
         )
     results = await asyncio.gather(*tasks)
@@ -78,6 +105,10 @@ async def _source_outline(
     for slot, result in zip(slots, results):
         proposals = result.get("proposals") or {}
         row = asdict(slot)
+        if slot.id in route_by_slot:
+            route = route_by_slot[slot.id]
+            row.update({"route_reason": route.reason, "route_confidence": route.confidence,
+                        "transcript": context_by_slot[slot.id]})
         row.update(
             {
                 "proposal_A": proposals.get("proposal_A"),
@@ -90,6 +121,16 @@ async def _source_outline(
                 ),
                 "review_state": proposals.get("review_state", "NO_VISUAL_FOUND"),
                 "sourcing_errors": result.get("errors", []),
+                "visual_route": result.get("visual_route"),
+                "evidence_intent": result.get("evidence_intent"),
+                "source_strategy": result.get("source_strategy"),
+                "searched_source_classes": result.get("searched_source_classes", []),
+                "rejected_candidates": result.get("rejected_candidates", []),
+                "quality_floor_state": result.get("quality_floor_state"),
+                "presentation_mode": (
+                    proposals.get("proposal_A", {}).get("recommended_presentation_mode")
+                    if isinstance(proposals.get("proposal_A"), dict) else None
+                ),
             }
         )
         coverage_by_beat.setdefault(slot.beat_id, []).append(row)
@@ -223,11 +264,14 @@ def run_online_from_artifacts(
     sourcing_engine: OnlineSourcingEngine,
     acquisition_adapter: AcquisitionPort | None = None,
     acquire_alternates: bool = False,
+    taste_context: TasteContext | None = None,
 ) -> dict[str, Any]:
     if not client_id:
         raise ValueError("client_id is required")
     if source_frames <= 0:
         raise ValueError("source_frames must be positive")
+    if taste_context is not None and taste_context.client_id != client_id:
+        raise ValueError("taste context violates client isolation")
     started = time.perf_counter()
     transcript = FasterWhisperArtifact(transcript_path).load()
     outline = json.loads(outline_path.read_text(encoding="utf-8"))
@@ -239,7 +283,8 @@ def run_online_from_artifacts(
 
     sourcing_started = time.perf_counter()
     candidate_map, sourcing_results, coverage_map = asyncio.run(
-        _source_outline(outline, sourcing_engine, client_id=client_id)
+        _source_outline(outline, sourcing_engine, client_id=client_id,
+                        transcript=normalized, taste_context=taste_context)
     )
     sourcing_seconds = time.perf_counter() - sourcing_started
 
@@ -266,6 +311,7 @@ def run_online_from_artifacts(
         source_frames=source_frames,
         candidate_assets_by_beat=candidate_map,
         coverage_slots_by_beat=coverage_map,
+        taste_context=taste_context,
     )
     # Analyze is explicitly Resolve-independent. Persist that invariant in the
     # review artifact so the integration gate can prove no timeline operation occurred.

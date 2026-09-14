@@ -75,3 +75,21 @@ def test_coverage_review_exposes_route_and_separate_taste_score_components() -> 
     assert "crop 0.3164" in html
     assert "taste 0.93" in html
     assert "final" in html
+
+
+def test_editorial_review_exposes_quality_axes_and_no_broll_reason() -> None:
+    plan = {
+        "client_id": "client-a", "content_hash": "hash", "source": {"fps": 25, "duration_frames": 100, "media": "reel.mp4"},
+        "beats": [], "captions": [],
+        "coverage_slots": [{
+            "id": "slot-1", "beat_id": "beat-1", "start_seconds": 0.0, "end_seconds": 3.5,
+            "visual_intent": "original claim", "queries": ["claim"],
+            "review_state": "NO_BROLL_QUALITY_FLOOR", "proposal_A": None,
+            "rejected_candidates": [{"id": "stock:1", "rejection_reasons": ["evidence_specificity_below_floor"]}],
+            "evidence_intent": {"evidence_intent_type": "EXACT_RECEIPT"},
+        }],
+    }
+    html = render_report(plan)
+    assert "NO_BROLL_QUALITY_FLOOR" in html
+    assert "evidence_specificity_below_floor" in html
+    assert "EXACT_RECEIPT" in html
