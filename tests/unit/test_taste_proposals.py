@@ -92,3 +92,19 @@ def test_without_taste_context_existing_score_shape_remains_available() -> None:
     assert proposal["semantic_score"] == 0.8
     assert "crop_score" in proposal
     assert "final_score" in proposal
+
+
+def test_editorial_mode_keeps_legacy_taste_path_separate() -> None:
+    from backend.app.evidence_intent import plan_evidence_intent
+
+    taste = _taste()
+    intent = plan_evidence_intent({"transcript": 'Ha scritto "test"', "intent": "show claim"}, "post", "RECEIPT", taste)
+    rows = [
+        {**_row("exact", .82, source="youtube", provider_id="1", route="RECEIPT"), "source_class": "EXACT_RECEIPT", "evidence_specificity": 1.0, "editorial_quality": .8},
+        {**_row("stock", .92, source="pexels", provider_id="2", route="STOCK"), "source_class": "GENERIC_STOCK", "evidence_specificity": .2, "editorial_quality": .9},
+    ]
+    editorial = select_proposals(rows, taste=taste, visual_route="RECEIPT", evidence_intent=intent)
+    assert editorial["proposal_A"]["id"] == "exact"
+    assert editorial["proposal_B"] is None
+    assert editorial["review_state"] == "SINGLE_PROPOSAL_QUALITY_FLOOR"
+    assert "rejected_candidates" in editorial

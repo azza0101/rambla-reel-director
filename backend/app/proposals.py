@@ -8,7 +8,11 @@ one opaque winner.
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any
+
+from .editorial_quality import WEIGHTS, score_editorial_candidate
+from .evidence_intent import EvidenceIntent
 
 from .crop_safety import evaluate_static_crop
 from .taste_profile import TasteContext
@@ -143,6 +147,73 @@ def _apply_relevance_gap_guard(prepared: list[dict[str, Any]]) -> list[dict[str,
     return [best_semantic, *(row for row in prepared if row is not best_semantic)]
 
 
+def _select_editorial_proposals(
+    candidates: list[dict[str, Any]],
+    *,
+    minimum: int,
+    target_aspect: float,
+    taste: TasteContext,
+    evidence_intent: EvidenceIntent,
+    recent_context: tuple[dict[str, Any], ...],
+) -> dict[str, Any]:
+    prepared: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for candidate in candidates:
+        score = score_editorial_candidate(
+            candidate, intent=evidence_intent, taste=taste, recent_context=recent_context
+        )
+        row = dict(candidate)
+        components = asdict(score)
+        row.update(components)
+        row["score_components"] = {name: components[name] for name in WEIGHTS}
+        row["editorial_final_score"] = score.final_score
+        row["semantic_score"] = score.semantic_relevance
+        row["final_score"] = score.final_score
+        row["rejection_reasons"] = list(score.rejection_reasons)
+        assessment = evaluate_static_crop(
+            int(row.get("width") or 0), int(row.get("height") or 0), target_aspect
+        )
+        row["crop_score"] = assessment.score
+        row["crop_box"] = list(assessment.crop_box)
+        row["crop_usable"] = assessment.usable
+        row["crop_reason"] = assessment.reason
+        if score.eligible:
+            prepared.append(row)
+        else:
+            rejected.append(row)
+    prepared.sort(key=lambda row: (-float(row["final_score"]), str(row.get("id", ""))))
+    chosen: list[dict[str, Any]] = []
+    for row in prepared:
+        source_id = str(row.get("provider_id") or row.get("id") or "")
+        motif = str(row.get("motif_id") or "")
+        preview = str(row.get("preview_sha256") or "")
+        if any(
+            (source_id == str(other.get("provider_id") or other.get("id") or "")
+             and motif == str(other.get("motif_id") or ""))
+            or (motif and motif == str(other.get("motif_id") or ""))
+            or (preview and preview == str(other.get("preview_sha256") or ""))
+            for other in chosen
+        ):
+            continue
+        chosen.append(row)
+        if len(chosen) >= max(3, minimum):
+            break
+    state = (
+        "NO_BROLL_QUALITY_FLOOR" if not chosen
+        else "SINGLE_PROPOSAL_QUALITY_FLOOR" if len(chosen) < minimum
+        else "READY"
+    )
+    return {
+        "proposal_A": chosen[0] if chosen else None,
+        "proposal_B": chosen[1] if len(chosen) > 1 else None,
+        "proposal_C": chosen[2] if len(chosen) > 2 else None,
+        "review_state": state,
+        "usable_candidate_count": len(prepared),
+        "minimum_proposals": minimum,
+        "rejected_candidates": rejected,
+    }
+
+
 def select_proposals(
     candidates: list[dict[str, Any]],
     *,
@@ -150,6 +221,8 @@ def select_proposals(
     target_aspect: float = 9 / 16,
     taste: TasteContext | None = None,
     visual_route: str | None = None,
+    evidence_intent: EvidenceIntent | None = None,
+    recent_context: tuple[dict[str, Any], ...] = (),
 ) -> dict[str, Any]:
     """Return A/B/(C) proposals with explicit score components.
 
@@ -160,8 +233,16 @@ def select_proposals(
 
     if minimum < 1:
         raise ValueError("minimum proposals must be positive")
+    if evidence_intent is not None and taste is None:
+        raise ValueError("editorial mode requires a TasteContext")
     if target_aspect <= 0:
         raise ValueError("target aspect must be positive")
+
+    if evidence_intent is not None:
+        return _select_editorial_proposals(
+            candidates, minimum=minimum, target_aspect=target_aspect,
+            taste=taste, evidence_intent=evidence_intent, recent_context=recent_context,
+        )
 
     prepared = [
         proposal
