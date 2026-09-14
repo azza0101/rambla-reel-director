@@ -63,9 +63,10 @@ class ReferenceStyleProfile:
             raise ValueError("reference style profile id is required")
         object.__setattr__(self, "speaker_persistence", _bounded(self.speaker_persistence, "speaker persistence"))
         object.__setattr__(self, "coverage_density", _bounded(self.coverage_density, "coverage density"))
-        if float(self.median_insert_seconds) <= 0:
+        duration = float(self.median_insert_seconds)
+        if not math.isfinite(duration) or duration <= 0:
             raise ValueError("median insert seconds must be positive")
-        object.__setattr__(self, "median_insert_seconds", float(self.median_insert_seconds))
+        object.__setattr__(self, "median_insert_seconds", duration)
         object.__setattr__(self, "route_mix", _bounded_map(self.route_mix, "route mix value"))
         object.__setattr__(self, "presentation_mix", _bounded_map(self.presentation_mix, "presentation mix value"))
 
@@ -101,13 +102,12 @@ class StyleDNA:
             raise ValueError("style mix keys must reference a known reference profile")
         if any(not math.isfinite(value) or value <= 0.0 for value in mix.values()):
             raise ValueError("style mix weights must be positive")
-        total = sum(mix.values())
-        if mix and total <= 0.0:
-            raise ValueError("style mix weights must have a positive total")
+        scale = max(mix.values(), default=1.0)
+        total = math.fsum(mix[key] / scale for key in sorted(mix))
         object.__setattr__(
             self,
             "active_style_mix",
-            _freeze_map({key: mix[key] / total for key in sorted(mix)}),
+            _freeze_map({key: (mix[key] / scale) / total for key in sorted(mix)}),
         )
 
         for name in (
@@ -191,7 +191,7 @@ class TasteContext:
     guardrails: Mapping[str, Any]
     trusted_sources: tuple[str, ...]
     default_proposal_count: int
-    style_dna: StyleDNA
+    style_dna: StyleDNA = field(default_factory=StyleDNA)
     topic: str | None = None
     genre: str | None = None
 

@@ -119,3 +119,60 @@ def test_style_dna_participates_in_canonical_hash() -> None:
     assert canonical_taste_hash(base) == canonical_taste_hash(replace(base))
     changed = replace(base, style_dna=replace(_style(), generic_stock_penalty=0.5))
     assert canonical_taste_hash(base) != canonical_taste_hash(changed)
+
+
+def test_style_mix_hash_is_independent_of_mapping_insertion_order() -> None:
+    refs = tuple(
+        ReferenceStyleProfile(
+            id=name,
+            speaker_persistence=0.5,
+            coverage_density=0.5,
+            median_insert_seconds=2.0,
+        )
+        for name in ("a", "b", "c")
+    )
+    forward = StyleDNA(reference_profiles=refs, active_style_mix={"a": 1e16, "b": 1, "c": 1})
+    reverse = StyleDNA(reference_profiles=refs, active_style_mix={"c": 1, "b": 1, "a": 1e16})
+    assert canonical_taste_hash(TasteProfile(client_id="c", version=1, approved=True, style_dna=forward)) == canonical_taste_hash(TasteProfile(client_id="c", version=1, approved=True, style_dna=reverse))
+
+
+def test_taste_context_keeps_legacy_constructor_compatible() -> None:
+    from backend.app.taste_profile import TasteContext
+
+    context = TasteContext(
+        client_id="c",
+        profile_version=1,
+        profile_hash="hash",
+        route_weights={},
+        guardrails={},
+        trusted_sources=(),
+        default_proposal_count=2,
+    )
+    assert context.style_dna == StyleDNA()
+
+
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), float("-inf")])
+def test_reference_style_rejects_non_finite_insert_duration(invalid: float) -> None:
+    with pytest.raises(ValueError, match="median insert seconds"):
+        ReferenceStyleProfile(
+            id="reference",
+            speaker_persistence=0.5,
+            coverage_density=0.5,
+            median_insert_seconds=invalid,
+        )
+
+
+
+def test_style_mix_normalizes_large_positive_weights_without_overflow() -> None:
+    refs = tuple(
+        ReferenceStyleProfile(
+            id=name,
+            speaker_persistence=0.5,
+            coverage_density=0.5,
+            median_insert_seconds=2.0,
+        )
+        for name in ("a", "b", "c")
+    )
+    style = StyleDNA(reference_profiles=refs, active_style_mix={"c": 1e308, "a": 1e308, "b": 1e308})
+    assert list(style.active_style_mix) == ["a", "b", "c"]
+    assert sum(style.active_style_mix.values()) == pytest.approx(1.0)
