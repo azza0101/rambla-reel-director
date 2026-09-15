@@ -44,7 +44,7 @@ if (Test-Path -LiteralPath (Join-Path $scriptRoot '.git')) {
 }
 
 $shortSha = $fullSha.Substring(0, 7)
-$marker = "CURATION V1 · build $shortSha"
+$marker = "CURATION-V1-build-$shortSha"
 $port = $null
 foreach ($candidate in 8765..8799) {
     $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $candidate)

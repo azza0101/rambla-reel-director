@@ -1,6 +1,6 @@
 from html.parser import HTMLParser
 
-from backend.app.curation_ui import BUILD_PREFIX, move_selection, phrase_status, remaining_decisions, render_curation_page
+from backend.app.curation_ui import BUILD_PREFIX, BUILD_SENTINEL_PREFIX, move_selection, phrase_status, remaining_decisions, render_curation_page
 
 
 def test_phrase_status_and_completion_require_real_decision():
@@ -33,6 +33,7 @@ def test_candidate_markup_never_nests_buttons():
 def test_authoritative_renderer_has_build_marker_and_no_legacy_ui():
     page = render_curation_page("abc1234")
     assert f"{BUILD_PREFIX} abc1234" in page
+    assert f'{BUILD_SENTINEL_PREFIX}abc1234' in page
     assert "Solo selezionati" not in page
     assert "Selezione locale" not in page
     assert page.count("<script>") == 1
