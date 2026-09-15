@@ -83,7 +83,18 @@ try {
 }
 $health = "http://127.0.0.1:$port/health"
 $stamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-$url = "http://127.0.0.1:$port/curation?build=$shortSha&ts=$stamp"
+$projectRoot = 'Z:\APP REEL TEST\qwen-embedding-smoke\kura-finto-etico-smoke\curation-projects'
+$latestProjectId = $null
+if (Test-Path -LiteralPath $projectRoot -PathType Container) {
+    $latest = Get-ChildItem -LiteralPath $projectRoot -Directory -ErrorAction SilentlyContinue |
+        Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'project.json') -PathType Leaf } |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+    if ($latest) { $latestProjectId = $latest.Name }
+}
+$query = "build=$shortSha&ts=$stamp"
+if ($latestProjectId) { $query += "&project=$([Uri]::EscapeDataString($latestProjectId))" }
+$url = "http://127.0.0.1:$port/curation?$query"
 $ready = $false
 foreach ($attempt in 1..40) {
     Start-Sleep -Milliseconds 250
@@ -92,7 +103,7 @@ foreach ($attempt in 1..40) {
 if (-not $ready) { Stop-Process -Id $process.Id -ErrorAction SilentlyContinue; throw "Acceptance server failed health check: $health" }
 $response = Invoke-WebRequest -Uri $url -UseBasicParsing -Headers @{'Cache-Control'='no-cache'}
 if (-not $response.Content.Contains($marker)) { Stop-Process -Id $process.Id -ErrorAction SilentlyContinue; throw "Build marker verification failed. Expected: $marker" }
-$record = @{pid=$process.Id;port=$port;url=$url;branch=$actualBranch;sha=$fullSha;short_sha=$shortSha;build_marker=$marker;started_at=(Get-Date).ToString('o')}
+$record = @{pid=$process.Id;port=$port;url=$url;project_id=$latestProjectId;branch=$actualBranch;sha=$fullSha;short_sha=$shortSha;build_marker=$marker;started_at=(Get-Date).ToString('o')}
 $record | ConvertTo-Json | Set-Content -LiteralPath $recordPath -Encoding utf8
 $record | Format-List
 Write-Output "OPEN MANUALLY: $url"
