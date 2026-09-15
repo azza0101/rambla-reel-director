@@ -371,7 +371,8 @@ def _probe_source_video(source: Path) -> dict[str, Any]:
 def create_app(*, project_root: Path | None = None, curation_run_root: Path | None = None, allowed_media_roots: list[Path] | None = None, probe_runner: Any = None, audio_probe_runner: Any = None, audio_command_runner: Any = None) -> FastAPI:
     app = FastAPI(title="RAMBLA Debug Runner", version="0.1.0")
     project_root = project_root or Path(DEFAULT_OUTPUT).parent / "curation-projects"
-    curation_run_root = curation_run_root or Path(DEFAULT_OUTPUT)
+    # Legacy/default artifacts are deliberately never used by project routes.
+    # Each project's analysis, media index, and selections live under its own root.
     allowed_roots = tuple(root.resolve() for root in (allowed_media_roots or [Path(DEFAULT_VIDEO).parent, project_root]))
     projects = ProjectStore(project_root, probe_runner=probe_runner or _probe_source_video, audio_probe_runner=audio_probe_runner)
     guide_command_runner = audio_command_runner or subprocess.run
@@ -397,23 +398,32 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
             raise HTTPException(status_code=403, detail="source fuori dalle root autorizzate") from None
         return resolved
 
-    def project_run() -> Any:
+    def project_run_root(project_id: str) -> Path:
+        load_project(project_id)
+        return project_root / project_id / "run"
+
+    def project_run(project_id: str) -> Any:
         try:
-            return load_curation_run(curation_run_root)
+            return load_curation_run(project_run_root(project_id))
         except (OSError, ValueError, json.JSONDecodeError):
             raise HTTPException(status_code=404, detail="artifact di curation non disponibile") from None
 
-    def project_selection_store() -> SelectionStore:
-        run = project_run()
+    def project_selection_store(project_id: str) -> SelectionStore:
+        run = project_run(project_id)
         return SelectionStore(
-            curation_run_root,
+            project_run_root(project_id),
             {asset_id: {"chunk_id": item.chunk_id} for asset_id, item in run.candidate_index.items()},
             [item.chunk_id for item in run.chunks],
         )
 
     def curation_payload(project_id: str) -> dict[str, Any]:
-        run = project_run()
-        saved = project_selection_store().load()
+        try:
+            run = project_run(project_id)
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                return {"project_id": project_id, "chunks": [], "selection_plan": {"chunks": {}}, "resolve_calls": 0}
+            raise
+        saved = project_selection_store(project_id).load()
         return {
             "project_id": project_id,
             "chunks": [{"id": row.chunk_id, "text": row.text,
@@ -434,10 +444,6 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
     @app.get("/debug", response_class=HTMLResponse)
     async def page() -> str:
         return render_debug_page()
-
-    @app.get("/debug/curation", response_class=HTMLResponse)
-    async def curation_page() -> str:
-        return render_curation_page()
 
     @app.get("/curation", response_class=HTMLResponse)
     async def professional_curation_page() -> str:
@@ -492,14 +498,15 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
             if not source.is_file():
                 raise HTTPException(status_code=404, detail="media non disponibile")
             return FileResponse(source)
-        candidate = project_run().candidate_index.get(asset_id)
+        run_root = project_run_root(project_id)
+        candidate = project_run(project_id).candidate_index.get(asset_id)
         if candidate is None or variant not in {"preview", "poster"}:
             raise HTTPException(status_code=404, detail="asset non trovato")
         path = candidate.preview_path if variant == "preview" else candidate.poster_path
         if not path or not Path(path).is_file():
             raise HTTPException(status_code=404, detail="media non disponibile")
         try:
-            Path(path).resolve().relative_to(curation_run_root.resolve())
+            Path(path).resolve().relative_to(run_root.resolve())
         except ValueError:
             raise HTTPException(status_code=403, detail="media fuori dalla run") from None
         return FileResponse(path)
@@ -512,15 +519,16 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
     @app.post("/api/curation/projects/{project_id}/analyze")
     async def analyze_project(project_id: str) -> dict[str, Any]:
         project = load_project(project_id)
-        marker = _read_json(curation_run_root / "analysis-signature.json", {})
-        if (curation_run_root / "semantic-chunks.json").is_file() and marker.get("analysis_signature") == project.analysis_signature:
+        run_root = project_run_root(project_id)
+        marker = _read_json(run_root / "analysis-signature.json", {})
+        if (run_root / "semantic-chunks.json").is_file() and marker.get("analysis_signature") == project.analysis_signature:
             return {"status": "reused", "resolve_calls": 0}
         if project.source_video is None:
             raise HTTPException(status_code=422, detail="source video required")
         active = RUNS.get(project_runs.get(project_id, ""))
         if active and active.status in {"QUEUED", "RUNNING"}:
             raise HTTPException(status_code=409, detail="analysis already running")
-        state = RunState(uuid.uuid4().hex[:12], Path(project.source_video.path), curation_run_root, guide_audio=Path(project.guide_audio.path) if project.guide_audio else None, analysis_signature=project.analysis_signature)
+        state = RunState(uuid.uuid4().hex[:12], Path(project.source_video.path), run_root, guide_audio=Path(project.guide_audio.path) if project.guide_audio else None, analysis_signature=project.analysis_signature)
         RUNS[state.run_id] = state
         project_runs[project_id] = state.run_id
         asyncio.create_task(_run(state))
@@ -530,7 +538,7 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
     async def put_project_selection(project_id: str, chunk_id: str, request: ProjectSelectionRequest) -> dict[str, Any]:
         load_project(project_id)
         try:
-            changed = project_selection_store().set_chunk_selection(chunk_id, request.asset_ids, no_broll=request.no_broll)
+            changed = project_selection_store(project_id).set_chunk_selection(chunk_id, request.asset_ids, no_broll=request.no_broll)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {"selection": changed, "resolve_calls": 0}

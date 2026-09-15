@@ -1,6 +1,6 @@
 from html.parser import HTMLParser
 
-from backend.app.curation_ui import move_selection, phrase_status, remaining_decisions, render_curation_page
+from backend.app.curation_ui import BUILD_MARKER, move_selection, phrase_status, remaining_decisions, render_curation_page
 
 
 def test_phrase_status_and_completion_require_real_decision():
@@ -28,3 +28,11 @@ def test_candidate_markup_never_nests_buttons():
             if tag == "button": self.depth -= 1
     parser = ButtonNesting(); parser.feed(render_curation_page())
     assert parser.nested is False
+
+
+def test_authoritative_renderer_has_build_marker_and_no_legacy_ui():
+    page = render_curation_page()
+    assert BUILD_MARKER in page
+    assert "Solo selezionati" not in page
+    assert "Selezione locale" not in page
+    assert page.count("<script>") == 1

@@ -144,12 +144,15 @@ def test_task7_http_acceptance_path(monkeypatch):
         app = server.create_app(project_root=root / "projects", curation_run_root=run,
             probe_runner=lambda _: {"duration": 6, "fps": 25, "width": 1080, "height": 1920, "has_audio": True},
             audio_probe_runner=lambda _: 6.0, audio_command_runner=normalize)
+        assert sum(getattr(route, "path", None) == "/curation" for route in app.routes) == 1
         with TestClient(app) as client:
             page = client.get("/curation")
             assert page.status_code == 200
-            for contract in ('id="file"', 'id="originalGuide"', 'id="replaceGuide"', 'id="analyze"', 'id="stop"', 'id="phrases"', 'id="videos"', 'id="images"', 'id="selected"', 'id="confirm"', "remaining>0", "up.onclick", "down.onclick"):
+            for contract in ('id="file"', 'id="originalGuide"', 'id="replaceGuide"', 'id="analyze"', 'id="stop"', 'id="phrases"', 'id="videos"', 'id="images"', 'id="selected"', 'id="confirm"', "left>0", "data-m"):
                 assert contract in page.text
             pid = client.post("/api/curation/projects", json={}).json()["project_id"]
+            run = root / "projects" / pid / "run"
+            run.mkdir()
             uploaded = client.put(f"/api/curation/projects/{pid}/source/upload?filename=reel.mp4", content=b"video").json()
             assert uploaded["guide_audio"]["mode"] == "original"
             original_signature = uploaded["analysis_signature"]
@@ -185,12 +188,14 @@ def test_project_hydration_reads_artifacts_and_persists_no_broll():
 
     root = _project_test_root()
     try:
-        run = root / "run"
-        run.mkdir()
+        legacy = root / "run"; legacy.mkdir()
+        (legacy / "semantic-chunks.json").write_text('[{"id":"legacy","text":"Must not leak"}]', encoding="utf-8")
+        client = TestClient(create_app(project_root=root / "projects", curation_run_root=legacy))
+        project_id = client.post("/api/curation/projects", json={}).json()["project_id"]
+        assert client.get(f"/api/curation/projects/{project_id}/curation").json()["chunks"] == []
+        run = root / "projects" / project_id / "run"; run.mkdir()
         (run / "semantic-chunks.json").write_text('[{"id":"chunk-1","text":"A line"}]', encoding="utf-8")
         (run / "online-candidates.json").write_text('[]', encoding="utf-8")
-        client = TestClient(create_app(project_root=root / "projects", curation_run_root=run))
-        project_id = client.post("/api/curation/projects", json={}).json()["project_id"]
 
         hydrated = client.get(f"/api/curation/projects/{project_id}/curation")
         saved = client.put(f"/api/curation/projects/{project_id}/curation/chunks/chunk-1/selection", json={"asset_ids": [], "no_broll": True})
@@ -200,6 +205,9 @@ def test_project_hydration_reads_artifacts_and_persists_no_broll():
         assert saved.status_code == 200
         assert saved.json()["selection"] == {"chunk_id": "chunk-1", "no_broll": True, "selected_assets": []}
         assert (run / "selection-plan.json").is_file()
+        other_id = client.post("/api/curation/projects", json={"name": "Other"}).json()["project_id"]
+        other = client.get(f"/api/curation/projects/{other_id}/curation").json()
+        assert other["chunks"] == [] and other["selection_plan"] == {"chunks": {}}
     finally:
         shutil.rmtree(root)
 
@@ -210,12 +218,13 @@ def test_project_analyze_reuses_existing_artifacts_without_starting_provider():
 
     root = _project_test_root()
     try:
-        run = root / "run"
-        run.mkdir()
-        (run / "semantic-chunks.json").write_text('[]', encoding="utf-8")
-        client = TestClient(create_app(project_root=root / "projects", curation_run_root=run))
+        source = root / "source.mp4"; source.write_bytes(b"video")
+        client = TestClient(create_app(project_root=root / "projects", allowed_media_roots=[root], probe_runner=lambda _: {"duration": 1, "fps": 25, "width": 1, "height": 1, "has_audio": False}))
         project = client.post("/api/curation/projects", json={}).json()
         project_id = project["project_id"]
+        project = client.post(f"/api/curation/projects/{project_id}/source/local", json={"path": str(source)}).json()
+        run = root / "projects" / project_id / "run"; run.mkdir()
+        (run / "semantic-chunks.json").write_text('[]', encoding="utf-8")
         (run / "analysis-signature.json").write_text(json.dumps({"analysis_signature": project["analysis_signature"]}), encoding="utf-8")
 
         response = client.post(f"/api/curation/projects/{project_id}/analyze")
