@@ -288,7 +288,10 @@ class PexelsSource:
         creator = video.get("user") if isinstance(video.get("user"), dict) else {}
         creator_name = str(creator.get("name") or "").strip() or None
         creator_page = _safe_public_url(creator.get("url"))
-        title = str(video.get("title") or f"Pexels video {provider_id}").strip()
+        from urllib.parse import unquote
+        slug=unquote(urlsplit(source_page).path).strip('/').split('/')[-1]
+        inferred=' '.join(w for w in slug.split('-') if not w.isdigit())
+        title = str(video.get("title") or (inferred if inferred!='video' else '') or f"Pexels video {provider_id}").strip()
         description = str(video.get("description") or title).strip()
 
         return RemoteCandidate(

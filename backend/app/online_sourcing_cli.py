@@ -115,6 +115,7 @@ async def _source_outline(
     if event_callback:
         event_callback("coverage", 100.0, "Coverage slots planned", slots=len(slots), providers=providers)
 
+    engine.event_callback=event_callback
     tasks = []
     completed_count = 0
     route_by_slot: dict[str, Any] = {}
@@ -139,6 +140,8 @@ async def _source_outline(
                 "evidence_intent": intent,
                 "source_strategy": plan_source_strategy(intent, route, taste_context),
             }
+        if getattr(engine,'quality_mode',False):
+            editorial['retrieval_intent']=slot.visual_intent
         task = engine.source_beat(
                 beat_id=slot.id,
                 client_id=client_id,
@@ -160,7 +163,7 @@ async def _source_outline(
             rejected = list(result.get("rejected_candidates") or [])
             queries = list(slot_value.queries)[: engine.max_queries]
             if event_callback:
-                event_callback("online_search", progress, f"Slot {completed}/{len(slots)} searched", slot_id=slot_value.id, query=queries, providers=providers, raw=len(candidates) + len(rejected), accepted=len(candidates), rejected=len(rejected), errors=result.get("errors", []))
+                event_callback("online_search", progress, f"Slot {completed}/{len(slots)} searched", slot_id=slot_value.id, query=queries, providers=providers, raw=result.get('raw_result_count',len(candidates)+len(rejected)), accepted=sum(c.get('clip_verified',False) for c in candidates) if getattr(engine,'quality_mode',False) else len(candidates), preview_pending=sum(c.get('quality_state')=='source_found' for c in candidates), rejected=len(rejected), errors=result.get("errors", []))
                 event_callback("qwen_final", progress, f"Slot {completed}/{len(slots)} retrieval ranked", slot_id=slot_value.id, ranked=[{"id": row.get("id"), "score": row.get("qwen_score", row.get("score"))} for row in candidates[:3]])
                 event_callback("bounded_acquisition", progress, f"Slot {completed}/{len(slots)} previews materialized", slot_id=slot_value.id, previews=sum(bool(row.get("preview_path")) for row in candidates), cache_hits=result.get("preview_cache_hits", 0))
                 event_callback("review", progress, f"Slot {completed}/{len(slots)} proposals ready", slot_id=slot_value.id, proposals=sum(isinstance((result.get("proposals") or {}).get(key), dict) for key in ("proposal_A", "proposal_B", "proposal_C")))
@@ -172,16 +175,23 @@ async def _source_outline(
         history = []
         for slot, result in zip(slots, results):
             candidates = list(result.get('candidates') or [])
-            relevant = [c for c in candidates if float(c.get('score',0)) >= .30]
+            relevant = [c for c in candidates if c.get('quality_state')=='source_found' or float(c.get('score',0)) >= .48] if getattr(engine,'quality_mode',False) else [c for c in candidates if float(c.get('score',0)) >= .30]
             result['quality_rejected'] = len(candidates)-len(relevant)
             result['active_providers'] = providers
             from .media_quality import other_media_history
             cross_media = other_media_history(engine.retrieval_output, 'image', slot.beat_id) if hasattr(engine,'retrieval_output') else []
-            retained, removed = diverse_candidates(relevant, history + cross_media, limit=3)
+            if getattr(engine,'quality_mode',False):
+                social,a = diverse_candidates([c for c in relevant if c.get('source')!='pexels'],history+cross_media,limit=3)
+                stock,b = diverse_candidates([c for c in relevant if c.get('source')=='pexels'],history+cross_media+social,limit=3)
+                retained,removed=social+stock,a+b
+            else:
+                retained, removed = diverse_candidates(relevant, history + cross_media, limit=3)
             history.extend(retained)
             result['candidates'] = retained
             result['duplicates_rejected'] = removed
-            result['raw_result_count'] = len(candidates) + len(result.get('rejected_candidates') or [])
+            result.setdefault('raw_result_count',len(candidates) + len(result.get('rejected_candidates') or []))
+            if getattr(engine,'quality_mode',False):
+                result['eligible_candidate_count']=sum(c.get('clip_verified',False) for c in retained)
             valid = {c['id'] for c in retained}
             for key in ('proposal_A','proposal_B','proposal_C'):
                 proposal = (result.get('proposals') or {}).get(key)
@@ -496,7 +506,7 @@ def _real_engine(
     sources: list[Any] = [YouTubeOnlineSourceAdapter(YouTubeSource(discover=_discover_youtube))]
     if pexels_api_key:
         sources.append(PexelsSource(pexels_api_key))
-    return OnlineSourcingEngine(
+    engine = OnlineSourcingEngine(
         sources=sources,
         cache=AssetCache(cache_root),
         ranker=ranker,
@@ -504,6 +514,9 @@ def _real_engine(
         max_preview_candidates=max_candidates,
         download_selected=False,
     )
+    engine.quality_mode = True
+    engine.query_intents = {}
+    return engine
 
 
 def main() -> None:
@@ -523,6 +536,9 @@ def main() -> None:
     args = parser.parse_args()
     if args.max_candidates <= 0 or args.max_candidates > 40:
         raise SystemExit("--max-candidates must be between 1 and 40")
+    from .project_config import load_project_credentials,provider_status
+    load_project_credentials()
+    print("RAMBLA_EVENT "+json.dumps({"stage":"online_search","message":"Provider configuration","data":provider_status()}),flush=True)
     key = os.environ.get(args.pexels_key_env)
     chunks_path = args.chunks or args.output_dir / "semantic-chunks.json"
     chunks = json.loads(chunks_path.read_text(encoding="utf-8"))
@@ -560,7 +576,9 @@ def main() -> None:
         rejected = list(row.get("rejected_candidates") or [])
         target["providers"] = sorted(set(target["providers"]) | set(row.get("active_providers", [])) | {str(candidate.get("source")) for candidate in candidates if candidate.get("source")})
         target["raw"] += int(row.get("raw_result_count") or len(candidates) + len(rejected))
-        target["accepted"] += len(candidates); target["rejected"] += len(rejected)
+        target["accepted"] += sum(c.get('clip_verified',False) for c in candidates) if row.get('quality_version') else len(candidates)
+        target['preview_pending']=target.get('preview_pending',0)+sum(c.get('quality_state')=='source_found' for c in candidates)
+        target["rejected"] += len(rejected)
         target["proposals"] += sum(isinstance((row.get("proposals") or {}).get(key), dict) for key in ("proposal_A", "proposal_B", "proposal_C"))
         target["errors"].extend(row.get("errors") or [])
         planned_shots = visual_plan.get("chunks", {}).get(chunk_id, {}).get("shots", [])

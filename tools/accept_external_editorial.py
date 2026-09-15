@@ -1,4 +1,4 @@
-"""Opt-in live provider acceptance. Uses a manual fixture, never generative models."""
+"""Opt-in external-import regression with live providers; not product acceptance."""
 import json
 import os
 from pathlib import Path
@@ -20,7 +20,7 @@ def main():
     source=projects/'manual-fixture.mp4'
     if not source.exists():
         subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','color=c=gray:s=1280x720:r=25:d=8','-c:v','libx264','-pix_fmt','yuv420p',str(source)],check=True)
-    os.environ['RAMBLA_RETRIEVAL_RANKING']='provider'
+    os.environ.setdefault('RAMBLA_RETRIEVAL_RANKING','auto')
     os.environ['RAMBLA_DIRECTOR_MODEL']='UNAVAILABLE-GENERATIVE-MODEL'
     os.environ['RAMBLA_ASR_PYTHON']=sys.executable
     os.environ['RAMBLA_DEBUG_COMMAND_JSON']=json.dumps([sys.executable,'-m','backend.app.debug_run_cli','--video','{video}','--output-dir','{output}'])
@@ -69,12 +69,13 @@ def main():
             response=client.get(asset['preview_url']);response.raise_for_status()
             assert len(response.content)>1000
             assert asset['source_page'].startswith('https://')
-        selected=[a['asset_id'] for a in shelf[:3]]
+        selected=[a['asset_id'] for a in shelf if a.get('selectable',False)][:3]
+        assert selected,'No sufficiently relevant selectable candidates'
         save=client.put(base+'/curation/chunks/vb-1/selection',json={'asset_ids':selected,'no_broll':False});save.raise_for_status()
         assert [a['track'] for a in save.json()['selection']['selected_assets']]==['V2','V3','V4'][:len(selected)]
         assert client.get(base+'/curation').json()['selection_plan']['chunks']['vb-1']==save.json()['selection']
         assert json.loads((run/'visual-plan.json').read_text(encoding='utf-8'))==plan
-        report={'status':'PASS','project_id':pid,'project_root':str(projects),'manual_transcript_fixture':True,'asr_rerun':False,'generative_calls':0,'ranking':'provider order; no model scores','timings_seconds':timings,'cards':counts,'playable_videos':sum(a['kind']=='video' and a['preview_status']=='ready' for a in shelf),'discovery_videos':sum(a['kind']=='video' and a['preview_status']=='discovery' for a in shelf),'queries_unchanged':True,'plan_unchanged':True,'selection_persisted':True,'preview_http_ok':True,'resolve_calls':0}
+        report={'status':'REGRESSION_PASS_NOT_PRODUCT_ACCEPTANCE','project_id':pid,'project_root':str(projects),'manual_transcript_fixture':True,'asr_rerun':False,'generative_calls':0,'ranking':'shot relevance; optional local visual embedding','timings_seconds':timings,'cards':counts,'playable_videos':sum(a['kind']=='video' and a['preview_status']=='ready' for a in shelf),'pending_videos':sum(a['kind']=='video' and a['preview_status']!='ready' for a in shelf),'queries_unchanged':True,'plan_unchanged':True,'selection_persisted':True,'preview_http_ok':True,'resolve_calls':0}
         write_json(proof/'acceptance.json',report); print(json.dumps(report,indent=2),flush=True)
 
 

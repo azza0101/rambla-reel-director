@@ -519,7 +519,10 @@ def _load_official_qwen_vl_embedder(path: Path, config: QwenConfig) -> Any:
             "embedding: official QwenLM/Qwen3-VL-Embedding implementation is missing; "
             "configure RAMBLA_QWEN_VL_EMBEDDING_CODE_ROOT or embedding_code_root"
         ) from exc
-    return embedder(model_name_or_path=str(path))
+    import torch
+    return embedder(model_name_or_path=str(path), local_files_only=True,
+                    dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
+                    max_pixels=512*32*32)
 
 
 class LocalQwenEmbedder(_LocalModel):

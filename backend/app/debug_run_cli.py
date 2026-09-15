@@ -126,6 +126,9 @@ def discover_image_candidates(
     """Search, locally materialize and Qwen-rank images with per-chunk resumability."""
     if sources is None and not visual_plan:
         raise ValueError("imported visual plan required before production image sourcing")
+    if sources is None:
+        from .quality_images import source_images
+        return asyncio.run(source_images(chunks,output_dir,visual_plan,ranker,client_id,event_callback=event_callback))
     artifact = output_dir / "image-candidates.json"
     intents = {}
     for index, chunk in enumerate(chunks):

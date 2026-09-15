@@ -25,6 +25,8 @@ class SelectionStore:
             candidate = self.candidate_index.get(asset_id)
             if candidate is None or candidate.get("chunk_id") != chunk_id:
                 raise ValueError("unknown or cross-chunk asset")
+            if candidate.get("selectable") is False:
+                raise ValueError("Source found / preview pending: a verified clip is required before selection")
         payload = self.load()
         payload["chunks"][chunk_id] = {"chunk_id": chunk_id, "no_broll": no_broll, "selected_assets": [] if no_broll else [
             {"asset_id": asset_id, "order": index, "track": f"V{index + 2}"} for index, asset_id in enumerate(unique)

@@ -31,12 +31,18 @@ class CurationCandidate:
     license_url: str | None = None
     attribution: str | None = None
     shot_id: str | None = None
+    matched_query: str | None = None
+    quality_state: str | None = None
+    clip_verified: bool = False
+    quality_reasons: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class CandidateShelf:
     video: tuple[CurationCandidate, ...]
     images: tuple[CurationCandidate, ...]
+    social: tuple[CurationCandidate, ...] = ()
+    stock: tuple[CurationCandidate, ...] = ()
 
 
 def build_candidate_shelf(
@@ -51,12 +57,13 @@ def build_candidate_shelf(
         if key not in seen:
             seen.add(key)
             ordered.append(row)
-    def per_shot(kind, limit):
-        rows=[r for r in ordered if r.kind==kind]
+    def per_shot(kind, limit, stock=None):
+        rows=[r for r in ordered if r.kind==kind and (stock is None or (r.provider=="pexels")==stock)]
         primary=[]; remaining=[]; shots=set()
         for row in rows:
             if row.shot_id not in shots:
                 primary.append(row); shots.add(row.shot_id)
             else: remaining.append(row)
         return tuple((primary+remaining)[:limit])
-    return CandidateShelf(video=per_shot('video',video_limit), images=per_shot('image',image_limit))
+    social=per_shot('video',video_limit,False); stock=per_shot('video',video_limit,True)
+    return CandidateShelf(video=social+stock, images=per_shot('image',image_limit),social=social,stock=stock)

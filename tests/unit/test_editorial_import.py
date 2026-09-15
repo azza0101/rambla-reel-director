@@ -158,7 +158,7 @@ def test_provider_mode_does_not_instantiate_any_model(tmp_path,monkeypatch):
     monkeypatch.setattr(qwen_stack.LocalQwenDirectorGenerator,'__init__',forbidden)
     monkeypatch.setenv('RAMBLA_RETRIEVAL_RANKING','provider')
     engine=_real_engine(client_id='p',pexels_api_key=None,model_root=tmp_path/'not-installed',embedding_code_root=None,cache_root=tmp_path/'cache',max_candidates=3)
-    assert engine.ranker.__class__.__name__=='ProviderOrderRanker'
+    assert engine.ranker.__class__.__name__=='QualityRanker'
 
 
 def test_duplicate_json_fields_rejected():

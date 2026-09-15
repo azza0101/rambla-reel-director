@@ -1,6 +1,8 @@
-# Current direction — External editorial plan import
+# Current direction — Retrieval quality, before product validation
 
-The external-plan workflow is implemented and verified; see [EXTERNAL_EDITORIAL_PLAN.md](EXTERNAL_EDITORIAL_PLAN.md) for the schema, acceptance evidence and launcher. Next user-review step: create external RAMBLA editorial instructions and a real KURA plan. Local generative optimization is optional and no longer blocks sourcing. Do not auto-generate a KURA plan or add an OpenAI API integration.
+Latest Issue #3 instruction accepts the external-plan import base; it does not accept sourcing quality or the KURA result. The user's next instruction prioritizes retrieval quality over UI polish. See [RETRIEVAL_QUALITY.md](RETRIEVAL_QUALITY.md) for the implementation, real regression evidence, limits, and reproduction commands. Do not call the product validated based on these fixtures.
+
+Keep the model-neutral external-plan workflow from [EXTERNAL_EDITORIAL_PLAN.md](EXTERNAL_EDITORIAL_PLAN.md). No automatic KURA generation, generative runtime in the critical path, new packages/model downloads, stickers, or Resolve changes. Pexels credentials stay in ignored project `.env.local`, loaded by the backend and stage workers.
 
 ---
 

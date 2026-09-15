@@ -19,6 +19,7 @@ from .curation_artifacts import load_curation_run
 from .curation_project import CurationProject, ProjectStore
 from .curation_selection import SelectionStore
 from .curation_ui import render_curation_page
+from .project_config import load_project_credentials,provider_status
 from .editorial_import import transcript_package, validate_import, import_plan, load_import, active_retrieval_root, contract_schema, parse_plan
 from .project_lock import project_stage_lock
 
@@ -528,6 +529,7 @@ def _probe_source_video(source: Path) -> dict[str, Any]:
 
 
 def create_app(*, project_root: Path | None = None, curation_run_root: Path | None = None, allowed_media_roots: list[Path] | None = None, probe_runner: Any = None, audio_probe_runner: Any = None, audio_command_runner: Any = None) -> FastAPI:
+    load_project_credentials()
     app = FastAPI(title="RAMBLA Debug Runner", version="0.1.0")
     project_root = project_root or Path(os.environ.get("RAMBLA_PROJECT_ROOT", str(Path(DEFAULT_OUTPUT).parent / "curation-projects")))
     # Legacy/default artifacts are deliberately never used by project routes.
@@ -571,7 +573,7 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
         run = project_run(project_id)
         return SelectionStore(
             active_retrieval_root(project_run_root(project_id)),
-            {asset_id: {"chunk_id": item.chunk_id} for asset_id, item in run.candidate_index.items()},
+            {asset_id: {"chunk_id": item.chunk_id,"selectable":item.kind!="video" or (item.preview_status=="ready" and item.clip_verified)} for asset_id, item in run.candidate_index.items()},
             [item.chunk_id for item in run.chunks],
         )
 
@@ -628,7 +630,7 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
             editorial_plan = approved_plan(project_id)
         except HTTPException as exc:
             editorial_error = exc.detail
-        flags = {'analysis_ready':analysis_ready,'editorial_plan_ready':editorial_plan is not None,'editorial_error':editorial_error}
+        flags = {'provider_status':provider_status(),'analysis_ready':analysis_ready,'editorial_plan_ready':editorial_plan is not None,'editorial_error':editorial_error}
         existing = _read_json(project_run_root(project_id)/'visual-plan.json',{})
         if not editorial_plan and existing.get('schema_version')=='rambla-visual-plan-1':
             return {**flags,'project_id':project_id,'chunks':[],'selection_plan':{'chunks':{}},'resolve_calls':0}
@@ -666,6 +668,7 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
             return str(row.get("zero_result_reason") or "images not searched")
         return {
             **flags,
+            "retrieval_warnings":list(run.errors),
             "project_id": project_id,
             "chunks": [{"id": row.chunk_id, "text": row.text,
                 "start": imported_beats.get(row.chunk_id, {}).get('start'),
@@ -679,7 +682,10 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
                 "assets": [
                 {"asset_id": item.asset_id, "chunk_id": item.chunk_id, "kind": item.kind,
                  "provider": item.provider, "title": item.title, "rights_state": item.rights_state,
-                 "orientation": item.orientation, "source_page":item.source_page, "preview_status":item.preview_status, "license_name":item.license_name,"license_url":item.license_url,"attribution":item.attribution,"shot_id":item.shot_id,
+                 "orientation": item.orientation, "source_page":item.source_page, "preview_status":item.preview_status, "license_name":item.license_name,"license_url":item.license_url,"attribution":item.attribution,"shot_id":item.shot_id,"matched_query":item.matched_query,"score":item.score,"source_url":item.source_page,
+                 "source_start_seconds":item.source_start_seconds,"source_end_seconds":item.source_end_seconds,
+                 "quality_state":item.quality_state,"quality_reasons":list(item.quality_reasons),
+                 "selectable":item.kind!="video" or (item.preview_status=="ready" and item.clip_verified),
                  "preview_url": item.preview_url or f"/api/curation/projects/{project_id}/media/{item.asset_id}/preview",
                  "poster_url": f"/api/curation/projects/{project_id}/media/{item.asset_id}/poster"}
                 for item in (*row.video_candidates, *row.image_candidates)
