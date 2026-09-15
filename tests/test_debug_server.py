@@ -171,3 +171,28 @@ def test_cancel_terminates_running_process_and_is_idempotent():
         assert process.terminated == 1
     finally:
         RUNS.pop(state.run_id, None)
+
+
+def test_cancel_kills_worker_that_ignores_terminate(monkeypatch):
+    import asyncio
+    from backend.app.debug_server import RUNS, RunState, create_app
+
+    class Process:
+        returncode = None
+        killed = False
+        def terminate(self): pass
+        def kill(self): self.killed = True; self.returncode = -9
+        async def wait(self):
+            if not self.killed: raise asyncio.TimeoutError
+            return self.returncode
+
+    async def immediate(awaitable, timeout): return await awaitable
+    monkeypatch.setattr(asyncio, "wait_for", immediate)
+    process = Process(); state = RunState("kill-test", Path("source.mp4"), Path("run"), status="RUNNING", process=process)
+    RUNS[state.run_id] = state
+    try:
+        response = TestClient(create_app()).post("/v1/debug/runs/kill-test/cancel")
+        assert response.json()["status"] == "CANCELLED"
+        assert process.killed is True
+    finally:
+        RUNS.pop(state.run_id, None)
