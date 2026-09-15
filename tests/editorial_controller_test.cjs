@@ -6,7 +6,7 @@ const package={instructions:'Whole reel instructions',project_id:'p',chunks:[{id
 let ready=false, fail=false, clipboard='';
 const context={document:{getElementById:el,querySelectorAll:()=>[],createElement:()=>({click(){}})},window:{addEventListener(){}},location:{search:''},localStorage:{getItem:()=>null,setItem(){},removeItem(){}},URLSearchParams,URL:{createObjectURL:()=> 'blob:test',revokeObjectURL(){}},Blob,Map,Error,JSON,setTimeout,clearInterval,setInterval,navigator:{clipboard:{writeText:async s=>{clipboard=s}}},fetch:async(url,opts)=>{requests.push([url,opts]);let data={};if(url.endsWith('/editorial-input'))data=package;else if(url.endsWith('/editorial-plan')){if(fail)return{ok:false,json:async()=>({detail:'$.visual_beats: invalid coverage'})};ready=true;data={status:'imported'}}else if(url.endsWith('/curation'))data={analysis_ready:true,editorial_plan_ready:ready,chunks:[],selection_plan:{chunks:{}}};return{ok:true,json:async()=>data}}};
 vm.createContext(context);
-vm.runInContext(input.script.replace('draw();restore()})();','draw();globalThis.test={state,hydrate,draw,card};})();'),context);
+vm.runInContext(input.script.replace('draw();restore()})();','draw();globalThis.test={state,hydrate,draw,card,centerActiveBeat};})();'),context);
 (async()=>{
   context.test.state.pid='p';await context.test.hydrate();
   assert.equal(el('findImages').disabled,true);assert.equal(el('copyEditorial').disabled,false);
@@ -28,5 +28,6 @@ vm.runInContext(input.script.replace('draw();restore()})();','draw();globalThis.
   assert.ok(el('stockVideos').innerHTML.includes('<details><summary>Retrieval details'));
   assert.ok(el('providerWarnings').textContent.includes('Pexels key missing'));
   assert.ok(el('providerWarnings').textContent.includes('rerun old retrieval'));
-  console.log('PASS editorial import, sourcing gate, separate shelves, pending disabled, clip ranges, expandable debug, warnings');
+  const rail=el('phrases');rail.scrollTop=100;rail.clientHeight=300;rail.getBoundingClientRect=()=>({top:20});rail.querySelector=()=>({offsetHeight:60,getBoundingClientRect:()=>({top:220})});let railScroll;rail.scrollTo=o=>{railScroll=o.top};context.test.centerActiveBeat();assert.equal(railScroll,220);
+  console.log('PASS independently centered rail, editorial import, sourcing gate, separate shelves, pending disabled, clip ranges, expandable debug, warnings');
 })().catch(e=>{console.error(e);process.exitCode=1});

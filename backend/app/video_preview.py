@@ -56,13 +56,13 @@ def probe_preview(value: str | None) -> dict:
     return dict(_probe(str(path),stat.st_size,stat.st_mtime_ns))
 
 
-def materialize_clip(source: str, directory: Path, identity: str, *, start_seconds: float = 0.0) -> dict:
+def materialize_clip(source: str, directory: Path, identity: str, *, start_seconds: float = 0.0, streaming: bool = False) -> dict:
     directory.mkdir(parents=True,exist_ok=True)
     key = hashlib.sha256((identity+'|preview-v2|'+str(start_seconds)).encode()).hexdigest()[:24]
     preview = directory/f'{key}.mp4'
     poster = directory/f'{key}.jpg'
     if not probe_preview(str(preview))['playable']:
-        if source.startswith(('https://','http://')):
+        if source.startswith(('https://','http://')) and not streaming:
             source=str(download_preview_proxy(source,directory,identity))
         subprocess.run(['ffmpeg','-v','error','-y','-ss',str(start_seconds),'-i',source,'-t','3.5','-vf',"scale='min(640,iw)':-2",'-an','-c:v','libx264','-pix_fmt','yuv420p','-preset','veryfast','-crf','28','-movflags','+faststart',str(preview)],check=True,capture_output=True,timeout=60)
     facts = probe_preview(str(preview))

@@ -1,8 +1,8 @@
-# Current direction — Retrieval quality, before product validation
+# Current direction — Imported-plan retrieval quality
 
-Latest Issue #3 instruction accepts the external-plan import base; it does not accept sourcing quality or the KURA result. The user's next instruction prioritizes retrieval quality over UI polish. See [RETRIEVAL_QUALITY.md](RETRIEVAL_QUALITY.md) for the implementation, real regression evidence, limits, and reproduction commands. Do not call the product validated based on these fixtures.
+Latest Issue #3 instructions require actual localized clips, faithful per-shot retrieval, safe analysis reuse, and an independently scrolling visual-beat rail. See [RETRIEVAL_MEDIA_ACCEPTANCE.md](RETRIEVAL_MEDIA_ACCEPTANCE.md) for this milestone's evidence and limitations.
 
-Keep the model-neutral external-plan workflow from [EXTERNAL_EDITORIAL_PLAN.md](EXTERNAL_EDITORIAL_PLAN.md). No automatic KURA generation, generative runtime in the critical path, new packages/model downloads, stickers, or Resolve changes. Pexels credentials stay in ignored project `.env.local`, loaded by the backend and stage workers.
+The external `rambla-visual-plan-1` stays authoritative. Retrieval code/configuration changes never authorize ASR, regeneration of the imported plan, or loss of selections. No stickers, models/packages installs, global configuration changes, or Resolve calls.
 
 ---
 

@@ -76,7 +76,13 @@ def editorial_artifacts_match(output_dir: Path, analysis_signature: str) -> bool
         recorded = json.loads(marker.read_text(encoding="utf-8")).get("analysis_signature")
     except (OSError, json.JSONDecodeError):
         return False
-    return recorded == analysis_signature and has_editorial_artifacts(output_dir) and has_concrete_visual_video_artifact(output_dir)
+    if recorded != analysis_signature:return False
+    try:
+        from .editorial_import import load_import
+        load_import(output_dir)
+        return True
+    except (OSError,ValueError,KeyError,TypeError):
+        return has_editorial_artifacts(output_dir) and has_concrete_visual_video_artifact(output_dir)
 
 
 def has_concrete_visual_video_artifact(output_dir: Path) -> bool:
@@ -92,6 +98,12 @@ def has_concrete_visual_video_artifact(output_dir: Path) -> bool:
 def invalidate_stale_analysis_outputs(output_dir: Path, analysis_signature: str) -> None:
     if editorial_artifacts_match(output_dir, analysis_signature):
         return
+    try:
+        from .editorial_import import load_import
+        load_import(output_dir)
+        # Imported editorial state is invalidated by source provenance, never provider shape.
+        return
+    except (OSError,ValueError,KeyError,TypeError):pass
     for name in ("online-candidates.json", "image-candidates.json", "video-sourcing.json", "image-sourcing.json", "video-sourcing-diagnostics.json", "visual-plan.json", "edit-plan.json", "review.html", "analysis-signature.json"):
         path = output_dir / name
         if path.is_file():
@@ -587,6 +599,11 @@ def _run_stages(args):
         _write_json(output / "video-sourcing.json", {"status": "complete", "chunks": len(chunks)})
         _event("online_search", 100, "Video sourcing completato", chunks=len(chunks))
         return
+    signature_file=output/'run-input.json'
+    if signature_file.is_file() and json.loads(signature_file.read_text())==signature and chunks_path.is_file() and transcript_path.is_file():
+        if args.stage=='analyze':
+            _event('analysis',100,'Existing transcript and chunks reused; imported plan preserved',asr_rerun=False)
+            return
     invalidate_stale_analysis_outputs(output, analysis_signature)
     signature_path = output / "run-input.json"
     cached = False

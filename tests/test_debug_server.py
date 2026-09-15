@@ -327,7 +327,7 @@ def test_video_and_image_sourcing_are_independent_project_stages(monkeypatch):
         pid = client.post("/api/curation/projects", json={}).json()["project_id"]
         client.post(f"/api/curation/projects/{pid}/source/local", json={"path": str(source)})
         run = root / "projects" / pid / "run"; run.mkdir()
-        for name, value in (("semantic-chunks.json", "[]"), ("semantic-beats.json", '{"beats":[]}'), ("transcript-raw.json", '{"segments":[]}')):
+        for name, value in (("semantic-chunks.json", "[]"), ("semantic-beats.json", '{"beats":[]}'), ("transcript-raw.json", '{"segments":[{"start":0,"end":2,"text":"An example."}]}')):
             (run / name).write_text(value, encoding="utf-8")
         from backend.app.editorial_import import transcript_package, import_plan
         project = client.get(f"/api/curation/projects/{pid}").json()
@@ -398,7 +398,8 @@ def test_project_analyze_reuses_existing_artifacts_without_starting_provider():
         project_id = project["project_id"]
         project = client.post(f"/api/curation/projects/{project_id}/source/local", json={"path": str(source)}).json()
         run = root / "projects" / project_id / "run"; run.mkdir()
-        (run / "semantic-chunks.json").write_text('[]', encoding="utf-8")
+        (run / "semantic-chunks.json").write_text('[{"id":"c1","start":0,"end":1,"text":"Example"}]', encoding="utf-8")
+        (run / "transcript-raw.json").write_text('{"segments":[{"start":0,"end":1,"text":"Example"}]}', encoding="utf-8")
         (run / "analysis-signature.json").write_text(json.dumps({"analysis_signature": project["analysis_signature"]}), encoding="utf-8")
 
         response = client.post(f"/api/curation/projects/{project_id}/analyze")

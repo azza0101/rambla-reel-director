@@ -580,7 +580,8 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
     def editorial_input(project_id: str) -> dict:
         project = load_project(project_id)
         root = project_run_root(project_id)
-        if not project.source_video or _read_json(root / 'analysis-signature.json', {}).get('analysis_signature') != project.analysis_signature:
+        from .analysis_reuse import ensure_analysis_ready
+        if not ensure_analysis_ready(root,project):
             raise HTTPException(status_code=422, detail='Analyze this source/guide before exporting or sourcing')
         try:
             return transcript_package(root, project_id, project.source_video.duration)
@@ -650,6 +651,17 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
         video_diagnostics = {str(row.get("chunk_id")): row for row in diagnostics.get("chunks", [])}
         image_artifact = _read_json(retrieval_root / "image-candidates.json", {"chunks": {}})
         image_diagnostics = image_artifact.get("chunks", {}) if isinstance(image_artifact, dict) else {}
+        from .retrieval_diagnostics import image_diagnostic,video_diagnostic
+        video_rows=_read_json(retrieval_root/'online-candidates.json',[])
+        def media_diagnostics(cid):
+            rows=[r for r in video_rows if r.get('parent_beat_id')==cid]
+            image_row=image_diagnostics.get(cid,{})
+            return {'social':video_diagnostic(rows,'youtube'),'stock':video_diagnostic(rows,'pexels',provider_status()['pexels_configured']),
+                'image':image_diagnostic(image_row),'image_attempts':image_row.get('search_attempts',[]),
+                'image_rejections':image_row.get('rejected_candidates',[]),
+                'video_attempts':[a for r in rows for a in r.get('search_attempts',[])],
+                'video_errors':[e for r in rows for e in r.get('errors',[])],
+                'video_rejections':[a for r in rows for a in r.get('rejected_candidates',[])]}
         visual_artifact = _read_json(project_run_root(project_id) / "visual-plan.json", {"chunks": {}})
         visual_plans = visual_artifact.get("chunks", {}) if isinstance(visual_artifact, dict) else {}
         visual_plans.update(imported_beats)
@@ -677,8 +689,10 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
                 "action": imported_beats.get(row.chunk_id, {}).get('action'),
                 "visual_plan": visual_plans.get(row.chunk_id),
                 "error": any(item.preview_error for item in (*row.video_candidates, *row.image_candidates)),
-                "video_reason": None if row.video_candidates else video_reason(row.chunk_id),
-                "image_reason": None if row.image_candidates else image_reason(row.chunk_id),
+                "video_reason": None if row.video_candidates else media_diagnostics(row.chunk_id)['social']['message'],
+                "stock_reason":media_diagnostics(row.chunk_id)['stock']['message'],
+                "image_reason": None if row.image_candidates else media_diagnostics(row.chunk_id)['image']['message'],
+                "retrieval_diagnostics":media_diagnostics(row.chunk_id),
                 "assets": [
                 {"asset_id": item.asset_id, "chunk_id": item.chunk_id, "kind": item.kind,
                  "provider": item.provider, "title": item.title, "rights_state": item.rights_state,
@@ -781,7 +795,8 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
         project = load_project(project_id)
         run_root = project_run_root(project_id)
         marker = _read_json(run_root / "analysis-signature.json", {})
-        if (run_root / "semantic-chunks.json").is_file() and marker.get("analysis_signature") == project.analysis_signature:
+        from .analysis_reuse import ensure_analysis_ready
+        if ensure_analysis_ready(run_root,project):
             return {"status": "reused", "resolve_calls": 0}
         if project.source_video is None:
             raise HTTPException(status_code=422, detail="source video required")

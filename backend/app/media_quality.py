@@ -3,6 +3,15 @@ import hashlib
 from pathlib import Path
 
 
+def balance_shots(rows):
+    first=[];remaining=[];seen=set()
+    for row in sorted(rows,key=lambda r:-r.get('score',0)):
+        shot=row.get('shot_id')
+        if shot not in seen:first.append(row);seen.add(shot)
+        else:remaining.append(row)
+    return first+remaining
+
+
 def perceptual_hash(path: Path) -> str:
     from PIL import Image, ImageOps
     with Image.open(path) as raw:

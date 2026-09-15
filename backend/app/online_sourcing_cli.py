@@ -175,7 +175,7 @@ async def _source_outline(
         history = []
         for slot, result in zip(slots, results):
             candidates = list(result.get('candidates') or [])
-            relevant = [c for c in candidates if c.get('quality_state')=='source_found' or float(c.get('score',0)) >= .48] if getattr(engine,'quality_mode',False) else [c for c in candidates if float(c.get('score',0)) >= .30]
+            relevant = [c for c in candidates if c.get('quality_state')=='source_found' or float(c.get('score',0)) >= .42] if getattr(engine,'quality_mode',False) else [c for c in candidates if float(c.get('score',0)) >= .30]
             result['quality_rejected'] = len(candidates)-len(relevant)
             result['active_providers'] = providers
             from .media_quality import other_media_history
@@ -531,6 +531,7 @@ def main() -> None:
     parser.add_argument("--source-frames", type=int, required=True)
     parser.add_argument("--model-root", type=Path, required=True)
     parser.add_argument("--embedding-code-root", type=Path)
+    parser.add_argument('--beat-ids',nargs='+')
     parser.add_argument("--pexels-key-env", default="PEXELS_API_KEY")
     parser.add_argument("--max-candidates", type=int, default=12)
     args = parser.parse_args()
@@ -545,6 +546,7 @@ def main() -> None:
     stored_outline = json.loads(args.outline.read_text(encoding="utf-8"))
     args.output_dir, chunks, visual_plan, imported_outline = retrieval_bundle(args.output_dir)
     sourcing_outline = {**stored_outline, **imported_outline}
+    if args.beat_ids:sourcing_outline['beats']=[b for b in sourcing_outline['beats'] if b['id'] in args.beat_ids]
     engine = _real_engine(
         client_id=args.client_id,
         pexels_api_key=key,

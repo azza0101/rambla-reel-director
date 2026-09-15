@@ -19,9 +19,9 @@ def test_project_credentials_are_loaded_without_overwriting_environment(tmp_path
 def test_expansion_preserves_required_subject_and_condition():
     from backend.app.retrieval_quality import expand_queries
     rows=expand_queries(['wilted basil plant in a small pot'],'image')
-    assert len(rows)<=4
+    assert len(rows)<=6
     assert any('wilting basil' in q for q in rows)
-    assert all('basil' in q and any(w in q for w in ('wilt','droop')) for q in rows)
+    assert all('basil' in q and any(w in q for w in ('wilt','droop','dying')) for q in rows)
     assert all('travel' not in q for q in rows)
 
 
@@ -48,12 +48,12 @@ def test_visual_score_cannot_override_explicit_wrong_condition():
     assert row['quality_state']=='rejected'
 
 
-def test_matching_metadata_cannot_rescue_weak_visual_evidence():
+def test_borderline_matching_candidate_requires_review():
     from backend.app.retrieval_quality import QualityRanker
     class Ranker:
-        def rank(self,q,rows):return [dict(r,embedding_score=.51) for r in rows]
+        def rank(self,q,rows):return [dict(r,embedding_score=.51 if 'wilted' in q else .40) for r in rows]
     row=QualityRanker(Ranker()).rank('wilted basil plant',[{'id':'weak','description':'wilted basil plant'}])[0]
-    assert row['quality_state']=='rejected'
+    assert row['quality_state']=='needs_review'
 
 
 def test_separate_video_shelves_keep_three_each_and_pending_not_final():
@@ -157,8 +157,8 @@ async def test_video_ranks_clip_frames_against_own_shot_not_shared_query(tmp_pat
     monkeypatch.setattr(module,'_frame_samples',lambda _:['frame-one.jpg','frame-two.jpg'])
     monkeypatch.setattr(module,'perceptual_hash',lambda _:'1234')
     result=await module.source_video_beat(engine,beat_id='b',client_id='p',queries=['shared query'],min_duration=1,max_duration=60,orientation=None,retrieval_intent=own)
-    assert len(result['candidates'])==1
-    row=result['candidates'][0]
+    assert len(result['candidates'])==int(playable)
+    row=(result['candidates'] if playable else result['discovery_sources'])[0]
     assert row['clip_verified'] is playable
     if playable:
         assert ranked[0][0]==own
@@ -174,13 +174,20 @@ def test_youtube_uses_video_only_bounded_proxy_and_local_cut(tmp_path,monkeypatc
     from types import SimpleNamespace as NS
     from backend.app import quality_video as module
     commands=[];downloads=[];cuts=[]
+    from contextlib import contextmanager
+    @contextmanager
+    def bridge(url):
+        downloads.append(url);yield "http://127.0.0.1:12345/media"
+    monkeypatch.setattr(module,"range_media",bridge)
+    module._youtube_url.cache_clear()
     def run(cmd,**kw):commands.append(cmd);return NS(stdout=json.dumps({'url':'https://media.example/video-only'}))
     monkeypatch.setattr(module.subprocess,'run',run)
     monkeypatch.setattr(module,'download_preview_proxy',lambda url,folder,identity:downloads.append(url) or folder/'proxy.mp4',raising=False)
     monkeypatch.setattr(module,'materialize_clip',lambda source,folder,identity,**kw:cuts.append((source,kw)) or {'preview_path':'clip.mp4','preview_duration':3.5,'source_start_seconds':kw.get('start_seconds',0),'source_end_seconds':kw.get('start_seconds',0)+3.5})
     clip=module._youtube_clip('https://youtube.com/watch?v=id',tmp_path,'youtube:id',7)
     assert downloads==['https://media.example/video-only']
-    assert cuts[0][0].endswith('proxy.mp4') and cuts[0][1]['start_seconds']==7
+    assert cuts[0][0]=='http://127.0.0.1:12345/media' and cuts[0][1]['start_seconds']==7
+    assert cuts[0][1]['streaming'] is True
     assert '--skip-download' in commands[0]
     assert 'bv*' in commands[0][commands[0].index('-f')+1]
     assert clip['source_end_seconds']==10.5

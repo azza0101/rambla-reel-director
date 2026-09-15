@@ -9,7 +9,7 @@ import time
 import httpx
 from .atomic_io import write_json
 from .image_sources import PexelsPhotoSource,GoogleImageSource,WikimediaImageSource
-from .media_quality import image_quality,diverse_candidates,other_media_history,cross_chunk_duplicate_rate
+from .media_quality import image_quality,diverse_candidates,other_media_history,cross_chunk_duplicate_rate,balance_shots
 from .project_config import load_project_credentials,provider_status
 from .retrieval_quality import VERSION,expand_queries,QualityRanker
 
@@ -45,6 +45,8 @@ async def source_images(chunks,output,plan,ranker,client_id,*,sources=None,fetch
         row={'status':'searched','visual_action':beat.get('visual_action','BROLL'),'candidates':[],'rejected_candidates':[],
             'search_attempts':[],'queries':[q for s in beat['shots'] for q in s['image_queries']],'raw_count':0,'accepted_count':0,'errors':[],'active_providers':[]}
         result['chunks'][bid]=row
+        counts={'raw':0,'hd':0,'preview':0,'preview_failed':0,'rejected':0,'duplicates':0,'requests_failed':0}
+        row['counts']=counts
         if row['visual_action']!='BROLL':
             row.update(status='not_requested',zero_result_reason=row['visual_action']);continue
         old=cached.get('chunks',{}).get(bid,{})
@@ -62,33 +64,46 @@ async def source_images(chunks,output,plan,ranker,client_id,*,sources=None,fetch
                     attempt={'provider':provider_name,'query':query,'shot_id':shot['shot_id'],'expanded':query not in shot['image_queries'],'expanded_from':shot['image_queries'] if query not in shot['image_queries'] else None}
                     row['search_attempts'].append(attempt)
                     if event_callback:event_callback('image_search',100*index/max(1,len(chunks)),'Searching photos',chunk_id=bid,**attempt)
-                    try: remote=await provider.search(query,limit=6)
+                    try: remote=await provider.search(query,limit=12)
                     except Exception as exc:
-                        attempt['error']=getattr(exc,'code',type(exc).__name__);row['errors'].append(attempt.copy());continue
+                        attempt['error']=getattr(exc,'code',type(exc).__name__);row['errors'].append(attempt.copy());counts['requests_failed']+=1;continue
                     attempt['hits']=len(remote);row['raw_count']+=len(remote)
+                    counts['raw']+=len(remote)
                     pool=[]
                     for c in remote:
                         if (c.provider,c.provider_id) in seen:continue
                         seen.add((c.provider,c.provider_id))
                         if max(c.width,c.height)<1024 or min(c.width,c.height)<480:continue
+                        counts['hd']+=1
                         cache=output/'image-cache';cache.mkdir(exist_ok=True)
                         local=cache/(hashlib.sha256((c.provider+':'+c.provider_id).encode()).hexdigest()[:24]+'.jpg')
                         try:
                             if not local.exists():local.write_bytes(await fetch(c.thumbnail_url))
                             quality=image_quality(local)
+                            counts['preview']+=1
                             pool.append({**asdict(c),**quality,'id':c.provider+':'+c.provider_id,'client_id':client_id,'path':str(local),'preview_path':str(local),'kind':'image','source':c.provider,'description':c.description or c.title,'shot_id':shot['shot_id'],'shot_description':shot['description'],'matched_query':query})
-                        except Exception as exc:row['errors'].append({'provider':c.provider,'code':'preview_failed','error_type':type(exc).__name__})
+                        except Exception as exc:
+                            dimension_failure=isinstance(exc,ValueError) and str(exc)=='image below usable dimensions'
+                            if dimension_failure:counts['hd']-=1
+                            else:counts['preview_failed']+=1
+                            row['errors'].append({'provider':c.provider,'code':'no_hd_candidates' if dimension_failure else 'preview_failed','error_type':type(exc).__name__})
                     ranked=ranker.rank(shot['description'],pool)
-                    strong=[r for r in ranked if r.get('quality_state')!='rejected' and r.get('score',0)>=.48]
-                    row['rejected_candidates'].extend({k:r.get(k) for k in ('id','provider','source_page','matched_query','score','embedding_score','metadata_score','quality_reasons')} for r in ranked if r not in strong)
+                    strong=[r for r in ranked if r.get('quality_state')!='rejected' and r.get('score',0)>=.42]
+                    counts['rejected']+=len(ranked)-len(strong)
+                    row['rejected_candidates'].extend({k:r.get(k) for k in ('id','provider','title','source_page','matched_query','score','embedding_score','shot_embedding_score','query_embedding_score','condition_counter_score','metadata_score','quality_reasons')} for r in ranked if r not in strong)
                     accepted,n=diverse_candidates(accepted+strong,history+cross+row['candidates'],limit=2)
                     result['duplicates_rejected']+=n;attempt['accepted']=len(accepted)
+                    counts['duplicates']+=n
                     if len(accepted)>=2:break
                 if len(accepted)>=2:break
             row['candidates'].extend(accepted)
-        row['candidates'],n=diverse_candidates(row['candidates'],history+cross,limit=4)
+        row['candidates'],n=diverse_candidates(balance_shots(row['candidates']),history+cross,limit=4)
         result['duplicates_rejected']+=n;history.extend(row['candidates']);row['accepted_count']=len(row['candidates'])
-        row['zero_result_reason']=None if row['candidates'] else 'No sufficiently relevant unique image after primary, secondary and expanded fallback queries'
+        from .retrieval_diagnostics import empty_reason
+        counts['ranker_unavailable']=bool(getattr(ranker,'warning',None)) or getattr(ranker,'visual',None) is None
+        counts['accepted']=len(row['candidates'])
+        row['diagnostics']=empty_reason(counts)
+        row['zero_result_reason']=None if row['candidates'] else row['diagnostics']['message']
         row['ranking_warning']=getattr(ranker,'warning',None)
         write_json(path,result)
         if event_callback:event_callback('image_search',100*(index+1)/len(chunks),'Photo quality gate complete',chunk_id=bid,accepted=row['accepted_count'],raw=row['raw_count'],errors=row['errors'],zero_reason=row['zero_result_reason'])

@@ -21,11 +21,13 @@ def main() -> None:
     parser.add_argument("--client-id", required=True)
     parser.add_argument("--model-root", type=Path, required=True)
     parser.add_argument("--embedding-code-root", type=Path)
+    parser.add_argument('--beat-ids',nargs='+')
     parser.add_argument("--relevance-floor", type=float, default=0.30)
     args = parser.parse_args()
     chunks = json.loads(args.chunks.read_text(encoding="utf-8"))
     outline = json.loads(args.outline.read_text(encoding="utf-8"))
     args.output_dir, chunks, visual_plan, imported_outline = retrieval_bundle(args.output_dir)
+    if args.beat_ids:chunks=[c for c in chunks if c['id'] in args.beat_ids]
     outline = {**outline, **imported_outline}
     ranker = create_retrieval_ranker(args.client_id, args.model_root, args.embedding_code_root)
     sourcing_started = time.perf_counter()
