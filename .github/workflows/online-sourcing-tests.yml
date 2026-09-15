@@ -8,6 +8,7 @@ on:
       - feat/resolve-panel-safe-v1
       - feat/taste-engine-core-v1
       - feat/editorial-intelligence-style-dna-v1
+      - feat/vertical-social-dense-coverage
   workflow_dispatch:
 
 jobs:
