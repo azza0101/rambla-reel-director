@@ -2,8 +2,9 @@ import json
 import shutil
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
-from backend.app.debug_run_cli import analysis_input_signature, build_short_outline, build_video_diagnostics, editorial_artifacts_match, invalidate_stale_analysis_outputs, persist_analysis_signature
+from backend.app.debug_run_cli import _consume_segments, analysis_input_signature, build_short_outline, build_video_diagnostics, editorial_artifacts_match, invalidate_stale_analysis_outputs, persist_analysis_signature, semantic_query_variants
 
 
 def workspace_dir() -> Path:
@@ -89,9 +90,108 @@ def test_semantic_chunking_splits_complete_italian_ideas_not_fixed_word_counts()
     assert [len(text.split()) for text in texts] == [4, 5, 7]
 
 
+def test_semantic_chunking_protects_subordinates_and_short_punchlines():
+    tokens = "Quando arriviamo nel villaggio, scopriamo che le famiglie lavorano insieme. Poi cambia tutto. Il viaggio diventa una responsabilità condivisa.".split()
+    words = []; clock = 0.0
+    for token in tokens:
+        if token == "Poi": clock += 0.8
+        words.append({"text": token, "start": clock, "end": clock + .42}); clock += .42
+    _, chunks = build_short_outline({"segments": [{"words": words}]})
+    texts = [chunk["text"] for chunk in chunks]
+    assert all(not text.endswith(" che") for text in texts)
+    assert "Poi cambia tutto." in texts
+    assert all(chunk["duration"] <= 8.0 for chunk in chunks)
+
+
+def test_semantic_chunking_does_not_orphan_last_word_after_long_enumeration():
+    tokens = "Avevo trovato un centro che sembrava perfetto, niente spettacoli, niente cavalcate, solo parole giuste, etico, responsabile, sostenibile.".split()
+    words = [{"text": token, "start": i * .48, "end": (i + 1) * .48} for i, token in enumerate(tokens)]
+    _, chunks = build_short_outline({"segments": [{"words": words}]})
+    assert all(len(chunk["text"].split()) >= 3 for chunk in chunks)
+    assert chunks[-1]["text"].endswith("sostenibile.")
+    assert all(chunk["duration"] <= 8.0 for chunk in chunks)
+
+
+def test_semantic_queries_remove_narration_filler_and_keep_visual_subject():
+    queries = semantic_query_variants(
+        "Per esempio in Thailandia avevo trovato un centro elefanti che sembrava perfetto"
+    )
+    assert queries[0] == "Thailand sanctuary elephant"
+    assert all("avevo trovato" not in query for query in queries)
+
+
+def test_partial_asr_callback_exposes_growing_transcript():
+    words = lambda text, start: [SimpleNamespace(word=text, start=start, end=start + .4)]
+    segments = [
+        SimpleNamespace(text="Prima", start=0.0, end=.4, words=words("Prima", 0.0)),
+        SimpleNamespace(text="Seconda", start=.5, end=.9, words=words("Seconda", .5)),
+    ]
+    updates = []
+    rows = _consume_segments(
+        iter(segments), SimpleNamespace(language="it", duration=1.0), 25,
+        lambda partial, progress: updates.append((partial, progress)),
+    )
+    assert rows == segments
+    assert [len(partial["segments"]) for partial, _ in updates] == [1, 2]
+    assert [progress for _, progress in updates] == [40.0, 90.0]
+    assert all(partial["timeline_fps"] == 25 for partial, _ in updates)
+
+
+def test_independent_sourcing_stages_reuse_analysis_without_cross_calls(monkeypatch):
+    import backend.app.debug_run_cli as cli
+    root = workspace_dir()
+    try:
+        source = root / "source.mp4"; source.write_bytes(b"video")
+        monkeypatch.setattr(cli, "_probe", lambda _: (10.0, 250))
+        monkeypatch.setattr(cli, "DEFAULT_MODEL_CACHE", root / "models")
+        monkeypatch.setattr(cli, "run_asr_stage", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("sourcing must not rerun ASR")))
+
+        video_output = root / "videos"; video_output.mkdir()
+        image_output = root / "images"; image_output.mkdir()
+        for output in (video_output, image_output):
+            (output / "transcript-raw.json").write_text('{"segments":[]}', encoding="utf-8")
+            (output / "semantic-beats.json").write_text('{"beats":[]}', encoding="utf-8")
+            (output / "semantic-chunks.json").write_text('[{"id":"chunk-1"}]', encoding="utf-8")
+
+        video_calls = []
+        monkeypatch.setattr(cli.subprocess, "run", lambda command, check: video_calls.append(command))
+        monkeypatch.setattr(cli, "discover_image_candidates", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("video stage must not source images")))
+        monkeypatch.setattr("sys.argv", ["debug_run_cli", "--video", str(source), "--output-dir", str(video_output), "--stage", "videos"])
+        cli.main()
+        assert len(video_calls) == 1
+        assert (video_output / "video-sourcing.json").is_file()
+
+        image_calls = []
+        monkeypatch.setattr(cli.subprocess, "run", lambda *_a, **_k: image_calls.append(True))
+        monkeypatch.setattr(cli, "discover_image_candidates", lambda chunks, output: {"chunks": {chunks[0]["id"]: {"candidates": []}}})
+        monkeypatch.setattr("sys.argv", ["debug_run_cli", "--video", str(source), "--output-dir", str(image_output), "--stage", "images"])
+        cli.main()
+        assert image_calls == []
+        assert (image_output / "image-sourcing.json").is_file()
+    finally:
+        shutil.rmtree(root)
+
+
 def test_video_diagnostics_explain_results_rejections_scores_and_previews():
     result = build_video_diagnostics([{"parent_beat_id": "chunk-1", "queries": ["artisan workshop"], "candidates": [{"id": "v1", "source": "pexels", "qwen_score": .81, "preview_path": "v.mp4"}], "rejected_candidates": [{"id": "v2", "reason": "rights"}]}])
     row = result["chunks"][0]
     assert row["queries"] == ["artisan workshop"] and row["providers"] == ["pexels"]
     assert row["raw_results"] == 2 and row["rejection_reasons"] == ["rights"]
     assert row["ranked"] == [{"asset_id": "v1", "score": .81, "preview": "ready"}]
+
+
+def test_hydrated_asset_ids_remain_unique_when_provider_repeats_across_chunks():
+    from backend.app.curation_artifacts import load_curation_run
+    root = workspace_dir()
+    try:
+        chunks = [{"id": "chunk-1", "text": "one"}, {"id": "chunk-2", "text": "two"}]
+        image = {"provider": "wikimedia", "provider_id": "same", "source_page": "https://commons.wikimedia.org/x", "title": "Same", "rights_state": "known_public_license", "orientation": "landscape", "thumbnail_url": "https://upload.wikimedia.org/x.jpg"}
+        images = {"chunks": {chunk["id"]: {"candidates": [image]} for chunk in chunks}}
+        (root / "semantic-chunks.json").write_text(json.dumps(chunks), encoding="utf-8")
+        (root / "online-candidates.json").write_text("[]", encoding="utf-8")
+        (root / "image-candidates.json").write_text(json.dumps(images), encoding="utf-8")
+        run = load_curation_run(root)
+        assert len(run.candidate_index) == 2
+        assert {candidate.chunk_id for candidate in run.candidate_index.values()} == {"chunk-1", "chunk-2"}
+    finally:
+        shutil.rmtree(root)

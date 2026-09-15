@@ -24,6 +24,17 @@ async def test_wikimedia_source_normalizes_public_thumbnail():
 
 
 @pytest.mark.asyncio
+async def test_wikimedia_source_rejects_document_search_hits():
+    async def handler(request):
+        return httpx.Response(200, json={"query": {"pages": {
+            "1": {"title": "File:Brochure.pdf", "imageinfo": [{"url": "https://upload.wikimedia.org/a.pdf", "thumburl": "https://upload.wikimedia.org/a.jpg", "mime": "application/pdf", "mediatype": "OFFICE"}]},
+            "2": {"title": "File:Elephant.jpg", "imageinfo": [{"url": "https://upload.wikimedia.org/e.jpg", "thumburl": "https://upload.wikimedia.org/e-thumb.jpg", "mime": "image/jpeg", "mediatype": "BITMAP"}]},
+        }}})
+    rows = await WikimediaImageSource(transport=httpx.MockTransport(handler)).search("travel", limit=4)
+    assert [row.title for row in rows] == ["File:Elephant.jpg"]
+
+
+@pytest.mark.asyncio
 async def test_pexels_photo_source_normalizes_and_hides_missing_key():
     async def handler(request):
         return httpx.Response(200, json={"photos": [{

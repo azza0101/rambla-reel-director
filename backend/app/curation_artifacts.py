@@ -30,10 +30,10 @@ def load_curation_run(run_dir: Path) -> CurationRunView:
     for slot in online:
         cid = slot.get("parent_beat_id")
         for row in slot.get("candidates", []):
-            found.setdefault(cid, []).append(CurationCandidate(str(row["id"]), cid, "video", str(row.get("source", "online")), str(row.get("source_page", "")), str(row.get("description", row["id"])), str(row.get("description", "")), float(row.get("score", 0)), str(row.get("rights_state", "review_required")), str(row.get("orientation", "unknown")), preview_path=row.get("preview_path"), local_asset_path=row.get("path")))
+            found.setdefault(cid, []).append(CurationCandidate(f"{cid}--{row['id']}", cid, "video", str(row.get("source", "online")), str(row.get("source_page", "")), str(row.get("description", row["id"])), str(row.get("description", "")), float(row.get("score", 0)), str(row.get("rights_state", "review_required")), str(row.get("orientation", "unknown")), preview_path=row.get("preview_path"), local_asset_path=row.get("path")))
     for cid, value in images.get("chunks", {}).items():
         for row in value.get("candidates", []):
-            found.setdefault(cid, []).append(CurationCandidate(f"{row['provider']}:{row['provider_id']}", cid, "image", row["provider"], row["source_page"], row["title"], row.get("description", ""), 0.0, row["rights_state"], row["orientation"], preview_url=row.get("thumbnail_url") or row.get("full_url")))
+            found.setdefault(cid, []).append(CurationCandidate(f"{cid}--{row['provider']}:{row['provider_id']}", cid, "image", row["provider"], row["source_page"], row["title"], row.get("description", ""), 0.0, row["rights_state"], row["orientation"], preview_url=row.get("thumbnail_url") or row.get("full_url")))
     views=[]; index={}
     for row in chunks:
         shelf=build_candidate_shelf(found.get(row["id"], []))

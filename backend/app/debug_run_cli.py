@@ -104,9 +104,18 @@ def discover_image_candidates(
 ) -> dict[str, Any]:
     """Persist lightweight image discovery once; subsequent runner calls reuse it."""
     artifact = output_dir / "image-candidates.json"
+    query_plan = {
+        str(chunk["id"]): (semantic_query_variants(str(chunk.get("text") or "").strip()) or [str(chunk.get("text") or "").strip()])[0]
+        for chunk in chunks
+    }
     if artifact.is_file():
         cached = json.loads(artifact.read_text(encoding="utf-8"))
-        if any(row.get("candidates") for row in cached.get("chunks", {}).values()):
+        cached_chunks = cached.get("chunks", {})
+        cache_matches = set(cached_chunks) == set(query_plan) and all(
+            str(cached_chunks[chunk_id].get("query") or "") == query
+            for chunk_id, query in query_plan.items()
+        )
+        if cache_matches and any(row.get("candidates") for row in cached_chunks.values()):
             return cached
 
     from .image_sources import PexelsPhotoSource, WikimediaImageSource, search_image_candidates
@@ -118,8 +127,7 @@ def discover_image_candidates(
     async def collect() -> dict[str, Any]:
         result: dict[str, Any] = {"schema_version": "curation-images-0.1", "chunks": {}, "errors": []}
         for chunk in chunks:
-            variants = semantic_query_variants(str(chunk.get("text") or "").strip())
-            query = variants[0] if variants else str(chunk.get("text") or "").strip()
+            query = query_plan[str(chunk["id"])]
             rows, errors = await search_image_candidates(query, sources=active_sources)
             result["chunks"][str(chunk["id"])] = {
                 "query": query,
@@ -221,29 +229,87 @@ def normalize_faster_whisper(
 
 
 def build_short_outline(
-    transcript: dict[str, Any], *, max_chunk_seconds: float = 4.0
+    transcript: dict[str, Any], *, max_chunk_seconds: float = 8.0
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Build deterministic idea-first chunks with time only as a safety bound."""
+    """Build deterministic idea-first chunks with timing as a safety bound.
+
+    Sentence endings, audible pauses, and discourse turns win over a fixed time
+    window. Commas are remembered as safe fallback boundaries, while subordinate
+    connectors stay attached to the clause that follows them.
+    """
     words = [
         dict(word)
         for segment in transcript.get("segments", [])
         for word in segment.get("words", [])
     ]
-    chunks: list[dict[str, Any]] = []
+    word_groups: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
-    contrast_starters = {"ma", "però", "pero", "invece", "quindi", "mentre", "tuttavia", "perché", "perche"}
+    soft_break: int | None = None
+    preferred_seconds = min(5.0, max_chunk_seconds)
+    discourse_starters = {"ma", "però", "pero", "invece", "quindi", "mentre", "tuttavia"}
+    subordinate_starters = {"che", "perché", "perche", "se", "quando", "anche"}
+
+    def flush(count: int | None = None) -> None:
+        nonlocal current, soft_break
+        count = len(current) if count is None else count
+        if count:
+            word_groups.append(current[:count])
+            current = current[count:]
+        soft_break = next(
+            (index for index, item in reversed(list(enumerate(current, 1)))
+             if str(item.get("text", "")).rstrip().endswith((",", ":"))),
+            None,
+        )
+
     for word in words:
         token = str(word.get("text", "")).strip()
-        if current and token.casefold().strip(".,;:!?") in contrast_starters and len(current) >= 3:
-            chunks.append(_chunk(current, len(chunks))); current = []
-        if current and float(word["end"]) - float(current[0]["start"]) > max_chunk_seconds:
-            chunks.append(_chunk(current, len(chunks)))
-            current = []
+        normalized = token.casefold().strip(".,;:!?")
+        gap = float(word["start"]) - float(current[-1]["end"]) if current else 0.0
+        if current and gap >= 0.55 and float(current[-1]["end"]) - float(current[0]["start"]) >= 1.1:
+            flush()
+        if current and normalized in discourse_starters and len(current) >= 3:
+            flush()
+
+        prospective_duration = float(word["end"]) - float(current[0]["start"]) if current else 0.0
+        if current and prospective_duration > max_chunk_seconds:
+            fallback_breaks = [
+                index for index, item in enumerate(current, 1)
+                if index >= 3
+                and len(current) - index >= 3
+                and str(item.get("text", "")).rstrip().endswith((",", ":"))
+            ]
+            split_at = fallback_breaks[-1] if fallback_breaks else (soft_break if soft_break and soft_break >= 3 else len(current))
+            while split_at > 3 and str(current[split_at - 1].get("text", "")).casefold().strip(".,;:!?") in subordinate_starters:
+                split_at -= 1
+            flush(split_at)
         current.append(word)
-        if len(current) >= 4 and token.endswith((".", "!", "?", ";")):
-            chunks.append(_chunk(current, len(chunks))); current = []
+        if token.endswith((",", ":")):
+            soft_break = len(current)
+        if token.endswith((".", "!", "?", ";")):
+            flush()
+        elif (
+            soft_break
+            and soft_break >= 3
+            and len(current) - soft_break >= 3
+            and float(current[-1]["end"]) - float(current[0]["start"]) >= preferred_seconds
+        ):
+            flush(soft_break)
     if current:
-        chunks.append(_chunk(current, len(chunks)))
+        flush()
+
+    # Absorb accidental micro-fragments, while retaining concise complete
+    # sentences (for example, "Poi cambia tutto.") as intentional punchlines.
+    merged: list[list[dict[str, Any]]] = []
+    for group in word_groups:
+        duration = float(group[-1]["end"]) - float(group[0]["start"])
+        complete_punchline = len(group) >= 3 and str(group[-1].get("text", "")).endswith((".", "!", "?"))
+        if merged and (len(group) < 3 or duration < 1.1) and not complete_punchline:
+            combined_duration = float(group[-1]["end"]) - float(merged[-1][0]["start"])
+            if combined_duration <= max_chunk_seconds:
+                merged[-1].extend(group)
+                continue
+        merged.append(group)
+    chunks = [_chunk(group, index) for index, group in enumerate(merged)]
 
     beats = []
     for row in chunks:
@@ -266,12 +332,29 @@ def build_short_outline(
 
 
 def semantic_query_variants(text: str) -> list[str]:
-    stop = {"il", "lo", "la", "i", "gli", "le", "un", "una", "e", "di", "a", "da", "in", "con", "su", "per", "che", "si", "sono"}
+    stop = {
+        "il", "lo", "la", "i", "gli", "le", "un", "una", "e", "di", "a", "da", "in", "con", "su", "per", "che", "si", "sono",
+        "io", "noi", "voi", "mi", "me", "ci", "vi", "ne", "dei", "se", "ma", "però", "pero", "quindi", "forse", "pure", "anche",
+        "avevo", "abbiamo", "ho", "ha", "hanno", "era", "è", "essere", "trovato", "sembrava", "perfetto", "esempio", "oggi", "ciao", "spiego",
+        "perché", "perche", "non", "vendiamo", "possiamo", "chiamarlo", "sempre", "niente", "spettacoli", "cavalcate", "significa", "esattamente", "questo",
+    }
+    visual_english = {
+        "turismo": "tourism", "sostenibile": "sustainable", "viaggio": "travel", "viaggi": "travel", "viaggiare": "travel",
+        "thailandia": "Thailand", "centro": "sanctuary", "elefanti": "elephant", "impatto": "impact", "ambientale": "environmental",
+        "voli": "flights", "autobus": "bus", "barche": "boats", "famiglie": "families", "locali": "local", "villaggio": "village",
+        "struttura": "lodge", "lavoratori": "workers", "plastica": "plastic", "guide": "guides", "orto": "garden", "galline": "chickens",
+        "cura": "care", "responsabilità": "responsibility", "responsabilita": "responsibility", "verde": "green",
+    }
     tokens = [token.strip(".,;:!?()\"") for token in text.split()]
-    concrete = [token for token in tokens if token and token.casefold() not in stop]
-    literal = " ".join(concrete[:8])
-    context = " ".join(concrete[-6:])
-    return list(dict.fromkeys(query for query in (literal, context) if len(query.split()) >= 2))[:2]
+    concrete = [token for token in tokens if token and token != "'" and token.casefold() not in stop]
+    literal = " ".join(concrete[:6])
+    context = " ".join(concrete[-5:])
+    visual = " ".join(dict.fromkeys(visual_english[token.casefold()] for token in concrete if token.casefold() in visual_english))
+    named = " ".join(
+        token for index, token in enumerate(tokens)
+        if token and token[0].isupper() and index > 0 and token.casefold() not in stop
+    )
+    return list(dict.fromkeys(query for query in (visual, named, context, literal) if len(query.split()) >= 2))[:2]
 
 
 def build_video_diagnostics(results: list[dict[str, Any]]) -> dict[str, Any]:

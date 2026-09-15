@@ -44,8 +44,8 @@ class WikimediaImageSource:
 
     async def search(self, query: str, *, limit: int) -> list[RemoteImageCandidate]:
         params = {"action": "query", "format": "json", "generator": "search", "gsrsearch": query,
-                  "gsrnamespace": 6, "gsrlimit": min(limit, 20), "prop": "imageinfo",
-                  "iiprop": "url|extmetadata", "iiurlwidth": 640}
+                  "gsrnamespace": 6, "gsrlimit": min(max(limit * 3, limit), 20), "prop": "imageinfo",
+                  "iiprop": "url|size|mime|mediatype|extmetadata", "iiurlwidth": 640}
         async with httpx.AsyncClient(transport=self.transport, timeout=10, headers={"User-Agent": "RAMBLA-Curation/0.1 (local preview)"}) as client:
             response = await client.get(self.endpoint, params=params)
         if response.status_code >= 400:
@@ -56,6 +56,10 @@ class WikimediaImageSource:
             info = (page.get("imageinfo") or [{}])[0]
             thumb, full = info.get("thumburl"), info.get("url")
             if not thumb or not full:
+                continue
+            mime = str(info.get("mime") or "")
+            media_type = str(info.get("mediatype") or "").upper()
+            if (mime and not mime.startswith("image/")) or (media_type and media_type not in {"BITMAP", "DRAWING"}):
                 continue
             width, height = int(info.get("width") or 0), int(info.get("height") or 0)
             license_data = info.get("extmetadata", {}).get("LicenseShortName", {})

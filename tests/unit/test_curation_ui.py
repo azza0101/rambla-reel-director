@@ -78,3 +78,6 @@ def test_staged_curation_controller_separates_actions_and_inspection():
     assert "pick(" not in media_handler
     assert "node.querySelector('.select').onclick=()=>pick" in page
     assert "selected?'Deselect':'Select'" in page
+    assert 'id="lightboxImage" hidden' in page and 'id="lightboxVideo" controls hidden' in page
+    assert "media.onclick=()=>inspectMedia(media)" in page
+    assert "if(video)target.play().catch" in page

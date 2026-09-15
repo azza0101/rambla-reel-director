@@ -1,3 +1,5 @@
+import shutil
+import uuid
 from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
@@ -21,7 +23,33 @@ def test_image_discovery_serializes_candidates_without_provider_credentials():
     with patch("backend.app.debug_run_cli._write_json", side_effect=lambda path, payload: captured.update(payload)):
         payload = discover_image_candidates([{"id": "chunk-1", "text": "turismo sostenibile"}], Path("not-created"), sources=[Source()])
     assert payload["chunks"]["chunk-1"]["candidates"][0]["provider"] == "wikimedia"
-    assert captured["chunks"]["chunk-1"]["query"] == "turismo sostenibile"
+    assert captured["chunks"]["chunk-1"]["query"] == "tourism sustainable"
+
+
+def test_image_discovery_refreshes_stale_full_phrase_query_cache():
+    class Source:
+        calls = []
+        async def search(self, query, *, limit):
+            self.calls.append(query)
+            return []
+
+    root = Path.cwd() / ".test-debug-cli" / uuid.uuid4().hex
+    root.mkdir(parents=True)
+    try:
+        (root / "image-candidates.json").write_text(
+            '{"chunks":{"chunk-1":{"query":"Questo è il vecchio testo completo e prolisso","candidates":[{}]}}}',
+            encoding="utf-8",
+        )
+        source = Source()
+        payload = discover_image_candidates(
+            [{"id": "chunk-1", "text": "turismo sostenibile famiglie locali autentiche"}],
+            root,
+            sources=[source],
+        )
+        assert source.calls == ["tourism sustainable families local"]
+        assert payload["chunks"]["chunk-1"]["candidates"] == []
+    finally:
+        shutil.rmtree(root)
 
 
 def test_existing_editorial_artifacts_skip_expensive_upstream(tmp_path):
@@ -31,7 +59,7 @@ def test_existing_editorial_artifacts_skip_expensive_upstream(tmp_path):
     assert has_editorial_artifacts(tmp_path) is True
 
 
-def test_build_short_outline_preserves_words_and_caps_chunks_at_four_seconds():
+def test_build_short_outline_preserves_words_and_uses_eight_second_safety_cap():
     transcript = {"segments": [
         {"start": 0.0, "end": 5.8, "text": "OpenAI ha scritto una cosa importante. Poi torna a parlare.",
          "words": [
@@ -49,7 +77,7 @@ def test_build_short_outline_preserves_words_and_caps_chunks_at_four_seconds():
     ]}
     outline, chunks = build_short_outline(transcript)
     assert len(chunks) == 2
-    assert max(row["duration"] for row in chunks) <= 4.0
+    assert max(row["duration"] for row in chunks) <= 8.0
     assert " ".join(word for row in chunks for word in row["text"].split()) == (
         "OpenAI ha scritto una cosa importante. Poi torna a parlare."
     )
@@ -124,6 +152,6 @@ def test_build_short_outline_queries_substantive_lowercase_chunk():
         for index, word in enumerate("turismo sostenibile voli barche impatto ambientale".split())
     ]
     outline, _ = build_short_outline({"segments": [{"words": words}]})
-    assert outline["beats"][0]["broll_queries"] == [
-        "turismo sostenibile voli barche impatto ambientale"
-    ]
+    assert outline["beats"][0]["broll_queries"][0] == (
+        "tourism sustainable flights boats impact environmental"
+    )
