@@ -39,6 +39,11 @@ def test_weighted_total_progress_is_monotonic():
     assert state.total() > first
 
 
+def test_succeeded_snapshot_is_always_terminal_100_percent():
+    state = RunState("done", Path("input.mp4"), Path("run"), status="SUCCEEDED", progress={"prepare": 100})
+    assert state.snapshot()["total_progress"] == 100.0
+
+
 def test_page_has_one_click_live_debug_ui():
     page = render_debug_page()
     assert "ESEGUI" in page
@@ -139,7 +144,15 @@ def test_run_command_carries_project_guide_and_signature(monkeypatch):
     monkeypatch.setenv("RAMBLA_DEBUG_COMMAND_JSON", '["python","runner.py","--video","{video}","--output-dir","{output}"]')
     state = RunState("r", Path("source.mp4"), Path("run"), guide_audio=Path("guide.wav"), analysis_signature="abc")
     command = _command(state)
-    assert command[-4:] == ["--guide-audio", "guide.wav", "--analysis-signature", "abc"]
+    assert command[command.index("--guide-audio"):command.index("--guide-audio") + 2] == ["--guide-audio", "guide.wav"]
+    assert command[command.index("--analysis-signature"):command.index("--analysis-signature") + 2] == ["--analysis-signature", "abc"]
+
+
+def test_run_command_carries_independent_curation_stage(monkeypatch):
+    from backend.app.debug_server import RunState, _command
+    monkeypatch.setenv("RAMBLA_DEBUG_COMMAND_JSON", '["python","runner.py","--video","{video}","--output-dir","{output}"]')
+    command = _command(RunState("r", Path("source.mp4"), Path("run"), stage_type="images"))
+    assert command[-2:] == ["--stage", "images"]
 
 
 def test_task7_http_acceptance_path(monkeypatch):
@@ -182,6 +195,29 @@ def test_task7_http_acceptance_path(monkeypatch):
             assert client.get(f"/api/curation/projects/{pid}/media/unknown/preview").status_code == 404
     finally:
         gate.set(); shutil.rmtree(root)
+
+
+def test_video_and_image_sourcing_are_independent_project_stages(monkeypatch):
+    import backend.app.debug_server as server
+    root = _project_test_root(); started = []
+    async def record(state):
+        started.append((state.stage_type, state.output_dir)); state.status = "SUCCEEDED"
+    monkeypatch.setattr(server, "_run", record)
+    try:
+        source = root / "source.mp4"; source.write_bytes(b"video")
+        client = TestClient(server.create_app(project_root=root / "projects", allowed_media_roots=[root], probe_runner=lambda _: {"duration": 2, "fps": 25, "width": 10, "height": 10, "has_audio": False}))
+        pid = client.post("/api/curation/projects", json={}).json()["project_id"]
+        client.post(f"/api/curation/projects/{pid}/source/local", json={"path": str(source)})
+        run = root / "projects" / pid / "run"; run.mkdir()
+        for name, value in (("semantic-chunks.json", "[]"), ("semantic-beats.json", '{"beats":[]}'), ("transcript-raw.json", '{"segments":[]}')):
+            (run / name).write_text(value, encoding="utf-8")
+        video = client.post(f"/api/curation/projects/{pid}/source/videos")
+        image = client.post(f"/api/curation/projects/{pid}/source/images")
+        assert video.json()["stage"] == "videos" and image.json()["stage"] == "images"
+        assert [stage for stage, _ in started] == ["videos", "images"]
+        assert all(path == run for _, path in started)
+    finally:
+        shutil.rmtree(root)
 
 
 def test_legacy_arbitrary_path_media_route_is_not_exposed():

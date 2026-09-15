@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
 from .curation_artifacts import load_curation_run
@@ -26,6 +26,7 @@ STAGES = (
     ("prepare", "Preparazione", 3.0),
     ("asr", "ASR / trascrizione", 12.0),
     ("semantic_chunking", "Chunk semantici", 9.0),
+    ("image_search", "Ricerca immagini", 12.0),
     ("coverage", "CoveragePlanner", 7.0),
     ("evidence_intent", "EvidenceIntent", 8.0),
     ("source_strategy", "SourceStrategy", 7.0),
@@ -132,10 +133,17 @@ class RunState:
     process: Any = None
     guide_audio: Path | None = None
     analysis_signature: str = ""
+    stage_type: str = "all"
 
     def total(self) -> float:
-        total_weight = sum(WEIGHTS.values())
-        done = sum(WEIGHTS[key] * self.progress.get(key, 0.0) / 100.0 for key in WEIGHTS)
+        scopes = {
+            "analyze": {"prepare", "asr", "semantic_chunking", "analysis"},
+            "videos": {"prepare", "coverage", "evidence_intent", "source_strategy", "online_search", "qwen_coarse", "bounded_acquisition", "qwen_final", "edit_plan", "review"},
+            "images": {"prepare", "image_search"},
+        }
+        keys = scopes.get(self.stage_type, set(WEIGHTS))
+        total_weight = sum(WEIGHTS.get(key, 0) for key in keys)
+        done = sum(WEIGHTS.get(key, 0) * self.progress.get(key, 0.0) / 100.0 for key in keys)
         return round(done * 100.0 / total_weight, 2) if total_weight else 0.0
 
     def snapshot(self) -> dict[str, Any]:
@@ -146,8 +154,10 @@ class RunState:
             "status": self.status,
             "return_code": self.return_code,
             "stage_progress": self.progress,
-            "total_progress": self.total(),
+            "total_progress": 100.0 if self.status == "SUCCEEDED" else self.total(),
+            "stage_type": self.stage_type,
             "last_message": self.last_message,
+            "events": [event.as_dict() for event in self.events[-30:]],
             "review_path": str(self.output_dir / "review.html"),
             "edit_plan_path": str(self.output_dir / "edit-plan.json"),
         }
@@ -229,6 +239,8 @@ def _command(state: RunState) -> list[str]:
         command.extend(["--guide-audio", str(state.guide_audio)])
     if state.analysis_signature and "--analysis-signature" not in command:
         command.extend(["--analysis-signature", state.analysis_signature])
+    if state.stage_type and "--stage" not in command:
+        command.extend(["--stage", state.stage_type])
     return command
 
 
@@ -424,15 +436,25 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
                 return {"project_id": project_id, "chunks": [], "selection_plan": {"chunks": {}}, "resolve_calls": 0}
             raise
         saved = project_selection_store(project_id).load()
+        diagnostics = _read_json(project_run_root(project_id) / "video-sourcing-diagnostics.json", {"chunks": []})
+        video_diagnostics = {str(row.get("chunk_id")): row for row in diagnostics.get("chunks", [])}
+        def video_reason(chunk_id: str) -> str:
+            row = video_diagnostics.get(chunk_id, {})
+            if row.get("errors"): return "provider error: " + str(row["errors"][0])
+            if row.get("raw_results", 0) == 0: return "0 provider results"
+            if row.get("rejected", 0): return "all rejected: " + ", ".join(row.get("rejection_reasons", []))
+            return "preview failed"
         return {
             "project_id": project_id,
             "chunks": [{"id": row.chunk_id, "text": row.text,
                 "error": any(item.preview_error for item in (*row.video_candidates, *row.image_candidates)),
+                "video_reason": None if row.video_candidates else video_reason(row.chunk_id),
+                "image_reason": None if row.image_candidates else "0 provider results or source unavailable",
                 "assets": [
                 {"asset_id": item.asset_id, "chunk_id": item.chunk_id, "kind": item.kind,
                  "provider": item.provider, "title": item.title, "rights_state": item.rights_state,
                  "orientation": item.orientation,
-                 "preview_url": f"/api/curation/projects/{project_id}/media/{item.asset_id}/preview",
+                 "preview_url": item.preview_url or f"/api/curation/projects/{project_id}/media/{item.asset_id}/preview",
                  "poster_url": f"/api/curation/projects/{project_id}/media/{item.asset_id}/poster"}
                 for item in (*row.video_candidates, *row.image_candidates)
             ]} for row in run.chunks],
@@ -507,6 +529,8 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
         if candidate is None or variant not in {"preview", "poster"}:
             raise HTTPException(status_code=404, detail="asset non trovato")
         path = candidate.preview_path if variant == "preview" else candidate.poster_path
+        if variant == "preview" and candidate.preview_url:
+            return RedirectResponse(candidate.preview_url)
         if not path or not Path(path).is_file():
             raise HTTPException(status_code=404, detail="media non disponibile")
         try:
@@ -532,11 +556,38 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
         active = RUNS.get(project_runs.get(project_id, ""))
         if active and active.status in {"QUEUED", "RUNNING"}:
             raise HTTPException(status_code=409, detail="analysis already running")
-        state = RunState(uuid.uuid4().hex[:12], Path(project.source_video.path), run_root, guide_audio=Path(project.guide_audio.path) if project.guide_audio else None, analysis_signature=project.analysis_signature)
+        state = RunState(uuid.uuid4().hex[:12], Path(project.source_video.path), run_root, guide_audio=Path(project.guide_audio.path) if project.guide_audio else None, analysis_signature=project.analysis_signature, stage_type="analyze")
         RUNS[state.run_id] = state
         project_runs[project_id] = state.run_id
         asyncio.create_task(_run(state))
         return {"status": "started", "run_id": state.run_id, "resolve_calls": 0}
+
+    def start_sourcing(project_id: str, stage_type: str) -> dict[str, Any]:
+        project = load_project(project_id); run_root = project_run_root(project_id)
+        if not (run_root / "semantic-chunks.json").is_file():
+            raise HTTPException(status_code=422, detail="analysis required before sourcing")
+        active = RUNS.get(project_runs.get(project_id, ""))
+        if active and active.status in {"QUEUED", "RUNNING"}:
+            raise HTTPException(status_code=409, detail="project stage already running")
+        state = RunState(uuid.uuid4().hex[:12], Path(project.source_video.path), run_root,
+            guide_audio=Path(project.guide_audio.path) if project.guide_audio else None,
+            analysis_signature=project.analysis_signature, stage_type=stage_type)
+        RUNS[state.run_id] = state; project_runs[project_id] = state.run_id
+        asyncio.create_task(_run(state))
+        return {"status": "started", "run_id": state.run_id, "stage": stage_type, "resolve_calls": 0}
+
+    @app.post("/api/curation/projects/{project_id}/source/videos")
+    async def source_project_videos(project_id: str) -> dict[str, Any]:
+        return start_sourcing(project_id, "videos")
+
+    @app.post("/api/curation/projects/{project_id}/source/images")
+    async def source_project_images(project_id: str) -> dict[str, Any]:
+        return start_sourcing(project_id, "images")
+
+    @app.get("/api/curation/projects/{project_id}/transcript")
+    async def get_project_transcript(project_id: str) -> dict[str, Any]:
+        path = project_run_root(project_id) / "transcript-raw.json"
+        return _read_json(path, {"segments": [], "status": "pending"})
 
     @app.put("/api/curation/projects/{project_id}/curation/chunks/{chunk_id}/selection")
     async def put_project_selection(project_id: str, chunk_id: str, request: ProjectSelectionRequest) -> dict[str, Any]:
@@ -639,7 +690,7 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
                     except asyncio.TimeoutError:
                         pass
                     yield "data: " + json.dumps({"stage": "snapshot", "message": "snapshot", "progress": None, "data": state.snapshot()}, ensure_ascii=False) + "\n\n"
-                    if state.status in {"SUCCEEDED", "FAILED"}:
+                    if state.status in {"SUCCEEDED", "FAILED", "CANCELLED"}:
                         return
             finally:
                 if queue in state.subscribers:

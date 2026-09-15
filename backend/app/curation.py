@@ -26,6 +26,7 @@ class CurationCandidate:
     local_asset_path: str | None = None
     preview_status: str = "pending"
     preview_error: str | None = None
+    preview_url: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -65,3 +65,16 @@ def test_launcher_browser_failure_is_nonfatal_and_manual_url_is_always_emitted()
     assert launcher.rstrip().endswith("exit 0")
     browser_section = launcher[browser:]
     assert "Stop-Process -Id $process.Id" not in browser_section
+
+
+def test_staged_curation_controller_separates_actions_and_inspection():
+    page = render_curation_page("stage123")
+    assert "FIND B-ROLL" in page and "FIND IMAGES" in page
+    assert "Analysis Details" in page and "transcript" in page
+    assert "startStage('analyze')" in page
+    assert "startStage('source/videos')" in page
+    assert "startStage('source/images')" in page
+    media_handler = page[page.index("media.onclick"):page.index("node.querySelector('.select').onclick")]
+    assert "pick(" not in media_handler
+    assert "node.querySelector('.select').onclick=()=>pick" in page
+    assert "selected?'Deselect':'Select'" in page

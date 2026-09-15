@@ -87,7 +87,7 @@ def editorial_artifacts_match(output_dir: Path, analysis_signature: str) -> bool
 def invalidate_stale_analysis_outputs(output_dir: Path, analysis_signature: str) -> None:
     if editorial_artifacts_match(output_dir, analysis_signature):
         return
-    for name in ("online-candidates.json", "image-candidates.json", "edit-plan.json", "review.html", "analysis-signature.json"):
+    for name in ("online-candidates.json", "image-candidates.json", "video-sourcing.json", "image-sourcing.json", "video-sourcing-diagnostics.json", "edit-plan.json", "review.html", "analysis-signature.json"):
         path = output_dir / name
         if path.is_file():
             path.unlink()
@@ -118,7 +118,8 @@ def discover_image_candidates(
     async def collect() -> dict[str, Any]:
         result: dict[str, Any] = {"schema_version": "curation-images-0.1", "chunks": {}, "errors": []}
         for chunk in chunks:
-            query = str(chunk.get("text") or "").strip()
+            variants = semantic_query_variants(str(chunk.get("text") or "").strip())
+            query = variants[0] if variants else str(chunk.get("text") or "").strip()
             rows, errors = await search_image_candidates(query, sources=active_sources)
             result["chunks"][str(chunk["id"])] = {
                 "query": query,
@@ -139,6 +140,7 @@ def run_asr_stage(
     model_name: str = "turbo",
     cache_dir: Path,
     timeline_fps: int | None = None,
+    progress_callback: Callable[[dict[str, Any], float], None] | None = None,
 ) -> tuple[dict[str, Any], str]:
     if model_factory is None:
         from faster_whisper import WhisperModel
@@ -155,7 +157,7 @@ def run_asr_stage(
         segments, info = model.transcribe(
             str(video), language="it", word_timestamps=True, vad_filter=True
         )
-        rows = list(segments)
+        rows = _consume_segments(segments, info, timeline_fps, progress_callback)
     except Exception:
         model = model_factory(
             model_size_or_path=model_name,
@@ -167,7 +169,7 @@ def run_asr_stage(
         segments, info = model.transcribe(
             str(video), language="it", word_timestamps=True, vad_filter=True
         )
-        rows = list(segments)
+        rows = _consume_segments(segments, info, timeline_fps, progress_callback)
     transcript = normalize_faster_whisper(
             rows,
             language=str(getattr(info, "language", "it") or "it"),
@@ -176,6 +178,18 @@ def run_asr_stage(
     if timeline_fps is not None:
         transcript["timeline_fps"] = int(timeline_fps)
     return transcript, mode
+
+
+def _consume_segments(segments: Any, info: Any, timeline_fps: int | None, callback: Callable[[dict[str, Any], float], None] | None) -> list[Any]:
+    rows = []
+    duration = max(0.001, float(getattr(info, "duration", 0.0) or 0.0))
+    for segment in segments:
+        rows.append(segment)
+        if callback:
+            partial = normalize_faster_whisper(rows, language=str(getattr(info, "language", "it") or "it"), duration_seconds=duration)
+            if timeline_fps is not None: partial["timeline_fps"] = int(timeline_fps)
+            callback(partial, min(99.0, 100.0 * float(segment.end) / duration))
+    return rows
 
 
 def normalize_faster_whisper(
@@ -209,7 +223,7 @@ def normalize_faster_whisper(
 def build_short_outline(
     transcript: dict[str, Any], *, max_chunk_seconds: float = 4.0
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Build bounded word-preserving chunks and a minimal sourcing outline."""
+    """Build deterministic idea-first chunks with time only as a safety bound."""
     words = [
         dict(word)
         for segment in transcript.get("segments", [])
@@ -217,11 +231,17 @@ def build_short_outline(
     ]
     chunks: list[dict[str, Any]] = []
     current: list[dict[str, Any]] = []
+    contrast_starters = {"ma", "però", "pero", "invece", "quindi", "mentre", "tuttavia", "perché", "perche"}
     for word in words:
+        token = str(word.get("text", "")).strip()
+        if current and token.casefold().strip(".,;:!?") in contrast_starters and len(current) >= 3:
+            chunks.append(_chunk(current, len(chunks))); current = []
         if current and float(word["end"]) - float(current[0]["start"]) > max_chunk_seconds:
             chunks.append(_chunk(current, len(chunks)))
             current = []
         current.append(word)
+        if len(current) >= 4 and token.endswith((".", "!", "?", ";")):
+            chunks.append(_chunk(current, len(chunks))); current = []
     if current:
         chunks.append(_chunk(current, len(chunks)))
 
@@ -239,10 +259,44 @@ def build_short_outline(
                 "start_seconds": row["start"],
                 "end_seconds": row["end"],
                 "intent": text,
-                "broll_queries": [text] if has_named_subject or len(tokens) >= 5 else [],
+                "broll_queries": semantic_query_variants(text) if has_named_subject or len(tokens) >= 5 else [],
             }
         )
     return {"schema_version": "content-sprint-0.1", "beats": beats}, chunks
+
+
+def semantic_query_variants(text: str) -> list[str]:
+    stop = {"il", "lo", "la", "i", "gli", "le", "un", "una", "e", "di", "a", "da", "in", "con", "su", "per", "che", "si", "sono"}
+    tokens = [token.strip(".,;:!?()\"") for token in text.split()]
+    concrete = [token for token in tokens if token and token.casefold() not in stop]
+    literal = " ".join(concrete[:8])
+    context = " ".join(concrete[-6:])
+    return list(dict.fromkeys(query for query in (literal, context) if len(query.split()) >= 2))[:2]
+
+
+def build_video_diagnostics(results: list[dict[str, Any]]) -> dict[str, Any]:
+    chunks = []
+    for row in results:
+        candidates = list(row.get("candidates") or [])
+        rejected = list(row.get("rejected_candidates") or [])
+        errors = list(row.get("errors") or row.get("sourcing_errors") or [])
+        chunks.append({
+            "chunk_id": row.get("parent_beat_id") or row.get("beat_id"),
+            "queries": row.get("queries") or ([row["query"]] if row.get("query") else []),
+            "providers": sorted({str(item.get("source") or item.get("provider")) for item in candidates if item.get("source") or item.get("provider")}),
+            "raw_results": int(row.get("raw_result_count") or len(candidates) + len(rejected)),
+            "rejected": len(rejected),
+            "rejection_reasons": sorted({str(item.get("reason") or item.get("rejection_reason")) for item in rejected}),
+            "ranked": [{"asset_id": item.get("id"), "score": item.get("qwen_score", item.get("score")), "preview": "ready" if item.get("preview_path") else "failed"} for item in candidates],
+            "errors": errors,
+        })
+    return {"schema_version": "video-sourcing-diagnostics-0.1", "chunks": chunks}
+
+
+def persist_video_diagnostics(output: Path) -> None:
+    path = output / "online-candidates.json"
+    rows = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else []
+    _write_json(output / "video-sourcing-diagnostics.json", build_video_diagnostics(rows if isinstance(rows, list) else []))
 
 
 def _chunk(words: list[dict[str, Any]], index: int) -> dict[str, Any]:
@@ -258,12 +312,23 @@ def _chunk(words: list[dict[str, Any]], index: int) -> dict[str, Any]:
     }
 
 
+def _video_sourcing_command(output: Path, transcript_path: Path, outline_path: Path, client_id: str, source_frames: int) -> list[str]:
+    return [
+        str(DEFAULT_PIPELINE_PYTHON if DEFAULT_PIPELINE_PYTHON.is_file() else Path(sys.executable)),
+        "-m", "backend.app.online_sourcing_cli", "--transcript", str(transcript_path),
+        "--outline", str(outline_path), "--output-dir", str(output), "--client-id", client_id,
+        "--source-frames", str(source_frames), "--model-root", str(DEFAULT_MODEL_ROOT),
+        "--embedding-code-root", str(DEFAULT_EMBEDDING_CODE),
+    ]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the existing RAMBLA editorial smoke from a raw video")
     parser.add_argument("--video", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--guide-audio", type=Path)
     parser.add_argument("--analysis-signature", default="")
+    parser.add_argument("--stage", choices=("analyze", "videos", "images", "all"), default="all")
     parser.add_argument("--model", default=str(DEFAULT_MODEL))
     parser.add_argument("--model-cache", type=Path, default=DEFAULT_MODEL_CACHE)
     parser.add_argument("--client-id", default="debug-kura")
@@ -284,9 +349,27 @@ def main() -> None:
     analysis_signature = args.analysis_signature or hashlib.sha256(
         json.dumps(signature, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+    transcript_path = output / "transcript-raw.json"
+    outline_path = output / "semantic-beats.json"
+    chunks_path = output / "semantic-chunks.json"
+    if args.stage in {"videos", "images"}:
+        if not chunks_path.is_file() or not transcript_path.is_file() or not outline_path.is_file():
+            raise SystemExit("analysis required before sourcing")
+        chunks = json.loads(chunks_path.read_text(encoding="utf-8"))
+        if args.stage == "images":
+            _event("image_search", 1, "Image sourcing avviato", items=len(chunks))
+            images = discover_image_candidates(chunks, output)
+            _write_json(output / "image-sourcing.json", {"status": "complete", "chunks": len(chunks)})
+            _event("image_search", 100, "Image sourcing completato", chunks=len(images.get("chunks", {})))
+            return
+        _event("online_search", 1, "Video sourcing avviato", items=len(chunks))
+        subprocess.run(_video_sourcing_command(output, transcript_path, outline_path, args.client_id, source_frames), check=True)
+        persist_video_diagnostics(output)
+        _write_json(output / "video-sourcing.json", {"status": "complete", "chunks": len(chunks)})
+        _event("online_search", 100, "Video sourcing completato", chunks=len(chunks))
+        return
     invalidate_stale_analysis_outputs(output, analysis_signature)
     signature_path = output / "run-input.json"
-    transcript_path = output / "transcript-raw.json"
     cached = False
     if signature_path.is_file() and transcript_path.is_file():
         cached = json.loads(signature_path.read_text(encoding="utf-8")) == signature
@@ -306,6 +389,10 @@ def main() -> None:
             model_name=args.model,
             cache_dir=args.model_cache,
             timeline_fps=timeline_fps,
+            progress_callback=lambda partial, progress: (
+                _write_json(transcript_path, partial),
+                _event("asr", progress, "Trascrizione in corso", segments=len(partial["segments"])),
+            ),
         )
         _write_json(transcript_path, transcript)
         _write_json(signature_path, signature)
@@ -317,10 +404,14 @@ def main() -> None:
         )
 
     outline, chunks = build_short_outline(transcript)
-    outline_path = output / "semantic-beats.json"
     _write_json(outline_path, outline)
-    _write_json(output / "semantic-chunks.json", chunks)
+    _write_json(chunks_path, chunks)
     _event("semantic_chunking", 100, "Chunk e outline pronti", chunks=len(chunks))
+
+    _write_json(output / "analysis-signature.json", {"analysis_signature": analysis_signature})
+    if args.stage == "analyze":
+        _event("analysis", 100, "Analisi transcript completata", chunks=len(chunks))
+        return
 
     images = discover_image_candidates(chunks, output)
     _event("image_search", 100, "Candidati immagini pronti", chunks=len(images.get("chunks", {})))
@@ -331,18 +422,9 @@ def main() -> None:
         persist_analysis_signature(output, analysis_signature)
         return
     _event("online_search", 1, "Avvio pipeline Editorial Intelligence esistente")
-    command = [
-        str(DEFAULT_PIPELINE_PYTHON if DEFAULT_PIPELINE_PYTHON.is_file() else Path(sys.executable)),
-        "-m", "backend.app.online_sourcing_cli",
-        "--transcript", str(transcript_path),
-        "--outline", str(outline_path),
-        "--output-dir", str(output),
-        "--client-id", args.client_id,
-        "--source-frames", str(source_frames),
-        "--model-root", str(DEFAULT_MODEL_ROOT),
-        "--embedding-code-root", str(DEFAULT_EMBEDDING_CODE),
-    ]
+    command = _video_sourcing_command(output, transcript_path, outline_path, args.client_id, source_frames)
     subprocess.run(command, check=True)
+    persist_video_diagnostics(output)
     persist_analysis_signature(output, analysis_signature)
     _event("review", 100, "Review pronta", artifact=str(output / "review.html"), asr_mode=mode)
 

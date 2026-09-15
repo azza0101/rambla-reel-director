@@ -3,7 +3,7 @@ import shutil
 import uuid
 from pathlib import Path
 
-from backend.app.debug_run_cli import analysis_input_signature, editorial_artifacts_match, invalidate_stale_analysis_outputs, persist_analysis_signature
+from backend.app.debug_run_cli import analysis_input_signature, build_short_outline, build_video_diagnostics, editorial_artifacts_match, invalidate_stale_analysis_outputs, persist_analysis_signature
 
 
 def workspace_dir() -> Path:
@@ -69,9 +69,29 @@ def test_main_uses_guide_for_asr_but_source_for_timeline(monkeypatch):
         monkeypatch.setattr(cli, "_probe", lambda _: (10.0, 250))
         monkeypatch.setattr(cli, "run_asr_stage", asr)
         monkeypatch.setattr(cli, "DEFAULT_MODEL_CACHE", root / "models")
-        monkeypatch.setattr("sys.argv", ["debug_run_cli", "--video", str(source), "--guide-audio", str(guide), "--output-dir", str(output), "--analysis-signature", "sig"])
+        monkeypatch.setattr(cli, "discover_image_candidates", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("analyze must not source images")))
+        monkeypatch.setattr(cli.subprocess, "run", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("analyze must not source videos")))
+        monkeypatch.setattr("sys.argv", ["debug_run_cli", "--video", str(source), "--guide-audio", str(guide), "--output-dir", str(output), "--analysis-signature", "sig", "--stage", "analyze"])
         cli.main()
         assert captured["path"] == guide.resolve()
         assert captured["timeline_fps"] == 25
+        assert (output / "semantic-chunks.json").is_file()
     finally:
         shutil.rmtree(root)
+
+
+def test_semantic_chunking_splits_complete_italian_ideas_not_fixed_word_counts():
+    tokens = "La città cambia rapidamente, ma i quartieri storici resistono. Quindi i giovani cercano nuovi spazi creativi.".split()
+    words = [{"text": token, "start": i * 0.35, "end": (i + 1) * 0.35} for i, token in enumerate(tokens)]
+    _, chunks = build_short_outline({"segments": [{"words": words}]}, max_chunk_seconds=20)
+    texts = [chunk["text"] for chunk in chunks]
+    assert texts == ["La città cambia rapidamente,", "ma i quartieri storici resistono.", "Quindi i giovani cercano nuovi spazi creativi."]
+    assert [len(text.split()) for text in texts] == [4, 5, 7]
+
+
+def test_video_diagnostics_explain_results_rejections_scores_and_previews():
+    result = build_video_diagnostics([{"parent_beat_id": "chunk-1", "queries": ["artisan workshop"], "candidates": [{"id": "v1", "source": "pexels", "qwen_score": .81, "preview_path": "v.mp4"}], "rejected_candidates": [{"id": "v2", "reason": "rights"}]}])
+    row = result["chunks"][0]
+    assert row["queries"] == ["artisan workshop"] and row["providers"] == ["pexels"]
+    assert row["raw_results"] == 2 and row["rejection_reasons"] == ["rights"]
+    assert row["ranked"] == [{"asset_id": "v1", "score": .81, "preview": "ready"}]
