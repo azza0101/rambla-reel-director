@@ -101,7 +101,6 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
     def emit(message,**data):
         callback=getattr(engine,'event_callback',None)
         if callback:callback('online_search',None,message,slot_id=beat_id,**data)
-    # Pexels, vertical social and normal YouTube each keep their own candidate budget.
     priority={'pexels':0,'youtube_shorts':1,'tiktok':2,'instagram':3,'youtube':4}
     for source in sorted(engine.sources,key=lambda s:priority.get(_provider_name(s).casefold(),5)):
         provider_label=_provider_name(source)
@@ -111,6 +110,15 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
             rows,error=await engine._search_one(source,query,orientation=orientation,min_duration=min_duration,max_duration=max_duration)
             attempt={'provider':provider_label,'query':query,'hits':len(rows),'expanded':query not in queries}
             output['search_attempts'].append(attempt)
+            drain=getattr(source,'drain_vertical_attempts',None)
+            if callable(drain):
+                for extra in drain():
+                    extra=dict(extra)
+                    extra.setdefault('query',query);extra.setdefault('hits',0)
+                    extra['expanded']=query not in queries
+                    output['search_attempts'].append(extra)
+                    if extra.get('error'):
+                        output['errors'].append({'provider':extra.get('provider'),'code':'provider_request_failed','error_type':extra.get('error')})
             if error:
                 output['errors'].append(error)
                 attempt['error']=error.get('code') if isinstance(error,dict) else type(error).__name__
