@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import shlex
+import subprocess
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -129,6 +130,8 @@ class RunState:
     events: list[DebugEvent] = field(default_factory=list)
     subscribers: list[asyncio.Queue[DebugEvent]] = field(default_factory=list)
     process: Any = None
+    guide_audio: Path | None = None
+    analysis_signature: str = ""
 
     def total(self) -> float:
         total_weight = sum(WEIGHTS.values())
@@ -220,8 +223,13 @@ def _command(state: RunState) -> list[str]:
             payload = payload.get("command")
     if not isinstance(payload, list) or not payload or not all(isinstance(x, str) for x in payload):
         raise RuntimeError("il profilo deve contenere un array command di stringhe")
-    values = {"video": str(state.video_path), "output": str(state.output_dir)}
-    return [item.format_map(values) for item in payload]
+    values = {"video": str(state.video_path), "output": str(state.output_dir), "guide": str(state.guide_audio or state.video_path), "analysis_signature": state.analysis_signature}
+    command = [item.format_map(values) for item in payload]
+    if state.guide_audio and "--guide-audio" not in command:
+        command.extend(["--guide-audio", str(state.guide_audio)])
+    if state.analysis_signature and "--analysis-signature" not in command:
+        command.extend(["--analysis-signature", state.analysis_signature])
+    return command
 
 
 async def _emit(state: RunState, event: DebugEvent) -> None:
@@ -312,7 +320,7 @@ def render_debug_page(default_video: str = DEFAULT_VIDEO, default_output: str = 
 <div class="card metrics"><div class="metric"><span class="muted">Run</span><b id="rid">—</b></div><div class="metric"><span class="muted">A/B certificate</span><b id="ab">—</b></div><div class="metric"><span class="muted">NO_BROLL</span><b id="nb">—</b></div><div class="metric"><span class="muted">Download bytes</span><b id="bytes">—</b></div><div class="metric"><span class="muted">Tempo</span><b id="secs">—</b></div></div>
 <div class="card split"><div><div class="muted" style="margin-bottom:6px">Log live</div><pre id="log"></pre></div><div><div class="muted" style="margin-bottom:6px">Eventi / dati</div><div id="events"></div></div></div>
 <div class="card muted" id="links">Gli output appariranno qui a fine run.</div>
-<script>const DEF_VIDEO={video},DEF_OUT={output},STAGES={stages};const nodes={{}};let es=null;const $=id=>document.getElementById(id);$('video').value=DEF_VIDEO;$('out').value=DEF_OUT;function esc(v){{return String(v??'').replace(/[&<>\"]/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}}[c]))}}function init(){{$('stages').innerHTML='';STAGES.forEach(s=>{{const n=document.createElement('div');n.className='stage';n.innerHTML=`<div class="head"><b>${{esc(s.label)}}</b><span>0%</span></div><div class="bar"><div class="fill"></div></div>`;$('stages').appendChild(n);nodes[s.id]=n}})}}function setStage(k,v){{const n=nodes[k];if(!n)return;v=Math.max(0,Math.min(100,Number(v)||0));n.querySelector('span').textContent=v.toFixed(0)+'%';n.querySelector('.fill').style.width=v+'%';n.classList.toggle('done',v>=100)}}function snap(s){{$('rid').textContent=s.run_id||'—';$('totalText').textContent=(s.total_progress||0).toFixed(1)+'%';$('total').style.width=(s.total_progress||0)+'%';$('msg').textContent=s.last_message||'';Object.entries(s.stage_progress||{{}}).forEach(([k,v])=>setStage(k,v))}}async function metrics(id){{try{{const m=await (await fetch(`/v1/debug/runs/${{id}}/metrics`)).json();$('ab').textContent=m.certified_ab_pairs??'—';$('nb').textContent=m.no_broll_count??'—';$('bytes').textContent=m.downloaded_bytes??'—';$('secs').textContent=m.total_seconds==null?'—':m.total_seconds+'s'}}catch(_){{}}}}function ev(e){{const d=document.createElement('div');d.className='event';d.innerHTML=`<b>${{esc(e.stage)}}</b> · ${{esc(e.message)}}`;if(e.data&&Object.keys(e.data).length)d.innerHTML+=`<pre style="height:auto;margin-top:6px">${{esc(JSON.stringify(e.data,null,2))}}</pre>`;$('events').prepend(d);$('log').textContent+=`[${{e.stage}}] ${{e.message}}\n`;$('log').scrollTop=$('log').scrollHeight;if(e.progress!=null)setStage(e.stage,e.progress)}}async function run(){{if(es)es.close();$('run').disabled=true;$('log').textContent='';$('events').innerHTML='';init();$('status').textContent='AVVIO…';try{{const r=await fetch('/v1/debug/runs',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{video_path:$('video').value,output_dir:$('out').value}})}});const s=await r.json();if(!r.ok)throw new Error(s.detail||JSON.stringify(s));snap(s);$('stop').disabled=false;es=new EventSource(`/v1/debug/runs/${{s.run_id}}/events`);es.onmessage=async x=>{{const e=JSON.parse(x.data);if(e.stage==='snapshot'){{snap(e.data);await metrics(e.data.run_id);if(['SUCCEEDED','FAILED','CANCELLED'].includes(e.data.status)){{$('status').textContent=e.data.status;$('status').className=e.data.status==='SUCCEEDED'?'good':'bad';$('run').disabled=false;if(e.data.status==='SUCCEEDED')$('links').innerHTML=`Review: <code>${{esc(e.data.review_path)}}</code><br>Edit Plan: <code>${{esc(e.data.edit_plan_path)}}</code>`}}}}else ev(e)}}}}catch(e){{$('status').textContent='ERRORE';$('status').className='bad';$('log').textContent+=String(e);$('run').disabled=false}}}}$('run').onclick=run;init();</script></main></body></html>'''
+<script>const DEF_VIDEO={video},DEF_OUT={output},STAGES={stages};const nodes={{}};let es=null;const $=id=>document.getElementById(id);$('video').value=DEF_VIDEO;$('out').value=DEF_OUT;function esc(v){{return String(v??'').replace(/[&<>\"]/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}}[c]))}}function init(){{$('stages').innerHTML='';STAGES.forEach(s=>{{const n=document.createElement('div');n.className='stage';n.innerHTML=`<div class="head"><b>${{esc(s.label)}}</b><span>0%</span></div><div class="bar"><div class="fill"></div></div>`;$('stages').appendChild(n);nodes[s.id]=n}})}}function setStage(k,v){{const n=nodes[k];if(!n)return;v=Math.max(0,Math.min(100,Number(v)||0));n.querySelector('span').textContent=v.toFixed(0)+'%';n.querySelector('.fill').style.width=v+'%';n.classList.toggle('done',v>=100)}}function snap(s){{$('rid').textContent=s.run_id||'—';$('totalText').textContent=(s.total_progress||0).toFixed(1)+'%';$('total').style.width=(s.total_progress||0)+'%';$('msg').textContent=s.last_message||'';Object.entries(s.stage_progress||{{}}).forEach(([k,v])=>setStage(k,v))}}async function metrics(id){{try{{const m=await (await fetch(`/v1/debug/runs/${{id}}/metrics`)).json();$('ab').textContent=m.certified_ab_pairs??'—';$('nb').textContent=m.no_broll_count??'—';$('bytes').textContent=m.downloaded_bytes??'—';$('secs').textContent=m.total_seconds==null?'—':m.total_seconds+'s'}}catch(_){{}}}}function ev(e){{const d=document.createElement('div');d.className='event';d.innerHTML=`<b>${{esc(e.stage)}}</b> · ${{esc(e.message)}}`;if(e.data&&Object.keys(e.data).length)d.innerHTML+=`<pre style="height:auto;margin-top:6px">${{esc(JSON.stringify(e.data,null,2))}}</pre>`;$('events').prepend(d);$('log').textContent+=`[${{e.stage}}] ${{e.message}}\n`;$('log').scrollTop=$('log').scrollHeight;if(e.progress!=null)setStage(e.stage,e.progress)}}async function run(){{if(es)es.close();$('run').disabled=true;$('log').textContent='';$('events').innerHTML='';init();$('status').textContent='AVVIO…';try{{const r=await fetch('/v1/debug/runs',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{video_path:$('video').value,output_dir:$('out').value}})}});const s=await r.json();if(!r.ok)throw new Error(s.detail||JSON.stringify(s));snap(s);$('stop').disabled=false;es=new EventSource(`/v1/debug/runs/${{s.run_id}}/events`);es.onmessage=async x=>{{const e=JSON.parse(x.data);if(e.stage==='snapshot'){{snap(e.data);await metrics(e.data.run_id);if(['SUCCEEDED','FAILED','CANCELLED'].includes(e.data.status)){{$('status').textContent=e.data.status;$('status').className=e.data.status==='SUCCEEDED'?'good':'bad';$('run').disabled=false;$('stop').disabled=true;if(e.data.status==='SUCCEEDED')$('links').innerHTML=`Review: <code>${{esc(e.data.review_path)}}</code><br>Edit Plan: <code>${{esc(e.data.edit_plan_path)}}</code>`}}}}else ev(e)}}}}catch(e){{$('status').textContent='ERRORE';$('status').className='bad';$('log').textContent+=String(e);$('run').disabled=false;$('stop').disabled=true}}}}$('run').onclick=run;init();</script></main></body></html>'''
 
 
 def _project_payload(project: CurationProject) -> dict[str, Any]:
@@ -330,8 +338,11 @@ def _project_payload(project: CurationProject) -> dict[str, Any]:
         "guide_audio": None if project.guide_audio is None else {
             "path": project.guide_audio.path, "mode": project.guide_audio.mode,
             "signature": project.guide_audio.signature,
+            "duration": project.guide_audio.duration,
         },
         "analysis_signature": project.analysis_signature,
+        "timeline_duration": project.source_video.duration if project.source_video else None,
+        "guide_duration_warning": project.guide_duration_warning,
         "resolve_calls": 0,
     }
 
@@ -357,12 +368,13 @@ def _probe_source_video(source: Path) -> dict[str, Any]:
     }
 
 
-def create_app(*, project_root: Path | None = None, curation_run_root: Path | None = None, allowed_media_roots: list[Path] | None = None, probe_runner: Any = None) -> FastAPI:
+def create_app(*, project_root: Path | None = None, curation_run_root: Path | None = None, allowed_media_roots: list[Path] | None = None, probe_runner: Any = None, audio_probe_runner: Any = None, audio_command_runner: Any = None) -> FastAPI:
     app = FastAPI(title="RAMBLA Debug Runner", version="0.1.0")
     project_root = project_root or Path(DEFAULT_OUTPUT).parent / "curation-projects"
     curation_run_root = curation_run_root or Path(DEFAULT_OUTPUT)
     allowed_roots = tuple(root.resolve() for root in (allowed_media_roots or [Path(DEFAULT_VIDEO).parent, project_root]))
-    projects = ProjectStore(project_root, probe_runner=probe_runner or _probe_source_video)
+    projects = ProjectStore(project_root, probe_runner=probe_runner or _probe_source_video, audio_probe_runner=audio_probe_runner)
+    guide_command_runner = audio_command_runner or subprocess.run
     project_runs: dict[str, str] = {}
 
     def load_project(project_id: str) -> CurationProject:
@@ -455,7 +467,7 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
     async def use_original_guide(project_id: str) -> dict[str, Any]:
         load_project(project_id)
         try:
-            projects.extract_source_audio(project_id)
+            projects.extract_source_audio(project_id, command_runner=guide_command_runner)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return _project_payload(projects.load(project_id))
@@ -463,7 +475,7 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
     @app.put("/api/curation/projects/{project_id}/guide/upload")
     async def upload_guide(project_id: str, request: Request, filename: str = "guide-audio") -> dict[str, Any]:
         load_project(project_id)
-        projects.write_external_guide_audio(project_id, filename, [await request.body()])
+        projects.write_external_guide_audio(project_id, filename, [await request.body()], command_runner=guide_command_runner)
         return _project_payload(projects.load(project_id))
 
     @app.get("/api/curation/projects/{project_id}/media/{asset_id}/{variant}")
@@ -502,7 +514,7 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
         active = RUNS.get(project_runs.get(project_id, ""))
         if active and active.status in {"QUEUED", "RUNNING"}:
             raise HTTPException(status_code=409, detail="analysis already running")
-        state = RunState(uuid.uuid4().hex[:12], Path(project.source_video.path), curation_run_root)
+        state = RunState(uuid.uuid4().hex[:12], Path(project.source_video.path), curation_run_root, guide_audio=Path(project.guide_audio.path) if project.guide_audio else None, analysis_signature=project.analysis_signature)
         RUNS[state.run_id] = state
         project_runs[project_id] = state.run_id
         asyncio.create_task(_run(state))

@@ -31,10 +31,12 @@ def _event(stage: str, progress: float, message: str, **data: Any) -> None:
 
 
 def _write_json(path: Path, payload: Any) -> None:
-    path.write_text(
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
         json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
     )
+    temporary.replace(path)
 
 
 def _probe(video: Path) -> tuple[float, int]:
@@ -58,6 +60,16 @@ def _probe(video: Path) -> tuple[float, int]:
 def _input_signature(video: Path) -> dict[str, Any]:
     stat = video.stat()
     return {"video": str(video.resolve()), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+
+
+def analysis_input_signature(video: Path, guide_audio: Path | None) -> dict[str, Any]:
+    return {"source": _input_signature(video.resolve()), "guide": _input_signature((guide_audio or video).resolve())}
+
+
+def persist_analysis_signature(output: Path, signature: str) -> None:
+    required = (output / "semantic-chunks.json", output / "review.html", output / "edit-plan.json")
+    if signature and all(path.is_file() for path in required):
+        _write_json(output / "analysis-signature.json", {"analysis_signature": signature})
 
 
 def has_editorial_artifacts(output_dir: Path) -> bool:
@@ -229,6 +241,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run the existing RAMBLA editorial smoke from a raw video")
     parser.add_argument("--video", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--guide-audio", type=Path)
+    parser.add_argument("--analysis-signature", default="")
     parser.add_argument("--model", default=str(DEFAULT_MODEL))
     parser.add_argument("--model-cache", type=Path, default=DEFAULT_MODEL_CACHE)
     parser.add_argument("--client-id", default="debug-kura")
@@ -238,11 +252,14 @@ def main() -> None:
     output = args.output_dir.resolve()
     if not video.is_file():
         raise SystemExit(f"video not found: {video}")
+    guide_audio = args.guide_audio.resolve() if args.guide_audio else video
+    if not guide_audio.is_file():
+        raise SystemExit(f"guide audio not found: {guide_audio}")
     output.mkdir(parents=True, exist_ok=True)
     args.model_cache.mkdir(parents=True, exist_ok=True)
     duration, source_frames = _probe(video)
     timeline_fps = max(1, round(source_frames / duration))
-    signature = _input_signature(video)
+    signature = analysis_input_signature(video, guide_audio)
     signature_path = output / "run-input.json"
     transcript_path = output / "transcript-raw.json"
     cached = False
@@ -260,7 +277,7 @@ def main() -> None:
     else:
         _event("asr", 1, "Avvio faster-whisper", model=args.model)
         transcript, mode = run_asr_stage(
-            video,
+            guide_audio,
             model_name=args.model,
             cache_dir=args.model_cache,
             timeline_fps=timeline_fps,
@@ -286,6 +303,7 @@ def main() -> None:
     if has_editorial_artifacts(output):
         _event("online_search", 100, "Artifact Editorial Intelligence riusati")
         _event("review", 100, "Review riusata", artifact=str(output / "review.html"), asr_mode=mode)
+        persist_analysis_signature(output, args.analysis_signature)
         return
     _event("online_search", 1, "Avvio pipeline Editorial Intelligence esistente")
     command = [
@@ -300,6 +318,7 @@ def main() -> None:
         "--embedding-code-root", str(DEFAULT_EMBEDDING_CODE),
     ]
     subprocess.run(command, check=True)
+    persist_analysis_signature(output, args.analysis_signature)
     _event("review", 100, "Review pronta", artifact=str(output / "review.html"), asr_mode=mode)
 
 

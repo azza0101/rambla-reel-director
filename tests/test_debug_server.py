@@ -91,6 +91,40 @@ def test_project_api_accepts_upload_without_browser_path():
         shutil.rmtree(root)
 
 
+def test_guide_audio_selection_normalizes_tracks_and_changes_analysis_signature():
+    from backend.app.debug_server import create_app
+
+    root = _project_test_root(); commands = []
+    def run(command):
+        commands.append(command); Path(command[-1]).write_bytes(b"wav")
+    try:
+        source = root / "source.mp4"; source.write_bytes(b"video")
+        app = create_app(project_root=root / "projects", allowed_media_roots=[root],
+            probe_runner=lambda _: {"duration": 10, "fps": 25, "width": 640, "height": 360, "has_audio": True},
+            audio_probe_runner=lambda _: 8.0, audio_command_runner=run)
+        client = TestClient(app); pid = client.post("/api/curation/projects", json={}).json()["project_id"]
+        registered = client.post(f"/api/curation/projects/{pid}/source/local", json={"path": str(source)}).json()
+        original = client.post(f"/api/curation/projects/{pid}/guide/original").json()
+        external = client.put(f"/api/curation/projects/{pid}/guide/upload?filename=voice.mp3", content=b"audio").json()
+
+        assert original["guide_audio"]["mode"] == "original"
+        assert external["guide_audio"]["mode"] == "external"
+        assert external["guide_audio"]["duration"] == 8.0
+        assert external["guide_duration_warning"].endswith("2.00s")
+        assert len({registered["analysis_signature"], original["analysis_signature"], external["analysis_signature"]}) == 3
+        assert all(command[-7:-1] == ["-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le"] for command in commands)
+    finally:
+        shutil.rmtree(root)
+
+
+def test_run_command_carries_project_guide_and_signature(monkeypatch):
+    from backend.app.debug_server import RunState, _command
+    monkeypatch.setenv("RAMBLA_DEBUG_COMMAND_JSON", '["python","runner.py","--video","{video}","--output-dir","{output}"]')
+    state = RunState("r", Path("source.mp4"), Path("run"), guide_audio=Path("guide.wav"), analysis_signature="abc")
+    command = _command(state)
+    assert command[-4:] == ["--guide-audio", "guide.wav", "--analysis-signature", "abc"]
+
+
 def test_legacy_arbitrary_path_media_route_is_not_exposed():
     """Restoring a browser-supplied path parameter would reintroduce filesystem serving."""
     from backend.app.debug_server import create_app

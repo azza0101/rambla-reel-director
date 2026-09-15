@@ -27,6 +27,7 @@ class GuideAudioInfo:
     mode: str
     source_signature: str
     signature: str = ""
+    duration: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,10 +43,20 @@ class CurationProject:
         guide = self.guide_audio.signature if self.guide_audio else ""
         return hashlib.sha256(f"{source}|{guide}".encode()).hexdigest()
 
+    @property
+    def guide_duration_warning(self) -> str | None:
+        if not self.source_video or not self.guide_audio or not self.guide_audio.duration:
+            return None
+        difference = abs(self.source_video.duration - self.guide_audio.duration)
+        if difference <= max(0.5, self.source_video.duration * 0.02):
+            return None
+        return f"Guide audio differs from source timeline by {difference:.2f}s"
+
 
 class ProjectStore:
-    def __init__(self, root: Path, *, probe_runner: Callable[[Path], dict[str, Any]]) -> None:
+    def __init__(self, root: Path, *, probe_runner: Callable[[Path], dict[str, Any]], audio_probe_runner: Callable[[Path], float] | None = None) -> None:
         self.root, self.probe_runner = root, probe_runner
+        self.audio_probe_runner = audio_probe_runner or _probe_audio_duration
 
     def create(self, name: str) -> CurationProject:
         project = CurationProject(uuid.uuid4().hex[:12], name.strip() or "New Reel")
@@ -83,7 +94,7 @@ class ProjectStore:
         target.parent.mkdir(parents=True, exist_ok=True)
         command_runner(["ffmpeg", "-y", "-i", project.source_video.path, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(target)])
         signature = hashlib.sha256(f"original|{project.source_video.signature}".encode()).hexdigest()
-        guide = GuideAudioInfo(str(target), "original", project.source_video.signature, signature)
+        guide = GuideAudioInfo(str(target), "original", project.source_video.signature, signature, self.audio_probe_runner(target))
         self._save(CurationProject(project.project_id, project.name, project.source_video, guide))
         return guide
 
@@ -111,7 +122,7 @@ class ProjectStore:
         command_runner(["ffmpeg", "-y", "-i", str(source), "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(target)])
         stat = source.stat()
         signature = hashlib.sha256(f"external|{source.name}|{stat.st_size}|{stat.st_mtime_ns}".encode()).hexdigest()
-        guide = GuideAudioInfo(str(target), "external", project.source_video.signature if project.source_video else "", signature)
+        guide = GuideAudioInfo(str(target), "external", project.source_video.signature if project.source_video else "", signature, self.audio_probe_runner(target))
         self._save(CurationProject(project.project_id, project.name, project.source_video, guide))
         return guide
 
@@ -124,3 +135,11 @@ class ProjectStore:
         path = self._path(project.project_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(asdict(project), indent=2), encoding="utf-8")
+
+
+def _probe_audio_duration(path: Path) -> float:
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+        check=True, capture_output=True, text=True,
+    )
+    return float(result.stdout.strip())
