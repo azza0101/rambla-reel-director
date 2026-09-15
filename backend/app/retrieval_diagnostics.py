@@ -93,6 +93,7 @@ def _provider_matches(value, provider):
 
 
 def video_diagnostic(rows, provider, configured=True):
+    rows = current_video_rows(rows)
     attempts = [
         a
         for r in rows
