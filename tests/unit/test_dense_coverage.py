@@ -28,3 +28,6 @@ def test_acceptance_launcher_uses_stable_origin_for_project_restore():
     assert "$port = 8765" in text
     assert "8765..8799" not in text
     assert ".curation-acceptance-server.json" in text
+    assert "curation-projects" in text
+    assert "project.json" in text
+    assert "&project=" in text
