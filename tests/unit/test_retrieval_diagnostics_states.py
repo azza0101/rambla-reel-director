@@ -60,3 +60,17 @@ def test_video_retrieval_version_changes_when_localization_contract_changes():
     from backend.app.quality_video import QUALITY_VERSION
 
     assert QUALITY_VERSION == "clip-quality-9"
+
+
+def test_stale_retrieval_artifacts_do_not_drive_current_diagnostics():
+    from backend.app.retrieval_diagnostics import current_image_chunks, current_video_rows
+
+    stale_video = [{"quality_version": "clip-quality-8", "parent_beat_id": "b1", "search_attempts": [{"hits": 9}]}]
+    current_video = [{"quality_version": "clip-quality-9", "parent_beat_id": "b1", "search_attempts": [{"hits": 1}]}]
+    assert current_video_rows(stale_video) == []
+    assert current_video_rows(current_video) == current_video
+
+    stale_images = {"schema_version": "retrieval-quality-8", "chunks": {"b1": {"raw_count": 8}}}
+    current_images = {"schema_version": "retrieval-quality-9", "chunks": {"b1": {"raw_count": 1}}}
+    assert current_image_chunks(stale_images) == {}
+    assert current_image_chunks(current_images) == current_images["chunks"]
