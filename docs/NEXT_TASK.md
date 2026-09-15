@@ -12,53 +12,100 @@ Implementation branch:
 
 `feat/curation-ui-v1`
 
-The earlier debug-style Curation UI contract and the older Editorial Intelligence + StyleDNA execution instructions are superseded wherever they conflict with this file and the approved redesign plan.
+The earlier debug-style Curation UI contract and older Editorial Intelligence + StyleDNA execution instructions are superseded wherever they conflict with this file and the approved redesign plan.
 
-## Required next action
+## Resume rule
 
-Resume from the **existing local working state** on `feat/curation-ui-v1`. Preserve completed/local work such as the professional ordered selection implementation; do not reset or redo completed tasks merely because the remote branch lags.
+Resume from the **existing local working state**. Preserve all completed/uncommitted work, especially the professional ordered selection implementation in `curation_selection.py`. Never reset or redo completed tasks merely because the remote branch lags.
 
-Execute the remaining approved plan continuously and sequentially until the professional product is genuinely testable.
+Because the Codex client/harness has demonstrated a finite per-turn execution budget even while account/week quota remains available, execute the approved plan in the following **three coherent turn batches**. This is an execution scheduling change only; product scope and acceptance criteria are unchanged.
 
-### Execution semantics
+## TURN BATCH A — previews + hydration
 
-1. Read the approved redesign spec/plan and the current local state.
-2. Use **single-agent sequential execution**. Do not use routine subagents or per-task external review gates.
-3. Use TDD/focused tests for the active task, then move directly to the next task.
-4. **Do not send a user-visible progress message after an intermediate task, test pass, or commit. Sending that message ends the Codex turn and stops execution.**
-5. Continue across Task 3, Task 4, Task 5, Task 6, Task 7 and final acceptance work in the same turn whenever possible.
-6. Reuse existing KURA transcript/chunks/candidates/edit-plan and cached model/provider artifacts. Do not rerun expensive ASR/Qwen/provider stages just to exercise the UI.
-7. Preserve `/debug` as engineering-only. Build `/curation` as the professional user surface.
-8. Keep Resolve frozen with `resolve_calls=0`; no ComfyUI/global Python/PATH/CUDA/system/credential changes.
-9. Do not merge to `main` and do not auto-merge.
+Execute remaining Plan Task 3 and Task 4 only:
 
-## Product completion target
+- real lightweight video previews + poster generation;
+- real image thumbnail materialization;
+- stable preview cache and per-card failure isolation;
+- max concurrency 4;
+- artifact hydration into genuinely separate video and image shelves;
+- max 3 video + 4 image candidates per phrase;
+- asset-id candidate index;
+- focused tests for Task 3 + 4;
+- preserve all work in files/commit/checkpoint before ending the turn.
 
-`TESTABLE=YES` requires all of the following to work together:
+Do not rerun ASR/Qwen/provider discovery just to test these components.
 
-- `/curation` opens as the professional product, not a debug page;
-- source video can be chosen/uploaded or registered from a local path;
-- source video has a real player and metadata;
-- original source audio can be extracted/cached as guide audio, with optional replacement guide audio;
-- analysis is reuse-first;
-- each phrase can expose up to **3 real playable video previews + 4 real image thumbnails**;
-- video and image cards are visually distinct and actually preview media;
-- ordered mixed-media multi-select works and persists;
-- selected order maps deterministically to V2/V3/V4...;
-- `NO BROLL` is mutually exclusive;
-- autosave survives refresh/restart;
-- `<run>/selection-plan.json` is written atomically;
-- professional media routes are asset-id based and do not expose arbitrary filesystem paths;
-- standard runtime uses no GPT/OpenAI/Codex call;
+Valid end state for this turn: `BATCH_A_COMPLETE` or a real `HARD_BLOCKER`.
+
+## TURN BATCH B — API + professional HTML product
+
+On the next turn resume without redoing Batch A. Execute Plan Task 5 and Task 6:
+
+- professional project/curation API;
+- safe asset-id media routes, never arbitrary browser filesystem paths;
+- source-video project API wiring needed by the product shell;
+- rewrite `/curation` as the professional product;
+- source-video picker/drag-drop + advanced local-path flow;
+- real source-video player + metadata;
+- real playable video cards;
+- real image cards + lightbox;
+- phrase rail, filters, save state, selection tray;
+- ordered mixed-media multi-select and V2/V3/V4 chips;
+- mutually exclusive NO BROLL;
+- autosave/retry/refresh persistence;
+- focused API + UI tests;
+- preserve all work in files/commit/checkpoint before ending the turn.
+
+Valid end state for this turn: `BATCH_B_COMPLETE` or a real `HARD_BLOCKER`.
+
+## TURN BATCH C — guide audio + integration + acceptance
+
+On the next turn resume without redoing A/B. Execute Plan Task 7 and final acceptance work:
+
+- source audio extraction/cache as normalized guide audio;
+- optional replacement guide audio;
+- guide-audio-aware analysis while timeline remains source-video based;
+- reuse-first behavior for transcript/chunks/candidates/edit-plan;
+- KURA acceptance smoke using existing artifacts where valid;
+- real video/image preview counts and error/cache evidence;
+- mixed video+image selection proving V2/V3 persistence;
+- separate NO BROLL proof;
+- full fresh pytest + backend compileall once at final gate;
+- exact local `/curation` URL and `selection-plan.json` path;
 - `resolve_calls=0`.
 
-## Completion / stop gate
+Valid end state: `TESTABLE=YES` or a real `HARD_BLOCKER`.
 
-**Do not stop for ordinary task completion, successful tests, commits, or status reporting.**
+## Per-turn execution rules
 
-End the Codex turn only when:
+1. Single worker, sequential, LOW-CREDIT.
+2. Read only this file, the approved plan section for the active batch, and directly relevant source/tests. Do not reread old Issue #3 history.
+3. No routine subagents/reviewers; Normal Chat is the external reviewer.
+4. TDD/focused tests while iterating. Full suite only in Batch C final gate.
+5. Inside a batch, do **not** send user-visible progress after individual tasks/tests/commits; continue until the batch is complete or a real blocker occurs.
+6. At a batch boundary, a concise final message is allowed because the per-turn budget is finite. It must contain only batch result, files/commit/test evidence, blocker if any, and exact next batch.
+7. Reuse existing KURA artifacts and caches aggressively.
+8. `/debug` remains engineering-only; `/curation` is the professional product.
+9. Resolve frozen: `resolve_calls=0`.
+10. No ComfyUI/global Python/PATH/CUDA/system/credential changes. No main merge or auto-merge.
 
-- `TESTABLE=YES`: the above professional `/curation` milestone is ready for the user to open and test, or
-- `HARD_BLOCKER`: a real blocker requires user action/decision and cannot be resolved within the already approved scope.
+## Final product target
 
-At that point post one concise HANDOFF with branch/SHA, tests, exact local URL, guide-audio status, preview counts/errors/cache hits, persistence + V2/V3 proof, selection-plan path, `resolve_calls=0`, and any remaining unproven item.
+`TESTABLE=YES` still requires:
+
+- professional `/curation` surface;
+- source video choose/upload/local-path registration;
+- source player + metadata;
+- original/external guide audio;
+- reuse-first analysis;
+- up to 3 real playable video previews + 4 real image thumbnails per phrase;
+- real media preview UX + image lightbox;
+- ordered mixed-media multi-select;
+- deterministic V2/V3/V4... mapping;
+- NO BROLL exclusivity;
+- autosave + refresh persistence;
+- atomic `<run>/selection-plan.json`;
+- asset-id safe media routes;
+- no GPT/OpenAI/Codex calls at standard runtime;
+- `resolve_calls=0`.
