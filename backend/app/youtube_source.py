@@ -102,7 +102,7 @@ def normalize_youtube_result(row: dict[str, Any], *, query: str) -> YouTubeCandi
     width = int(row.get("width") or 0)
     height = int(row.get("height") or 0)
     title = str(row.get("title") or f"YouTube video {video_id}").strip()
-    creator_name = str(row.get("channel") or row.get("creator") or "").strip() or None
+    creator_name = str(row.get("channel") or row.get("creator") or row.get("uploader") or "").strip() or None
     thumbnail = _safe_thumbnail(row.get("thumbnail") or row.get("thumbnail_url"))
     source_class = str(row.get("source_class") or "CLOSE_SEMANTIC_EDITORIAL")
     if source_class not in SOURCE_CLASSES:
@@ -193,15 +193,20 @@ class YouTubeSource:
 
 
 class YouTubeOnlineSourceAdapter:
-    """Expose YouTube discovery through the generic preview-ranking source port."""
+    """Expose YouTube/Shorts discovery through the generic source port."""
 
     supported_source_classes = (
         "EXACT_RECEIPT", "EXACT_ENTITY_EVENT", "SOURCE_NATIVE_SOCIAL",
         "ARCHIVAL_REPERTORY", "PRODUCT_UI_DEMO", "CULTURAL_REFERENCE",
         "CLOSE_SEMANTIC_EDITORIAL",
     )
-    def __init__(self, source: YouTubeSource):
+
+    def __init__(self, source: YouTubeSource, *, provider_name: str = "youtube", portrait_only: bool = False):
+        if provider_name not in {"youtube", "youtube_shorts"}:
+            raise ValueError("unsupported YouTube provider identity")
         self.source = source
+        self.provider_name = provider_name
+        self.portrait_only = bool(portrait_only)
 
     async def search(
         self,
@@ -218,20 +223,27 @@ class YouTubeOnlineSourceAdapter:
             query,
             min_duration=min_duration,
             max_duration=max_duration,
-            limit=limit,
+            limit=max(limit, limit * 3 if self.portrait_only else limit),
         )
         output: list[YouTubeRemoteCandidate] = []
         for rank, row in enumerate(rows):
+            if self.portrait_only and row.orientation != "portrait":
+                continue
             if orientation is not None and row.orientation != orientation:
                 continue
             if not row.thumbnail_url:
                 continue
+            source_page = (
+                f"https://www.youtube.com/shorts/{row.video_id}"
+                if self.provider_name == "youtube_shorts"
+                else row.source_page
+            )
             output.append(
                 YouTubeRemoteCandidate(
-                    provider="youtube",
+                    provider=self.provider_name,
                     provider_id=row.video_id,
                     query=row.query,
-                    source_page=row.source_page,
+                    source_page=source_page,
                     creator_name=row.creator_name,
                     creator_page=None,
                     title=row.title,
@@ -241,9 +253,7 @@ class YouTubeOnlineSourceAdapter:
                     height=row.height,
                     orientation=row.orientation,
                     preview_url=row.thumbnail_url,
-                    # This is a public source reference, not a direct media URL. The
-                    # online engine marks it bounded-window so direct full download is skipped.
-                    selected_rendition_url=row.source_page,
+                    selected_rendition_url=source_page,
                     rendition_width=row.width,
                     rendition_height=row.height,
                     rights_state=row.rights_state,
@@ -251,8 +261,10 @@ class YouTubeOnlineSourceAdapter:
                     scene_evidence=row.scene_evidence,
                     acquisition_mode="bounded_window",
                     source_duration=row.duration,
-                    source_class=row.source_class,
+                    source_class="SOURCE_NATIVE_SOCIAL" if self.provider_name == "youtube_shorts" else row.source_class,
                     source_authenticity=row.source_authenticity,
                 )
             )
-        return output[:limit]
+            if len(output) >= limit:
+                break
+        return output
