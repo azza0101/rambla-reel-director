@@ -22,6 +22,16 @@ def expand_queries(queries,kind):
         if alias!=q and alias not in out:out.append(alias)
         broad=re.sub(r'\blocal\s+','',alias,flags=re.I)
         if broad not in out:out.append(broad)
+    # Retrieval engines often index planning actions with simpler nouns than the
+    # editorial query. These aliases keep the exact physical activity (map/route
+    # planning) while avoiding a zero-hit result caused only by phrasing.
+    for q in queries:
+        if re.search(r'\b(compare|comparing|plan|planning)\b',q,re.I) and re.search(r'\b(route|routes|itinerary|itineraries)\b',q,re.I):
+            for variant in ('travel planning map','route planning map','trip planning map','travel itinerary map'):
+                if variant not in out:out.append(variant)
+        elif re.search(r'\b(custom\s+)?travel\s+itinerary\s+planning\b|\btraveler\s+planning\s+itinerary\b',q,re.I):
+            for variant in ('travel itinerary planning','trip planning map','travel planning map'):
+                if variant not in out:out.append(variant)
     for q in queries:
         if re.search(r'\b(wilted|wilting|dying|drooping)\b',q,re.I):
             base=re.sub(r'\b(on |in |a |the )?(balcony|windowsill|terrace)\b','',q,flags=re.I)
