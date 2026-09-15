@@ -53,12 +53,31 @@ if (Test-Path -LiteralPath (Join-Path $scriptRoot '.git')) {
 
 $shortSha = $fullSha.Substring(0, 7)
 $marker = "CURATION-V1-build-$shortSha"
-$port = $null
-foreach ($candidate in 8765..8799) {
-    $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $candidate)
-    try { $listener.Start(); $port = $candidate; break } catch {} finally { $listener.Stop() }
+
+# Keep a stable browser origin so localStorage can reopen the last project across
+# launcher restarts. Only stop the process recorded by our previous launcher and
+# only when it is the same scoped Python runtime; never kill an unrelated process.
+$recordPath = Join-Path $scriptRoot '.curation-acceptance-server.json'
+if (Test-Path -LiteralPath $recordPath -PathType Leaf) {
+    try {
+        $old = Get-Content -LiteralPath $recordPath -Raw | ConvertFrom-Json
+        if ($old.pid) {
+            $oldProcess = Get-Process -Id ([int]$old.pid) -ErrorAction SilentlyContinue
+            if ($oldProcess -and $oldProcess.Path -eq $runtime) {
+                Stop-Process -Id $oldProcess.Id -Force -ErrorAction Stop
+                Wait-Process -Id $oldProcess.Id -Timeout 5 -ErrorAction SilentlyContinue
+            }
+        }
+    } catch {
+        Write-Warning "Previous acceptance server cleanup skipped: $($_.Exception.Message)"
+    }
 }
-if (-not $port) { throw 'No free acceptance port in range 8765..8799' }
+
+$port = 8765
+$listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $port)
+try { $listener.Start() }
+catch { throw "Port 8765 is already in use by an unrelated process. Close it, then relaunch RAMBLA." }
+finally { $listener.Stop() }
 
 $previousToken = $env:RAMBLA_BUILD_TOKEN
 $env:RAMBLA_BUILD_TOKEN = $shortSha
@@ -77,7 +96,7 @@ if (-not $ready) { Stop-Process -Id $process.Id -ErrorAction SilentlyContinue; t
 $response = Invoke-WebRequest -Uri $url -UseBasicParsing -Headers @{'Cache-Control'='no-cache'}
 if (-not $response.Content.Contains($marker)) { Stop-Process -Id $process.Id -ErrorAction SilentlyContinue; throw "Build marker verification failed. Expected: $marker" }
 $record = @{pid=$process.Id;port=$port;url=$url;branch=$actualBranch;sha=$fullSha;short_sha=$shortSha;build_marker=$marker;started_at=(Get-Date).ToString('o')}
-$record | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $scriptRoot '.curation-acceptance-server.json') -Encoding utf8
+$record | ConvertTo-Json | Set-Content -LiteralPath $recordPath -Encoding utf8
 $record | Format-List
 Write-Output "OPEN MANUALLY: $url"
 
