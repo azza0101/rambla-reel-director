@@ -134,7 +134,8 @@ class ProjectStore:
     def _save(self, project: CurationProject) -> None:
         path = self._path(project.project_id)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(asdict(project), indent=2), encoding="utf-8")
+        from .atomic_io import write_json
+        write_json(path, asdict(project))
 
 
 def _probe_audio_duration(path: Path) -> float:

@@ -1,3 +1,11 @@
+# Current direction — External editorial plan import
+
+The external-plan workflow is implemented and verified; see [EXTERNAL_EDITORIAL_PLAN.md](EXTERNAL_EDITORIAL_PLAN.md) for the schema, acceptance evidence and launcher. Next user-review step: create external RAMBLA editorial instructions and a real KURA plan. Local generative optimization is optional and no longer blocks sourcing. Do not auto-generate a KURA plan or add an OpenAI API integration.
+
+---
+
+## Earlier implementation plan (historical)
+
 # Next Task — Complete Professional Curation UI Redesign
 
 Current phase: **implementation authorized for the approved Professional Curation UI Redesign**.

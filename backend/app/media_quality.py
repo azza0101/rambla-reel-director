@@ -3,6 +3,15 @@ import hashlib
 from pathlib import Path
 
 
+def perceptual_hash(path: Path) -> str:
+    from PIL import Image, ImageOps
+    with Image.open(path) as raw:
+        image = ImageOps.exif_transpose(raw).convert('L').resize((9, 8))
+        pixels = list(image.getdata())
+        bits = [pixels[y*9+x] > pixels[y*9+x+1] for y in range(8) for x in range(8)]
+        return f'{sum(int(bit) << i for i, bit in enumerate(bits)):016x}'
+
+
 def image_quality(path: Path) -> dict:
     from PIL import Image, ImageOps
     with Image.open(path) as raw:
@@ -34,3 +43,24 @@ def diverse_candidates(rows: list[dict], history: list[dict], *, limit: int) -> 
         if len(selected) < limit:
             selected.append(row)
     return selected, rejected
+
+
+def cross_chunk_duplicate_rate(groups: list[list[dict]]) -> float:
+    history = []
+    duplicates = total = 0
+    for rows in groups:
+        total += len(rows)
+        duplicates += sum(any(same_visual(row, prior) for prior in history) for row in rows)
+        history.extend(rows)
+    return duplicates / total if total else 0.0
+
+
+def other_media_history(root: Path, kind: str, beat_id: str) -> list[dict]:
+    """Share fingerprints across independent stages, excluding same-beat alternatives."""
+    import json
+    path=root/('online-candidates.json' if kind=='video' else 'image-candidates.json')
+    if not path.is_file(): return []
+    payload=json.loads(path.read_text(encoding='utf-8'))
+    if kind=='video':
+        return [c for row in payload if row.get('parent_beat_id')!=beat_id for c in row.get('candidates',[])]
+    return [c for cid,row in payload.get('chunks',{}).items() if cid!=beat_id for c in row.get('candidates',[])]

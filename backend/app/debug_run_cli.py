@@ -120,23 +120,23 @@ def discover_image_candidates(
     chunks: list[dict[str, Any]], output_dir: Path, *, sources: list[Any] | None = None,
     outline: dict[str, Any] | None = None, ranker: Any = None,
     preview_fetcher: Callable[[str], Any] | None = None, relevance_floor: float = 0.30,
-    client_id: str = "debug-kura", event_callback: Callable[..., None] | None = None,
+    client_id: str = "debug-reel", event_callback: Callable[..., None] | None = None,
     visual_plan: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Search, locally materialize and Qwen-rank images with per-chunk resumability."""
     if sources is None and not visual_plan:
-        raise ValueError("generative visual plan required before production image sourcing")
+        raise ValueError("imported visual plan required before production image sourcing")
     artifact = output_dir / "image-candidates.json"
     intents = {}
     for index, chunk in enumerate(chunks):
         chunk_id = str(chunk["id"])
         planned = (visual_plan or {}).get("chunks", {}).get(chunk_id)
         if not planned:
+            if sources is None: raise ValueError(f"missing imported visual beat: {chunk_id}")
             intents[chunk_id] = build_image_intent(index, chunks, outline)
             continue
         shots = list(planned.get("shots") or [])
-        queries = [shot["image_queries"][0] for shot in shots if shot.get("image_queries")]
-        queries.extend(query for shot in shots for query in shot.get("image_queries", [])[1:])
+        queries = [query for shot in shots for query in shot.get("image_queries", [])]
         intents[chunk_id] = {
             "intent": planned["core_meaning"], "queries": queries, "context": planned.get("local_context", ""),
             "editorial_function": planned.get("editorial_function"), "subtext": planned.get("subtext"),
@@ -174,11 +174,18 @@ def discover_image_candidates(
         result["quality_signature"] = quality_signature
         cache_root = output_dir / "image-cache"; cache_root.mkdir(parents=True, exist_ok=True)
         for index, chunk in enumerate(chunks):
-            chunk_id = str(chunk["id"]); intent = intents[chunk_id]; queries = intent["queries"] or [str(chunk.get("text") or "image")]
+            chunk_id = str(chunk["id"]); intent = intents[chunk_id]
+            planned = (visual_plan or {}).get('chunks', {}).get(chunk_id, {})
+            if planned.get('visual_action', 'BROLL') != 'BROLL':
+                result['chunks'][chunk_id] = {'status':'not_requested', 'visual_action':planned['visual_action'], 'candidates':[], 'accepted_count':0, 'raw_count':0, 'queries':[], 'active_providers':[], 'zero_result_reason':planned['visual_action']}
+                continue
+            from .media_quality import other_media_history
+            cross_media = other_media_history(output_dir, 'video', chunk_id)
+            queries = intent["queries"] or [str(chunk.get("text") or "image")]
             previous = cached.get("chunks", {}).get(chunk_id, {})
             previous_queries = previous.get("queries") or ([previous.get("query")] if previous.get("query") else [])
             if previous.get("candidates") and previous_queries == queries and cached.get("quality_signature") == quality_signature and all(Path(c.get("preview_path") or "missing").is_file() for c in previous["candidates"]):
-                row = dict(previous, cache_status="reused"); row["candidates"], removed = diverse_candidates(row["candidates"], history, limit=4); history.extend(row["candidates"]); duplicate_count += removed; result["chunks"][chunk_id] = row; reused += 1
+                row = dict(previous, cache_status="reused"); row["candidates"], removed = diverse_candidates(row["candidates"], history + cross_media, limit=4); row["accepted_count"] = len(row["candidates"]); history.extend(row["candidates"]); duplicate_count += removed; result["chunks"][chunk_id] = row; reused += 1
                 if event_callback: event_callback("image_search", 100 * (index + 1) / max(1, len(chunks)), "Image chunk reused", chunk_id=chunk_id, **{key: row.get(key) for key in ("raw_count", "accepted_count", "active_providers")})
                 continue
             retried += 1; gathered = {}; errors = []
@@ -225,7 +232,7 @@ def discover_image_candidates(
                 ranked_groups.append(accepted_group)
             accepted = [group[0] for group in ranked_groups if group]
             remainder = sorted((candidate for group in ranked_groups for candidate in group[1:]), key=lambda item: (-float(item.get("score", 0)), str(item.get("id"))))
-            accepted, removed = diverse_candidates(accepted + remainder, history, limit=4)
+            accepted, removed = diverse_candidates(accepted + remainder, history + cross_media, limit=4)
             duplicate_count += removed; history.extend(accepted)
             zero_reason = None
             if not gathered: zero_reason = "0 provider results" if not errors else "provider search failed"
@@ -238,7 +245,8 @@ def discover_image_candidates(
             if event_callback: event_callback("image_search", 100 * (index + 1) / max(1, len(chunks)), "Image chunk searched", chunk_id=chunk_id, query=queries, providers=row["active_providers"], raw=row["raw_count"], accepted=row["accepted_count"], zero_reason=zero_reason, errors=errors)
         result["cache_reused_chunks"] = reused; result["retried_chunks"] = retried
         result["duplicates_rejected"] = duplicate_count
-        result["cross_chunk_duplicate_rate"] = 0.0
+        from .media_quality import cross_chunk_duplicate_rate
+        result["cross_chunk_duplicate_rate"] = cross_chunk_duplicate_rate([row["candidates"] for row in result["chunks"].values()])
         return result
 
     payload = asyncio.run(collect())
@@ -454,24 +462,14 @@ def semantic_query_variants(text: str) -> list[str]:
         "avevo", "abbiamo", "ho", "ha", "hanno", "era", "è", "essere", "trovato", "sembrava", "perfetto", "esempio", "oggi", "ciao", "spiego",
         "perché", "perche", "non", "vendiamo", "possiamo", "chiamarlo", "sempre", "niente", "spettacoli", "cavalcate", "significa", "esattamente", "questo",
     }
-    visual_english = {
-        "turismo": "tourism", "sostenibile": "sustainable", "viaggio": "travel", "viaggi": "travel", "viaggiare": "travel",
-        "thailandia": "Thailand", "centro": "sanctuary", "elefanti": "elephant", "impatto": "impact", "ambientale": "environmental",
-        "voli": "flights", "autobus": "bus", "barche": "boats", "famiglie": "families", "locali": "local", "villaggio": "village",
-        "struttura": "lodge", "lavoratori": "workers", "plastica": "plastic", "guide": "guides", "orto": "garden", "galline": "chickens",
-        "cura": "care", "responsabilità": "responsibility", "responsabilita": "responsibility", "verde": "green",
-    }
     tokens = [token.strip(".,;:!?()\"") for token in text.split()]
     concrete = [token for token in tokens if token and token != "'" and token.casefold() not in stop]
     literal = " ".join(concrete[:6])
     context = " ".join(concrete[-5:])
-    visual = " ".join(dict.fromkeys(visual_english[token.casefold()] for token in concrete if token.casefold() in visual_english))
     named = " ".join(
         token for index, token in enumerate(tokens)
         if token and token[0].isupper() and index > 0 and token.casefold() not in stop
     )
-    if visual:
-        return list(dict.fromkeys((visual, f"{visual} documentary photography", f"{visual} editorial image")))[:3]
     return list(dict.fromkeys(query for query in (named, context, literal) if len(query.split()) >= 2))[:3]
 
 
@@ -541,7 +539,7 @@ def main() -> None:
     parser.add_argument("--stage", choices=("analyze", "videos", "images", "all"), default="all")
     parser.add_argument("--model", default=str(DEFAULT_MODEL))
     parser.add_argument("--model-cache", type=Path, default=DEFAULT_MODEL_CACHE)
-    parser.add_argument("--client-id", default="debug-kura")
+    parser.add_argument("--client-id", default="debug-reel")
     args = parser.parse_args()
 
     from .project_lock import project_stage_lock
@@ -571,17 +569,18 @@ def _run_stages(args):
     if args.stage in {"videos", "images"}:
         if not chunks_path.is_file() or not transcript_path.is_file() or not outline_path.is_file():
             raise SystemExit("analysis required before sourcing")
-        chunks = json.loads(chunks_path.read_text(encoding="utf-8"))
+        from .editorial_import import retrieval_bundle
+        retrieval_output, chunks, _, _ = retrieval_bundle(output)
         if args.stage == "images":
             _event("image_search", 1, "Image sourcing avviato", items=len(chunks))
             subprocess.run(_image_sourcing_command(output, chunks_path, outline_path, args.client_id), check=True)
-            images = json.loads((output / "image-candidates.json").read_text(encoding="utf-8"))
+            images = json.loads((retrieval_output / "image-candidates.json").read_text(encoding="utf-8"))
             _write_json(output / "image-sourcing.json", {"status": "complete", "chunks": len(chunks)})
             _event("image_search", 100, "Image sourcing completato", chunks=len(images.get("chunks", {})))
             return
         _event("online_search", 1, "Video sourcing avviato", items=len(chunks))
         subprocess.run(_video_sourcing_command(output, transcript_path, outline_path, args.client_id, source_frames), check=True)
-        persist_video_diagnostics(output)
+        persist_video_diagnostics(retrieval_output)
         _write_json(output / "video-sourcing.json", {"status": "complete", "chunks": len(chunks)})
         _event("online_search", 100, "Video sourcing completato", chunks=len(chunks))
         return
@@ -631,7 +630,7 @@ def _run_stages(args):
         return
 
     subprocess.run(_image_sourcing_command(output, chunks_path, outline_path, args.client_id), check=True)
-    images = json.loads((output / "image-candidates.json").read_text(encoding="utf-8"))
+    images = json.loads((retrieval_output / "image-candidates.json").read_text(encoding="utf-8"))
     _event("image_search", 100, "Candidati immagini pronti", chunks=len(images.get("chunks", {})))
 
     if editorial_artifacts_match(output, analysis_signature):

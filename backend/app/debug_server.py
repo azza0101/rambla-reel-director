@@ -19,6 +19,8 @@ from .curation_artifacts import load_curation_run
 from .curation_project import CurationProject, ProjectStore
 from .curation_selection import SelectionStore
 from .curation_ui import render_curation_page
+from .editorial_import import transcript_package, validate_import, import_plan, load_import, active_retrieval_root, contract_schema, parse_plan
+from .project_lock import project_stage_lock
 
 DEFAULT_VIDEO = r"Z:\APP REEL TEST\VIDEO BASE\KURA_Finto etico_draft 1.mp4"
 DEFAULT_OUTPUT = r"Z:\APP REEL TEST\qwen-embedding-smoke\kura-finto-etico-smoke\run"
@@ -527,7 +529,7 @@ def _probe_source_video(source: Path) -> dict[str, Any]:
 
 def create_app(*, project_root: Path | None = None, curation_run_root: Path | None = None, allowed_media_roots: list[Path] | None = None, probe_runner: Any = None, audio_probe_runner: Any = None, audio_command_runner: Any = None) -> FastAPI:
     app = FastAPI(title="RAMBLA Debug Runner", version="0.1.0")
-    project_root = project_root or Path(DEFAULT_OUTPUT).parent / "curation-projects"
+    project_root = project_root or Path(os.environ.get("RAMBLA_PROJECT_ROOT", str(Path(DEFAULT_OUTPUT).parent / "curation-projects")))
     # Legacy/default artifacts are deliberately never used by project routes.
     # Each project's analysis, media index, and selections live under its own root.
     allowed_roots = tuple(root.resolve() for root in (allowed_media_roots or [Path(DEFAULT_VIDEO).parent, project_root]))
@@ -568,37 +570,108 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
     def project_selection_store(project_id: str) -> SelectionStore:
         run = project_run(project_id)
         return SelectionStore(
-            project_run_root(project_id),
+            active_retrieval_root(project_run_root(project_id)),
             {asset_id: {"chunk_id": item.chunk_id} for asset_id, item in run.candidate_index.items()},
             [item.chunk_id for item in run.chunks],
         )
 
+    def editorial_input(project_id: str) -> dict:
+        project = load_project(project_id)
+        root = project_run_root(project_id)
+        if not project.source_video or _read_json(root / 'analysis-signature.json', {}).get('analysis_signature') != project.analysis_signature:
+            raise HTTPException(status_code=422, detail='Analyze this source/guide before exporting or sourcing')
+        try:
+            return transcript_package(root, project_id, project.source_video.duration)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail='Editorial input unavailable: '+str(exc)) from exc
+
+    def approved_plan(project_id: str) -> dict:
+        package = editorial_input(project_id)
+        try:
+            return validate_import(load_import(project_run_root(project_id)), package)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail='Import a valid editorial plan before sourcing: '+str(exc)) from exc
+
+    @app.get('/api/curation/editorial-plan/schema')
+    async def editorial_schema() -> dict:
+        return contract_schema()
+
+    @app.get('/api/curation/projects/{project_id}/editorial-input')
+    async def export_editorial_input(project_id: str) -> dict:
+        return editorial_input(project_id)
+
+    @app.post('/api/curation/projects/{project_id}/editorial-plan')
+    async def receive_editorial_plan(project_id: str, request: Request) -> dict:
+        active = RUNS.get(project_runs.get(project_id, ''))
+        if active and active.status in {'QUEUED','RUNNING'}:
+            raise HTTPException(status_code=409, detail='Wait for the running project stage before importing')
+        raw = await request.body()
+        if len(raw)>2_000_000:
+            raise HTTPException(status_code=413, detail='Editorial JSON exceeds 2 MB')
+        try:
+            plan = parse_plan(raw)
+            with project_stage_lock(project_run_root(project_id)):
+                root = import_plan(project_run_root(project_id), plan, editorial_input(project_id))
+            return {'status':'imported','visual_beats':len(plan['visual_beats']),'plan_version':root.name,'resolve_calls':0}
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (ValueError, KeyError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     def curation_payload(project_id: str) -> dict[str, Any]:
+        analysis_ready = False
+        editorial_plan = None
+        editorial_error = None
+        try:
+            editorial_input(project_id)
+            analysis_ready = True
+            editorial_plan = approved_plan(project_id)
+        except HTTPException as exc:
+            editorial_error = exc.detail
+        flags = {'analysis_ready':analysis_ready,'editorial_plan_ready':editorial_plan is not None,'editorial_error':editorial_error}
+        existing = _read_json(project_run_root(project_id)/'visual-plan.json',{})
+        if not editorial_plan and existing.get('schema_version')=='rambla-visual-plan-1':
+            return {**flags,'project_id':project_id,'chunks':[],'selection_plan':{'chunks':{}},'resolve_calls':0}
         try:
             run = project_run(project_id)
         except HTTPException as exc:
             if exc.status_code == 404:
-                return {"project_id": project_id, "chunks": [], "selection_plan": {"chunks": {}}, "resolve_calls": 0}
+                return {**flags, "project_id": project_id, "chunks": [], "selection_plan": {"chunks": {}}, "resolve_calls": 0}
             raise
         saved = project_selection_store(project_id).load()
-        diagnostics = _read_json(project_run_root(project_id) / "video-sourcing-diagnostics.json", {"chunks": []})
+        retrieval_root = active_retrieval_root(project_run_root(project_id))
+        imported_beats = {b['id']:b for b in editorial_plan['visual_beats']} if editorial_plan else {}
+        for bid, beat in imported_beats.items():
+            if beat['action'] != 'BROLL':
+                saved['chunks'].setdefault(bid, {'chunk_id':bid,'no_broll':beat['action']=='KEEP_TALKING_HEAD','selected_assets':[],'action':beat['action'],'continuation_from':beat.get('continuation_from')})
+        diagnostics = _read_json(retrieval_root / "video-sourcing-diagnostics.json", {"chunks": []})
         video_diagnostics = {str(row.get("chunk_id")): row for row in diagnostics.get("chunks", [])}
-        image_artifact = _read_json(project_run_root(project_id) / "image-candidates.json", {"chunks": {}})
+        image_artifact = _read_json(retrieval_root / "image-candidates.json", {"chunks": {}})
         image_diagnostics = image_artifact.get("chunks", {}) if isinstance(image_artifact, dict) else {}
         visual_artifact = _read_json(project_run_root(project_id) / "visual-plan.json", {"chunks": {}})
         visual_plans = visual_artifact.get("chunks", {}) if isinstance(visual_artifact, dict) else {}
+        visual_plans.update(imported_beats)
         def video_reason(chunk_id: str) -> str:
+            if imported_beats.get(chunk_id,{}).get('action','BROLL')!='BROLL':
+                return imported_beats[chunk_id]['action'].replace('_',' ')
             row = video_diagnostics.get(chunk_id, {})
             if row.get("errors"): return "provider error: " + str(row["errors"][0])
             if row.get("raw_results", 0) == 0: return "0 provider results"
             if row.get("rejected", 0): return "all rejected: " + ", ".join(row.get("rejection_reasons", []))
             return "preview failed"
         def image_reason(chunk_id: str) -> str:
+            if imported_beats.get(chunk_id,{}).get('action','BROLL')!='BROLL':
+                return imported_beats[chunk_id]['action'].replace('_',' ')
             row = image_diagnostics.get(chunk_id, {})
             return str(row.get("zero_result_reason") or "images not searched")
         return {
+            **flags,
             "project_id": project_id,
             "chunks": [{"id": row.chunk_id, "text": row.text,
+                "start": imported_beats.get(row.chunk_id, {}).get('start'),
+                "end": imported_beats.get(row.chunk_id, {}).get('end'),
+                "covered_chunk_ids": imported_beats.get(row.chunk_id, {}).get('covered_chunk_ids', [row.chunk_id]),
+                "action": imported_beats.get(row.chunk_id, {}).get('action'),
                 "visual_plan": visual_plans.get(row.chunk_id),
                 "error": any(item.preview_error for item in (*row.video_candidates, *row.image_candidates)),
                 "video_reason": None if row.video_candidates else video_reason(row.chunk_id),
@@ -606,7 +679,7 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
                 "assets": [
                 {"asset_id": item.asset_id, "chunk_id": item.chunk_id, "kind": item.kind,
                  "provider": item.provider, "title": item.title, "rights_state": item.rights_state,
-                 "orientation": item.orientation,
+                 "orientation": item.orientation, "source_page":item.source_page, "preview_status":item.preview_status, "license_name":item.license_name,"license_url":item.license_url,"attribution":item.attribution,"shot_id":item.shot_id,
                  "preview_url": item.preview_url or f"/api/curation/projects/{project_id}/media/{item.asset_id}/preview",
                  "poster_url": f"/api/curation/projects/{project_id}/media/{item.asset_id}/poster"}
                 for item in (*row.video_candidates, *row.image_candidates)
@@ -719,6 +792,7 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
         project = load_project(project_id); run_root = project_run_root(project_id)
         if not (run_root / "semantic-chunks.json").is_file():
             raise HTTPException(status_code=422, detail="analysis required before sourcing")
+        approved_plan(project_id)
         active = RUNS.get(project_runs.get(project_id, ""))
         if active and active.status in {"QUEUED", "RUNNING"}:
             raise HTTPException(status_code=409, detail="project stage already running")

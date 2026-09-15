@@ -116,7 +116,7 @@ def test_semantic_queries_remove_narration_filler_and_keep_visual_subject():
     queries = semantic_query_variants(
         "Per esempio in Thailandia avevo trovato un centro elefanti che sembrava perfetto"
     )
-    assert queries[0] == "Thailand sanctuary elephant"
+    assert queries[0] == "Thailandia centro elefanti"
     assert all("avevo trovato" not in query for query in queries)
 
 
@@ -167,6 +167,11 @@ def test_independent_sourcing_stages_reuse_analysis_without_cross_calls(monkeypa
             (output / "semantic-beats.json").write_text('{"beats":[]}', encoding="utf-8")
             (output / "semantic-chunks.json").write_text('[{"id":"chunk-1"}]', encoding="utf-8")
 
+        from backend.app.editorial_import import transcript_package, import_plan, retrieval_bundle
+        for output in (video_output,image_output):
+            (output/'semantic-chunks.json').write_text(json.dumps([{'id':'chunk-1','start':0.0,'end':10.0,'text':'Example.'}]),encoding='utf-8')
+            package=transcript_package(output,'demo',10.0)
+            import_plan(output,{'schema_version':'rambla-visual-plan-1','project_id':'demo','transcript_signature':package['transcript_signature'],'global_topic':'Example','visual_beats':[{'id':'vb-1','start':0.0,'end':10.0,'covered_chunk_ids':['chunk-1'],'original_text':'Example.','action':'KEEP_TALKING_HEAD','editorial_function':'statement','core_meaning':'Example','subtext':'','visual_mode':'single','shots':[],'avoid':[]}]},package)
         video_calls = []
         monkeypatch.setattr(cli.subprocess, "run", lambda command, check: video_calls.append(command))
         monkeypatch.setattr(cli, "discover_image_candidates", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("video stage must not source images")))
@@ -178,7 +183,7 @@ def test_independent_sourcing_stages_reuse_analysis_without_cross_calls(monkeypa
         image_calls = []
         def run_images(command, check):
             image_calls.append(command)
-            (image_output / "image-candidates.json").write_text('{"chunks":{"chunk-1":{"candidates":[]}}}', encoding="utf-8")
+            (retrieval_bundle(image_output)[0] / "image-candidates.json").write_text('{"chunks":{"chunk-1":{"candidates":[]}}}', encoding="utf-8")
         monkeypatch.setattr(cli.subprocess, "run", run_images)
         monkeypatch.setattr("sys.argv", ["debug_run_cli", "--video", str(source), "--output-dir", str(image_output), "--stage", "images"])
         cli.main()

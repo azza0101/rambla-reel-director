@@ -27,6 +27,10 @@ class CurationCandidate:
     preview_status: str = "pending"
     preview_error: str | None = None
     preview_url: str | None = None
+    license_name: str | None = None
+    license_url: str | None = None
+    attribution: str | None = None
+    shot_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +51,12 @@ def build_candidate_shelf(
         if key not in seen:
             seen.add(key)
             ordered.append(row)
-    return CandidateShelf(
-        video=tuple(row for row in ordered if row.kind == "video")[:video_limit],
-        images=tuple(row for row in ordered if row.kind == "image")[:image_limit],
-    )
+    def per_shot(kind, limit):
+        rows=[r for r in ordered if r.kind==kind]
+        primary=[]; remaining=[]; shots=set()
+        for row in rows:
+            if row.shot_id not in shots:
+                primary.append(row); shots.add(row.shot_id)
+            else: remaining.append(row)
+        return tuple((primary+remaining)[:limit])
+    return CandidateShelf(video=per_shot('video',video_limit), images=per_shot('image',image_limit))

@@ -329,6 +329,12 @@ def test_video_and_image_sourcing_are_independent_project_stages(monkeypatch):
         run = root / "projects" / pid / "run"; run.mkdir()
         for name, value in (("semantic-chunks.json", "[]"), ("semantic-beats.json", '{"beats":[]}'), ("transcript-raw.json", '{"segments":[]}')):
             (run / name).write_text(value, encoding="utf-8")
+        from backend.app.editorial_import import transcript_package, import_plan
+        project = client.get(f"/api/curation/projects/{pid}").json()
+        (run/'analysis-signature.json').write_text(json.dumps({'analysis_signature':project['analysis_signature']}),encoding='utf-8')
+        (run/'semantic-chunks.json').write_text(json.dumps([{'id':'c1','start':0.0,'end':2.0,'text':'An example.'}]),encoding='utf-8')
+        package=transcript_package(run,pid,2.0)
+        import_plan(run,{'schema_version':'rambla-visual-plan-1','project_id':pid,'transcript_signature':package['transcript_signature'],'global_topic':'Example','visual_beats':[{'id':'vb-1','start':0.0,'end':2.0,'covered_chunk_ids':['c1'],'original_text':'An example.','action':'KEEP_TALKING_HEAD','editorial_function':'statement','core_meaning':'Example','subtext':'','visual_mode':'single','shots':[],'avoid':[]}]},package)
         video = client.post(f"/api/curation/projects/{pid}/source/videos")
         image = client.post(f"/api/curation/projects/{pid}/source/images")
         assert video.json()["stage"] == "videos" and image.json()["stage"] == "images"

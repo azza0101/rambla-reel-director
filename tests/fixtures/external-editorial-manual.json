@@ -1,0 +1,74 @@
+{
+  "chunks": [
+    {
+      "id": "c1",
+      "start": 0.0,
+      "end": 3.0,
+      "text": "Slice the tomatoes."
+    },
+    {
+      "id": "c2",
+      "start": 3.0,
+      "end": 6.0,
+      "text": "Keep the pieces small."
+    },
+    {
+      "id": "c3",
+      "start": 6.0,
+      "end": 8.0,
+      "text": "That is my advice."
+    }
+  ],
+  "plan": {
+    "schema_version": "rambla-visual-plan-1",
+    "project_id": "project1",
+    "transcript_signature": "f9747e4be94e6d47d86c9a8dbca0891aebbc94fa31598bd79fab672aa0caf345",
+    "global_topic": "Preparing tomatoes",
+    "visual_beats": [
+      {
+        "id": "vb-1",
+        "start": 0.0,
+        "end": 6.0,
+        "covered_chunk_ids": [
+          "c1",
+          "c2"
+        ],
+        "original_text": "Slice the tomatoes. Keep the pieces small.",
+        "action": "BROLL",
+        "editorial_function": "instruction",
+        "core_meaning": "Cut small tomato pieces",
+        "subtext": "",
+        "visual_mode": "single",
+        "shots": [
+          {
+            "shot_id": "s1",
+            "description": "Hands slicing tomatoes on a cutting board",
+            "image_queries": [
+              "sliced tomatoes"
+            ],
+            "video_queries": [
+              "slicing tomatoes close up"
+            ]
+          }
+        ],
+        "avoid": []
+      },
+      {
+        "id": "vb-2",
+        "start": 6.0,
+        "end": 8.0,
+        "covered_chunk_ids": [
+          "c3"
+        ],
+        "original_text": "That is my advice.",
+        "action": "KEEP_TALKING_HEAD",
+        "editorial_function": "conclusion",
+        "core_meaning": "Personal advice",
+        "subtext": "",
+        "visual_mode": "single",
+        "shots": [],
+        "avoid": []
+      }
+    ]
+  }
+}

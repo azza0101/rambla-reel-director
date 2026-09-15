@@ -26,6 +26,10 @@ class CurationRunView:
 
 def load_curation_run(run_dir: Path) -> CurationRunView:
     chunks = json.loads((run_dir / "semantic-chunks.json").read_text(encoding="utf-8"))
+    from .editorial_import import retrieval_bundle, VERSION
+    plan_path = run_dir / 'visual-plan.json'
+    if plan_path.is_file() and json.loads(plan_path.read_text(encoding='utf-8')).get('schema_version') == VERSION:
+        run_dir, chunks, _, _ = retrieval_bundle(run_dir)
     online = json.loads((run_dir / "online-candidates.json").read_text(encoding="utf-8")) if (run_dir / "online-candidates.json").is_file() else []
     images = json.loads((run_dir / "image-candidates.json").read_text(encoding="utf-8")) if (run_dir / "image-candidates.json").is_file() else {"chunks": {}}
     found: dict[str, list[CurationCandidate]] = {}
@@ -34,10 +38,10 @@ def load_curation_run(run_dir: Path) -> CurationRunView:
         for row in slot.get("candidates", []):
             playable = probe_preview(row.get('preview_path'))['playable']
             poster = row.get('poster_path') or (row.get('preview_path') if not playable else None)
-            found.setdefault(cid, []).append(CurationCandidate(f"{cid}--{row['id']}", cid, "video", str(row.get("source", "online")), str(row.get("source_page", "")), str(row.get("description", row["id"])), str(row.get("description", "")), float(row.get("score", 0)), str(row.get("rights_state", "review_required")), str(row.get("orientation", "unknown")), preview_path=row.get("preview_path"), poster_path=poster, preview_status="ready" if playable else "discovery", local_asset_path=row.get("preview_path") if playable else None))
+            found.setdefault(cid, []).append(CurationCandidate(f"{cid}--{row['id']}", cid, "video", str(row.get("source", "online")), str(row.get("source_page", "")), str(row.get("description", row["id"])), str(row.get("description", "")), float(row.get("score", 0)), str(row.get("rights_state", "review_required")), str(row.get("orientation", "unknown")), preview_path=row.get("preview_path"), poster_path=poster, preview_status="ready" if playable else "discovery", local_asset_path=row.get("preview_path") if playable else None, license_name=row.get("license_name"),license_url=row.get("license_url"),attribution=row.get("attribution"),shot_id=row.get("shot_id")))
     for cid, value in images.get("chunks", {}).items():
         for row in value.get("candidates", []):
-            found.setdefault(cid, []).append(CurationCandidate(f"{cid}--{row['provider']}:{row['provider_id']}", cid, "image", row["provider"], row["source_page"], row["title"], row.get("description", ""), float(row.get("score", 0.0)), row["rights_state"], row["orientation"], preview_path=row.get("preview_path"), local_asset_path=row.get("preview_path"), preview_url=None if row.get("preview_path") else row.get("thumbnail_url") or row.get("full_url")))
+            found.setdefault(cid, []).append(CurationCandidate(f"{cid}--{row['provider']}:{row['provider_id']}", cid, "image", row["provider"], row["source_page"], row["title"], row.get("description", ""), float(row.get("score", 0.0)), row["rights_state"], row["orientation"], preview_path=row.get("preview_path"), local_asset_path=row.get("preview_path"), preview_url=None if row.get("preview_path") else row.get("thumbnail_url") or row.get("full_url"),license_name=row.get("license_name"),license_url=row.get("license_url"),attribution=row.get("attribution"),shot_id=row.get("shot_id")))
     views=[]; index={}
     for row in chunks:
         shelf=build_candidate_shelf(found.get(row["id"], []))

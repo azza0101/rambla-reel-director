@@ -17,6 +17,8 @@ from typing import Any, Protocol
 from .acquisition import AcquisitionRequest
 from .asset_cache import AssetCache
 from .coverage import plan_coverage_slots
+from .editorial_import import retrieval_bundle
+from .retrieval_ranker import create_retrieval_ranker
 from .director_engine import FasterWhisperArtifact, build_edit_plan
 from .director_preview import render_report
 from .evidence_intent import plan_evidence_intent
@@ -26,7 +28,7 @@ from .qwen_stack import LocalQwenEmbedder, QwenConfig, QwenMultimodalRanker
 from .source_strategy import plan_source_strategy
 from .taste_profile import TasteContext
 from .visual_routing import plan_visual_route
-from .visual_planner import apply_visual_plan_to_outline, ensure_local_visual_plan, merge_visual_diagnostics, persist_visual_plan
+from .visual_planner import merge_visual_diagnostics, persist_visual_plan
 from .youtube_source import YouTubeOnlineSourceAdapter, YouTubeSource
 
 
@@ -52,7 +54,8 @@ def _is_python310_notice(message: str) -> bool:
 
 
 def _write_json(path: Path, value: Any) -> None:
-    path.write_text(json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    from .atomic_io import write_json
+    write_json(path, value)
 
 
 def _rehash_plan(plan: dict[str, Any]) -> None:
@@ -158,7 +161,7 @@ async def _source_outline(
             queries = list(slot_value.queries)[: engine.max_queries]
             if event_callback:
                 event_callback("online_search", progress, f"Slot {completed}/{len(slots)} searched", slot_id=slot_value.id, query=queries, providers=providers, raw=len(candidates) + len(rejected), accepted=len(candidates), rejected=len(rejected), errors=result.get("errors", []))
-                event_callback("qwen_final", progress, f"Slot {completed}/{len(slots)} Qwen ranked", slot_id=slot_value.id, ranked=[{"id": row.get("id"), "score": row.get("qwen_score", row.get("score"))} for row in candidates[:3]])
+                event_callback("qwen_final", progress, f"Slot {completed}/{len(slots)} retrieval ranked", slot_id=slot_value.id, ranked=[{"id": row.get("id"), "score": row.get("qwen_score", row.get("score"))} for row in candidates[:3]])
                 event_callback("bounded_acquisition", progress, f"Slot {completed}/{len(slots)} previews materialized", slot_id=slot_value.id, previews=sum(bool(row.get("preview_path")) for row in candidates), cache_hits=result.get("preview_cache_hits", 0))
                 event_callback("review", progress, f"Slot {completed}/{len(slots)} proposals ready", slot_id=slot_value.id, proposals=sum(isinstance((result.get("proposals") or {}).get(key), dict) for key in ("proposal_A", "proposal_B", "proposal_C")))
             return result
@@ -167,9 +170,14 @@ async def _source_outline(
     if any(beat.get('visual_plan') for beat in outline['beats']):
         from .media_quality import diverse_candidates
         history = []
-        for result in results:
+        for slot, result in zip(slots, results):
             candidates = list(result.get('candidates') or [])
-            retained, removed = diverse_candidates(candidates, history, limit=3)
+            relevant = [c for c in candidates if float(c.get('score',0)) >= .30]
+            result['quality_rejected'] = len(candidates)-len(relevant)
+            result['active_providers'] = providers
+            from .media_quality import other_media_history
+            cross_media = other_media_history(engine.retrieval_output, 'image', slot.beat_id) if hasattr(engine,'retrieval_output') else []
+            retained, removed = diverse_candidates(relevant, history + cross_media, limit=3)
             history.extend(retained)
             result['candidates'] = retained
             result['duplicates_rejected'] = removed
@@ -394,16 +402,24 @@ def run_online_from_artifacts(
         acquisition_seconds = time.perf_counter() - acquisition_started
 
     plan_started = time.perf_counter()
-    plan = build_edit_plan(
-        normalized,
-        outline,
-        [],
-        client_id=client_id,
-        source_frames=source_frames,
-        candidate_assets_by_beat=candidate_map,
-        coverage_slots_by_beat=coverage_map,
-        taste_context=taste_context,
-    )
+    external = any(b.get('external_plan') for b in outline['beats'])
+    if external:
+        # A retrieval report is not an edit decision. Preserve the supplied actions
+        # and timing even when no usable media is found; no RuleDirector runs here.
+        plan = {'schema_version':'imported-retrieval-review-1','client_id':client_id,
+                'beats':[{**b['visual_plan'],'candidates':candidate_map.get(b['id'],[])} for b in outline['beats']],
+                'coverage_slots':[r for rows in coverage_map.values() for r in rows]}
+    else:
+        plan = build_edit_plan(
+            normalized,
+            outline,
+            [],
+            client_id=client_id,
+            source_frames=source_frames,
+            candidate_assets_by_beat=candidate_map,
+            coverage_slots_by_beat=coverage_map,
+            taste_context=taste_context,
+        )
     # Analyze is explicitly Resolve-independent. Persist that invariant in the
     # review artifact so the integration gate can prove no timeline operation occurred.
     plan["resolve_calls"] = 0
@@ -416,7 +432,12 @@ def run_online_from_artifacts(
     _write_json(output_dir / "semantic-beats.json", stored_outline)
     _write_json(output_dir / "online-candidates.json", sourcing_results)
     _write_json(output_dir / "edit-plan.json", plan)
-    (output_dir / "review.html").write_text(render_report(plan), encoding="utf-8")
+    if external:
+        import html
+        report = '<!doctype html><meta charset="utf-8"><h1>Imported plan retrieval</h1><pre>'+html.escape(json.dumps(plan,ensure_ascii=False,indent=2))+'</pre>'
+    else:
+        report = render_report(plan)
+    (output_dir / "review.html").write_text(report, encoding="utf-8")
 
     proposal_count = sum(
         int(isinstance(result.get("proposals", {}).get(key), dict))
@@ -448,6 +469,8 @@ def run_online_from_artifacts(
         "preview_cache_hits": sum(int(row.get("preview_cache_hits", 0)) for row in sourcing_results),
         "selected_cache_hits": sum(int(bool(row.get("selected_cache_hit", False))) for row in sourcing_results),
         "downloaded_selected": downloaded_selected,
+        "duplicates_rejected": sum(int(row.get("duplicates_rejected",0)) for row in sourcing_results),
+        "quality_rejected": sum(int(row.get("quality_rejected",0)) for row in sourcing_results),
         "provider_errors": sum(len(row.get("errors", [])) for row in sourcing_results),
         "sourcing_seconds": round(sourcing_seconds, 4),
         "acquisition_seconds": round(acquisition_seconds, 4),
@@ -469,9 +492,7 @@ def _real_engine(
     max_candidates: int,
     embedder: LocalQwenEmbedder | None = None,
 ) -> OnlineSourcingEngine:
-    config = QwenConfig(model_root=model_root, embedding_code_root=embedding_code_root)
-    embedder = embedder or LocalQwenEmbedder(config)
-    ranker = QwenMultimodalRanker(client_id=client_id, embed=embedder, rerank=None)
+    ranker = create_retrieval_ranker(client_id, model_root, embedding_code_root)
     sources: list[Any] = [YouTubeOnlineSourceAdapter(YouTubeSource(discover=_discover_youtube))]
     if pexels_api_key:
         sources.append(PexelsSource(pexels_api_key))
@@ -506,9 +527,8 @@ def main() -> None:
     chunks_path = args.chunks or args.output_dir / "semantic-chunks.json"
     chunks = json.loads(chunks_path.read_text(encoding="utf-8"))
     stored_outline = json.loads(args.outline.read_text(encoding="utf-8"))
-    embedder = LocalQwenEmbedder(QwenConfig(model_root=args.model_root, embedding_code_root=args.embedding_code_root))
-    visual_plan = ensure_local_visual_plan(chunks_path, args.outline, args.output_dir, args.model_root)
-    sourcing_outline = apply_visual_plan_to_outline(stored_outline, visual_plan)
+    args.output_dir, chunks, visual_plan, imported_outline = retrieval_bundle(args.output_dir)
+    sourcing_outline = {**stored_outline, **imported_outline}
     engine = _real_engine(
         client_id=args.client_id,
         pexels_api_key=key,
@@ -516,8 +536,9 @@ def main() -> None:
         embedding_code_root=args.embedding_code_root,
         cache_root=args.output_dir / "asset-cache",
         max_candidates=args.max_candidates,
-        embedder=embedder,
     )
+    engine.retrieval_output = args.output_dir
+    engine.query_intents = {q: shot['description'] for beat in visual_plan['chunks'].values() for shot in beat['shots'] for q in shot['video_queries']}
     plan = run_online_from_artifacts(
         args.transcript,
         args.outline,
@@ -534,8 +555,10 @@ def main() -> None:
         chunk_id = str(row.get("parent_beat_id") or "")
         target = video_diagnostics.setdefault(chunk_id, {"providers": [], "raw": 0, "accepted": 0, "rejected": 0, "proposals": 0, "errors": [], "selected": []})
         candidates = list(row.get("candidates") or [])
+        shot_id = str(row.get('coverage_slot_id','')).split(':shot:')[-1] if ':shot:' in str(row.get('coverage_slot_id','')) else None
+        for candidate in candidates: candidate['shot_id'] = shot_id
         rejected = list(row.get("rejected_candidates") or [])
-        target["providers"] = sorted(set(target["providers"]) | {str(candidate.get("source")) for candidate in candidates if candidate.get("source")})
+        target["providers"] = sorted(set(target["providers"]) | set(row.get("active_providers", [])) | {str(candidate.get("source")) for candidate in candidates if candidate.get("source")})
         target["raw"] += int(row.get("raw_result_count") or len(candidates) + len(rejected))
         target["accepted"] += len(candidates); target["rejected"] += len(rejected)
         target["proposals"] += sum(isinstance((row.get("proposals") or {}).get(key), dict) for key in ("proposal_A", "proposal_B", "proposal_C"))
@@ -543,6 +566,7 @@ def main() -> None:
         planned_shots = visual_plan.get("chunks", {}).get(chunk_id, {}).get("shots", [])
         query_to_shot = {query: shot.get("shot_id") for shot in planned_shots for query in shot.get("video_queries", [])}
         target["selected"].extend({"asset_id": candidate.get("id"), "shot_id": query_to_shot.get(candidate.get("query")), "query": candidate.get("query"), "provider": candidate.get("source"), "score": candidate.get("qwen_score", candidate.get("score"))} for candidate in candidates[:3])
+    persist_visual_plan(args.output_dir / "online-candidates.json", sourcing_rows)
     for target in video_diagnostics.values():
         target["zero_result_reason"] = (
             None if target["accepted"] else
@@ -550,7 +574,7 @@ def main() -> None:
             "0 provider results" if target["raw"] == 0 else
             "all candidates rejected"
         )
-    persist_visual_plan(args.output_dir / "visual-plan.json", merge_visual_diagnostics(visual_plan, "video", video_diagnostics))
+    persist_visual_plan(args.output_dir / "video-retrieval-plan.json", merge_visual_diagnostics(visual_plan, "video", video_diagnostics))
     benchmark = json.loads(
         (args.output_dir / "online-sourcing-benchmark.json").read_text(encoding="utf-8")
     )

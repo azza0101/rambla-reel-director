@@ -8,6 +8,7 @@ import json
 import math
 import os
 import sys
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -464,6 +465,7 @@ class LocalQwenDirectorGenerator(_LocalModel):
     role = "director"
 
     def load(self) -> "LocalQwenDirectorGenerator":
+        started = time.perf_counter()
         path = self._local_path()
         import torch
         try:
@@ -478,9 +480,11 @@ class LocalQwenDirectorGenerator(_LocalModel):
         self.model = AutoModelForMultimodalLM.from_pretrained(
             str(path), local_files_only=True, device_map='cuda:0', dtype=torch.bfloat16,
         )
+        self.load_seconds = time.perf_counter()-started
         return self
 
     def __call__(self, prompt: str) -> str:
+        call_started = time.perf_counter()
         if self.model is None:
             self.load()
         messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
@@ -492,10 +496,13 @@ class LocalQwenDirectorGenerator(_LocalModel):
             return_tensors="pt",
             enable_thinking=False,
         ).to(self.model.device)
-        output = self.model.generate(**inputs, max_new_tokens=1800, do_sample=False)
+        output = self.model.generate(**inputs, max_new_tokens=4096, do_sample=False, eos_token_id=self.processor.tokenizer.eos_token_id)
         text = self.processor.decode(
             output[0][inputs["input_ids"].shape[-1] :], skip_special_tokens=True
         )
+        elapsed = time.perf_counter() - call_started
+        generated_tokens = len(output[0]) - inputs["input_ids"].shape[-1]
+        self.last_metrics = {"input_tokens": inputs["input_ids"].shape[-1], "output_tokens": generated_tokens, "seconds": elapsed, "output_tokens_per_second": generated_tokens / max(elapsed, 1e-9)}
         self.completed_calls += 1
         return text
 

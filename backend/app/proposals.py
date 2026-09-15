@@ -80,7 +80,7 @@ def _proposal_row(
         raise ValueError("candidate score must be between 0 and 1")
 
     result = dict(row)
-    result["qwen_score"] = round(float(row.get("embedding_score", semantic_score)), 4)
+    result["qwen_score"] = round(float(row["embedding_score"]), 4) if row.get("embedding_score") is not None else None
     result["semantic_score"] = round(semantic_score, 4)
     result["crop_score"] = assessment.score
     result["crop_box"] = list(assessment.crop_box)

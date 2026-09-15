@@ -74,3 +74,9 @@ async def test_google_official_image_boundary_and_sanitized_failure():
         return httpx.Response(200, json={'items':[{'title':'Chef chopping onions','link':'https://images.example/full.jpg','image':{'contextLink':'https://example/photo','width':1800,'height':1200}}]})
     rows = await GoogleImageSource('secret','engine',transport=httpx.MockTransport(handler)).search('chef chopping onions',limit=3)
     assert rows[0].width == 1800 and rows[0].rights_state == 'review_required'
+
+
+def test_cross_chunk_duplicate_rate_measures_retained_visuals():
+    from backend.app.media_quality import cross_chunk_duplicate_rate
+    assert cross_chunk_duplicate_rate([[{"source_page": "a"}], [{"source_page": "a"}, {"source_page": "b"}]]) == 1/3
+    assert cross_chunk_duplicate_rate([]) == 0

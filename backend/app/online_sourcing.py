@@ -238,6 +238,9 @@ class OnlineSourcingEngine:
                 "provider_id": candidate.provider_id,
                 "creator": provenance.get("creator"),
                 "rights_state": candidate.rights_state,
+                "license_name": "Pexels License" if candidate.provider=="pexels" else None,
+                "license_url": "https://www.pexels.com/license/" if candidate.provider=="pexels" else None,
+                "attribution": (provenance.get("creator") or {}).get("name"),
                 "query": candidate.query,
                 "width": candidate.width,
                 "height": candidate.height,
@@ -247,6 +250,11 @@ class OnlineSourcingEngine:
                 "source_duration": float(getattr(candidate, "source_duration", candidate.duration)),
                 "acquisition_mode": str(getattr(candidate, "acquisition_mode", "full_asset")),
             }
+            from .media_quality import perceptual_hash
+            try:
+                asset['perceptual_hash'] = perceptual_hash(Path(preview.path))
+            except (OSError, ValueError, ImportError):
+                pass
             asset['preview_status'] = 'discovery'
             asset['poster_path'] = str(preview.path)
             if candidate.provider == 'pexels':
@@ -278,7 +286,7 @@ class OnlineSourcingEngine:
         for query in clean_queries:
             group = [a for a in assets if a.get('query') == query]
             if group:
-                ranked.extend(self.ranker.rank(query, group))
+                ranked.extend(self.ranker.rank(getattr(self, 'query_intents', {}).get(query, query), group))
         ranked.sort(key=lambda r: -float(r.get('score',0)))
         for row in ranked:
             source_asset = asset_by_id[row["id"]]
@@ -294,7 +302,7 @@ class OnlineSourcingEngine:
                 "source_authenticity",
             ):
                 row[key] = source_asset[key]
-            for key in ('preview_path','poster_path','preview_status','preview_duration','preview_mime','kind'):
+            for key in ('preview_path','poster_path','preview_status','preview_duration','preview_mime','perceptual_hash','kind','license_name','license_url','attribution'):
                 if key in source_asset: row[key] = source_asset[key]
             if "route" in source_asset:
                 row.setdefault("route", source_asset["route"])

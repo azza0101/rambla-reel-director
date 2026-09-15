@@ -26,6 +26,9 @@ class RemoteImageCandidate:
     rights_state: str
     provider_rank: int
     kind: str = "image"
+    license_name: str | None = None
+    license_url: str | None = None
+    attribution: str | None = None
 
 
 class ImageSource(Protocol):
@@ -67,7 +70,10 @@ class WikimediaImageSource:
             title = str(page.get("title") or page_id)
             output.append(RemoteImageCandidate("wikimedia", str(page_id), query,
                 "https://commons.wikimedia.org/wiki/" + quote(title.replace(" ", "_")), title, "", thumb, full,
-                width, height, _orientation(width, height), rights, rank))
+                width, height, _orientation(width, height), rights, rank,
+                license_name=license_data.get('value'),
+                license_url=info.get('extmetadata',{}).get('LicenseUrl',{}).get('value'),
+                attribution=info.get('extmetadata',{}).get('Artist',{}).get('value')))
         return output[:limit]
 
 
@@ -94,7 +100,7 @@ class PexelsPhotoSource:
             width, height = int(row.get("width") or 0), int(row.get("height") or 0)
             output.append(RemoteImageCandidate("pexels", str(row.get("id")), query, str(row.get("url")),
                 str(row.get("alt") or "Pexels photo"), "", thumb, full, width, height,
-                _orientation(width, height), "provider_stock_terms", rank))
+                _orientation(width, height), "provider_stock_terms", rank,license_name="Pexels License",license_url="https://www.pexels.com/license/",attribution=row.get("photographer")))
         return output[:limit]
 
 

@@ -22,6 +22,7 @@ async def test_wikimedia_source_normalizes_public_thumbnail():
     assert rows[0].provider == "wikimedia"
     assert rows[0].source_page.startswith("https://commons.wikimedia.org/")
     assert rows[0].thumbnail_url.startswith("https://")
+    assert rows[0].license_name == 'CC BY-SA'
 
 
 @pytest.mark.asyncio

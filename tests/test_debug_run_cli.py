@@ -35,7 +35,7 @@ def test_image_discovery_retries_zero_cache_and_persists_qwen_ranked_coverage(mo
     cached = {
         "schema_version": "curation-images-0.2",
         "chunks": {
-            "chunk-1": {"status": "searched", "queries": ["tourism sustainable", "tourism sustainable documentary photography", "tourism sustainable editorial image"], "candidates": [{"provider": "wikimedia", "provider_id": "cached"}]},
+            "chunk-1": {"status": "searched", "queries": ["turismo sostenibile", "tourism sustainable documentary photography", "tourism sustainable editorial image"], "candidates": [{"provider": "wikimedia", "provider_id": "cached"}]},
             "chunk-2": {"status": "searched", "queries": ["families local village", "families local village documentary photography", "families local village editorial image"], "candidates": [], "zero_result_reason": "0 provider results"},
         },
     }
@@ -107,7 +107,7 @@ def test_image_discovery_serializes_candidates_without_provider_credentials():
     with patch("backend.app.debug_run_cli._write_json", side_effect=lambda path, payload: captured.update(payload)):
         payload = discover_image_candidates([{"id": "chunk-1", "text": "turismo sostenibile"}], Path("not-created"), sources=[Source()])
     assert payload["chunks"]["chunk-1"]["candidates"][0]["provider"] == "wikimedia"
-    assert captured["chunks"]["chunk-1"]["query"] == "tourism sustainable"
+    assert captured["chunks"]["chunk-1"]["query"] == "turismo sostenibile"
 
 
 def test_image_discovery_refreshes_stale_full_phrase_query_cache():
@@ -130,7 +130,7 @@ def test_image_discovery_refreshes_stale_full_phrase_query_cache():
             root,
             sources=[source],
         )
-        assert source.calls == ["tourism sustainable families local", "tourism sustainable families local documentary photography", "tourism sustainable families local editorial image"]
+        assert source.calls == ["turismo sostenibile famiglie locali autentiche"]
         assert payload["chunks"]["chunk-1"]["candidates"] == []
     finally:
         shutil.rmtree(root)
@@ -260,5 +260,5 @@ def test_build_short_outline_queries_substantive_lowercase_chunk():
     ]
     outline, _ = build_short_outline({"segments": [{"words": words}]})
     assert outline["beats"][0]["broll_queries"][0] == (
-        "tourism sustainable flights boats impact environmental"
+        "sostenibile voli barche impatto ambientale"
     )

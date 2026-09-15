@@ -30,7 +30,6 @@ class SelectionStore:
             {"asset_id": asset_id, "order": index, "track": f"V{index + 2}"} for index, asset_id in enumerate(unique)
         ]}
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_suffix(".json.tmp")
-        temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        temporary.replace(self.path)
+        from .atomic_io import write_json
+        write_json(self.path, payload)
         return payload["chunks"][chunk_id]

@@ -70,6 +70,12 @@ def plan_coverage_slots(
         if not queries:
             continue
 
+        if beat.get('external_plan'):
+            # Preserve imported beat boundaries and search every supplied shot.
+            for shot in beat['visual_plan']['shots']:
+                slots.append(CoverageSlot(f"{beat_id}:shot:{shot['shot_id']}",beat_id,start,end,shot['description'],tuple(shot['video_queries']),'imported_shot',1))
+            continue
+
         intent = str(beat.get("intent") or queries[0]).strip()
         duration = end - start
         windows: list[tuple[float, float]]
