@@ -19,20 +19,17 @@ if (Test-Path -LiteralPath (Join-Path $scriptRoot '.git')) {
     if ($LASTEXITCODE) { throw 'fast-forward-only update failed' }
     $fullSha = (git -C $scriptRoot rev-parse HEAD).Trim()
 } else {
-    # Codex's documented API-transport workspace has no .git metadata. Materialize
-    # the immutable remote branch instead of trusting or overwriting local files.
+    # Codex's documented API-transport workspace has no .git metadata. Verify
+    # every remote tracked blob against the local Git blob hash before launch.
     $fullSha = (gh api "repos/$repo/git/ref/heads/$branch" --jq .object.sha).Trim()
-    $builds = Join-Path $scriptRoot '.acceptance-builds'
-    $archive = Join-Path $builds "$fullSha.tar.gz"
-    $extract = Join-Path $builds $fullSha
-    New-Item -ItemType Directory -Force -Path $builds | Out-Null
-    if (-not (Test-Path -LiteralPath $extract)) {
-        gh api "repos/$repo/tarball/$fullSha" -H 'Accept: application/vnd.github+json' | Set-Content -AsByteStream -LiteralPath $archive
-        New-Item -ItemType Directory -Force -Path $extract | Out-Null
-        tar -xf $archive -C $extract
+    $commit = gh api "repos/$repo/git/commits/$fullSha" | ConvertFrom-Json
+    $remoteFiles = (gh api "repos/$repo/git/trees/$($commit.tree.sha)?recursive=1" | ConvertFrom-Json).tree | Where-Object type -eq 'blob'
+    $changed = @()
+    foreach ($entry in $remoteFiles) {
+        $localPath = Join-Path $scriptRoot $entry.path
+        if (-not (Test-Path -LiteralPath $localPath -PathType Leaf) -or (git hash-object -- $localPath).Trim() -ne $entry.sha) { $changed += $entry.path }
     }
-    $workRoot = (Get-ChildItem -LiteralPath $extract -Directory | Select-Object -First 1).FullName
-    if (-not $workRoot) { throw "Remote acceptance archive could not be materialized: $fullSha" }
+    if ($changed.Count) { throw "API workspace differs from remote; aborting. Changed files:`n$($changed -join "`n")" }
     $actualBranch = $branch
 }
 
