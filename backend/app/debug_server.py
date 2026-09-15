@@ -446,8 +446,12 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
         return render_debug_page()
 
     @app.get("/curation", response_class=HTMLResponse)
-    async def professional_curation_page() -> str:
-        return render_curation_page()
+    async def professional_curation_page() -> HTMLResponse:
+        token = os.environ.get("RAMBLA_BUILD_TOKEN", "development")
+        return HTMLResponse(render_curation_page(token), headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache", "Expires": "0",
+        })
 
     @app.post("/api/curation/projects", status_code=201)
     async def create_project(request: ProjectCreateRequest) -> dict[str, Any]:

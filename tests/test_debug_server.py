@@ -51,6 +51,16 @@ def test_page_has_one_click_live_debug_ui():
     assert "`/v1/debug/runs/${activeRunId}/cancel`" in page
 
 
+def test_curation_page_has_runtime_sha_marker_and_no_cache_headers(monkeypatch):
+    from backend.app.debug_server import create_app
+    monkeypatch.setenv("RAMBLA_BUILD_TOKEN", "abc1234")
+    response = TestClient(create_app()).get("/curation?build=abc1234&ts=1")
+    assert "CURATION V1 · build abc1234" in response.text
+    assert response.headers["cache-control"] == "no-store, no-cache, must-revalidate"
+    assert response.headers["pragma"] == "no-cache"
+    assert response.headers["expires"] == "0"
+
+
 def test_project_api_persists_registered_source_and_rejects_outside_media():
     """Removing project-scoped asset resolution would expose arbitrary files again."""
     from backend.app.debug_server import create_app

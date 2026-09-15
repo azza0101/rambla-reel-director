@@ -1,6 +1,6 @@
 from html.parser import HTMLParser
 
-from backend.app.curation_ui import BUILD_MARKER, move_selection, phrase_status, remaining_decisions, render_curation_page
+from backend.app.curation_ui import BUILD_PREFIX, move_selection, phrase_status, remaining_decisions, render_curation_page
 
 
 def test_phrase_status_and_completion_require_real_decision():
@@ -31,8 +31,20 @@ def test_candidate_markup_never_nests_buttons():
 
 
 def test_authoritative_renderer_has_build_marker_and_no_legacy_ui():
-    page = render_curation_page()
-    assert BUILD_MARKER in page
+    page = render_curation_page("abc1234")
+    assert f"{BUILD_PREFIX} abc1234" in page
     assert "Solo selezionati" not in page
     assert "Selezione locale" not in page
     assert page.count("<script>") == 1
+
+
+def test_acceptance_launcher_uses_safe_dynamic_port_and_fast_forward_contract():
+    from pathlib import Path
+    launcher = (Path(__file__).parents[2] / "tools" / "start_curation_acceptance.ps1").read_text(encoding="utf-8")
+    assert "8765..8799" in launcher
+    assert "merge --ff-only" in launcher
+    assert "status --porcelain" in launcher
+    assert "RAMBLA_BUILD_TOKEN" in launcher
+    assert "Start-Process $url" in launcher
+    assert "reset --hard" not in launcher
+    assert "Stop-Process -Id $process.Id" in launcher
