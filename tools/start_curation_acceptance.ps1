@@ -19,17 +19,24 @@ if (Test-Path -LiteralPath (Join-Path $scriptRoot '.git')) {
     if ($LASTEXITCODE) { throw 'fast-forward-only update failed' }
     $fullSha = (git -C $scriptRoot rev-parse HEAD).Trim()
 } else {
-    # Codex's documented API-transport workspace has no .git metadata. Verify
-    # every remote tracked blob against the local Git blob hash before launch.
+    # Codex's documented API-transport workspace has no .git metadata. Build an
+    # isolated runtime from exact remote blobs; never trust or overwrite the mirror.
     $fullSha = (gh api "repos/$repo/git/ref/heads/$branch" --jq .object.sha).Trim()
     $commit = gh api "repos/$repo/git/commits/$fullSha" | ConvertFrom-Json
     $remoteFiles = (gh api "repos/$repo/git/trees/$($commit.tree.sha)?recursive=1" | ConvertFrom-Json).tree | Where-Object type -eq 'blob'
-    $changed = @()
-    foreach ($entry in $remoteFiles) {
-        $localPath = Join-Path $scriptRoot $entry.path
-        if (-not (Test-Path -LiteralPath $localPath -PathType Leaf) -or (git hash-object -- $localPath).Trim() -ne $entry.sha) { $changed += $entry.path }
+    $workRoot = Join-Path $scriptRoot ".acceptance-builds\$fullSha"
+    $complete = Join-Path $workRoot '.complete'
+    if (-not (Test-Path -LiteralPath $complete)) {
+        New-Item -ItemType Directory -Force -Path $workRoot | Out-Null
+        $runtimeFiles = $remoteFiles | Where-Object { $_.path -like 'backend/*' -or $_.path -eq 'pyproject.toml' -or $_.path -eq 'debug-runner-command.json' }
+        foreach ($entry in $runtimeFiles) {
+            $target = Join-Path $workRoot $entry.path
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+            $encoded = (gh api "repos/$repo/git/blobs/$($entry.sha)" --jq .content) -replace '\s',''
+            [IO.File]::WriteAllBytes($target, [Convert]::FromBase64String($encoded))
+        }
+        Set-Content -LiteralPath $complete -Value $fullSha -Encoding ascii
     }
-    if ($changed.Count) { throw "API workspace differs from remote; aborting. Changed files:`n$($changed -join "`n")" }
     $actualBranch = $branch
 }
 
