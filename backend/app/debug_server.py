@@ -487,10 +487,11 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
 
     @app.post("/api/curation/projects/{project_id}/analyze")
     async def analyze_project(project_id: str) -> dict[str, Any]:
-        load_project(project_id)
-        if (curation_run_root / "semantic-chunks.json").is_file():
+        project = load_project(project_id)
+        marker = _read_json(curation_run_root / "analysis-signature.json", {})
+        if (curation_run_root / "semantic-chunks.json").is_file() and marker.get("analysis_signature") == project.analysis_signature:
             return {"status": "reused", "resolve_calls": 0}
-        raise HTTPException(status_code=409, detail="analysis artifacts unavailable")
+        raise HTTPException(status_code=409, detail="analysis required for current source and guide")
 
     @app.put("/api/curation/projects/{project_id}/curation/chunks/{chunk_id}/selection")
     async def put_project_selection(project_id: str, chunk_id: str, request: ProjectSelectionRequest) -> dict[str, Any]:

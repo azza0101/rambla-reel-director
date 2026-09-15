@@ -66,7 +66,10 @@ class ProjectStore:
         stat = source.stat()
         signature = hashlib.sha256(f"{source}|{stat.st_size}|{stat.st_mtime_ns}".encode()).hexdigest()
         current = self.load(project_id)
-        project = CurationProject(current.project_id, current.name, SourceVideoInfo(str(source), float(data["duration"]), float(data["fps"]), int(data["width"]), int(data["height"]), bool(data["has_audio"]), signature), current.guide_audio)
+        guide = current.guide_audio
+        if guide and guide.mode == "original" and guide.source_signature != signature:
+            guide = None
+        project = CurationProject(current.project_id, current.name, SourceVideoInfo(str(source), float(data["duration"]), float(data["fps"]), int(data["width"]), int(data["height"]), bool(data["has_audio"]), signature), guide)
         self._save(project)
         return project
 

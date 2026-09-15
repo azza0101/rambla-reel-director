@@ -135,7 +135,9 @@ def test_project_analyze_reuses_existing_artifacts_without_starting_provider():
         run.mkdir()
         (run / "semantic-chunks.json").write_text('[]', encoding="utf-8")
         client = TestClient(create_app(project_root=root / "projects", curation_run_root=run))
-        project_id = client.post("/api/curation/projects", json={}).json()["project_id"]
+        project = client.post("/api/curation/projects", json={}).json()
+        project_id = project["project_id"]
+        (run / "analysis-signature.json").write_text(json.dumps({"analysis_signature": project["analysis_signature"]}), encoding="utf-8")
 
         response = client.post(f"/api/curation/projects/{project_id}/analyze")
 
