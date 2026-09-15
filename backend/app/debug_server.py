@@ -9,10 +9,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
+from .curation_artifacts import load_curation_run
+from .curation_project import CurationProject, ProjectStore
+from .curation_selection import SelectionStore
 from .curation_ui import render_curation_page
 
 DEFAULT_VIDEO = r"Z:\APP REEL TEST\VIDEO BASE\KURA_Finto etico_draft 1.mp4"
@@ -98,6 +101,22 @@ class CurationSelectionRequest(BaseModel):
     selections: dict[str, str]
 
 
+class ProjectCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = "New Reel"
+
+
+class LocalSourceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    path: str
+
+
+class ProjectSelectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    asset_ids: list[str] = []
+    no_broll: bool = False
+
+
 @dataclass(slots=True)
 class RunState:
     run_id: str
@@ -165,7 +184,7 @@ def _curation_payload(output_dir: Path) -> dict[str, Any]:
         assets = by_chunk.get(cid, [])
         for asset in assets:
             path = asset.pop("preview_path", None)
-            asset["preview_url"] = f"/api/curation/media?path={path}" if path and Path(path).is_file() else None
+            asset["preview_url"] = f"/api/curation/run/default/media/{asset['asset_id']}/preview" if path and Path(path).is_file() else None
         result.append({"id": cid, "text": chunk.get("text", ""), "assets": assets[:7]})
     return {"chunks": result, "selections": selected, "resolve_calls": 0}
 
@@ -291,8 +310,95 @@ def render_debug_page(default_video: str = DEFAULT_VIDEO, default_output: str = 
 <script>const DEF_VIDEO={video},DEF_OUT={output},STAGES={stages};const nodes={{}};let es=null;const $=id=>document.getElementById(id);$('video').value=DEF_VIDEO;$('out').value=DEF_OUT;function esc(v){{return String(v??'').replace(/[&<>\"]/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}}[c]))}}function init(){{$('stages').innerHTML='';STAGES.forEach(s=>{{const n=document.createElement('div');n.className='stage';n.innerHTML=`<div class="head"><b>${{esc(s.label)}}</b><span>0%</span></div><div class="bar"><div class="fill"></div></div>`;$('stages').appendChild(n);nodes[s.id]=n}})}}function setStage(k,v){{const n=nodes[k];if(!n)return;v=Math.max(0,Math.min(100,Number(v)||0));n.querySelector('span').textContent=v.toFixed(0)+'%';n.querySelector('.fill').style.width=v+'%';n.classList.toggle('done',v>=100)}}function snap(s){{$('rid').textContent=s.run_id||'—';$('totalText').textContent=(s.total_progress||0).toFixed(1)+'%';$('total').style.width=(s.total_progress||0)+'%';$('msg').textContent=s.last_message||'';Object.entries(s.stage_progress||{{}}).forEach(([k,v])=>setStage(k,v))}}async function metrics(id){{try{{const m=await (await fetch(`/v1/debug/runs/${{id}}/metrics`)).json();$('ab').textContent=m.certified_ab_pairs??'—';$('nb').textContent=m.no_broll_count??'—';$('bytes').textContent=m.downloaded_bytes??'—';$('secs').textContent=m.total_seconds==null?'—':m.total_seconds+'s'}}catch(_){{}}}}function ev(e){{const d=document.createElement('div');d.className='event';d.innerHTML=`<b>${{esc(e.stage)}}</b> · ${{esc(e.message)}}`;if(e.data&&Object.keys(e.data).length)d.innerHTML+=`<pre style="height:auto;margin-top:6px">${{esc(JSON.stringify(e.data,null,2))}}</pre>`;$('events').prepend(d);$('log').textContent+=`[${{e.stage}}] ${{e.message}}\n`;$('log').scrollTop=$('log').scrollHeight;if(e.progress!=null)setStage(e.stage,e.progress)}}async function run(){{if(es)es.close();$('run').disabled=true;$('log').textContent='';$('events').innerHTML='';init();$('status').textContent='AVVIO…';try{{const r=await fetch('/v1/debug/runs',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{video_path:$('video').value,output_dir:$('out').value}})}});const s=await r.json();if(!r.ok)throw new Error(s.detail||JSON.stringify(s));snap(s);es=new EventSource(`/v1/debug/runs/${{s.run_id}}/events`);es.onmessage=async x=>{{const e=JSON.parse(x.data);if(e.stage==='snapshot'){{snap(e.data);await metrics(e.data.run_id);if(['SUCCEEDED','FAILED'].includes(e.data.status)){{$('status').textContent=e.data.status;$('status').className=e.data.status==='SUCCEEDED'?'good':'bad';$('run').disabled=false;if(e.data.status==='SUCCEEDED')$('links').innerHTML=`Review: <code>${{esc(e.data.review_path)}}</code><br>Edit Plan: <code>${{esc(e.data.edit_plan_path)}}</code>`}}}}else ev(e)}}}}catch(e){{$('status').textContent='ERRORE';$('status').className='bad';$('log').textContent+=String(e);$('run').disabled=false}}}}$('run').onclick=run;init();</script></main></body></html>'''
 
 
-def create_app() -> FastAPI:
+def _project_payload(project: CurationProject) -> dict[str, Any]:
+    return {
+        "project_id": project.project_id,
+        "name": project.name,
+        "source_video": None if project.source_video is None else {
+            "path": project.source_video.path,
+            "duration": project.source_video.duration,
+            "fps": project.source_video.fps,
+            "width": project.source_video.width,
+            "height": project.source_video.height,
+            "has_audio": project.source_video.has_audio,
+        },
+        "guide_audio": None if project.guide_audio is None else {"mode": project.guide_audio.mode},
+        "resolve_calls": 0,
+    }
+
+
+def _probe_source_video(source: Path) -> dict[str, Any]:
+    """Probe local source metadata without starting analysis providers."""
+    import subprocess
+
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration:stream=codec_type,r_frame_rate,width,height", "-of", "json", str(source)],
+        check=True, capture_output=True, text=True,
+    )
+    payload = json.loads(result.stdout)
+    streams = payload.get("streams", [])
+    video = next(stream for stream in streams if stream.get("codec_type") == "video")
+    numerator, denominator = str(video.get("r_frame_rate", "0/1")).split("/", 1)
+    return {
+        "duration": float(payload.get("format", {}).get("duration", 0)),
+        "fps": float(numerator) / float(denominator or 1),
+        "width": int(video.get("width", 0)),
+        "height": int(video.get("height", 0)),
+        "has_audio": any(stream.get("codec_type") == "audio" for stream in streams),
+    }
+
+
+def create_app(*, project_root: Path | None = None, curation_run_root: Path | None = None, allowed_media_roots: list[Path] | None = None, probe_runner: Any = None) -> FastAPI:
     app = FastAPI(title="RAMBLA Debug Runner", version="0.1.0")
+    project_root = project_root or Path(DEFAULT_OUTPUT).parent / "curation-projects"
+    curation_run_root = curation_run_root or Path(DEFAULT_OUTPUT)
+    allowed_roots = tuple(root.resolve() for root in (allowed_media_roots or [Path(DEFAULT_VIDEO).parent, project_root]))
+    projects = ProjectStore(project_root, probe_runner=probe_runner or _probe_source_video)
+
+    def load_project(project_id: str) -> CurationProject:
+        try:
+            return projects.load(project_id)
+        except (FileNotFoundError, ValueError):
+            raise HTTPException(status_code=404, detail="project non trovato") from None
+
+    def allowed_source(path: Path) -> Path:
+        resolved = path.resolve()
+        try:
+            next(root for root in allowed_roots if resolved.is_relative_to(root))
+        except StopIteration:
+            raise HTTPException(status_code=403, detail="source fuori dalle root autorizzate") from None
+        return resolved
+
+    def project_run() -> Any:
+        try:
+            return load_curation_run(curation_run_root)
+        except (OSError, ValueError, json.JSONDecodeError):
+            raise HTTPException(status_code=404, detail="artifact di curation non disponibile") from None
+
+    def project_selection_store() -> SelectionStore:
+        run = project_run()
+        return SelectionStore(
+            curation_run_root,
+            {asset_id: {"chunk_id": item.chunk_id} for asset_id, item in run.candidate_index.items()},
+            [item.chunk_id for item in run.chunks],
+        )
+
+    def curation_payload(project_id: str) -> dict[str, Any]:
+        run = project_run()
+        saved = project_selection_store().load()
+        return {
+            "project_id": project_id,
+            "chunks": [{"id": row.chunk_id, "text": row.text, "assets": [
+                {"asset_id": item.asset_id, "chunk_id": item.chunk_id, "kind": item.kind,
+                 "provider": item.provider, "title": item.title, "rights_state": item.rights_state,
+                 "orientation": item.orientation,
+                 "preview_url": f"/api/curation/projects/{project_id}/media/{item.asset_id}/preview",
+                 "poster_url": f"/api/curation/projects/{project_id}/media/{item.asset_id}/poster"}
+                for item in (*row.video_candidates, *row.image_candidates)
+            ]} for row in run.chunks],
+            "selection_plan": saved,
+            "resolve_calls": 0,
+        }
 
     @app.get("/", response_class=HTMLResponse)
     @app.get("/debug", response_class=HTMLResponse)
@@ -303,9 +409,101 @@ def create_app() -> FastAPI:
     async def curation_page() -> str:
         return render_curation_page()
 
+    @app.get("/curation", response_class=HTMLResponse)
+    async def professional_curation_page() -> str:
+        return render_curation_page()
+
+    @app.post("/api/curation/projects", status_code=201)
+    async def create_project(request: ProjectCreateRequest) -> dict[str, Any]:
+        return _project_payload(projects.create(request.name))
+
+    @app.get("/api/curation/projects/{project_id}")
+    async def get_project(project_id: str) -> dict[str, Any]:
+        return _project_payload(load_project(project_id))
+
+    @app.post("/api/curation/projects/{project_id}/source/local")
+    async def register_project_source(project_id: str, request: LocalSourceRequest) -> dict[str, Any]:
+        load_project(project_id)
+        source = allowed_source(Path(request.path))
+        try:
+            return _project_payload(projects.register_local_video(project_id, source))
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="source video non trovato") from None
+
+    @app.put("/api/curation/projects/{project_id}/source/upload")
+    async def upload_project_source(project_id: str, request: Request, filename: str = "source-video.mp4") -> dict[str, Any]:
+        load_project(project_id)
+        try:
+            project = projects.write_uploaded_video(project_id, filename, [await request.body()])
+        except ValueError as exc:
+            raise HTTPException(status_code=413, detail=str(exc)) from exc
+        return _project_payload(project)
+
+    @app.get("/api/curation/projects/{project_id}/media/{asset_id}/{variant}")
+    async def get_project_media(project_id: str, asset_id: str, variant: str) -> FileResponse:
+        project = load_project(project_id)
+        if asset_id == "source-video" and variant == "source" and project.source_video is not None:
+            source = allowed_source(Path(project.source_video.path))
+            if not source.is_file():
+                raise HTTPException(status_code=404, detail="media non disponibile")
+            return FileResponse(source)
+        candidate = project_run().candidate_index.get(asset_id)
+        if candidate is None or variant not in {"preview", "poster"}:
+            raise HTTPException(status_code=404, detail="asset non trovato")
+        path = candidate.preview_path if variant == "preview" else candidate.poster_path
+        if not path or not Path(path).is_file():
+            raise HTTPException(status_code=404, detail="media non disponibile")
+        try:
+            Path(path).resolve().relative_to(curation_run_root.resolve())
+        except ValueError:
+            raise HTTPException(status_code=403, detail="media fuori dalla run") from None
+        return FileResponse(path)
+
+    @app.get("/api/curation/projects/{project_id}/curation")
+    async def get_project_curation(project_id: str) -> dict[str, Any]:
+        load_project(project_id)
+        return curation_payload(project_id)
+
+    @app.post("/api/curation/projects/{project_id}/analyze")
+    async def analyze_project(project_id: str) -> dict[str, Any]:
+        load_project(project_id)
+        if (curation_run_root / "semantic-chunks.json").is_file():
+            return {"status": "reused", "resolve_calls": 0}
+        raise HTTPException(status_code=409, detail="analysis artifacts unavailable")
+
+    @app.put("/api/curation/projects/{project_id}/curation/chunks/{chunk_id}/selection")
+    async def put_project_selection(project_id: str, chunk_id: str, request: ProjectSelectionRequest) -> dict[str, Any]:
+        load_project(project_id)
+        try:
+            changed = project_selection_store().set_chunk_selection(chunk_id, request.asset_ids, no_broll=request.no_broll)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"selection": changed, "resolve_calls": 0}
+
+    @app.get("/api/curation/run/default/media/{asset_id}/{variant}")
+    async def get_asset_media(asset_id: str, variant: str) -> FileResponse:
+        candidate = load_curation_run(Path(DEFAULT_OUTPUT)).candidate_index.get(asset_id)
+        if candidate is None:
+            raise HTTPException(status_code=404, detail="asset non trovato")
+        path = candidate.poster_path if variant == "poster" else candidate.preview_path
+        if not path or not Path(path).is_file():
+            raise HTTPException(status_code=404, detail="preview non disponibile")
+        root = Path(DEFAULT_OUTPUT).resolve()
+        try:
+            Path(path).resolve().relative_to(root)
+        except ValueError as exc:
+            raise HTTPException(status_code=403, detail="media fuori dalla run") from exc
+        return FileResponse(path)
+
     @app.get("/api/curation/run/default")
     async def get_curation() -> dict[str, Any]:
-        return _curation_payload(Path(DEFAULT_OUTPUT))
+        run = load_curation_run(Path(DEFAULT_OUTPUT))
+        return {"chunks": [{"id": row.chunk_id, "text": row.text, "assets": [
+            {"asset_id": item.asset_id, "chunk_id": item.chunk_id, "kind": item.kind, "provider": item.provider,
+             "title": item.title, "rights_state": item.rights_state, "orientation": item.orientation,
+             "preview_url": f"/api/curation/run/default/media/{item.asset_id}/preview",
+             "poster_url": f"/api/curation/run/default/media/{item.asset_id}/poster"}
+            for item in (*row.video_candidates, *row.image_candidates)]} for row in run.chunks], "resolve_calls": 0}
 
     @app.put("/api/curation/run/default/selection")
     async def put_curation_selection(request: CurationSelectionRequest) -> dict[str, Any]:
@@ -314,18 +512,6 @@ def create_app() -> FastAPI:
         output = Path(DEFAULT_OUTPUT)
         _write_selection(output, request.selections)
         return {"selections": request.selections, "resolve_calls": 0}
-
-    @app.get("/api/curation/media")
-    async def get_curation_media(path: str) -> FileResponse:
-        candidate = Path(path)
-        root = Path(DEFAULT_OUTPUT).resolve()
-        try:
-            candidate.resolve().relative_to(root)
-        except ValueError as exc:
-            raise HTTPException(status_code=403, detail="media fuori dalla run") from exc
-        if not candidate.is_file():
-            raise HTTPException(status_code=404, detail="media non trovata")
-        return FileResponse(candidate)
 
     @app.post("/v1/debug/runs")
     async def create_run(request: RunRequest) -> dict[str, Any]:

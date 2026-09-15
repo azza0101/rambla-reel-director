@@ -1,7 +1,17 @@
 from pathlib import Path
 import json
+import shutil
+import uuid
+
+from fastapi.testclient import TestClient
 
 from backend.app.debug_server import ArtifactProgressTracker, DebugEvent, RunState, parse_worker_line, render_debug_page
+
+
+def _project_test_root() -> Path:
+    root = Path.cwd() / ".test-project-api" / uuid.uuid4().hex
+    root.mkdir(parents=True)
+    return root
 
 
 def test_parse_worker_line_accepts_structured_event():
@@ -37,3 +47,99 @@ def test_page_has_one_click_live_debug_ui():
     assert "EvidenceIntent" in page
     assert "Qwen final" in page
     assert "KURA_Finto etico_draft 1.mp4" in page
+
+
+def test_project_api_persists_registered_source_and_rejects_outside_media():
+    """Removing project-scoped asset resolution would expose arbitrary files again."""
+    from backend.app.debug_server import create_app
+
+    root = _project_test_root()
+    try:
+        source = root / "allowed" / "source.mp4"
+        source.parent.mkdir()
+        source.write_bytes(b"video")
+        client = TestClient(create_app(project_root=root / "projects", allowed_media_roots=[root / "allowed"], probe_runner=lambda _: {"duration": 3, "fps": 25, "width": 640, "height": 360, "has_audio": True}))
+
+        created = client.post("/api/curation/projects", json={"name": "Demo reel"})
+        assert created.status_code == 201
+        project_id = created.json()["project_id"]
+
+        registered = client.post(f"/api/curation/projects/{project_id}/source/local", json={"path": str(source)})
+        assert registered.status_code == 200
+        assert registered.json()["source_video"]["duration"] == 3.0
+
+        unknown = client.get(f"/api/curation/projects/{project_id}/media/not-an-asset/preview")
+        assert unknown.status_code == 404
+    finally:
+        shutil.rmtree(root)
+
+
+def test_project_api_accepts_upload_without_browser_path():
+    """Removing the upload route would make the setup flow depend on local browser paths."""
+    from backend.app.debug_server import create_app
+
+    root = _project_test_root()
+    try:
+        client = TestClient(create_app(project_root=root / "projects", probe_runner=lambda _: {"duration": 4, "fps": 24, "width": 1280, "height": 720, "has_audio": False}))
+        project_id = client.post("/api/curation/projects", json={}).json()["project_id"]
+
+        response = client.put(f"/api/curation/projects/{project_id}/source/upload?filename=clip.mp4", content=b"video")
+
+        assert response.status_code == 200
+        assert response.json()["source_video"]["path"].endswith("clip.mp4")
+    finally:
+        shutil.rmtree(root)
+
+
+def test_legacy_arbitrary_path_media_route_is_not_exposed():
+    """Restoring a browser-supplied path parameter would reintroduce filesystem serving."""
+    from backend.app.debug_server import create_app
+
+    response = TestClient(create_app()).get("/api/curation/media?path=C:/Windows/win.ini")
+
+    assert response.status_code == 404
+
+
+def test_project_hydration_reads_artifacts_and_persists_no_broll():
+    """Removing project hydration or atomic selection storage loses a saved editorial decision."""
+    from backend.app.debug_server import create_app
+
+    root = _project_test_root()
+    try:
+        run = root / "run"
+        run.mkdir()
+        (run / "semantic-chunks.json").write_text('[{"id":"chunk-1","text":"A line"}]', encoding="utf-8")
+        (run / "online-candidates.json").write_text('[]', encoding="utf-8")
+        client = TestClient(create_app(project_root=root / "projects", curation_run_root=run))
+        project_id = client.post("/api/curation/projects", json={}).json()["project_id"]
+
+        hydrated = client.get(f"/api/curation/projects/{project_id}/curation")
+        saved = client.put(f"/api/curation/projects/{project_id}/curation/chunks/chunk-1/selection", json={"asset_ids": [], "no_broll": True})
+
+        assert hydrated.status_code == 200
+        assert hydrated.json()["chunks"][0]["text"] == "A line"
+        assert saved.status_code == 200
+        assert saved.json()["selection"] == {"chunk_id": "chunk-1", "no_broll": True, "selected_assets": []}
+        assert (run / "selection-plan.json").is_file()
+    finally:
+        shutil.rmtree(root)
+
+
+def test_project_analyze_reuses_existing_artifacts_without_starting_provider():
+    """Removing reuse-first routing would trigger expensive analysis just to render curation."""
+    from backend.app.debug_server import create_app
+
+    root = _project_test_root()
+    try:
+        run = root / "run"
+        run.mkdir()
+        (run / "semantic-chunks.json").write_text('[]', encoding="utf-8")
+        client = TestClient(create_app(project_root=root / "projects", curation_run_root=run))
+        project_id = client.post("/api/curation/projects", json={}).json()["project_id"]
+
+        response = client.post(f"/api/curation/projects/{project_id}/analyze")
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "reused", "resolve_calls": 0}
+    finally:
+        shutil.rmtree(root)
