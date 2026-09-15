@@ -21,8 +21,8 @@ Before any task:
 Some Codex Windows sandboxes may be unable to write `.git/FETCH_HEAD` or access the host credential helper even when the source workspace has already been synchronized outside the sandbox. In that case, do not abort solely because `git pull` cannot run inside the sandbox if all of the following are true:
 
 - the task was launched from the intended source workspace;
-- the user or an external trusted process has just synchronized that source workspace against `origin/main`;
-- the exact expected `main` commit SHA is provided to the task;
+- the user or an external trusted process has just synchronized that source workspace against the intended remote base;
+- the exact expected base/feature commit SHA is provided to the task;
 - `git rev-parse HEAD` inside the task matches that expected SHA;
 - the working tree is clean.
 
@@ -32,10 +32,10 @@ If local chat context conflicts with the current repository state, stop and foll
 
 ## Delivery workflow
 
-- Use a separate branch for every implementation task.
+- Use a separate branch for every implementation task or approved implementation tranche, as specified by the active plan.
 - Add or update automated tests before considering work complete.
 - Commit and push the branch.
-- Open a pull request toward `main` describing changes, tests and results, open problems, and decisions required.
+- Open a pull request toward the base branch specified by the active approved plan; default to `main` only when the plan does not name another base.
 - Never merge autonomously.
 - Apply review corrections on the same branch.
 
@@ -58,16 +58,16 @@ If local `.git` writes remain blocked but `gh` is installed, authenticated, and 
 
 Rules for this fallback:
 
-- GitHub remote state is authoritative. Read the exact `main` SHA through `gh api` before starting.
+- GitHub remote state is authoritative. Read the exact intended base and feature branch SHAs through `gh api` before starting.
 - Do not implement from a stale or dirty checkout. Preserve any existing local modifications, then materialize a clean plain working tree from the exact remote commit into a separate non-Git workspace outside `Z:\RAMBLA-reel-director`, preferably under `Z:\RAMBLA-reel-data\codex-work\<task-name>\`.
 - The plain working tree may be created from the GitHub archive API or equivalent authenticated GitHub API reads. It MUST contain no invented files or content.
-- Create the implementation branch remotely from the verified `main` SHA through GitHub API. For the current approved slice the branch is `feat/foundation-safe-resolve-slice`.
+- Create or use the implementation branch named by the active approved plan, from the exact base commit specified by that plan.
 - Publish logical commits through GitHub's Git Data API (`blobs` -> `tree` -> `commit` -> non-forced branch-ref update) or an equivalent authenticated GitHub API operation. Before each ref update, re-read the remote branch head and verify it still equals the expected parent. Never force-push.
 - A task commit must contain only the files intended by that task. Run tests and diff/content verification in the plain working tree before publishing the corresponding API commit.
-- Remote verification replaces local tracking verification: confirm the branch ref points to the new commit, inspect changed files/compare against `main`, and verify the intended content through GitHub API.
+- Remote verification replaces local tracking verification: confirm the branch ref points to the new commit, inspect changed files/compare against the active plan base, and verify the intended content through GitHub API.
 - Open/update the pull request through `gh`/GitHub API. Never merge autonomously.
-- Task 0 is satisfied when Codex proves the full API delivery cycle itself: create the remote feature branch from current `main`, publish a smoke-file commit, publish a cleanup commit that removes the smoke file, and verify the remote branch after both operations without user-run shell commands.
-- Keep the stale/dirty `Z:\RAMBLA-reel-director` checkout untouched until a host process can safely resynchronize it later. The API worktree and remote branch are the active implementation surfaces while this fallback is in use.
+- The historical Task 0 API-delivery proof applies to the foundation plan; later approved plans do not repeat it unless their active plan explicitly says so.
+- Keep the stale/dirty `Z:\RAMBLA-reel-director` checkout untouched until a host process can safely resynchronize it later. The isolated worktree/API workspace and remote feature branch are the active implementation surfaces while this fallback is in use.
 
 If neither local Git delivery nor authenticated GitHub API transport is available, stop with workspace changes intact and report the exact blocked operation; do not create an alternate repository unless explicitly authorized.
 
@@ -83,4 +83,6 @@ If neither local Git delivery nor authenticated GitHub API transport is availabl
 
 ## Current phase
 
-The MVP technical specification and the first implementation plan are explicitly approved. Implementation is authorized only for the scope defined by `docs/superpowers/plans/2026-09-11-foundation-safe-resolve-vertical-slice.md` and its approval record. Start with Task 0 to prove the Codex-driven delivery path before product edits. Local Git is preferred when available; authenticated GitHub API transport is explicitly approved when Windows sandbox policy keeps `.git` read-only. Do not broaden scope beyond the approved plan, and do not merge autonomously.
+The Editorial Intelligence + StyleDNA V1 design/spec and written implementation plan were explicitly approved by the user on 2026-09-14. The approval record is `docs/approvals/2026-09-14-editorial-intelligence-style-dna-v1-plan-approved.md` and the active plan is `docs/superpowers/plans/2026-09-14-editorial-intelligence-style-dna-v1.md`.
+
+Implementation is authorized only within that plan on branch `feat/editorial-intelligence-style-dna-v1`, based on `feat/resolve-panel-safe-v1`. Execute with an isolated worktree, Superpowers subagent-driven development, TDD, per-task review, and verification-before-completion. Keep Resolve frozen (`resolve_calls=0`), keep the original dirty checkout untouched, open only a draft PR back to `feat/resolve-panel-safe-v1`, never merge autonomously, and do not update `main` as part of this phase.

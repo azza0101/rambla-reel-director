@@ -124,11 +124,29 @@ def _proposal_card(proposal: dict[str, Any], *, label: str, selected_id: str | N
     tracking = " · tracking/reframe" if proposal.get("needs_tracking") else ""
     route_text = f" · route {_cell(evidence_route)}" if evidence_route is not None else ""
     taste_text = f" · taste {_cell(taste)}" if taste is not None else ""
+    editorial_axes = (
+        ("evidence specificity", "evidence_specificity"),
+        ("editorial quality", "editorial_quality"),
+        ("source authority", "source_authority_authenticity"),
+        ("style fit", "style_fit"),
+        ("composition", "composition_usability"),
+        ("technical", "technical_quality"),
+        ("diversity", "diversity_novelty"),
+    )
+    editorial_text = " · ".join(
+        f"{label} {_cell(proposal[key])}" for label, key in editorial_axes if key in proposal
+    )
+    editorial_meta = " · ".join(
+        f"{label} {_cell(proposal[key])}"
+        for label, key in (("source class", "source_class"), ("presentation", "recommended_presentation_mode"))
+        if proposal.get(key)
+    )
     return (
         f"<article class='candidate{' picked' if selected else ''}'>"
         f"{image}<div class='candidate-body'><span class='badge proposal'>{_cell(label)}</span>{selected_badge}"
         f"<strong>{_cell(proposal_id)}</strong><div>{_cell(source)} · {source_link}</div>"
         f"<div>Qwen {_cell(qwen)} · semantic {_cell(semantic)}{route_text} · crop {_cell(crop)}{taste_text} · final <b>{_cell(final)}</b>{_cell(tracking)}</div>"
+        f"<div>{editorial_text}</div><div>{editorial_meta}</div>"
         f"{source_range}<div>creator {_cell(creator)} · rights {_cell(rights)}</div>"
         "</div></article>"
     )
@@ -144,7 +162,7 @@ def render_report(plan: dict[str, Any]) -> str:
         selected = beat["selected_asset"]
         selected_text = "none" if selected is None else f"{selected['id']} ({selected['path']}; score {selected['score']})"
         alternates = "; ".join(
-            f"{row['id']}: {row['score']} ({row['reason']})"
+            f"{row['id']}: {row['score']} ({row.get('reason', '')})"
             for row in beat["candidates"]
             if selected is None or row["id"] != selected["id"]
         )
@@ -192,8 +210,6 @@ def render_report(plan: dict[str, Any]) -> str:
             proposal = slot.get(key)
             if isinstance(proposal, dict):
                 cards.append(_proposal_card(proposal, label=label, selected_id=selected_id))
-        if not cards:
-            continue
         beat = beats_by_id.get(str(slot.get("beat_id")), {})
         transcript = beat.get("transcript", "")
         queries = " · ".join(str(value) for value in slot.get("queries", []) if value)
@@ -207,13 +223,23 @@ def render_report(plan: dict[str, Any]) -> str:
             taste_label = f" · Taste v{_cell(taste_version)}" if taste_version is not None else ""
             reason_label = f" · reason: {_cell(route_reason)}" if route_reason else ""
             route_meta = f"<p><b>Route: {_cell(route)}</b>{taste_label}{reason_label}</p>"
+        evidence_intent = slot.get("evidence_intent") or {}
+        intent_label = evidence_intent.get("evidence_intent_type", "") if isinstance(evidence_intent, dict) else ""
+        rejected = slot.get("rejected_candidates") or []
+        rejected_text = "".join(
+            f"<li>{_cell(row.get('id', 'unknown'))}: {_cell(', '.join(row.get('rejection_reasons') or []))}</li>"
+            for row in rejected if isinstance(row, dict)
+        )
+        no_broll = "<p>NO_BROLL: speaker remains visible; no eligible insert.</p>" if not cards else ""
         coverage_sections.append(
             f"<section class='beat-review coverage-review'><h3>{_cell(slot.get('id','coverage'))} · {_cell(slot.get('review_state',''))}</h3>"
             f"<p><b>{start_seconds:.2f}–{end_seconds:.2f}s</b> · {_cell(transcript)}</p>"
             f"{route_meta}"
+            f"<p>Evidence intent: {_cell(intent_label)}</p>{no_broll}"
             f"<p>Intent: {_cell(slot.get('visual_intent',''))}</p>"
             f"<p>Search: <code>{_cell(queries)}</code></p>"
-            f"<div class='candidate-grid'>{''.join(cards)}</div></section>"
+            f"<div class='candidate-grid'>{''.join(cards)}</div>"
+            f"<ul class='rejected'>{rejected_text}</ul></section>"
         )
 
     caption_rows = "".join(

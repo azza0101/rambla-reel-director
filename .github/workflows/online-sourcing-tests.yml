@@ -7,6 +7,7 @@ on:
       - feat/asr-resolve-benchmark-v2
       - feat/resolve-panel-safe-v1
       - feat/taste-engine-core-v1
+      - feat/editorial-intelligence-style-dna-v1
   workflow_dispatch:
 
 jobs:

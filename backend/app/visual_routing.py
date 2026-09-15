@@ -22,6 +22,11 @@ class VisualRouteDecision:
     search_hint: str
 
 
+def route_name(route: VisualRouteDecision | str) -> str:
+    """Return a route identifier from either planning representation."""
+    return route.route if isinstance(route, VisualRouteDecision) else route
+
+
 def _text(slot: Mapping[str, Any], context: str) -> str:
     return " ".join(
         [str(slot.get("transcript", "")), str(slot.get("intent", "")), context]

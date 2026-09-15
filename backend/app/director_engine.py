@@ -489,6 +489,19 @@ def validate_edit_plan(plan: dict[str, Any]) -> None:
             raise ValueError("selected proposal is not present in coverage slot proposals")
         if slot.get("review_state") == "READY" and len(proposal_ids) < minimum_proposals:
             raise ValueError("coverage slot READY state lacks required proposals")
+        if slot.get("evidence_intent"):
+            if not isinstance(slot.get("source_strategy"), dict):
+                raise ValueError("editorial coverage slot requires source strategy")
+            if not isinstance(slot.get("searched_source_classes"), list):
+                raise ValueError("editorial coverage slot requires searched source classes")
+            if not isinstance(slot.get("rejected_candidates"), list):
+                raise ValueError("editorial coverage slot requires rejected candidates")
+            for key in ("proposal_A", "proposal_B", "proposal_C"):
+                proposal = slot.get(key)
+                if proposal is None:
+                    continue
+                if not proposal.get("recommended_presentation_mode") or not proposal.get("score_components"):
+                    raise ValueError("editorial proposal requires presentation and score components")
 
     if not plan["captions"]:
         raise ValueError("captions missing")

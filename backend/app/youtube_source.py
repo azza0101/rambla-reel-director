@@ -15,6 +15,7 @@ from typing import Any, Awaitable, Callable
 from urllib.parse import urlsplit, urlunsplit
 
 from .scene_locator import SceneEvidence
+from .source_strategy import SOURCE_CLASSES
 
 
 DiscoverFn = Callable[[str, int], Awaitable[list[dict[str, Any]]] | list[dict[str, Any]]]
@@ -34,6 +35,8 @@ class YouTubeCandidate:
     thumbnail_url: str
     rights_state: str
     scene_evidence: tuple[SceneEvidence, ...]
+    source_class: str = "CLOSE_SEMANTIC_EDITORIAL"
+    source_authenticity: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +64,8 @@ class YouTubeRemoteCandidate:
     scene_evidence: tuple[SceneEvidence, ...]
     acquisition_mode: str
     source_duration: float
+    source_class: str = "CLOSE_SEMANTIC_EDITORIAL"
+    source_authenticity: float | None = None
 
 
 def _orientation(width: int, height: int) -> str:
@@ -98,6 +103,14 @@ def normalize_youtube_result(row: dict[str, Any], *, query: str) -> YouTubeCandi
     title = str(row.get("title") or f"YouTube video {video_id}").strip()
     creator_name = str(row.get("channel") or row.get("creator") or "").strip() or None
     thumbnail = _safe_thumbnail(row.get("thumbnail") or row.get("thumbnail_url"))
+    source_class = str(row.get("source_class") or "CLOSE_SEMANTIC_EDITORIAL")
+    if source_class not in SOURCE_CLASSES:
+        raise ValueError("unsupported YouTube source class")
+    authenticity = row.get("source_authenticity")
+    if authenticity is not None:
+        authenticity = float(authenticity)
+        if not 0.0 <= authenticity <= 1.0:
+            raise ValueError("source authenticity must be between 0 and 1")
 
     evidence_rows: list[SceneEvidence] = []
     raw_evidence = row.get("scene_evidence") or []
@@ -132,6 +145,8 @@ def normalize_youtube_result(row: dict[str, Any], *, query: str) -> YouTubeCandi
         thumbnail_url=thumbnail,
         rights_state="review_required",
         scene_evidence=tuple(sorted(evidence_rows, key=lambda item: item.timestamp_seconds)),
+        source_class=source_class,
+        source_authenticity=authenticity,
     )
 
 
@@ -179,6 +194,11 @@ class YouTubeSource:
 class YouTubeOnlineSourceAdapter:
     """Expose YouTube discovery through the generic preview-ranking source port."""
 
+    supported_source_classes = (
+        "EXACT_RECEIPT", "EXACT_ENTITY_EVENT", "SOURCE_NATIVE_SOCIAL",
+        "ARCHIVAL_REPERTORY", "PRODUCT_UI_DEMO", "CULTURAL_REFERENCE",
+        "CLOSE_SEMANTIC_EDITORIAL",
+    )
     def __init__(self, source: YouTubeSource):
         self.source = source
 
@@ -230,6 +250,8 @@ class YouTubeOnlineSourceAdapter:
                     scene_evidence=row.scene_evidence,
                     acquisition_mode="bounded_window",
                     source_duration=row.duration,
+                    source_class=row.source_class,
+                    source_authenticity=row.source_authenticity,
                 )
             )
         return output[:limit]
