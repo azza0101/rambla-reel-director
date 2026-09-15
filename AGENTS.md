@@ -32,9 +32,9 @@ If local chat context conflicts with the current repository state, stop and foll
 
 ## Delivery workflow
 
-- Use a separate branch for every implementation task or approved implementation tranche, as specified by the active plan.
+- Use the implementation branch specified by the active approved plan.
 - Add or update automated tests before considering work complete.
-- Commit and push the branch.
+- Commit and push logical task changes without rewriting useful history.
 - Open a pull request toward the base branch specified by the active approved plan; default to `main` only when the plan does not name another base.
 - Never merge autonomously.
 - Apply review corrections on the same branch.
@@ -66,7 +66,6 @@ Rules for this fallback:
 - A task commit must contain only the files intended by that task. Run tests and diff/content verification in the plain working tree before publishing the corresponding API commit.
 - Remote verification replaces local tracking verification: confirm the branch ref points to the new commit, inspect changed files/compare against the active plan base, and verify the intended content through GitHub API.
 - Open/update the pull request through `gh`/GitHub API. Never merge autonomously.
-- The historical Task 0 API-delivery proof applies to the foundation plan; later approved plans do not repeat it unless their active plan explicitly says so.
 - Keep the stale/dirty `Z:\RAMBLA-reel-director` checkout untouched until a host process can safely resynchronize it later. The isolated worktree/API workspace and remote feature branch are the active implementation surfaces while this fallback is in use.
 
 If neither local Git delivery nor authenticated GitHub API transport is available, stop with workspace changes intact and report the exact blocked operation; do not create an alternate repository unless explicitly authorized.
@@ -81,8 +80,26 @@ If neither local Git delivery nor authenticated GitHub API transport is availabl
 - Keep client assets isolated. Never mix assets across clients automatically.
 - Keep the backend independently runnable and testable without Resolve or the panel.
 
-## Current phase
+## Current phase — Professional Curation UI Redesign
 
-The Editorial Intelligence + StyleDNA V1 design/spec and written implementation plan were explicitly approved by the user on 2026-09-14. The approval record is `docs/approvals/2026-09-14-editorial-intelligence-style-dna-v1-plan-approved.md` and the active plan is `docs/superpowers/plans/2026-09-14-editorial-intelligence-style-dna-v1.md`.
+The Professional Curation UI Redesign design/spec and implementation plan were explicitly approved by the user on 2026-09-15.
 
-Implementation is authorized only within that plan on branch `feat/editorial-intelligence-style-dna-v1`, based on `feat/resolve-panel-safe-v1`. Execute with an isolated worktree, Superpowers subagent-driven development, TDD, per-task review, and verification-before-completion. Keep Resolve frozen (`resolve_calls=0`), keep the original dirty checkout untouched, open only a draft PR back to `feat/resolve-panel-safe-v1`, never merge autonomously, and do not update `main` as part of this phase.
+Authoritative documents:
+- `docs/superpowers/specs/2026-09-15-curation-ui-professional-redesign.md`
+- `docs/superpowers/plans/2026-09-15-curation-ui-professional-redesign.md`
+- `docs/approvals/2026-09-15-curation-ui-professional-redesign-plan-approved.md`
+
+Implementation is authorized on branch `feat/curation-ui-v1`. The previous debug-style Curation UI behavior and older Editorial Intelligence execution instructions are superseded wherever they conflict with this approved redesign.
+
+Execution mode for this phase:
+- **single-agent sequential execution** using the approved plan;
+- TDD/focused verification per task, but **no user-visible stop or review checkpoint after ordinary intermediate tasks**;
+- Normal Chat is the external reviewer; do not spawn routine internal subagents/reviewers;
+- preserve useful existing local work and commits; do not reset/clean just to restart from remote;
+- continue through successive plan tasks in the same Codex turn whenever possible;
+- a routine successful test, commit, or task completion is not a reason to end the turn;
+- stop/end the turn only at `TESTABLE=YES` for the professional `/curation` milestone, or at a genuine `HARD_BLOCKER` requiring user action.
+
+Current product target includes: professional `/curation` UI, source-video loader, source-audio extraction/guide-audio replacement, reuse-first analysis, up to 3 real video previews + 4 real image thumbnails per phrase, ordered mixed-media multi-select mapped to V2/V3/V4..., mutually exclusive NO BROLL, autosave/persistence, atomic `selection-plan.json`, and safe asset-id media routes.
+
+Keep Resolve frozen (`resolve_calls=0`), keep `/debug` developer-facing, standard runtime must require no GPT/OpenAI/Codex call, and never merge autonomously.
