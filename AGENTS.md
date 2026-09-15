@@ -1,30 +1,49 @@
 # RAMBLA REEL DIRECTOR — collaboration rules
 
-## Source of truth for current work
+## Current source of truth
 
 Current implementation phase: **Professional Curation UI Redesign** on branch `feat/curation-ui-v1`.
 
-For routine execution in this phase, read:
-1. `docs/NEXT_TASK.md` — **self-contained authoritative execution mirror for the active batch**.
-2. Directly relevant source/test files for that batch.
-3. `docs/DECISIONS.md` only if a product/architecture ambiguity arises.
+Read first:
+1. `docs/NEXT_TASK.md`
+2. only the source/tests directly relevant to the active plan task
+3. `docs/DECISIONS.md` only when a real architecture ambiguity exists
 
-The full approved redesign spec/plan live on branch `design/curation-ui-professional-redesign`. **Do not fetch/reread them during ordinary batch execution.** `docs/NEXT_TASK.md` already mirrors the requirements needed for the active implementation batches. Consult the design branch only if `NEXT_TASK.md` is genuinely ambiguous.
+The older Editorial Intelligence execution instructions and the old debug-style Curation UI contract are superseded wherever they conflict with the approved Professional Curation UI Redesign.
 
-Old Editorial Intelligence + StyleDNA execution instructions and the old debug-style Curation UI contract are superseded wherever they conflict with `docs/NEXT_TASK.md`.
+## Execution mode — restored continuous workflow
 
-## Execution mode
+The active implementation workspace MUST be a **real Git checkout/worktree on `feat/curation-ui-v1`**. A plain directory materialized from GitHub API may be used only as a migration/source snapshot, not as the long-running implementation workspace.
 
-- Single worker, sequential, LOW-CREDIT.
-- Preserve all existing local/uncommitted work; never reset/clean/restart completed work merely because remote lags.
-- The Codex client/harness has shown a finite per-turn execution budget independent of weekly/account quota.
-- Therefore execute the redesign in the coherent turn batches defined in `docs/NEXT_TASK.md`.
-- Inside a batch, do not emit user-visible progress after individual tasks/tests/commits. Continue until the batch is complete or a genuine blocker occurs.
-- `BATCH_A_COMPLETE` and `BATCH_B_COMPLETE` are valid safe end-of-turn checkpoints, not blockers.
-- `TESTABLE=YES` is the final completion state after Batch C.
-- `HARD_BLOCKER` is reserved for a real issue requiring user action/decision; ordinary turn-budget exhaustion should instead checkpoint the current batch safely and report the nearest completed batch/sub-block.
-- No routine subagents/reviewers; Normal Chat is the external reviewer.
-- Use focused tests while iterating; full suite only at the final gate specified in `NEXT_TASK.md`.
+Use single-worker sequential execution in the same style that previously completed the Editorial Intelligence plan successfully:
+
+- execute the approved implementation plan continuously, task by task;
+- for production behavior changes use RED -> GREEN -> REFACTOR;
+- run the focused verification named for the task;
+- commit each completed logical task on `feat/curation-ui-v1`;
+- continue immediately to the next task without a user-facing status stop;
+- maintain a tiny local execution ledger (untracked is fine) with current task, last commit, tests run, remaining item, next action so a new turn can resume without reconstructing history;
+- Normal Chat is the external reviewer; do not spawn routine reviewer/subagent loops unless a concrete task genuinely benefits from one;
+- do not reread old Issue #3 history on every turn.
+
+`BATCH_A_COMPLETE`, `BATCH_B_CHECKPOINT`, `BATCH_B_COMPLETE`, WIP snapshot publication, token-presence checks, successful compilation alone, or a single smoke endpoint are **not completion gates and are not reasons to end execution**.
+
+Do not optimize for producing a checkpoint. Optimize for completing working end-to-end behavior from the approved plan.
+
+A user signal `.` means: read the newest relevant Normal Chat instruction on Issue #3, read the local execution ledger, and **resume implementation immediately**. It is not a request for a status report.
+
+Stop/end a turn only for:
+- a genuine blocker requiring user action/decision that cannot be solved within approved scope; or
+- the final `TESTABLE=YES` acceptance state.
+
+If the product harness interrupts a turn for its own limit, preserve code/tests/ledger exactly where they are. On the next user signal, resume from the ledger without re-planning or emitting a status-only turn.
+
+## Delivery
+
+- Work on `feat/curation-ui-v1` in a real Git checkout/worktree.
+- Commit logical task completions locally and push them to the feature branch when the task verification is green, so Normal Chat can inspect the actual remote diff.
+- Never force-push and never merge autonomously.
+- The current `wip/curation-ui-batch-b-review` branch is not the implementation target.
 
 ## Safety boundaries
 
@@ -35,12 +54,5 @@ Old Editorial Intelligence + StyleDNA execution instructions and the old debug-s
 - Source media remains read-only after registration.
 - Keep client assets isolated.
 - Heavy runtime/model/media artifacts stay under approved `Z:\APP REEL TEST` roots.
-- Never force-push or merge autonomously.
-
-## Delivery
-
-- Work on `feat/curation-ui-v1`.
-- Commit/push logical changes without rewriting useful history when the environment allows it.
-- If local Git writes are sandbox-blocked, preserve workspace changes and use authenticated GitHub API transport where available rather than asking the user to run manual commands.
 - Keep `/debug` engineering-facing; `/curation` is the professional product.
 - Standard product runtime must require no GPT/OpenAI/Codex calls.
