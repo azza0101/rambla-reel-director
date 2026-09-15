@@ -1,6 +1,7 @@
 from pathlib import Path
 import json
 import shutil
+import sys
 import uuid
 
 from fastapi.testclient import TestClient
@@ -42,6 +43,99 @@ def test_weighted_total_progress_is_monotonic():
 def test_succeeded_snapshot_is_always_terminal_100_percent():
     state = RunState("done", Path("input.mp4"), Path("run"), status="SUCCEEDED", progress={"prepare": 100})
     assert state.snapshot()["total_progress"] == 100.0
+
+
+def test_analyze_snapshot_distinguishes_waiting_active_and_pre_asr_failure():
+    state = RunState("asr-state", Path("input.mp4"), Path("run"), status="RUNNING", stage_type="analyze")
+    assert state.snapshot()["transcript_status"] == "waiting"
+    state.events.append(DebugEvent("asr", "Trascrizione in corso", 1.0))
+    assert state.snapshot()["transcript_status"] == "active"
+    state.events.clear()
+    state.status = "FAILED"
+    state.last_message = "Worker preflight failed: source is not readable: input.mp4"
+    snapshot = state.snapshot()
+    assert snapshot["transcript_status"] == "failed"
+    assert snapshot["transcript_message"] == state.last_message
+
+
+def test_worker_preflight_names_the_unreadable_input_path():
+    import backend.app.debug_server as server
+    root = _project_test_root()
+    try:
+        video = root / "source.mp4"; video.write_bytes(b"video")
+        missing_guide = root / "missing-guide.wav"
+        state = RunState("preflight", video, root / "run", guide_audio=missing_guide)
+        try:
+            server._preflight_worker(state, [sys.executable, "-c", "pass"], root)
+        except RuntimeError as exc:
+            message = str(exc)
+        else:
+            raise AssertionError("missing guide must fail worker preflight")
+        assert "guide" in message.casefold()
+        assert str(missing_guide) in message
+    finally:
+        shutil.rmtree(root)
+
+
+def test_windows_winerror5_fallback_streams_real_worker_events(monkeypatch):
+    import asyncio
+    import backend.app.debug_server as server
+    root = _project_test_root()
+    try:
+        video = root / "source.mp4"; video.write_bytes(b"video")
+        output = root / "run"
+        state = RunState("fallback", video, output, stage_type="analyze")
+        command = [sys.executable, "-c", "print('RAMBLA_EVENT {{\"stage\":\"asr\",\"progress\":1,\"message\":\"ASR started\"}}', flush=True)"]
+        monkeypatch.setenv("RAMBLA_DEBUG_COMMAND_JSON", json.dumps(command))
+
+        async def denied(*args, **kwargs):
+            error = PermissionError(5, "Access denied")
+            error.winerror = 5
+            raise error
+
+        monkeypatch.setattr(server.asyncio, "create_subprocess_exec", denied)
+        monkeypatch.setattr(server, "WINDOWS", True)
+        asyncio.run(server._run(state))
+
+        assert state.status == "SUCCEEDED"
+        assert state.return_code == 0
+        assert any(event.stage == "asr" and event.message == "ASR started" for event in state.events)
+        assert any(event.stage == "preflight" for event in state.events)
+        assert any(event.data.get("spawn_mode") == "popen-thread" for event in state.events)
+    finally:
+        shutil.rmtree(root)
+
+
+def test_popen_worker_adapter_supports_terminate_then_kill_fallback(monkeypatch):
+    import asyncio
+    import backend.app.debug_server as server
+
+    class PopenProcess:
+        returncode = None
+        killed = False
+        stdout = None
+        def poll(self): return self.returncode
+        def terminate(self): pass
+        def kill(self): self.killed = True; self.returncode = -9
+        def wait(self): return self.returncode
+
+    async def timeout_once(awaitable, timeout):
+        await awaitable
+        if not process.killed:
+            raise asyncio.TimeoutError
+        return process.returncode
+
+    process = PopenProcess()
+    worker = server._PopenWorker(process)
+    monkeypatch.setattr(asyncio, "wait_for", timeout_once)
+    state = RunState("popen-kill", Path("source.mp4"), Path("run"), status="RUNNING", process=worker)
+    server.RUNS[state.run_id] = state
+    try:
+        response = TestClient(server.create_app()).post("/v1/debug/runs/popen-kill/cancel")
+        assert response.json()["status"] == "CANCELLED"
+        assert process.killed is True
+    finally:
+        server.RUNS.pop(state.run_id, None)
 
 
 def test_page_has_one_click_live_debug_ui():

@@ -81,3 +81,5 @@ def test_staged_curation_controller_separates_actions_and_inspection():
     assert 'id="lightboxImage" hidden' in page and 'id="lightboxVideo" controls hidden' in page
     assert "media.onclick=()=>inspectMedia(media)" in page
     assert "if(video)target.play().catch" in page
+    assert "r.transcript_status==='active'" in page
+    assert "Analysis failed before ASR:" in page

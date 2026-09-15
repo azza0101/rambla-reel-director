@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import uuid
 from dataclasses import dataclass, field
@@ -38,6 +39,7 @@ STAGES = (
     ("review", "Review HTML", 5.0),
 )
 WEIGHTS = {key: weight for key, _, weight in STAGES}
+WINDOWS = os.name == "nt"
 
 
 @dataclass(slots=True, frozen=True)
@@ -147,6 +149,12 @@ class RunState:
         return round(done * 100.0 / total_weight, 2) if total_weight else 0.0
 
     def snapshot(self) -> dict[str, Any]:
+        asr_started = any(event.stage == "asr" for event in self.events)
+        transcript_status = None
+        transcript_message = None
+        if self.stage_type == "analyze":
+            transcript_status = "active" if asr_started else "failed" if self.status == "FAILED" else "waiting"
+            transcript_message = self.last_message if transcript_status == "failed" else None
         return {
             "run_id": self.run_id,
             "video_path": str(self.video_path),
@@ -158,6 +166,8 @@ class RunState:
             "stage_type": self.stage_type,
             "last_message": self.last_message,
             "events": [event.as_dict() for event in self.events[-30:]],
+            "transcript_status": transcript_status,
+            "transcript_message": transcript_message,
             "review_path": str(self.output_dir / "review.html"),
             "edit_plan_path": str(self.output_dir / "edit-plan.json"),
         }
@@ -253,21 +263,139 @@ async def _emit(state: RunState, event: DebugEvent) -> None:
         await queue.put(event)
 
 
-async def _run(state: RunState) -> None:
-    state.status = "RUNNING"
-    state.output_dir.mkdir(parents=True, exist_ok=True)
-    tracker = ArtifactProgressTracker(state.output_dir)
-    await _emit(state, DebugEvent("prepare", "Run avviata", 100.0))
+class _AsyncioWorker:
+    spawn_mode = "asyncio"
+
+    def __init__(self, process: Any):
+        self.process = process
+
+    @property
+    def returncode(self) -> int | None:
+        return self.process.returncode
+
+    async def readline(self) -> bytes:
+        assert self.process.stdout is not None
+        return await self.process.stdout.readline()
+
+    async def wait(self) -> int:
+        return await self.process.wait()
+
+    def terminate(self) -> None:
+        self.process.terminate()
+
+    def kill(self) -> None:
+        self.process.kill()
+
+
+class _PopenWorker:
+    spawn_mode = "popen-thread"
+
+    def __init__(self, process: subprocess.Popen[bytes]):
+        self.process = process
+
+    @property
+    def returncode(self) -> int | None:
+        return self.process.poll()
+
+    async def readline(self) -> bytes:
+        assert self.process.stdout is not None
+        return await asyncio.to_thread(self.process.stdout.readline)
+
+    async def wait(self) -> int:
+        try:
+            return await asyncio.to_thread(self.process.wait)
+        finally:
+            if self.process.stdout is not None and not self.process.stdout.closed:
+                self.process.stdout.close()
+
+    def terminate(self) -> None:
+        self.process.terminate()
+
+    def kill(self) -> None:
+        self.process.kill()
+
+
+def _readable_file(label: str, path: Path) -> None:
+    if not path.is_file():
+        raise RuntimeError(f"Worker preflight failed: {label} is not a file: {path}")
     try:
-        command = _command(state)
-        await _emit(state, DebugEvent("log", "Comando: " + " ".join(shlex.quote(x) for x in command)))
-        process = await asyncio.create_subprocess_exec(
+        with path.open("rb") as stream:
+            stream.read(1)
+    except OSError as exc:
+        raise RuntimeError(f"Worker preflight failed: {label} is not readable: {path}: {exc}") from exc
+
+
+def _preflight_worker(state: RunState, command: list[str], cwd: Path) -> dict[str, str]:
+    executable_text = command[0]
+    located = shutil.which(executable_text) if not Path(executable_text).is_absolute() else executable_text
+    executable = Path(located) if located else Path(executable_text)
+    _readable_file("executable", executable)
+    if not cwd.is_dir():
+        raise RuntimeError(f"Worker preflight failed: cwd is not a directory: {cwd}")
+    try:
+        next(cwd.iterdir(), None)
+    except OSError as exc:
+        raise RuntimeError(f"Worker preflight failed: cwd is not readable: {cwd}: {exc}") from exc
+    _readable_file("source", state.video_path)
+    _readable_file("guide", state.guide_audio or state.video_path)
+    try:
+        state.output_dir.mkdir(parents=True, exist_ok=True)
+        probe = state.output_dir / f".worker-write-probe-{uuid.uuid4().hex}.tmp"
+        try:
+            with probe.open("xb") as stream:
+                stream.write(b"ok")
+        finally:
+            if probe.exists():
+                probe.unlink()
+    except OSError as exc:
+        raise RuntimeError(f"Worker preflight failed: output is not writable: {state.output_dir}: {exc}") from exc
+    return {"executable": str(executable), "cwd": str(cwd), "source": str(state.video_path), "guide": str(state.guide_audio or state.video_path), "output": str(state.output_dir)}
+
+
+async def _spawn_worker(command: list[str], cwd: Path) -> Any:
+    try:
+        return _AsyncioWorker(await asyncio.create_subprocess_exec(
             *command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
-            cwd=str(Path.cwd()),
+            cwd=str(cwd),
+        ))
+    except PermissionError as exc:
+        if not WINDOWS or getattr(exc, "winerror", None) != 5:
+            raise
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            cwd=str(cwd),
         )
+        return _PopenWorker(process)
+
+
+async def _stop_worker(process: Any) -> None:
+    if process.returncode is not None:
+        return
+    process.terminate()
+    try:
+        await asyncio.wait_for(process.wait(), timeout=3.0)
+    except asyncio.TimeoutError:
+        process.kill()
+        await process.wait()
+
+
+async def _run(state: RunState) -> None:
+    state.status = "RUNNING"
+    try:
+        command = _command(state)
+        cwd = Path.cwd()
+        preflight = _preflight_worker(state, command, cwd)
+        tracker = ArtifactProgressTracker(state.output_dir)
+        await _emit(state, DebugEvent("prepare", "Run avviata", 100.0))
+        await _emit(state, DebugEvent("preflight", "Worker preflight completato", 100.0, preflight))
+        await _emit(state, DebugEvent("log", "Comando: " + " ".join(shlex.quote(x) for x in command)))
+        process = await _spawn_worker(command, cwd)
         state.process = process
+        await _emit(state, DebugEvent("worker", "Worker avviato", data={"spawn_mode": process.spawn_mode}))
 
         async def watch() -> None:
             while process.returncode is None:
@@ -276,9 +404,8 @@ async def _run(state: RunState) -> None:
                 await asyncio.sleep(0.35)
 
         watcher = asyncio.create_task(watch())
-        assert process.stdout is not None
         while True:
-            line = await process.stdout.readline()
+            line = await process.readline()
             if not line:
                 break
             await _emit(state, parse_worker_line(line.decode("utf-8", errors="replace")))
@@ -297,6 +424,8 @@ async def _run(state: RunState) -> None:
         state.status = "FAILED"
         await _emit(state, DebugEvent("error", str(exc), data=state.snapshot()))
     finally:
+        if state.process is not None and state.process.returncode is None:
+            await _stop_worker(state.process)
         state.process = None
 
 
@@ -656,12 +785,7 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
             return state.snapshot()
         state.status = "CANCELLED"
         if state.process is not None and state.process.returncode is None:
-            state.process.terminate()
-            try:
-                await asyncio.wait_for(state.process.wait(), timeout=3.0)
-            except asyncio.TimeoutError:
-                state.process.kill()
-                await state.process.wait()
+            await _stop_worker(state.process)
         await _emit(state, DebugEvent("cancelled", "Run annullata", data=state.snapshot()))
         return state.snapshot()
 
