@@ -37,3 +37,20 @@ def test_route_comparison_query_gets_searchable_retrieval_aliases():
     assert variants[0] == "traveler comparing routes map"
     assert "travel planning map" in variants
     assert "route planning map" in variants
+
+
+def test_transport_queries_get_provider_friendly_aliases():
+    from backend.app.retrieval_quality import expand_queries
+
+    plane = expand_queries(["passengers boarding airplane"], "video")
+    ferry = expand_queries(["passengers boarding ferry"], "video")
+    assert "people boarding plane" in plane
+    assert "people boarding boat" in ferry
+
+
+def test_search_relaxes_nonessential_travel_modifiers():
+    from backend.app.retrieval_quality import expand_queries
+
+    variants = expand_queries(["custom travel itinerary planning"], "image")
+    assert "travel itinerary planning" in variants
+    assert "travel planning map" in variants
