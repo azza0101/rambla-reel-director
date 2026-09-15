@@ -9,7 +9,9 @@ handled separately by ``acquisition.py``.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
+import os
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlsplit, urlunsplit
@@ -86,7 +88,6 @@ def _safe_thumbnail(value: Any) -> str:
         return ""
     if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
         return ""
-    # Provider thumbnail query strings are transient and unnecessary for durable discovery metadata.
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
 
 
@@ -157,26 +158,17 @@ class YouTubeSource:
     def __init__(self, *, discover: DiscoverFn):
         self.discover = discover
 
-    async def search(
-        self,
-        query: str,
-        *,
-        min_duration: float,
-        max_duration: float,
-        limit: int,
-    ) -> list[YouTubeCandidate]:
+    async def search(self, query: str, *, min_duration: float, max_duration: float, limit: int) -> list[YouTubeCandidate]:
         if not isinstance(query, str) or not query.strip():
             raise ValueError("YouTube discovery query is required")
         if min_duration < 0 or max_duration <= 0 or min_duration > max_duration:
             raise ValueError("invalid duration bounds")
         if limit <= 0:
             raise ValueError("limit must be positive")
-
         result = self.discover(query.strip(), limit)
         raw = await result if inspect.isawaitable(result) else result
         if not isinstance(raw, list):
             raise ValueError("YouTube discovery must return a list")
-
         output: list[YouTubeCandidate] = []
         for row in raw:
             if not isinstance(row, dict):
@@ -192,8 +184,23 @@ class YouTubeSource:
         return output
 
 
+def _interleave(groups: list[list[Any]], limit: int) -> list[Any]:
+    output=[]
+    for index in range(max((len(group) for group in groups), default=0)):
+        for group in groups:
+            if index < len(group):
+                output.append(group[index])
+                if len(output) >= limit:
+                    return output
+    return output
+
+
 class YouTubeOnlineSourceAdapter:
-    """Expose YouTube/Shorts discovery through the generic source port."""
+    """Expose YouTube plus optional portrait social discovery through one source port.
+
+    The augmentation is opt-in through RAMBLA_ENABLE_VERTICAL_SOCIAL so existing
+    offline/unit behavior never performs network discovery unexpectedly.
+    """
 
     supported_source_classes = (
         "EXACT_RECEIPT", "EXACT_ENTITY_EVENT", "SOURCE_NATIVE_SOCIAL",
@@ -201,31 +208,25 @@ class YouTubeOnlineSourceAdapter:
         "CLOSE_SEMANTIC_EDITORIAL",
     )
 
-    def __init__(self, source: YouTubeSource, *, provider_name: str = "youtube", portrait_only: bool = False):
+    def __init__(self, source: YouTubeSource, *, provider_name: str = "youtube", portrait_only: bool = False, vertical_sources: list[Any] | None = None):
         if provider_name not in {"youtube", "youtube_shorts"}:
             raise ValueError("unsupported YouTube provider identity")
         self.source = source
         self.provider_name = provider_name
         self.portrait_only = bool(portrait_only)
+        self.vertical_sources = vertical_sources
+        self._vertical_attempts: list[dict[str, Any]] = []
 
-    async def search(
-        self,
-        query: str,
-        *,
-        orientation: str | None,
-        min_duration: float,
-        max_duration: float,
-        limit: int,
-    ) -> list[YouTubeRemoteCandidate]:
+    def drain_vertical_attempts(self) -> list[dict[str, Any]]:
+        attempts=list(self._vertical_attempts)
+        self._vertical_attempts.clear()
+        return attempts
+
+    async def search(self, query: str, *, orientation: str | None, min_duration: float, max_duration: float, limit: int) -> list[Any]:
         if orientation is not None and orientation not in {"portrait", "landscape", "square"}:
             raise ValueError("unsupported orientation")
-        rows = await self.source.search(
-            query,
-            min_duration=min_duration,
-            max_duration=max_duration,
-            limit=max(limit, limit * 3 if self.portrait_only else limit),
-        )
-        output: list[YouTubeRemoteCandidate] = []
+        rows = await self.source.search(query, min_duration=min_duration, max_duration=max_duration, limit=max(limit, limit * 3 if self.portrait_only else limit))
+        normal: list[YouTubeRemoteCandidate] = []
         for rank, row in enumerate(rows):
             if self.portrait_only and row.orientation != "portrait":
                 continue
@@ -233,38 +234,47 @@ class YouTubeOnlineSourceAdapter:
                 continue
             if not row.thumbnail_url:
                 continue
-            source_page = (
-                f"https://www.youtube.com/shorts/{row.video_id}"
-                if self.provider_name == "youtube_shorts"
-                else row.source_page
-            )
-            output.append(
-                YouTubeRemoteCandidate(
-                    provider=self.provider_name,
-                    provider_id=row.video_id,
-                    query=row.query,
-                    source_page=source_page,
-                    creator_name=row.creator_name,
-                    creator_page=None,
-                    title=row.title,
-                    description=row.title,
-                    duration=row.duration,
-                    width=row.width,
-                    height=row.height,
-                    orientation=row.orientation,
-                    preview_url=row.thumbnail_url,
-                    selected_rendition_url=source_page,
-                    rendition_width=row.width,
-                    rendition_height=row.height,
-                    rights_state=row.rights_state,
-                    provider_rank=rank,
-                    scene_evidence=row.scene_evidence,
-                    acquisition_mode="bounded_window",
-                    source_duration=row.duration,
-                    source_class="SOURCE_NATIVE_SOCIAL" if self.provider_name == "youtube_shorts" else row.source_class,
-                    source_authenticity=row.source_authenticity,
-                )
-            )
-            if len(output) >= limit:
+            source_page = f"https://www.youtube.com/shorts/{row.video_id}" if self.provider_name == "youtube_shorts" else row.source_page
+            normal.append(YouTubeRemoteCandidate(
+                provider=self.provider_name, provider_id=row.video_id, query=row.query,
+                source_page=source_page, creator_name=row.creator_name, creator_page=None,
+                title=row.title, description=row.title, duration=row.duration,
+                width=row.width, height=row.height, orientation=row.orientation,
+                preview_url=row.thumbnail_url, selected_rendition_url=source_page,
+                rendition_width=row.width, rendition_height=row.height,
+                rights_state=row.rights_state, provider_rank=rank,
+                scene_evidence=row.scene_evidence, acquisition_mode="bounded_window",
+                source_duration=row.duration,
+                source_class="SOURCE_NATIVE_SOCIAL" if self.provider_name == "youtube_shorts" else row.source_class,
+                source_authenticity=row.source_authenticity,
+            ))
+            if len(normal) >= limit:
                 break
-        return output
+
+        if self.provider_name != "youtube" or str(os.environ.get('RAMBLA_ENABLE_VERTICAL_SOCIAL','')).casefold() not in {'1','true','yes','on'}:
+            return normal[:limit]
+
+        if self.vertical_sources is None:
+            from .vertical_social import build_default_vertical_sources
+            vertical_sources = build_default_vertical_sources()
+        else:
+            vertical_sources = self.vertical_sources
+        groups=[]
+        outcomes=await asyncio.gather(*[
+            source.search(query,orientation='portrait',min_duration=min_duration,max_duration=max_duration,limit=min(2,limit))
+            for source in vertical_sources
+        ],return_exceptions=True)
+        for source,outcome in zip(vertical_sources,outcomes):
+            provider=str(getattr(source,'provider_name',type(source).__name__))
+            if isinstance(outcome,BaseException):
+                self._vertical_attempts.append({'provider':provider,'query':query,'hits':0,'error':type(outcome).__name__})
+                groups.append([])
+                continue
+            rows=list(outcome)
+            attempt=dict(getattr(source,'last_attempt',{}) or {})
+            attempt.setdefault('provider',provider);attempt.setdefault('query',query);attempt.setdefault('hits',len(rows))
+            self._vertical_attempts.append(attempt)
+            groups.append(rows)
+
+        # Give each vertical provider one fair slot before normal long-form YouTube.
+        return _interleave(groups+[normal],limit)
