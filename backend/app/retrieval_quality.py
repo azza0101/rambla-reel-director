@@ -1,7 +1,7 @@
 """Retrieval-only constraints and relevance. Never infer a new editorial shot."""
 import re
 
-VERSION='retrieval-quality-8'
+VERSION='retrieval-quality-9'
 STOP=set('a an the of on in at with and or to for by is are close up view shot photo image video footage hands small large background'.split())
 GROUPS=[('wilt','wilting','wilted','droop','drooping','withered'),('slice','slicing','sliced','cut','cutting','chop','chopping','chopped'),('tomato','tomatoes'),('dry','dried'),('empty','vacant'),('closed','shut')]
 CANON={w:group[0] for group in GROUPS for w in group}
@@ -17,11 +17,16 @@ def expand_queries(queries,kind):
     out=list(dict.fromkeys(queries))
     for q in queries:
         alias=q
-        for old,new in [('local guide','tour guide'),('guesthouse','guest house'),('travelers','tourists')]:
+        for old,new in [
+            ('local guide','tour guide'),('guesthouse','guest house'),('travelers','tourists'),
+            ('passengers','people'),('airplane','plane'),('ferry','boat'),
+        ]:
             alias=re.sub(r'\b'+old+r'\b',new,alias,flags=re.I)
         if alias!=q and alias not in out:out.append(alias)
         broad=re.sub(r'\blocal\s+','',alias,flags=re.I)
-        if broad not in out:out.append(broad)
+        broad=re.sub(r'\b(long[- ]haul|custom)\s+','',broad,flags=re.I)
+        broad=' '.join(broad.split())
+        if broad and broad not in out:out.append(broad)
     # Retrieval engines often index planning actions with simpler nouns than the
     # editorial query. These aliases keep the exact physical activity (map/route
     # planning) while avoiding a zero-hit result caused only by phrasing.
@@ -33,6 +38,9 @@ def expand_queries(queries,kind):
             for variant in ('travel itinerary planning','trip planning map','travel planning map'):
                 if variant not in out:out.append(variant)
     for q in queries:
+        if re.search(r'\bvegetable garden\b',q,re.I) and re.search(r'\bchickens?\b',q,re.I):
+            for variant in ('chickens vegetable garden','free range chickens garden'):
+                if variant not in out:out.append(variant)
         if re.search(r'\b(wilted|wilting|dying|drooping)\b',q,re.I):
             base=re.sub(r'\b(on |in |a |the )?(balcony|windowsill|terrace)\b','',q,flags=re.I)
             base=' '.join(base.split())
