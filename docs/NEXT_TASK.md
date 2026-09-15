@@ -1,111 +1,104 @@
-# Next Task — Finish Professional Curation UI Redesign
+# Next Task — Complete Professional Curation UI Redesign
 
 Current phase: **implementation authorized for the approved Professional Curation UI Redesign**.
 
-Authoritative approval/spec/plan:
+Implementation branch: `feat/curation-ui-v1`
 
-- `docs/approvals/2026-09-15-curation-ui-professional-redesign-plan-approved.md`
-- `docs/superpowers/specs/2026-09-15-curation-ui-professional-redesign.md`
-- `docs/superpowers/plans/2026-09-15-curation-ui-professional-redesign.md`
+Approved product target remains unchanged: professional `/curation`, source video/project flow, guide audio, real video/image previews, ordered mixed-media selection, NO BROLL, autosave/persistence, safe asset-id media routes, reuse-first analysis, zero GPT/OpenAI runtime dependency, `resolve_calls=0`.
 
-Implementation branch:
+## Immediate recovery: restore the proven working execution setup
 
-`feat/curation-ui-v1`
+The current slowdowns came from running in a plain non-Git workspace and allowing intermediate `BATCH_*_CHECKPOINT` exits. Restore the earlier successful execution pattern now.
 
-The earlier debug-style Curation UI contract and older Editorial Intelligence + StyleDNA execution instructions are superseded wherever they conflict with this file and the approved redesign plan.
+1. Create a fresh **real Git clone/checkout** under the approved RAMBLA test root, e.g. `Z:\APP REEL TEST\qwen-embedding-smoke\curation-ui-git`, authenticated with the already-working GitHub account.
+2. Check out `feat/curation-ui-v1` at the current remote head.
+3. Do NOT use the old `editorial-intelligence-worktree` as the active workspace.
+4. Treat these existing locations only as migration sources/backups:
+   - `Z:\APP REEL TEST\qwen-embedding-smoke\curation-ui-plain`
+   - `Z:\APP REEL TEST\qwen-embedding-smoke\curation-migration-backup`
+5. Copy/reconcile only the actual Curation implementation/test changes from the migration source into the fresh Git checkout. Never copy `.git`, runtime media, models, caches, downloaded assets, or unrelated Editorial Intelligence files.
+6. Run the smallest focused Curation tests needed to prove migrated Task 1–4 behavior still works. Fix migration conflicts if any; do not rerun ASR/Qwen/provider discovery just to verify migration.
+7. Commit the migrated, verified Curation work as a real Git commit on `feat/curation-ui-v1` and push it. This gives Normal Chat a real diff to inspect.
+8. Then continue immediately with the remaining approved implementation tasks. Do not stop after migration/push.
 
-## Resume rule
+## Remaining implementation — execute continuously
 
-Resume from the **existing local working state**. Preserve all completed/uncommitted work, especially the professional ordered selection implementation in `curation_selection.py`. Never reset or redo completed tasks merely because the remote branch lags.
+### Task 5 — Professional project/curation API
 
-Because the Codex client/harness has demonstrated a finite per-turn execution budget even while account/week quota remains available, execute the approved plan in the following **three coherent turn batches**. This is an execution scheduling change only; product scope and acceptance criteria are unchanged.
+Complete real end-to-end API behavior, including:
+- project create/load/state;
+- source video upload/registration flow needed by the professional product;
+- run/curation hydration from real artifact data;
+- ordered selection endpoint backed by `SelectionStore`;
+- atomic `selection-plan.json` persistence;
+- safe media route by `project_id + asset_id + variant` only;
+- unknown asset => 404;
+- candidate resolving outside approved roots => reject;
+- no arbitrary browser-supplied filesystem path serving;
+- reuse-first analyze adapter; no expensive upstream rerun merely to render/test UI.
 
-## TURN BATCH A — previews + hydration
+Write behavior tests first. Passing compilation or a 200 on one route is not sufficient. Commit/push Task 5 when its focused behavior tests are green, then continue immediately.
 
-Execute remaining Plan Task 3 and Task 4 only:
+### Task 6 — Professional `/curation` product
 
-- real lightweight video previews + poster generation;
-- real image thumbnail materialization;
-- stable preview cache and per-card failure isolation;
-- max concurrency 4;
-- artifact hydration into genuinely separate video and image shelves;
-- max 3 video + 4 image candidates per phrase;
-- asset-id candidate index;
-- focused tests for Task 3 + 4;
-- preserve all work in files/commit/checkpoint before ending the turn.
+Replace the current debug/shell surface with a functioning user product, not token-only/static markup.
 
-Do not rerun ASR/Qwen/provider discovery just to test these components.
-
-Valid end state for this turn: `BATCH_A_COMPLETE` or a real `HARD_BLOCKER`.
-
-## TURN BATCH B — API + professional HTML product
-
-On the next turn resume without redoing Batch A. Execute Plan Task 5 and Task 6:
-
-- professional project/curation API;
-- safe asset-id media routes, never arbitrary browser filesystem paths;
-- source-video project API wiring needed by the product shell;
-- rewrite `/curation` as the professional product;
-- source-video picker/drag-drop + advanced local-path flow;
-- real source-video player + metadata;
-- real playable video cards;
-- real image cards + lightbox;
-- phrase rail, filters, save state, selection tray;
-- ordered mixed-media multi-select and V2/V3/V4 chips;
+Must work end-to-end with Task 5 APIs:
+- New Reel setup;
+- drag/drop / Choose video;
+- advanced local-path registration;
+- actual source player + metadata;
+- Use original audio / Replace guide audio controls prepared for Task 7;
+- ANALYZE REEL action;
+- timeline phrase rail with status and filters;
+- active phrase content;
+- max 3 real playable video candidate cards;
+- max 4 real image thumbnails + lightbox;
+- media inspection separate from selection;
+- ordered mixed video+image selection tray;
+- deterministic V2/V3/V4... assignment;
+- reorder controls;
 - mutually exclusive NO BROLL;
-- autosave/retry/refresh persistence;
-- focused API + UI tests;
-- preserve all work in files/commit/checkpoint before ending the turn.
+- autosave, Saving/Saved/Error+Retry state;
+- refresh persistence by reloading the backend selection plan;
+- CONFIRM PLAN validation state.
 
-Valid end state for this turn: `BATCH_B_COMPLETE` or a real `HARD_BLOCKER`.
+Tests must verify behavior/contracts, not only presence of strings such as `IntersectionObserver` or button labels. A token-presence test may supplement behavior tests but cannot be the completion proof.
 
-## TURN BATCH C — guide audio + integration + acceptance
+Commit/push Task 6 when focused API/UI behavior tests are green, then continue immediately.
 
-On the next turn resume without redoing A/B. Execute Plan Task 7 and final acceptance work:
+### Task 7 — Guide audio + reuse integration
 
-- source audio extraction/cache as normalized guide audio;
-- optional replacement guide audio;
-- guide-audio-aware analysis while timeline remains source-video based;
-- reuse-first behavior for transcript/chunks/candidates/edit-plan;
-- KURA acceptance smoke using existing artifacts where valid;
-- real video/image preview counts and error/cache evidence;
-- mixed video+image selection proving V2/V3 persistence;
-- separate NO BROLL proof;
-- full fresh pytest + backend compileall once at final gate;
-- exact local `/curation` URL and `selection-plan.json` path;
-- `resolve_calls=0`.
+Complete:
+- source audio extraction/cache to mono 16 kHz PCM s16le guide audio;
+- replacement external guide audio normalization;
+- duration mismatch warning;
+- guide-audio-aware ASR input while source-video timeline remains authoritative;
+- source+guide signature reuse behavior;
+- preserve existing upstream artifacts when unchanged.
 
-Valid end state: `TESTABLE=YES` or a real `HARD_BLOCKER`.
+Commit/push when focused tests are green, then continue immediately.
 
-## Per-turn execution rules
+### Final acceptance
 
-1. Single worker, sequential, LOW-CREDIT.
-2. Read only this file, the approved plan section for the active batch, and directly relevant source/tests. Do not reread old Issue #3 history.
-3. No routine subagents/reviewers; Normal Chat is the external reviewer.
-4. TDD/focused tests while iterating. Full suite only in Batch C final gate.
-5. Inside a batch, do **not** send user-visible progress after individual tasks/tests/commits; continue until the batch is complete or a real blocker occurs.
-6. At a batch boundary, a concise final message is allowed because the per-turn budget is finite. It must contain only batch result, files/commit/test evidence, blocker if any, and exact next batch.
-7. Reuse existing KURA artifacts and caches aggressively.
-8. `/debug` remains engineering-only; `/curation` is the professional product.
-9. Resolve frozen: `resolve_calls=0`.
-10. No ComfyUI/global Python/PATH/CUDA/system/credential changes. No main merge or auto-merge.
+Use the existing KURA artifacts where valid; do not rerun expensive analysis solely for acceptance.
 
-## Final product target
+Prove:
+- `/curation` opens as the professional product;
+- source video flow works;
+- guide audio flow works;
+- real video/image candidate previews render when candidates exist;
+- mixed video+image selection persists with V2/V3/V4 ordering;
+- a different phrase can be NO BROLL;
+- refresh/restart restores state;
+- `selection-plan.json` path is known and valid;
+- safe asset-id media routes are used;
+- `/debug` still works;
+- `resolve_calls=0`;
+- standard runtime does not call GPT/OpenAI/Codex.
 
-`TESTABLE=YES` still requires:
+At the final gate run fresh full pytest + backend compileall once. Then push final branch state and report `TESTABLE=YES` with exact local URL and evidence.
 
-- professional `/curation` surface;
-- source video choose/upload/local-path registration;
-- source player + metadata;
-- original/external guide audio;
-- reuse-first analysis;
-- up to 3 real playable video previews + 4 real image thumbnails per phrase;
-- real media preview UX + image lightbox;
-- ordered mixed-media multi-select;
-- deterministic V2/V3/V4... mapping;
-- NO BROLL exclusivity;
-- autosave + refresh persistence;
-- atomic `<run>/selection-plan.json`;
-- asset-id safe media routes;
-- no GPT/OpenAI/Codex calls at standard runtime;
-- `resolve_calls=0`.
+## Execution contract
+
+Execute continuously, task by task, using RED -> GREEN -> REFACTOR and a tiny local ledger. Do not end for progress reporting, migration completion, compilation-only success, one-route smoke success, WIP publication, or `BATCH_*` checkpoints. Stop only at a genuine user-action blocker or final `TESTABLE=YES`.
