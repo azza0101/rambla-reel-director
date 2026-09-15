@@ -49,3 +49,17 @@ def test_acceptance_launcher_uses_safe_dynamic_port_and_fast_forward_contract():
     assert "Start-Process $url" in launcher
     assert "reset --hard" not in launcher
     assert "Stop-Process -Id $process.Id" in launcher
+
+
+def test_launcher_browser_failure_is_nonfatal_and_manual_url_is_always_emitted():
+    from pathlib import Path
+    launcher = (Path(__file__).parents[2] / "tools" / "start_curation_acceptance.ps1").read_text(encoding="utf-8")
+    manual = launcher.index('Write-Output "OPEN MANUALLY: $url"')
+    browser = launcher.index("$browser = Start-Process $url")
+    assert manual < browser
+    assert "Default browser failed" in launcher
+    assert "msedge.exe" in launcher
+    assert "Browser could not be opened" in launcher
+    assert launcher.rstrip().endswith("exit 0")
+    browser_section = launcher[browser:]
+    assert "Stop-Process -Id $process.Id" not in browser_section

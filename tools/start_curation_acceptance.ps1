@@ -70,5 +70,30 @@ $response = Invoke-WebRequest -Uri $url -UseBasicParsing -Headers @{'Cache-Contr
 if (-not $response.Content.Contains($marker)) { Stop-Process -Id $process.Id -ErrorAction SilentlyContinue; throw "Build marker verification failed. Expected: $marker" }
 $record = @{pid=$process.Id;port=$port;url=$url;branch=$actualBranch;sha=$fullSha;short_sha=$shortSha;build_marker=$marker;started_at=(Get-Date).ToString('o')}
 $record | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $scriptRoot '.curation-acceptance-server.json') -Encoding utf8
-Start-Process $url
 $record | Format-List
+Write-Output "OPEN MANUALLY: $url"
+
+# Browser startup is convenience only. The verified server and recovery record
+# remain authoritative even if a browser executable crashes or cannot start.
+$opened = $false
+try {
+    $browser = Start-Process $url -PassThru -ErrorAction Stop
+    Start-Sleep -Milliseconds 750
+    if ($browser.HasExited -and $browser.ExitCode -ne 0) { throw "Default browser exited with code $($browser.ExitCode)" }
+    $opened = $true
+} catch {
+    Write-Warning "Default browser failed: $($_.Exception.Message)"
+}
+if (-not $opened) {
+    $edgeCandidates = @(
+        (Get-Command msedge.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
+        "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe",
+        "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Select-Object -Unique
+    foreach ($edge in $edgeCandidates) {
+        try { Start-Process -FilePath $edge -ArgumentList $url -ErrorAction Stop; $opened = $true; break }
+        catch { Write-Warning "Edge fallback failed: $($_.Exception.Message)" }
+    }
+}
+if (-not $opened) { Write-Warning "Browser could not be opened. Use the OPEN MANUALLY URL above." }
+exit 0
