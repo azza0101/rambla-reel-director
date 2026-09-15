@@ -57,6 +57,12 @@ def _input_signature(video: Path) -> dict[str, Any]:
     return {"video": str(video.resolve()), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
 
 
+def has_editorial_artifacts(output_dir: Path) -> bool:
+    return all((output_dir / name).is_file() for name in (
+        "online-candidates.json", "edit-plan.json", "review.html",
+    ))
+
+
 def run_asr_stage(
     video: Path,
     *,
@@ -238,6 +244,10 @@ def main() -> None:
     _write_json(output / "semantic-chunks.json", chunks)
     _event("semantic_chunking", 100, "Chunk e outline pronti", chunks=len(chunks))
 
+    if has_editorial_artifacts(output):
+        _event("online_search", 100, "Artifact Editorial Intelligence riusati")
+        _event("review", 100, "Review riusata", artifact=str(output / "review.html"), asr_mode=mode)
+        return
     _event("online_search", 1, "Avvio pipeline Editorial Intelligence esistente")
     command = [
         str(DEFAULT_PIPELINE_PYTHON if DEFAULT_PIPELINE_PYTHON.is_file() else Path(sys.executable)),

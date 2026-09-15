@@ -3,9 +3,17 @@ from pathlib import Path
 
 from backend.app.debug_run_cli import (
     build_short_outline,
+    has_editorial_artifacts,
     normalize_faster_whisper,
     run_asr_stage,
 )
+
+
+def test_existing_editorial_artifacts_skip_expensive_upstream(tmp_path):
+    assert has_editorial_artifacts(tmp_path) is False
+    for name in ("online-candidates.json", "edit-plan.json", "review.html"):
+        (tmp_path / name).write_text("{}", encoding="utf-8")
+    assert has_editorial_artifacts(tmp_path) is True
 
 
 def test_build_short_outline_preserves_words_and_caps_chunks_at_four_seconds():
