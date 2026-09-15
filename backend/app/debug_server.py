@@ -128,6 +128,7 @@ class RunState:
     last_message: str = "In attesa"
     events: list[DebugEvent] = field(default_factory=list)
     subscribers: list[asyncio.Queue[DebugEvent]] = field(default_factory=list)
+    process: Any = None
 
     def total(self) -> float:
         total_weight = sum(WEIGHTS.values())
@@ -246,6 +247,7 @@ async def _run(state: RunState) -> None:
             stderr=asyncio.subprocess.STDOUT,
             cwd=str(Path.cwd()),
         )
+        state.process = process
 
         async def watch() -> None:
             while process.returncode is None:
@@ -268,11 +270,14 @@ async def _run(state: RunState) -> None:
             pass
         for event in tracker.scan():
             await _emit(state, event)
-        state.status = "SUCCEEDED" if state.return_code == 0 else "FAILED"
+        if state.status != "CANCELLED":
+            state.status = "SUCCEEDED" if state.return_code == 0 else "FAILED"
         await _emit(state, DebugEvent("review" if state.status == "SUCCEEDED" else "error", state.status, 100.0 if state.status == "SUCCEEDED" and (state.output_dir / "review.html").exists() else None, state.snapshot()))
     except Exception as exc:
         state.status = "FAILED"
         await _emit(state, DebugEvent("error", str(exc), data=state.snapshot()))
+    finally:
+        state.process = None
 
 
 def _metrics(state: RunState) -> dict[str, Any]:
@@ -358,6 +363,7 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
     curation_run_root = curation_run_root or Path(DEFAULT_OUTPUT)
     allowed_roots = tuple(root.resolve() for root in (allowed_media_roots or [Path(DEFAULT_VIDEO).parent, project_root]))
     projects = ProjectStore(project_root, probe_runner=probe_runner or _probe_source_video)
+    project_runs: dict[str, str] = {}
 
     def load_project(project_id: str) -> CurationProject:
         try:
@@ -491,7 +497,16 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
         marker = _read_json(curation_run_root / "analysis-signature.json", {})
         if (curation_run_root / "semantic-chunks.json").is_file() and marker.get("analysis_signature") == project.analysis_signature:
             return {"status": "reused", "resolve_calls": 0}
-        raise HTTPException(status_code=409, detail="analysis required for current source and guide")
+        if project.source_video is None:
+            raise HTTPException(status_code=422, detail="source video required")
+        active = RUNS.get(project_runs.get(project_id, ""))
+        if active and active.status in {"QUEUED", "RUNNING"}:
+            raise HTTPException(status_code=409, detail="analysis already running")
+        state = RunState(uuid.uuid4().hex[:12], Path(project.source_video.path), curation_run_root)
+        RUNS[state.run_id] = state
+        project_runs[project_id] = state.run_id
+        asyncio.create_task(_run(state))
+        return {"status": "started", "run_id": state.run_id, "resolve_calls": 0}
 
     @app.put("/api/curation/projects/{project_id}/curation/chunks/{chunk_id}/selection")
     async def put_project_selection(project_id: str, chunk_id: str, request: ProjectSelectionRequest) -> dict[str, Any]:
@@ -550,6 +565,20 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
         if run_id not in RUNS:
             raise HTTPException(status_code=404, detail="run non trovata")
         return RUNS[run_id].snapshot()
+
+    @app.post("/v1/debug/runs/{run_id}/cancel")
+    async def cancel_run(run_id: str) -> dict[str, Any]:
+        if run_id not in RUNS:
+            raise HTTPException(status_code=404, detail="run non trovata")
+        state = RUNS[run_id]
+        if state.status not in {"QUEUED", "RUNNING"}:
+            return state.snapshot()
+        state.status = "CANCELLED"
+        if state.process is not None and state.process.returncode is None:
+            state.process.terminate()
+            await state.process.wait()
+        await _emit(state, DebugEvent("cancelled", "Run annullata", data=state.snapshot()))
+        return state.snapshot()
 
     @app.get("/v1/debug/runs/{run_id}/metrics")
     async def get_metrics(run_id: str) -> dict[str, Any]:

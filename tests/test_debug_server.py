@@ -145,3 +145,29 @@ def test_project_analyze_reuses_existing_artifacts_without_starting_provider():
         assert response.json() == {"status": "reused", "resolve_calls": 0}
     finally:
         shutil.rmtree(root)
+
+
+def test_cancel_terminates_running_process_and_is_idempotent():
+    from backend.app.debug_server import RUNS, RunState, create_app
+
+    class Process:
+        returncode = None
+        terminated = 0
+        def terminate(self):
+            self.terminated += 1
+            self.returncode = -15
+        async def wait(self):
+            return self.returncode
+
+    process = Process()
+    state = RunState("cancel-test", Path("source.mp4"), Path("run"), status="RUNNING", process=process)
+    RUNS[state.run_id] = state
+    try:
+        client = TestClient(create_app())
+        first = client.post("/v1/debug/runs/cancel-test/cancel")
+        second = client.post("/v1/debug/runs/cancel-test/cancel")
+        assert first.json()["status"] == "CANCELLED"
+        assert second.json()["status"] == "CANCELLED"
+        assert process.terminated == 1
+    finally:
+        RUNS.pop(state.run_id, None)
