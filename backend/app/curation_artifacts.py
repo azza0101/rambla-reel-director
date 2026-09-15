@@ -36,12 +36,13 @@ def load_curation_run(run_dir: Path) -> CurationRunView:
     errors=[]
     if imported:
         from .retrieval_quality import VERSION as QUALITY_VERSION
+        from .quality_video import QUALITY_VERSION as VIDEO_QUALITY_VERSION
         if images.get('chunks') and images.get('schema_version') != QUALITY_VERSION:
             errors.append('Image retrieval predates quality filtering: rerun image search.')
             images={'chunks':{}}
-        if any(slot.get('quality_version')!='clip-quality-8' for slot in online):
+        if any(slot.get('quality_version')!=VIDEO_QUALITY_VERSION for slot in online):
             errors.append('Video retrieval predates clip verification: rerun video search.')
-            online=[slot for slot in online if slot.get('quality_version')=='clip-quality-8']
+            online=[slot for slot in online if slot.get('quality_version')==VIDEO_QUALITY_VERSION]
     found: dict[str, list[CurationCandidate]] = {}
     for slot in online:
         cid = slot.get("parent_beat_id")
