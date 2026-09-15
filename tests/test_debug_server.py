@@ -47,6 +47,8 @@ def test_page_has_one_click_live_debug_ui():
     assert "EvidenceIntent" in page
     assert "Qwen final" in page
     assert "KURA_Finto etico_draft 1.mp4" in page
+    assert "$('stop').onclick" in page
+    assert "`/v1/debug/runs/${activeRunId}/cancel`" in page
 
 
 def test_project_api_persists_registered_source_and_rejects_outside_media():
@@ -143,7 +145,10 @@ def test_task7_http_acceptance_path(monkeypatch):
             probe_runner=lambda _: {"duration": 6, "fps": 25, "width": 1080, "height": 1920, "has_audio": True},
             audio_probe_runner=lambda _: 6.0, audio_command_runner=normalize)
         with TestClient(app) as client:
-            assert client.get("/curation").status_code == 200
+            page = client.get("/curation")
+            assert page.status_code == 200
+            for contract in ('id="file"', 'id="originalGuide"', 'id="replaceGuide"', 'id="analyze"', 'id="stop"', 'id="phrases"', 'id="videos"', 'id="images"', 'id="selected"', 'id="confirm"', "remaining>0", "up.onclick", "down.onclick"):
+                assert contract in page.text
             pid = client.post("/api/curation/projects", json={}).json()["project_id"]
             uploaded = client.put(f"/api/curation/projects/{pid}/source/upload?filename=reel.mp4", content=b"video").json()
             assert uploaded["guide_audio"]["mode"] == "original"
