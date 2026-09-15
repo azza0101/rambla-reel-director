@@ -23,13 +23,16 @@ if (Test-Path -LiteralPath (Join-Path $scriptRoot '.git')) {
     # isolated runtime from exact remote blobs; never trust or overwrite the mirror.
     $fullSha = (gh api "repos/$repo/git/ref/heads/$branch" --jq .object.sha).Trim()
     $commit = gh api "repos/$repo/git/commits/$fullSha" | ConvertFrom-Json
-    $remoteFiles = (gh api "repos/$repo/git/trees/$($commit.tree.sha)?recursive=1" | ConvertFrom-Json).tree | Where-Object type -eq 'blob'
-    $workRoot = Join-Path $scriptRoot ".acceptance-builds\$fullSha"
+    $rootTree = (gh api "repos/$repo/git/trees/$($commit.tree.sha)" | ConvertFrom-Json).tree
+    $backendSha = ($rootTree | Where-Object path -eq 'backend').sha
+    if (-not $backendSha) { throw 'Remote backend tree not found' }
+    $remoteFiles = @((gh api "repos/$repo/git/trees/$backendSha`?recursive=1" | ConvertFrom-Json).tree | Where-Object type -eq 'blob' | ForEach-Object { [pscustomobject]@{path="backend/$($_.path)";sha=$_.sha} })
+    $remoteFiles += @($rootTree | Where-Object { $_.type -eq 'blob' -and $_.path -in @('pyproject.toml','debug-runner-command.json') })
+    $workRoot = Join-Path $scriptRoot ".acceptance-builds\$fullSha-runtime"
     $complete = Join-Path $workRoot '.complete'
     if (-not (Test-Path -LiteralPath $complete)) {
         New-Item -ItemType Directory -Force -Path $workRoot | Out-Null
-        $runtimeFiles = $remoteFiles | Where-Object { $_.path -like 'backend/*' -or $_.path -eq 'pyproject.toml' -or $_.path -eq 'debug-runner-command.json' }
-        foreach ($entry in $runtimeFiles) {
+        foreach ($entry in $remoteFiles) {
             $target = Join-Path $workRoot $entry.path
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
             $encoded = (gh api "repos/$repo/git/blobs/$($entry.sha)" --jq .content) -replace '\s',''
