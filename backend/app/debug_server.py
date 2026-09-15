@@ -375,6 +375,12 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
     allowed_roots = tuple(root.resolve() for root in (allowed_media_roots or [Path(DEFAULT_VIDEO).parent, project_root]))
     projects = ProjectStore(project_root, probe_runner=probe_runner or _probe_source_video, audio_probe_runner=audio_probe_runner)
     guide_command_runner = audio_command_runner or subprocess.run
+
+    def select_default_guide(project: CurationProject) -> CurationProject:
+        if project.source_video and project.source_video.has_audio:
+            projects.extract_source_audio(project.project_id, command_runner=guide_command_runner)
+            return projects.load(project.project_id)
+        return project
     project_runs: dict[str, str] = {}
 
     def load_project(project_id: str) -> CurationProject:
@@ -450,7 +456,7 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
         load_project(project_id)
         source = allowed_source(Path(request.path))
         try:
-            return _project_payload(projects.register_local_video(project_id, source))
+            return _project_payload(select_default_guide(projects.register_local_video(project_id, source)))
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail="source video non trovato") from None
 
@@ -461,7 +467,7 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
             project = projects.write_uploaded_video(project_id, filename, [await request.body()])
         except ValueError as exc:
             raise HTTPException(status_code=413, detail=str(exc)) from exc
-        return _project_payload(project)
+        return _project_payload(select_default_guide(project))
 
     @app.post("/api/curation/projects/{project_id}/guide/original")
     async def use_original_guide(project_id: str) -> dict[str, Any]:

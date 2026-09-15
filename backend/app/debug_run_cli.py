@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import subprocess
@@ -70,6 +71,26 @@ def persist_analysis_signature(output: Path, signature: str) -> None:
     required = (output / "semantic-chunks.json", output / "review.html", output / "edit-plan.json")
     if signature and all(path.is_file() for path in required):
         _write_json(output / "analysis-signature.json", {"analysis_signature": signature})
+
+
+def editorial_artifacts_match(output_dir: Path, analysis_signature: str) -> bool:
+    marker = output_dir / "analysis-signature.json"
+    if not marker.is_file():
+        return False
+    try:
+        recorded = json.loads(marker.read_text(encoding="utf-8")).get("analysis_signature")
+    except (OSError, json.JSONDecodeError):
+        return False
+    return recorded == analysis_signature and has_editorial_artifacts(output_dir)
+
+
+def invalidate_stale_analysis_outputs(output_dir: Path, analysis_signature: str) -> None:
+    if editorial_artifacts_match(output_dir, analysis_signature):
+        return
+    for name in ("online-candidates.json", "image-candidates.json", "edit-plan.json", "review.html", "analysis-signature.json"):
+        path = output_dir / name
+        if path.is_file():
+            path.unlink()
 
 
 def has_editorial_artifacts(output_dir: Path) -> bool:
@@ -260,6 +281,10 @@ def main() -> None:
     duration, source_frames = _probe(video)
     timeline_fps = max(1, round(source_frames / duration))
     signature = analysis_input_signature(video, guide_audio)
+    analysis_signature = args.analysis_signature or hashlib.sha256(
+        json.dumps(signature, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    invalidate_stale_analysis_outputs(output, analysis_signature)
     signature_path = output / "run-input.json"
     transcript_path = output / "transcript-raw.json"
     cached = False
@@ -300,10 +325,10 @@ def main() -> None:
     images = discover_image_candidates(chunks, output)
     _event("image_search", 100, "Candidati immagini pronti", chunks=len(images.get("chunks", {})))
 
-    if has_editorial_artifacts(output):
+    if editorial_artifacts_match(output, analysis_signature):
         _event("online_search", 100, "Artifact Editorial Intelligence riusati")
         _event("review", 100, "Review riusata", artifact=str(output / "review.html"), asr_mode=mode)
-        persist_analysis_signature(output, args.analysis_signature)
+        persist_analysis_signature(output, analysis_signature)
         return
     _event("online_search", 1, "Avvio pipeline Editorial Intelligence esistente")
     command = [
@@ -318,7 +343,7 @@ def main() -> None:
         "--embedding-code-root", str(DEFAULT_EMBEDDING_CODE),
     ]
     subprocess.run(command, check=True)
-    persist_analysis_signature(output, args.analysis_signature)
+    persist_analysis_signature(output, analysis_signature)
     _event("review", 100, "Review pronta", artifact=str(output / "review.html"), asr_mode=mode)
 
 

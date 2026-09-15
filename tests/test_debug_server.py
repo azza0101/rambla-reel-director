@@ -58,7 +58,8 @@ def test_project_api_persists_registered_source_and_rejects_outside_media():
         source = root / "allowed" / "source.mp4"
         source.parent.mkdir()
         source.write_bytes(b"video")
-        client = TestClient(create_app(project_root=root / "projects", allowed_media_roots=[root / "allowed"], probe_runner=lambda _: {"duration": 3, "fps": 25, "width": 640, "height": 360, "has_audio": True}))
+        def normalize(command): Path(command[-1]).write_bytes(b"wav")
+        client = TestClient(create_app(project_root=root / "projects", allowed_media_roots=[root / "allowed"], probe_runner=lambda _: {"duration": 3, "fps": 25, "width": 640, "height": 360, "has_audio": True}, audio_probe_runner=lambda _: 3.0, audio_command_runner=normalize))
 
         created = client.post("/api/curation/projects", json={"name": "Demo reel"})
         assert created.status_code == 201
@@ -67,6 +68,7 @@ def test_project_api_persists_registered_source_and_rejects_outside_media():
         registered = client.post(f"/api/curation/projects/{project_id}/source/local", json={"path": str(source)})
         assert registered.status_code == 200
         assert registered.json()["source_video"]["duration"] == 3.0
+        assert registered.json()["guide_audio"]["mode"] == "original"
 
         unknown = client.get(f"/api/curation/projects/{project_id}/media/not-an-asset/preview")
         assert unknown.status_code == 404
@@ -111,7 +113,9 @@ def test_guide_audio_selection_normalizes_tracks_and_changes_analysis_signature(
         assert external["guide_audio"]["mode"] == "external"
         assert external["guide_audio"]["duration"] == 8.0
         assert external["guide_duration_warning"].endswith("2.00s")
-        assert len({registered["analysis_signature"], original["analysis_signature"], external["analysis_signature"]}) == 3
+        assert registered["guide_audio"]["mode"] == "original"
+        assert registered["analysis_signature"] == original["analysis_signature"]
+        assert external["analysis_signature"] != original["analysis_signature"]
         assert all(command[-7:-1] == ["-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le"] for command in commands)
     finally:
         shutil.rmtree(root)
@@ -123,6 +127,42 @@ def test_run_command_carries_project_guide_and_signature(monkeypatch):
     state = RunState("r", Path("source.mp4"), Path("run"), guide_audio=Path("guide.wav"), analysis_signature="abc")
     command = _command(state)
     assert command[-4:] == ["--guide-audio", "guide.wav", "--analysis-signature", "abc"]
+
+
+def test_task7_http_acceptance_path(monkeypatch):
+    import asyncio
+    import backend.app.debug_server as server
+    root = _project_test_root(); run = root / "run"; run.mkdir(); gate = asyncio.Event()
+    def normalize(command): Path(command[-1]).write_bytes(b"wav")
+    async def held_worker(state):
+        state.status = "RUNNING"; state.progress["prepare"] = 100
+        await gate.wait()
+    monkeypatch.setattr(server, "_run", held_worker)
+    try:
+        app = server.create_app(project_root=root / "projects", curation_run_root=run,
+            probe_runner=lambda _: {"duration": 6, "fps": 25, "width": 1080, "height": 1920, "has_audio": True},
+            audio_probe_runner=lambda _: 6.0, audio_command_runner=normalize)
+        with TestClient(app) as client:
+            assert client.get("/curation").status_code == 200
+            pid = client.post("/api/curation/projects", json={}).json()["project_id"]
+            uploaded = client.put(f"/api/curation/projects/{pid}/source/upload?filename=reel.mp4", content=b"video").json()
+            assert uploaded["guide_audio"]["mode"] == "original"
+            original_signature = uploaded["analysis_signature"]
+            replaced = client.put(f"/api/curation/projects/{pid}/guide/upload?filename=voice.mp3", content=b"voice").json()
+            assert replaced["analysis_signature"] != original_signature
+            started = client.post(f"/api/curation/projects/{pid}/analyze").json()
+            snapshot = client.get(f"/v1/debug/runs/{started['run_id']}").json()
+            assert snapshot["status"] == "RUNNING" and snapshot["total_progress"] > 0
+            assert client.post(f"/v1/debug/runs/{started['run_id']}/cancel").json()["status"] == "CANCELLED"
+            (run / "semantic-chunks.json").write_text('[{"id":"chunk-1","text":"Phrase"}]', encoding="utf-8")
+            (run / "online-candidates.json").write_text("[]", encoding="utf-8")
+            hydrated = client.get(f"/api/curation/projects/{pid}/curation").json()
+            assert hydrated["chunks"][0]["text"] == "Phrase" and hydrated["resolve_calls"] == 0
+            saved = client.put(f"/api/curation/projects/{pid}/curation/chunks/chunk-1/selection", json={"asset_ids": [], "no_broll": True}).json()
+            assert saved["selection"]["no_broll"] is True and saved["resolve_calls"] == 0
+            assert client.get(f"/api/curation/projects/{pid}/media/unknown/preview").status_code == 404
+    finally:
+        gate.set(); shutil.rmtree(root)
 
 
 def test_legacy_arbitrary_path_media_route_is_not_exposed():
