@@ -25,6 +25,7 @@ from .qwen_stack import LocalQwenEmbedder, QwenConfig, QwenMultimodalRanker
 from .source_strategy import plan_source_strategy
 from .taste_profile import TasteContext
 from .visual_routing import plan_visual_route
+from .youtube_source import YouTubeOnlineSourceAdapter, YouTubeSource
 
 
 class AcquisitionPort(Protocol):
@@ -40,6 +41,30 @@ def _rehash_plan(plan: dict[str, Any]) -> None:
     snapshot.pop("content_hash", None)
     canonical = json.dumps(snapshot, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     plan["content_hash"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _discover_youtube(query: str, limit: int, *, ydl_factory: Any = None) -> list[dict[str, Any]]:
+    if ydl_factory is None:
+        from yt_dlp import YoutubeDL
+
+        ydl_factory = YoutubeDL
+    options = {"quiet": True, "no_warnings": True, "skip_download": True, "extract_flat": "in_playlist"}
+    with ydl_factory(options) as ydl:
+        payload = ydl.extract_info(f"ytsearch{limit}:{query}", download=False)
+    output = []
+    for entry in payload.get("entries", []) if isinstance(payload, dict) else []:
+        if not isinstance(entry, dict):
+            continue
+        thumbnails = [row for row in entry.get("thumbnails", []) if isinstance(row, dict) and row.get("url")]
+        thumbnail = max(thumbnails, key=lambda row: int(row.get("width") or 0) * int(row.get("height") or 0), default={})
+        output.append({
+            "id": entry.get("id"), "title": entry.get("title"),
+            "channel": entry.get("channel") or entry.get("uploader"),
+            "duration": entry.get("duration"), "thumbnail": thumbnail.get("url") or entry.get("thumbnail"),
+            "width": int(entry.get("width") or thumbnail.get("width") or 1280),
+            "height": int(entry.get("height") or thumbnail.get("height") or 720),
+        })
+    return output
 
 
 async def _source_outline(
@@ -376,7 +401,7 @@ def run_online_from_artifacts(
 def _real_engine(
     *,
     client_id: str,
-    pexels_api_key: str,
+    pexels_api_key: str | None,
     model_root: Path,
     embedding_code_root: Path | None,
     cache_root: Path,
@@ -385,8 +410,11 @@ def _real_engine(
     config = QwenConfig(model_root=model_root, embedding_code_root=embedding_code_root)
     embedder = LocalQwenEmbedder(config)
     ranker = QwenMultimodalRanker(client_id=client_id, embed=embedder, rerank=None)
+    sources: list[Any] = [YouTubeOnlineSourceAdapter(YouTubeSource(discover=_discover_youtube))]
+    if pexels_api_key:
+        sources.append(PexelsSource(pexels_api_key))
     return OnlineSourcingEngine(
-        sources=[PexelsSource(pexels_api_key)],
+        sources=sources,
         cache=AssetCache(cache_root),
         ranker=ranker,
         max_results_per_query=max_candidates,
@@ -412,8 +440,6 @@ def main() -> None:
     if args.max_candidates <= 0 or args.max_candidates > 40:
         raise SystemExit("--max-candidates must be between 1 and 40")
     key = os.environ.get(args.pexels_key_env)
-    if not key:
-        raise SystemExit(f"credential required: set {args.pexels_key_env}")
     engine = _real_engine(
         client_id=args.client_id,
         pexels_api_key=key,

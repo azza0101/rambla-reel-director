@@ -7,6 +7,7 @@ import pytest
 from backend.app.asset_cache import PreviewAsset
 from backend.app.online_assets import ProviderError, RemoteCandidate
 from backend.app.online_sourcing import OnlineSourcingEngine
+from backend.app.online_sourcing_cli import _discover_youtube
 from backend.app.qwen_stack import QwenMultimodalRanker
 
 
@@ -318,3 +319,30 @@ async def test_editorial_sourcing_does_not_treat_thumbnail_as_final_window_evide
     )
     assert result["proposals"]["proposal_A"] is None
     assert "semantic_relevance_below_floor" in result["rejected_candidates"][0]["rejection_reasons"]
+
+
+def test_youtube_discovery_normalizes_flat_search_metadata():
+    class FakeYdl:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+        def extract_info(self, query, download):
+            assert query == "ytsearch2:ethical tourism"
+            assert download is False
+            return {"entries": [{
+                "id": "abc123",
+                "title": "Ethical tourism",
+                "channel": "Example",
+                "duration": 42.0,
+                "thumbnails": [{"url": "https://img.example/thumb.jpg", "width": 1280, "height": 720}],
+            }]}
+
+    rows = _discover_youtube("ethical tourism", 2, ydl_factory=lambda _: FakeYdl())
+    assert rows == [{
+        "id": "abc123", "title": "Ethical tourism", "channel": "Example",
+        "duration": 42.0, "thumbnail": "https://img.example/thumb.jpg",
+        "width": 1280, "height": 720,
+    }]
