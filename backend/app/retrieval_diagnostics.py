@@ -65,6 +65,10 @@ def image_diagnostic(row):
     if row.get("visual_action") in {"KEEP_TALKING_HEAD", "CONTINUE_PREVIOUS_VISUAL"}:
         return _result("not_requested", {})
 
+    from .retrieval_quality import VERSION
+    if row and row.get("quality_version") != VERSION:
+        return _result("not_searched", {"attempts": 0, "raw": 0, "hd": 0, "preview": 0, "accepted": 0, "searched": False})
+
     attempts = list(row.get("search_attempts") or [])
     candidates = list(row.get("candidates") or [])
     stored = dict(row.get("counts") or {})
