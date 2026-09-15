@@ -19,8 +19,6 @@ if (Test-Path -LiteralPath (Join-Path $scriptRoot '.git')) {
     if ($LASTEXITCODE) { throw 'fast-forward-only update failed' }
     $fullSha = (git -C $scriptRoot rev-parse HEAD).Trim()
 } else {
-    # Codex's documented API-transport workspace has no .git metadata. Build an
-    # isolated runtime from exact remote blobs; never trust or overwrite the mirror.
     $fullSha = (gh api "repos/$repo/git/ref/heads/$branch" --jq .object.sha).Trim()
     $commit = gh api "repos/$repo/git/commits/$fullSha" | ConvertFrom-Json
     $rootTree = (gh api "repos/$repo/git/trees/$($commit.tree.sha)" | ConvertFrom-Json).tree
@@ -53,10 +51,6 @@ if (Test-Path -LiteralPath (Join-Path $scriptRoot '.git')) {
 
 $shortSha = $fullSha.Substring(0, 7)
 $marker = "CURATION-V1-build-$shortSha"
-
-# Keep a stable browser origin so localStorage can reopen the last project across
-# launcher restarts. Only stop the process recorded by our previous launcher and
-# only when it is the same scoped Python runtime; never kill an unrelated process.
 $recordPath = Join-Path $scriptRoot '.curation-acceptance-server.json'
 if (Test-Path -LiteralPath $recordPath -PathType Leaf) {
     try {
@@ -68,9 +62,7 @@ if (Test-Path -LiteralPath $recordPath -PathType Leaf) {
                 Wait-Process -Id $oldProcess.Id -Timeout 5 -ErrorAction SilentlyContinue
             }
         }
-    } catch {
-        Write-Warning "Previous acceptance server cleanup skipped: $($_.Exception.Message)"
-    }
+    } catch { Write-Warning "Previous acceptance server cleanup skipped: $($_.Exception.Message)" }
 }
 
 $port = 8765
@@ -80,10 +72,15 @@ catch { throw "Port 8765 is already in use by an unrelated process. Close it, th
 finally { $listener.Stop() }
 
 $previousToken = $env:RAMBLA_BUILD_TOKEN
+$previousVertical = $env:RAMBLA_ENABLE_VERTICAL_SOCIAL
 $env:RAMBLA_BUILD_TOKEN = $shortSha
+$env:RAMBLA_ENABLE_VERTICAL_SOCIAL = '1'
 try {
     $process = Start-Process -FilePath $runtime -ArgumentList '-m','uvicorn','backend.app.debug_server:app','--host','127.0.0.1','--port',"$port" -WorkingDirectory $workRoot -WindowStyle Hidden -PassThru
-} finally { $env:RAMBLA_BUILD_TOKEN = $previousToken }
+} finally {
+    $env:RAMBLA_BUILD_TOKEN = $previousToken
+    $env:RAMBLA_ENABLE_VERTICAL_SOCIAL = $previousVertical
+}
 $health = "http://127.0.0.1:$port/health"
 $stamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 $url = "http://127.0.0.1:$port/curation?build=$shortSha&ts=$stamp"
@@ -100,17 +97,13 @@ $record | ConvertTo-Json | Set-Content -LiteralPath $recordPath -Encoding utf8
 $record | Format-List
 Write-Output "OPEN MANUALLY: $url"
 
-# Browser startup is convenience only. The verified server and recovery record
-# remain authoritative even if a browser executable crashes or cannot start.
 $opened = $false
 try {
     $browser = Start-Process $url -PassThru -ErrorAction Stop
     Start-Sleep -Milliseconds 750
     if ($browser.HasExited -and $browser.ExitCode -ne 0) { throw "Default browser exited with code $($browser.ExitCode)" }
     $opened = $true
-} catch {
-    Write-Warning "Default browser failed: $($_.Exception.Message)"
-}
+} catch { Write-Warning "Default browser failed: $($_.Exception.Message)" }
 if (-not $opened) {
     $edgeCandidates = @(
         (Get-Command msedge.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
