@@ -11,6 +11,8 @@ from .retrieval_quality import metadata_quality,expand_queries
 from .video_preview import materialize_clip,download_preview_proxy,probe_preview
 from .media_quality import perceptual_hash,diverse_candidates
 
+QUALITY_VERSION='clip-quality-9'
+
 
 def temporal_starts(duration,provider):
     if duration<=3.5:return [0.0]
@@ -50,7 +52,7 @@ def _frame_samples(clip):
 async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_duration,orientation,retrieval_intent=None,**ignored):
     output={'beat_id':beat_id,'queries':queries,'candidates':[],'rejected_candidates':[],'errors':[],
         'search_attempts':[],'preview_cache_hits':0,'selected_cache_hit':False,
-        'proposals':{'proposal_A':None,'proposal_B':None,'proposal_C':None},'quality_version':'clip-quality-8'}
+        'proposals':{'proposal_A':None,'proposal_B':None,'proposal_C':None},'quality_version':QUALITY_VERSION}
     def emit(message,**data):
         callback=getattr(engine,'event_callback',None)
         if callback:callback('online_search',None,message,slot_id=beat_id,**data)
