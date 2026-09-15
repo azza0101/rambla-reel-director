@@ -42,7 +42,7 @@ async def source_images(chunks,output,plan,ranker,client_id,*,sources=None,fetch
             response=await client.get(url);response.raise_for_status();return response.content
     for index,chunk in enumerate(chunks):
         bid=chunk['id']; beat=plan['chunks'][bid]; cross=other_media_history(output,'video',bid)
-        row={'status':'searched','visual_action':beat.get('visual_action','BROLL'),'candidates':[],'rejected_candidates':[],
+        row={'quality_version':VERSION,'status':'searched','visual_action':beat.get('visual_action','BROLL'),'candidates':[],'rejected_candidates':[],
             'search_attempts':[],'queries':[q for s in beat['shots'] for q in s['image_queries']],'raw_count':0,'accepted_count':0,'errors':[],'active_providers':[]}
         result['chunks'][bid]=row
         counts={'raw':0,'hd':0,'preview':0,'preview_failed':0,'rejected':0,'duplicates':0,'requests_failed':0}
@@ -51,7 +51,7 @@ async def source_images(chunks,output,plan,ranker,client_id,*,sources=None,fetch
             row.update(status='not_requested',zero_result_reason=row['visual_action']);continue
         old=cached.get('chunks',{}).get(bid,{})
         if cached.get('quality_signature')==signature and old.get('candidates') and all(Path(c.get('preview_path','missing')).is_file() for c in old['candidates']):
-            row.update(old);row['candidates'],n=diverse_candidates(old['candidates'],history+cross,limit=4)
+            row.update(old);row['quality_version']=VERSION;row['candidates'],n=diverse_candidates(old['candidates'],history+cross,limit=4)
             row['accepted_count']=len(row['candidates']);row['cache_status']='reused';history.extend(row['candidates']);result['duplicates_rejected']+=n;result['cache_reused_chunks']+=1;continue
         result['retried_chunks']+=1
         for shot in beat['shots']:
