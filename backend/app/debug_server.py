@@ -388,7 +388,9 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
         saved = project_selection_store().load()
         return {
             "project_id": project_id,
-            "chunks": [{"id": row.chunk_id, "text": row.text, "assets": [
+            "chunks": [{"id": row.chunk_id, "text": row.text,
+                "error": any(item.preview_error for item in (*row.video_candidates, *row.image_candidates)),
+                "assets": [
                 {"asset_id": item.asset_id, "chunk_id": item.chunk_id, "kind": item.kind,
                  "provider": item.provider, "title": item.title, "rights_state": item.rights_state,
                  "orientation": item.orientation,
