@@ -37,6 +37,19 @@ def _direct_media_url(url,provider):
     return media
 
 
+# Compatibility boundary retained for the proven normal-YouTube bounded proxy
+# contract. New providers use the generic helpers below.
+@lru_cache(maxsize=64)
+def _youtube_url(url):
+    return _direct_media_url(url,'youtube')
+
+
+def _youtube_clip(url,directory,identity,start):
+    directory.mkdir(parents=True,exist_ok=True)
+    with range_media(_youtube_url(url)) as local_source:
+        return materialize_clip(local_source,directory,identity,start_seconds=start,streaming=True)
+
+
 def _range_clip(url,directory,identity,start,provider):
     directory.mkdir(parents=True,exist_ok=True)
     key=hashlib.sha256((identity+'|range-preview-v3|'+str(start)).encode()).hexdigest()[:24]
@@ -48,8 +61,7 @@ def _range_clip(url,directory,identity,start,provider):
             subprocess.run(['ffmpeg','-v','error','-y','-ss','1','-i',str(cached),'-frames:v','1',str(poster)],check=True,capture_output=True,timeout=20)
         return {'preview_path':str(cached),'poster_path':str(poster),'keyframe_path':str(poster),'preview_status':'ready','preview_duration':facts['duration'],'preview_mime':facts['mime'],'source_start_seconds':start,'source_end_seconds':start+facts['duration']}
     with range_media(_direct_media_url(url,provider)) as local_source:
-        clip=materialize_clip(local_source,directory,identity,start_seconds=start,streaming=True)
-    return clip
+        return materialize_clip(local_source,directory,identity,start_seconds=start,streaming=True)
 
 
 def _section_clip(url,directory,identity,start,provider):
@@ -73,7 +85,9 @@ def _section_clip(url,directory,identity,start,provider):
 
 
 def _social_clip(url,directory,identity,start,provider):
-    if provider in {'youtube','youtube_shorts'}:
+    if provider=='youtube':
+        return _youtube_clip(url,directory,identity,start)
+    if provider=='youtube_shorts':
         return _range_clip(url,directory,identity,start,provider)
     if provider in {'tiktok','instagram'}:
         return _section_clip(url,directory,identity,start,provider)
@@ -113,9 +127,7 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
             drain=getattr(source,'drain_vertical_attempts',None)
             if callable(drain):
                 for extra in drain():
-                    extra=dict(extra)
-                    extra.setdefault('query',query);extra.setdefault('hits',0)
-                    extra['expanded']=query not in queries
+                    extra=dict(extra);extra.setdefault('query',query);extra.setdefault('hits',0);extra['expanded']=query not in queries
                     output['search_attempts'].append(extra)
                     if extra.get('error'):
                         output['errors'].append({'provider':extra.get('provider'),'code':'provider_request_failed','error_type':extra.get('error')})
@@ -133,8 +145,7 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
             asset_id=f'{candidate.provider}:{candidate.provider_id}'
             meta,contradictions,missing,generic=metadata_quality(intent,candidate.title+' '+candidate.description)
             if candidate.provider in VERTICAL_PROVIDERS and candidate.orientation!='portrait':
-                output['rejected_candidates'].append({'id':asset_id,'source':candidate.provider,'source_url':candidate.source_page,'matched_query':candidate.query,'score':0,'quality_reasons':['vertical-social candidate is not portrait']})
-                continue
+                output['rejected_candidates'].append({'id':asset_id,'source':candidate.provider,'source_url':candidate.source_page,'matched_query':candidate.query,'score':0,'quality_reasons':['vertical-social candidate is not portrait']});continue
             try: preview=await engine.cache.materialize_preview(candidate)
             except Exception as exc:
                 output['errors'].append({'provider':candidate.provider,'code':'poster_failed','error_type':type(exc).__name__});continue
@@ -148,22 +159,18 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
                 'path':str(preview.path),'preview_path':str(preview.path),'poster_path':str(preview.path),'keyframe_path':str(preview.path),
                 'kind':'image','preview_status':'preview_pending','quality_state':'source_found','score':round(meta*.6,4),
                 'source_start_seconds':None,'source_end_seconds':None,'clip_verified':False,'selected_full_download':False}
-            duration=float(candidate.duration)
-            starts=temporal_starts(duration,candidate.provider)
-            measured=[]
+            duration=float(candidate.duration);starts=temporal_starts(duration,candidate.provider);measured=[]
             for start in starts:
                 emit('Materializing bounded clip',provider=candidate.provider,query=candidate.query,source_start_seconds=start,source_end_seconds=start+3.5)
                 try:
                     folder=Path(preview.path).parent/'quality-clips'
                     if candidate.provider=='pexels':
                         clip=await asyncio.to_thread(materialize_clip,candidate.preview_rendition_url or candidate.selected_rendition_url,folder,asset_id,start_seconds=start)
-                    else:
-                        clip=await asyncio.to_thread(_social_clip,candidate.source_page,folder,asset_id,start,candidate.provider)
+                    else:clip=await asyncio.to_thread(_social_clip,candidate.source_page,folder,asset_id,start,candidate.provider)
                     frames=await asyncio.to_thread(_frame_samples,clip)
                     frame_rows=[{**base,**clip,'id':asset_id+f':frame:{i}','kind':'video','path':clip['preview_path'],'keyframe_path':frame} for i,frame in enumerate(frames)]
                     emit('Ranking actual clip frames',provider=candidate.provider,query=candidate.query,frames=len(frames))
-                    scored=engine.ranker.rank(intent,frame_rows)
-                    score=sum(r['score'] for r in scored)/max(1,len(scored))
+                    scored=engine.ranker.rank(intent,frame_rows);score=sum(r['score'] for r in scored)/max(1,len(scored))
                     verified=len(scored)==len(frames) and bool(scored) and all(r.get('quality_state') in {'accepted','needs_review'} for r in scored)
                     row={**base,**clip,'kind':'video','score':round(score,4),'frame_scores':[r['score'] for r in scored],
                         'embedding_score':sum(r['embedding_score'] for r in scored)/len(scored) if scored and all(r.get('embedding_score') is not None for r in scored) else None,
@@ -180,13 +187,10 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
                 best=max(measured,key=lambda r:(r['clip_verified'],r['score']))
                 if best['score']>=.50 and best['clip_verified']:accepted.append(best)
                 else:output['rejected_candidates'].append({k:best.get(k) for k in ('id','source','source_url','matched_query','score','frame_scores','source_start_seconds','source_end_seconds','quality_reasons')})
-            else:
-                pending.append(base)
+            else:pending.append(base)
             if len(accepted)>=3:break
         accepted,_=diverse_candidates(sorted(accepted,key=lambda r:-r['score']),[],limit=3)
-        output['candidates'].extend(accepted[:3])
-        output.setdefault('discovery_sources',[]).extend(pending)
+        output['candidates'].extend(accepted[:3]);output.setdefault('discovery_sources',[]).extend(pending)
     output['eligible_candidate_count']=sum(c.get('clip_verified',False) for c in output['candidates'])
-    output['raw_result_count']=sum(r['hits'] for r in output['search_attempts'])
-    output['ranking_warning']=getattr(engine.ranker,'warning',None)
+    output['raw_result_count']=sum(r['hits'] for r in output['search_attempts']);output['ranking_warning']=getattr(engine.ranker,'warning',None)
     return output
