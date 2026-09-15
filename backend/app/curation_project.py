@@ -26,6 +26,7 @@ class GuideAudioInfo:
     path: str
     mode: str
     source_signature: str
+    signature: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +35,12 @@ class CurationProject:
     name: str
     source_video: SourceVideoInfo | None = None
     guide_audio: GuideAudioInfo | None = None
+
+    @property
+    def analysis_signature(self) -> str:
+        source = self.source_video.signature if self.source_video else ""
+        guide = self.guide_audio.signature if self.guide_audio else ""
+        return hashlib.sha256(f"{source}|{guide}".encode()).hexdigest()
 
 
 class ProjectStore:
@@ -72,7 +79,8 @@ class ProjectStore:
             return project.guide_audio
         target.parent.mkdir(parents=True, exist_ok=True)
         command_runner(["ffmpeg", "-y", "-i", project.source_video.path, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(target)])
-        guide = GuideAudioInfo(str(target), "original", project.source_video.signature)
+        signature = hashlib.sha256(f"original|{project.source_video.signature}".encode()).hexdigest()
+        guide = GuideAudioInfo(str(target), "original", project.source_video.signature, signature)
         self._save(CurationProject(project.project_id, project.name, project.source_video, guide))
         return guide
 
@@ -98,7 +106,9 @@ class ProjectStore:
                 handle.write(chunk)
         target = source.parent / "guide-audio.wav"
         command_runner(["ffmpeg", "-y", "-i", str(source), "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(target)])
-        guide = GuideAudioInfo(str(target), "external", project.source_video.signature if project.source_video else "")
+        stat = source.stat()
+        signature = hashlib.sha256(f"external|{source.name}|{stat.st_size}|{stat.st_mtime_ns}".encode()).hexdigest()
+        guide = GuideAudioInfo(str(target), "external", project.source_video.signature if project.source_video else "", signature)
         self._save(CurationProject(project.project_id, project.name, project.source_video, guide))
         return guide
 

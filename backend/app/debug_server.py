@@ -322,7 +322,11 @@ def _project_payload(project: CurationProject) -> dict[str, Any]:
             "height": project.source_video.height,
             "has_audio": project.source_video.has_audio,
         },
-        "guide_audio": None if project.guide_audio is None else {"mode": project.guide_audio.mode},
+        "guide_audio": None if project.guide_audio is None else {
+            "path": project.guide_audio.path, "mode": project.guide_audio.mode,
+            "signature": project.guide_audio.signature,
+        },
+        "analysis_signature": project.analysis_signature,
         "resolve_calls": 0,
     }
 
@@ -440,6 +444,21 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
         except ValueError as exc:
             raise HTTPException(status_code=413, detail=str(exc)) from exc
         return _project_payload(project)
+
+    @app.post("/api/curation/projects/{project_id}/guide/original")
+    async def use_original_guide(project_id: str) -> dict[str, Any]:
+        load_project(project_id)
+        try:
+            projects.extract_source_audio(project_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return _project_payload(projects.load(project_id))
+
+    @app.put("/api/curation/projects/{project_id}/guide/upload")
+    async def upload_guide(project_id: str, request: Request, filename: str = "guide-audio") -> dict[str, Any]:
+        load_project(project_id)
+        projects.write_external_guide_audio(project_id, filename, [await request.body()])
+        return _project_payload(projects.load(project_id))
 
     @app.get("/api/curation/projects/{project_id}/media/{asset_id}/{variant}")
     async def get_project_media(project_id: str, asset_id: str, variant: str) -> FileResponse:
