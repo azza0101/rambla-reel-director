@@ -465,11 +465,18 @@ class LocalQwenDirectorGenerator(_LocalModel):
 
     def load(self) -> "LocalQwenDirectorGenerator":
         path = self._local_path()
-        from transformers import AutoModelForMultimodalLM, AutoProcessor
+        import torch
+        try:
+            from transformers import AutoModelForMultimodalLM, AutoProcessor
+            from transformers.models.auto.configuration_auto import CONFIG_MAPPING_NAMES
+            if 'qwen3_5' not in CONFIG_MAPPING_NAMES:
+                raise ImportError('qwen3_5 not registered')
+        except ImportError:
+            raise ModelUnavailable('Director requires an explicitly configured local Qwen3.5-compatible Transformers runtime; current runtime lacks qwen3_5 support. No automatic install or template fallback.') from None
 
         self.processor = AutoProcessor.from_pretrained(str(path), local_files_only=True)
         self.model = AutoModelForMultimodalLM.from_pretrained(
-            str(path), local_files_only=True, device_map="cuda:0", dtype="auto"
+            str(path), local_files_only=True, device_map='cuda:0', dtype=torch.bfloat16,
         )
         return self
 
@@ -483,8 +490,9 @@ class LocalQwenDirectorGenerator(_LocalModel):
             tokenize=True,
             return_dict=True,
             return_tensors="pt",
+            enable_thinking=False,
         ).to(self.model.device)
-        output = self.model.generate(**inputs, max_new_tokens=256, do_sample=False)
+        output = self.model.generate(**inputs, max_new_tokens=1800, do_sample=False)
         text = self.processor.decode(
             output[0][inputs["input_ids"].shape[-1] :], skip_special_tokens=True
         )

@@ -45,7 +45,7 @@ class WikimediaImageSource:
     async def search(self, query: str, *, limit: int) -> list[RemoteImageCandidate]:
         params = {"action": "query", "format": "json", "generator": "search", "gsrsearch": query,
                   "gsrnamespace": 6, "gsrlimit": min(max(limit * 3, limit), 20), "prop": "imageinfo",
-                  "iiprop": "url|size|mime|mediatype|extmetadata", "iiurlwidth": 640}
+                  "iiprop": "url|size|mime|mediatype|extmetadata", "iiurlwidth": 1280}
         async with httpx.AsyncClient(transport=self.transport, timeout=10, headers={"User-Agent": "RAMBLA-Reel-Director/0.2 (https://github.com/azza0101/rambla-reel-director)"}) as client:
             response = await client.get(self.endpoint, params=params)
         if response.status_code >= 400:
@@ -88,7 +88,7 @@ class PexelsPhotoSource:
         output = []
         for rank, row in enumerate(response.json().get("photos", [])):
             src = row.get("src") or {}
-            thumb, full = src.get("medium"), src.get("original")
+            thumb, full = src.get("large2x") or src.get("large") or src.get("medium"), src.get("original")
             if not thumb or not full:
                 continue
             width, height = int(row.get("width") or 0), int(row.get("height") or 0)
@@ -96,6 +96,36 @@ class PexelsPhotoSource:
                 str(row.get("alt") or "Pexels photo"), "", thumb, full, width, height,
                 _orientation(width, height), "provider_stock_terms", rank))
         return output[:limit]
+
+
+class GoogleImageSource:
+    """Official Custom Search JSON API for configured eligible search engines."""
+    provider_name = "google"
+    endpoint = "https://customsearch.googleapis.com/customsearch/v1"
+
+    def __init__(self, api_key: str, search_engine_id: str, *, transport=None):
+        self.api_key, self.search_engine_id, self.transport = api_key, search_engine_id, transport
+
+    async def search(self, query: str, *, limit: int) -> list[RemoteImageCandidate]:
+        if not self.api_key or not self.search_engine_id:
+            raise ProviderError('google', 'credential_required', 'Google image search is not configured')
+        try:
+            async with httpx.AsyncClient(transport=self.transport, timeout=10) as client:
+                response = await client.get(self.endpoint, params={'key':self.api_key, 'cx':self.search_engine_id, 'q':query, 'searchType':'image', 'imgSize':'xlarge', 'num':min(limit,10), 'safe':'active'})
+            response.raise_for_status()
+            payload = response.json()
+        except Exception:
+            raise ProviderError('google', 'request_failed', 'Google image search failed') from None
+        rows = []
+        import hashlib
+        for rank, item in enumerate(payload.get('items', [])):
+            meta = item.get('image', {})
+            full, page = item.get('link'), meta.get('contextLink')
+            if not full or not page:
+                continue
+            width, height = int(meta.get('width', 0)), int(meta.get('height', 0))
+            rows.append(RemoteImageCandidate('google', hashlib.sha256(full.encode()).hexdigest()[:20], query, page, item.get('title', ''), item.get('snippet', ''), full, full, width, height, _orientation(width,height), 'review_required', rank))
+        return rows[:limit]
 
 
 async def search_image_candidates(query: str, *, sources: list[ImageSource], per_source_limit: int = 6) -> tuple[list[RemoteImageCandidate], list[dict[str, str]]]:

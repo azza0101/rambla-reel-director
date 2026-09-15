@@ -1,0 +1,14 @@
+[
+  {
+    "id": "cybersecurity-0",
+    "text": "Una password lunga non basta se la riusi su tutti i siti.",
+    "start": 0,
+    "end": 4
+  },
+  {
+    "id": "cybersecurity-1",
+    "text": "Attiva l'autenticazione a due fattori e controlla il mittente prima di aprire allegati.",
+    "start": 4,
+    "end": 8
+  }
+]

@@ -66,6 +66,7 @@ class YouTubeRemoteCandidate:
     source_duration: float
     source_class: str = "CLOSE_SEMANTIC_EDITORIAL"
     source_authenticity: float | None = None
+    preview_rendition_url: str | None = None
 
 
 def _orientation(width: int, height: int) -> str:

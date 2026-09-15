@@ -12,6 +12,9 @@ import asyncio
 from dataclasses import asdict
 from typing import Any, Protocol
 
+from pathlib import Path
+from .video_preview import materialize_clip
+
 from .evidence_intent import EvidenceIntent
 from .source_strategy import SourceStrategy, plan_source_strategy
 from .asset_cache import AssetCache, CachedAsset, PreviewAsset, public_provenance
@@ -244,6 +247,15 @@ class OnlineSourcingEngine:
                 "source_duration": float(getattr(candidate, "source_duration", candidate.duration)),
                 "acquisition_mode": str(getattr(candidate, "acquisition_mode", "full_asset")),
             }
+            asset['preview_status'] = 'discovery'
+            asset['poster_path'] = str(preview.path)
+            if candidate.provider == 'pexels':
+                try:
+                    clip = await asyncio.to_thread(materialize_clip, getattr(candidate, 'preview_rendition_url', None) or candidate.selected_rendition_url, Path(preview.path).parent/'clips', asset_id)
+                    asset.update(clip)
+                    asset['kind'] = 'video'
+                except Exception:
+                    errors.append({'provider':'pexels','code':'video_preview_failed_discovery_only'})
             # Stock is intrinsically a STOCK route. Other providers may expose a
             # more precise route through the ranker/adapter; absent that, the
             # requested route remains selection context rather than fabricated
@@ -262,7 +274,12 @@ class OnlineSourcingEngine:
                 visual_route=visual_route,
             )
 
-        ranked = self.ranker.rank(clean_queries[0], assets)
+        ranked = []
+        for query in clean_queries:
+            group = [a for a in assets if a.get('query') == query]
+            if group:
+                ranked.extend(self.ranker.rank(query, group))
+        ranked.sort(key=lambda r: -float(r.get('score',0)))
         for row in ranked:
             source_asset = asset_by_id[row["id"]]
             for key in (
@@ -277,6 +294,8 @@ class OnlineSourcingEngine:
                 "source_authenticity",
             ):
                 row[key] = source_asset[key]
+            for key in ('preview_path','poster_path','preview_status','preview_duration','preview_mime','kind'):
+                if key in source_asset: row[key] = source_asset[key]
             if "route" in source_asset:
                 row.setdefault("route", source_asset["route"])
             row.setdefault("providers", {})["retrieval"] = row.get("source", "online")

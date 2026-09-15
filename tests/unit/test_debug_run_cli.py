@@ -120,7 +120,7 @@ def test_semantic_queries_remove_narration_filler_and_keep_visual_subject():
     assert all("avevo trovato" not in query for query in queries)
 
 
-def test_image_intent_inherits_nearby_editorial_context_for_abstract_phrase():
+def test_diagnostic_lexical_intent_preserves_context_without_domain_templates():
     chunks = [
         {"id": "chunk-1", "text": "Possiamo chiamarlo turismo sostenibile."},
         {"id": "chunk-2", "text": "Per arrivarci prendiamo tre voli, autobus e barche."},
@@ -128,9 +128,9 @@ def test_image_intent_inherits_nearby_editorial_context_for_abstract_phrase():
     ]
     outline = {"beats": [{"id": "chunk-3", "intent": "responsible travel choices", "broll_queries": []}]}
     intent = build_image_intent(2, chunks, outline)
-    assert intent["intent"] == "responsible travel choices versus transport carbon emissions"
-    assert 2 <= len(intent["queries"]) <= 3
-    assert "air travel carbon emissions" in intent["queries"]
+    assert intent["intent"] == "responsible travel choices"
+    assert intent["queries"] == ["punto partire"]
+    assert "tre voli" in intent["context"]
     assert all("point" not in query.casefold() for query in intent["queries"])
 
 

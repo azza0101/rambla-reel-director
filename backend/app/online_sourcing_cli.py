@@ -26,7 +26,7 @@ from .qwen_stack import LocalQwenEmbedder, QwenConfig, QwenMultimodalRanker
 from .source_strategy import plan_source_strategy
 from .taste_profile import TasteContext
 from .visual_routing import plan_visual_route
-from .visual_planner import apply_visual_plan_to_outline, load_or_create_visual_plan, merge_visual_diagnostics, persist_visual_plan
+from .visual_planner import apply_visual_plan_to_outline, ensure_local_visual_plan, merge_visual_diagnostics, persist_visual_plan
 from .youtube_source import YouTubeOnlineSourceAdapter, YouTubeSource
 
 
@@ -164,6 +164,22 @@ async def _source_outline(
             return result
         tasks.append(source_with_progress())
     results = await asyncio.gather(*tasks)
+    if any(beat.get('visual_plan') for beat in outline['beats']):
+        from .media_quality import diverse_candidates
+        history = []
+        for result in results:
+            candidates = list(result.get('candidates') or [])
+            retained, removed = diverse_candidates(candidates, history, limit=3)
+            history.extend(retained)
+            result['candidates'] = retained
+            result['duplicates_rejected'] = removed
+            result['raw_result_count'] = len(candidates) + len(result.get('rejected_candidates') or [])
+            valid = {c['id'] for c in retained}
+            for key in ('proposal_A','proposal_B','proposal_C'):
+                proposal = (result.get('proposals') or {}).get(key)
+                if isinstance(proposal,dict) and proposal.get('id') not in valid:
+                    result['proposals'][key] = None
+
 
     coverage_by_beat: dict[str, list[dict[str, Any]]] = {}
     candidate_by_beat_and_id: dict[str, dict[str, dict[str, Any]]] = {}
@@ -465,7 +481,7 @@ def _real_engine(
         ranker=ranker,
         max_results_per_query=max_candidates,
         max_preview_candidates=max_candidates,
-        download_selected=True,
+        download_selected=False,
     )
 
 
@@ -491,8 +507,7 @@ def main() -> None:
     chunks = json.loads(chunks_path.read_text(encoding="utf-8"))
     stored_outline = json.loads(args.outline.read_text(encoding="utf-8"))
     embedder = LocalQwenEmbedder(QwenConfig(model_root=args.model_root, embedding_code_root=args.embedding_code_root))
-    visual_plan = load_or_create_visual_plan(chunks, stored_outline, args.output_dir, embed=embedder,
-        event_callback=lambda stage, progress, message, **data: print("RAMBLA_EVENT " + json.dumps({"stage": stage, "progress": progress, "message": message, "data": data}, ensure_ascii=False), flush=True))
+    visual_plan = ensure_local_visual_plan(chunks_path, args.outline, args.output_dir, args.model_root)
     sourcing_outline = apply_visual_plan_to_outline(stored_outline, visual_plan)
     engine = _real_engine(
         client_id=args.client_id,

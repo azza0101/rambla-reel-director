@@ -263,6 +263,8 @@ def _command(state: RunState) -> list[str]:
         command.extend(["--analysis-signature", state.analysis_signature])
     if state.stage_type and "--stage" not in command:
         command.extend(["--stage", state.stage_type])
+    if 'backend.app.debug_run_cli' in command and os.environ.get("RAMBLA_ASR_PYTHON"):
+        command[0] = os.environ["RAMBLA_ASR_PYTHON"]
     return command
 
 

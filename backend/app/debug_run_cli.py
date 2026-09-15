@@ -32,13 +32,7 @@ def _event(stage: str, progress: float, message: str, **data: Any) -> None:
     )
 
 
-def _write_json(path: Path, payload: Any) -> None:
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    temporary.replace(path)
+from .atomic_io import write_json as _write_json
 
 
 def _probe(video: Path) -> tuple[float, int]:
@@ -115,56 +109,23 @@ def _source_name(source: Any) -> str:
 
 
 def build_image_intent(index: int, chunks: list[dict[str, Any]], outline: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Build a concise English visual intent from the phrase and its narrative neighbours."""
-    current = str(chunks[index].get("text") or "").strip()
-    nearby = " ".join(str(chunks[pos].get("text") or "") for pos in range(max(0, index - 2), min(len(chunks), index + 2)))
-    beat = next((row for row in (outline or {}).get("beats", []) if str(row.get("id")) == str(chunks[index].get("id"))), {})
-    editorial = str(beat.get("intent") or "").strip()
-    folded = (nearby + " " + editorial).casefold()
-    current_folded = current.casefold()
-    transport = any(word in folded for word in ("voli", "volo", "flights", "autobus", "bus", "barche", "boats"))
-    sustainable = any(word in folded for word in ("sostenib", "sustainab", "responsib", "carbon", "emission"))
-    abstract_tokens = {word.casefold().strip(".,;:!?") for word in current.split()}
-    abstract = "punto" in abstract_tokens or current.casefold().startswith(("quindi", "ma ", "però", "pero"))
-    if any(word in current_folded for word in ("etichetta verde", "ecolo", "fingere")) or ("racconto che ci" in current_folded and not transport):
-        intent = "greenwashing claims versus measurable sustainable practice"
-        queries = ["greenwashing", "eco label", "sustainable tourism advertising"]
-    elif transport and sustainable:
-        intent = "responsible travel choices versus transport carbon emissions" if abstract else "sustainable travel contradiction across multiple transport modes"
-        queries = ["air travel carbon emissions", "sustainable tourism transport footprint", "planes bus boats travel montage"]
-    elif any(word in folded for word in ("elefant", "cavalcate", "thailand")):
-        intent = "ethical elephant sanctuary evidence and animal welfare"
-        queries = ["ethical elephant sanctuary Thailand", "elephant welfare sanctuary no riding", "responsible wildlife tourism"]
-    elif any(word in folded for word in ("plastica", "orto", "galline", "strutture locali", "guide solo del posto")):
-        intent = "locally run low waste accommodation and community livelihoods"
-        queries = ["local eco lodge community", "zero waste sustainable accommodation", "local guides organic garden tourism"]
-    elif any(word in folded for word in ("intercontinentale", "bangkok", "impatto", "pianeta")):
-        intent = "long haul travel impact and practical emissions tradeoffs"
-        queries = ["air travel", "aviation carbon emissions", "sustainable travel"]
-    elif any(word in folded for word in ("sfrutta", "persone o animali", "impoverisce", "territori")):
-        intent = "ethical tourism protecting local communities and animal welfare"
-        queries = ["ethical tourism local communities", "responsible travel animal welfare", "community based sustainable tourism"]
-    elif any(word in folded for word in ("compromesso", "ridurre il danno", "scelte", "non dobbiamo viaggiare")):
-        intent = "responsible travel choices that reduce environmental harm"
-        queries = ["responsible travel choices", "reduce tourism environmental impact", "lower carbon sustainable journey"]
-    elif any(word in folded for word in ("preconfezionati", "commerciali", "scrivisi", "costruiamo insieme", "dm")):
-        intent = "personalized responsible travel planning with a local advisor"
-        queries = ["travel planning", "travel advisor", "custom journey"]
-    else:
-        combined = " ".join(part for part in (current if not abstract else nearby, editorial) if part)
-        queries = semantic_query_variants(combined)
-        intent = " ".join(queries) or "editorial travel context"
-    return {"intent": intent, "queries": list(dict.fromkeys(queries))[:3], "context": nearby.strip(), "editorial_intent": editorial}
+    """Diagnostic-only lexical intent; production sourcing requires a generated plan."""
+    current = str(chunks[index].get('text') or '')
+    nearby = ' '.join(str(c.get('text') or '') for c in chunks[max(0,index-1):index+2])
+    beat = next((b for b in (outline or {}).get('beats',[]) if str(b.get('id')) == str(chunks[index]['id'])),{})
+    return {'intent':beat.get('intent') or current,'queries':semantic_query_variants(current),'context':nearby,'editorial_intent':beat.get('intent','')}
 
 
 def discover_image_candidates(
     chunks: list[dict[str, Any]], output_dir: Path, *, sources: list[Any] | None = None,
     outline: dict[str, Any] | None = None, ranker: Any = None,
-    preview_fetcher: Callable[[str], Any] | None = None, relevance_floor: float = 0.12,
+    preview_fetcher: Callable[[str], Any] | None = None, relevance_floor: float = 0.30,
     client_id: str = "debug-kura", event_callback: Callable[..., None] | None = None,
     visual_plan: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Search, locally materialize and Qwen-rank images with per-chunk resumability."""
+    if sources is None and not visual_plan:
+        raise ValueError("generative visual plan required before production image sourcing")
     artifact = output_dir / "image-candidates.json"
     intents = {}
     for index, chunk in enumerate(chunks):
@@ -187,11 +148,16 @@ def discover_image_candidates(
         except (OSError, json.JSONDecodeError): cached = {"chunks": {}}
     else: cached = {"chunks": {}}
 
-    from .image_sources import PexelsPhotoSource, WikimediaImageSource, search_image_candidates
+    from .image_sources import GoogleImageSource, PexelsPhotoSource, WikimediaImageSource, search_image_candidates
+    from .media_quality import image_quality, diverse_candidates
 
     active_sources = sources if sources is not None else [WikimediaImageSource()]
     if sources is None and os.environ.get("PEXELS_API_KEY", "").strip():
         active_sources.append(PexelsPhotoSource(os.environ["PEXELS_API_KEY"]))
+
+    if sources is None and os.environ.get('GOOGLE_API_KEY') and os.environ.get('GOOGLE_CSE_ID'):
+        active_sources.append(GoogleImageSource(os.environ['GOOGLE_API_KEY'], os.environ['GOOGLE_CSE_ID']))
+    quality_signature = hashlib.sha256(json.dumps({'version':3,'intents':intents,'floor':relevance_floor,'providers':[_source_name(x) for x in active_sources],'ranker':type(ranker).__name__},sort_keys=True).encode()).hexdigest()
 
     async def fetch(url: str) -> bytes:
         if preview_fetcher is not None:
@@ -204,13 +170,15 @@ def discover_image_candidates(
     async def collect() -> dict[str, Any]:
         result: dict[str, Any] = {"schema_version": "curation-images-0.2", "chunks": {}, "errors": [], "active_providers": [_source_name(source) for source in active_sources]}
         reused = 0; retried = 0
+        history = []; duplicate_count = 0
+        result["quality_signature"] = quality_signature
         cache_root = output_dir / "image-cache"; cache_root.mkdir(parents=True, exist_ok=True)
         for index, chunk in enumerate(chunks):
             chunk_id = str(chunk["id"]); intent = intents[chunk_id]; queries = intent["queries"] or [str(chunk.get("text") or "image")]
             previous = cached.get("chunks", {}).get(chunk_id, {})
             previous_queries = previous.get("queries") or ([previous.get("query")] if previous.get("query") else [])
-            if previous.get("candidates") and previous_queries == queries:
-                row = dict(previous, cache_status="reused"); result["chunks"][chunk_id] = row; reused += 1
+            if previous.get("candidates") and previous_queries == queries and cached.get("quality_signature") == quality_signature and all(Path(c.get("preview_path") or "missing").is_file() for c in previous["candidates"]):
+                row = dict(previous, cache_status="reused"); row["candidates"], removed = diverse_candidates(row["candidates"], history, limit=4); history.extend(row["candidates"]); duplicate_count += removed; result["chunks"][chunk_id] = row; reused += 1
                 if event_callback: event_callback("image_search", 100 * (index + 1) / max(1, len(chunks)), "Image chunk reused", chunk_id=chunk_id, **{key: row.get(key) for key in ("raw_count", "accepted_count", "active_providers")})
                 continue
             retried += 1; gathered = {}; errors = []
@@ -218,11 +186,15 @@ def discover_image_candidates(
                 query: shot for shot in intent.get("shots", []) for query in shot.get("image_queries", [])
             }
             for query in queries:
+                if event_callback: event_callback("image_search",100*index/max(1,len(chunks)),"Searching images",chunk_id=chunk_id,query=query,providers=result["active_providers"])
                 rows, query_errors = await search_image_candidates(query, sources=active_sources, per_source_limit=5)
                 errors.extend({"query": query, **error} for error in query_errors)
                 for candidate in rows: gathered.setdefault((candidate.provider, candidate.provider_id), candidate)
             materialized = []
             for candidate in gathered.values():
+                if max(candidate.width,candidate.height) < 1024 or min(candidate.width,candidate.height) < 480 or candidate.width*candidate.height < 500_000:
+                    errors.append({'provider':candidate.provider,'code':'image_dimensions_rejected'})
+                    continue
                 suffix = Path(candidate.thumbnail_url.split("?", 1)[0]).suffix.lower()
                 if suffix not in {".jpg", ".jpeg", ".png", ".webp"}: suffix = ".jpg"
                 path = cache_root / f"{hashlib.sha256((candidate.provider + ':' + candidate.provider_id).encode()).hexdigest()[:20]}{suffix}"
@@ -232,16 +204,17 @@ def discover_image_candidates(
                         preview_path = str(path)
                     else:
                         preview_path = None
+                    quality = image_quality(path) if preview_path else {}
                     shot = query_to_shot.get(candidate.query, {})
-                    materialized.append({**asdict(candidate), "id": f"{candidate.provider}:{candidate.provider_id}", "client_id": client_id, "path": preview_path or candidate.thumbnail_url, "preview_path": preview_path, "source": candidate.provider, "description": candidate.description or candidate.title, "shot_id": shot.get("shot_id"), "shot_description": shot.get("description")})
+                    materialized.append({**asdict(candidate), **quality, "id": f"{candidate.provider}:{candidate.provider_id}", "client_id": client_id, "path": preview_path or candidate.thumbnail_url, "preview_path": preview_path, "source": candidate.provider, "description": candidate.description or candidate.title, "shot_id": shot.get("shot_id"), "shot_description": shot.get("description")})
                 except Exception as exc:
-                    errors.append({"query": candidate.query, "provider": candidate.provider, "code": "preview_error", "message": str(exc)})
+                    errors.append({"query": candidate.query, "provider": candidate.provider, "code": "preview_error", "message": type(exc).__name__})
             originals = {item["id"]: item for item in materialized}
             ranked_groups: list[list[dict[str, Any]]] = []
             shot_rows = intent.get("shots") or [{"shot_id": None, "description": intent["intent"]}]
             for shot in shot_rows:
                 group = [item for item in materialized if item.get("shot_id") == shot.get("shot_id")] if intent.get("shots") else materialized
-                ranking_intent = f"Concrete shot: {shot.get('description')}. Editorial use: {intent['intent']}. Avoid: {', '.join(intent.get('avoid', []))}"
+                ranking_intent = str(shot.get("description") or intent["intent"])
                 ranked = ranker.rank(ranking_intent, group) if ranker is not None else [dict(item, score=1.0, embedding_score=None, reason="provider order; Qwen ranker unavailable") for item in group]
                 accepted_group = []
                 for ranked_row in ranked:
@@ -252,17 +225,20 @@ def discover_image_candidates(
                 ranked_groups.append(accepted_group)
             accepted = [group[0] for group in ranked_groups if group]
             remainder = sorted((candidate for group in ranked_groups for candidate in group[1:]), key=lambda item: (-float(item.get("score", 0)), str(item.get("id"))))
-            accepted = (accepted + remainder)[:4]
+            accepted, removed = diverse_candidates(accepted + remainder, history, limit=4)
+            duplicate_count += removed; history.extend(accepted)
             zero_reason = None
             if not gathered: zero_reason = "0 provider results" if not errors else "provider search failed"
-            elif not materialized: zero_reason = "all previews failed"
-            elif not accepted: zero_reason = f"all candidates below relevance floor {relevance_floor:.2f}"
+            elif not materialized: zero_reason = "no usable HD previews"
+            elif not accepted: zero_reason = f"no unique candidates above relevance floor {relevance_floor:.2f}"
             row = {"status": "searched", "cache_status": "refreshed", "intent": intent["intent"], "context": intent["context"], "editorial_function": intent.get("editorial_function"), "subtext": intent.get("subtext"), "visual_mode": intent.get("visual_mode"), "shots": intent.get("shots", []), "avoid": intent.get("avoid", []), "planner_provider": intent.get("planner_provider"), "planning_score": intent.get("planning_score"), "queries": queries, "query": queries[0], "active_providers": result["active_providers"], "raw_count": len(gathered), "accepted_count": len(accepted), "zero_result_reason": zero_reason, "errors": errors, "candidates": accepted}
             result["chunks"][chunk_id] = row; result["errors"].extend({"chunk_id": chunk_id, **error} for error in errors)
             result["cache_reused_chunks"] = reused; result["retried_chunks"] = retried
             _write_json(artifact, result)
             if event_callback: event_callback("image_search", 100 * (index + 1) / max(1, len(chunks)), "Image chunk searched", chunk_id=chunk_id, query=queries, providers=row["active_providers"], raw=row["raw_count"], accepted=row["accepted_count"], zero_reason=zero_reason, errors=errors)
         result["cache_reused_chunks"] = reused; result["retried_chunks"] = retried
+        result["duplicates_rejected"] = duplicate_count
+        result["cross_chunk_duplicate_rate"] = 0.0
         return result
 
     payload = asyncio.run(collect())
@@ -279,11 +255,15 @@ def run_asr_stage(
     timeline_fps: int | None = None,
     progress_callback: Callable[[dict[str, Any], float], None] | None = None,
 ) -> tuple[dict[str, Any], str]:
-    if model_factory is None:
+    real_runtime = model_factory is None
+    if real_runtime:
         from faster_whisper import WhisperModel
 
         model_factory = WhisperModel
     try:
+        if real_runtime and os.name == "nt":
+            import ctypes
+            ctypes.WinDLL("cublas64_12.dll")
         model = model_factory(
             model_size_or_path=model_name,
             device="cuda",
@@ -291,11 +271,18 @@ def run_asr_stage(
             download_root=str(cache_dir),
         )
         mode = "cuda/float16"
+        if real_runtime:
+            import numpy as np
+            preflight_segments, _ = model.transcribe(np.zeros(16000,dtype=np.float32),language='it',vad_filter=False)
+            list(preflight_segments)
+            _event('asr',1,'ASR CUDA preflight passed',mode=mode,runtime=sys.executable)
         segments, info = model.transcribe(
             str(video), language="it", word_timestamps=True, vad_filter=True
         )
         rows = _consume_segments(segments, info, timeline_fps, progress_callback)
-    except Exception:
+    except Exception as exc:
+        if real_runtime:
+            _event('asr',1,'CUDA ASR unavailable; using CPU',mode='cpu/int8',reason=type(exc).__name__,runtime=sys.executable)
         model = model_factory(
             model_size_or_path=model_name,
             device="cpu",
@@ -557,6 +544,12 @@ def main() -> None:
     parser.add_argument("--client-id", default="debug-kura")
     args = parser.parse_args()
 
+    from .project_lock import project_stage_lock
+    with project_stage_lock(args.output_dir.resolve()):
+        _run_stages(args)
+
+
+def _run_stages(args):
     video = args.video.resolve()
     output = args.output_dir.resolve()
     if not video.is_file():

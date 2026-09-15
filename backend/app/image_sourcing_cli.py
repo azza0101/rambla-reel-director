@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .debug_run_cli import discover_image_candidates, _event
 from .qwen_stack import LocalQwenEmbedder, QwenConfig, QwenMultimodalRanker
-from .visual_planner import load_or_create_visual_plan, merge_visual_diagnostics, persist_visual_plan
+from .visual_planner import ensure_local_visual_plan, merge_visual_diagnostics, persist_visual_plan
 
 
 def main() -> None:
@@ -19,12 +19,12 @@ def main() -> None:
     parser.add_argument("--client-id", required=True)
     parser.add_argument("--model-root", type=Path, required=True)
     parser.add_argument("--embedding-code-root", type=Path)
-    parser.add_argument("--relevance-floor", type=float, default=0.12)
+    parser.add_argument("--relevance-floor", type=float, default=0.30)
     args = parser.parse_args()
     chunks = json.loads(args.chunks.read_text(encoding="utf-8"))
     outline = json.loads(args.outline.read_text(encoding="utf-8"))
     embedder = LocalQwenEmbedder(QwenConfig(model_root=args.model_root, embedding_code_root=args.embedding_code_root))
-    visual_plan = load_or_create_visual_plan(chunks, outline, args.output_dir, embed=embedder, event_callback=_event)
+    visual_plan = ensure_local_visual_plan(args.chunks, args.outline, args.output_dir, args.model_root)
     ranker = QwenMultimodalRanker(client_id=args.client_id, embed=embedder, rerank=None, top_k=16)
     payload = discover_image_candidates(
         chunks, args.output_dir, outline=outline, ranker=ranker, client_id=args.client_id,

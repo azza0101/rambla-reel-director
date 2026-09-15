@@ -38,6 +38,7 @@ class RemoteCandidate:
     provider_rank: int
     source_class: str = "GENERIC_STOCK"
     source_authenticity: float | None = None
+    preview_rendition_url: str | None = None
 
 
 class ProviderError(RuntimeError):
@@ -305,6 +306,7 @@ class PexelsSource:
             orientation=orientation,
             preview_url=preview_url,
             selected_rendition_url=rendition["link"],
+            preview_rendition_url=min((f for f in video.get('video_files',[]) if isinstance(f,dict) and 'mp4' in str(f.get('file_type','')) and _network_url(f.get('link')) and _positive_int(f.get('width'))>=480),key=lambda f:_positive_int(f.get('width'))*_positive_int(f.get('height')),default=rendition)['link'],
             rendition_width=rendition["width"],
             rendition_height=rendition["height"],
             rights_state="provider_stock_terms",

@@ -114,7 +114,8 @@ async def test_source_beat_dedupes_previews_and_qwen_ranks_local_paths(tmp_path)
     assert source.calls == ["query one", "query two"]
     assert source.orientations == [None, None]
     assert sorted(cache.calls) == ["1", "2", "3"]
-    assert len(seen_embed_inputs) == 1
+    assert len(seen_embed_inputs) == 2
+    assert [x[0] for x in seen_embed_inputs] == ["query one", "query two"]
     assert seen_embed_inputs[0][0] == "query one"
     assert all(Path(path).is_file() for path in seen_embed_inputs[0][1:])
     assert [row["provider_id"] for row in result["candidates"]] == ["2", "1", "3"]
@@ -128,7 +129,7 @@ async def test_source_beat_dedupes_previews_and_qwen_ranks_local_paths(tmp_path)
     assert result["proposals"]["proposal_A"]["id"] != result["proposals"]["proposal_B"]["id"]
     assert "crop_score" in result["proposals"]["proposal_A"]
     assert "qwen_score" in result["proposals"]["proposal_A"]
-    assert result["errors"] == []
+    assert result["errors"] == [{"provider":"pexels","code":"video_preview_failed_discovery_only"}]
 
 
 @pytest.mark.asyncio

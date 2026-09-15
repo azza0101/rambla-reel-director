@@ -14,7 +14,9 @@ from backend.app.debug_run_cli import (
 )
 
 
-def test_image_discovery_retries_zero_cache_and_persists_qwen_ranked_coverage():
+def test_image_discovery_retries_zero_cache_and_persists_qwen_ranked_coverage(monkeypatch):
+    import backend.app.media_quality as quality
+    monkeypatch.setattr(quality, "image_quality", lambda p: {"content_sha256":p.stem})
     from backend.app.image_sources import RemoteImageCandidate
 
     class Source:
@@ -22,7 +24,7 @@ def test_image_discovery_retries_zero_cache_and_persists_qwen_ranked_coverage():
         calls = []
         async def search(self, query, *, limit):
             self.calls.append(query)
-            return [RemoteImageCandidate("wikimedia", str(i), query, f"https://example.test/{i}", f"Candidate {i}", "", f"https://example.test/{i}.jpg", f"https://example.test/{i}.jpg", 640, 360, "landscape", "known_public_license", i) for i in range(5)]
+            return [RemoteImageCandidate("wikimedia", str(i), query, f"https://example.test/{i}", f"Candidate {i}", "", f"https://example.test/{i}.jpg", f"https://example.test/{i}.jpg", 1280, 800, "landscape", "known_public_license", i) for i in range(5)]
 
     class Ranker:
         def rank(self, query, assets):
@@ -45,25 +47,29 @@ def test_image_discovery_retries_zero_cache_and_persists_qwen_ranked_coverage():
             tmp_path,
             sources=[source], ranker=Ranker(), preview_fetcher=lambda _url: b"jpeg", relevance_floor=.1,
         )
-        assert payload["chunks"]["chunk-1"]["cache_status"] == "reused"
-        retried = payload["chunks"]["chunk-2"]
+        assert payload["chunks"]["chunk-1"]["cache_status"] == "refreshed"
+        retried = payload["chunks"]["chunk-1"]
         assert retried["status"] == "searched" and retried["raw_count"] >= 5
         assert retried["accepted_count"] == 4
         assert [row["score"] for row in retried["candidates"]] == [.91, .82, .71, .6]
         assert all(row["preview_path"] for row in retried["candidates"])
-        assert payload["cache_reused_chunks"] == 1 and payload["retried_chunks"] == 1
+        assert payload["cache_reused_chunks"] == 0 and payload["retried_chunks"] == 2
+        assert payload["chunks"]["chunk-2"]["accepted_count"] == 0
+        assert "unique" in payload["chunks"]["chunk-2"]["zero_result_reason"]
     finally:
         shutil.rmtree(tmp_path)
 
 
-def test_image_discovery_searches_each_concrete_shot_and_persists_shot_ranking():
+def test_image_discovery_searches_each_concrete_shot_and_persists_shot_ranking(monkeypatch):
+    import backend.app.media_quality as quality
+    monkeypatch.setattr(quality, "image_quality", lambda p: {"content_sha256":p.stem})
     from backend.app.image_sources import RemoteImageCandidate
 
     class Source:
         provider_name = "wikimedia"
         async def search(self, query, *, limit):
             provider_id = query.split()[0]
-            return [RemoteImageCandidate("wikimedia", provider_id, query, f"https://example.test/{provider_id}", query, "", f"https://example.test/{provider_id}.jpg", f"https://example.test/{provider_id}.jpg", 640, 360, "landscape", "known_public_license", 0)]
+            return [RemoteImageCandidate("wikimedia", provider_id, query, f"https://example.test/{provider_id}", query, "", f"https://example.test/{provider_id}.jpg", f"https://example.test/{provider_id}.jpg", 1280, 800, "landscape", "known_public_license", 0)]
 
     class Ranker:
         def rank(self, query, assets):
@@ -95,7 +101,7 @@ def test_image_discovery_serializes_candidates_without_provider_credentials():
     class Source:
         async def search(self, query, *, limit):
             from backend.app.image_sources import RemoteImageCandidate
-            return [RemoteImageCandidate("wikimedia", "1", query, "https://example.test/file", "File", "", "https://example.test/t.jpg", "https://example.test/f.jpg", 640, 360, "landscape", "known_public_license", 0)]
+            return [RemoteImageCandidate("wikimedia", "1", query, "https://example.test/file", "File", "", "https://example.test/t.jpg", "https://example.test/f.jpg", 1280, 800, "landscape", "known_public_license", 0)]
 
     captured = {}
     with patch("backend.app.debug_run_cli._write_json", side_effect=lambda path, payload: captured.update(payload)):

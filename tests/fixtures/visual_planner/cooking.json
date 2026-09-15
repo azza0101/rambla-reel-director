@@ -1,0 +1,14 @@
+[
+  {
+    "id": "cooking-0",
+    "text": "Taglia la cipolla e falla soffriggere lentamente in padella.",
+    "start": 0,
+    "end": 4
+  },
+  {
+    "id": "cooking-1",
+    "text": "Aggiungi i pomodori, poi manteca la pasta con un mestolo d'acqua di cottura.",
+    "start": 4,
+    "end": 8
+  }
+]
