@@ -19,15 +19,20 @@ def test_missing_video_rows_are_not_reported_as_provider_zero_hits():
 
 
 def test_zero_provider_hits_requires_an_actual_search_attempt():
-    rows = [{"search_attempts": [{"provider": "YouTubeOnlineSourceAdapter", "query": "traveler comparing routes map", "hits": 0}], "candidates": [], "errors": []}]
+    rows = [{"quality_version": "clip-quality-9", "search_attempts": [{"provider": "YouTubeOnlineSourceAdapter", "query": "traveler comparing routes map", "hits": 0}], "candidates": [], "errors": []}]
     result = video_diagnostic(rows, "youtube")
     assert result["code"] == "zero_provider_hits"
 
 
 def test_image_zero_provider_hits_requires_an_actual_search_attempt():
-    row = {"status": "searched", "search_attempts": [{"provider": "PexelsPhotoSource", "query": "wilted basil plant", "hits": 0}], "counts": {"raw": 0, "hd": 0, "preview": 0, "rejected": 0, "duplicates": 0, "requests_failed": 0}, "candidates": []}
+    row = {"quality_version": "retrieval-quality-9", "status": "searched", "search_attempts": [{"provider": "PexelsPhotoSource", "query": "wilted basil plant", "hits": 0}], "counts": {"raw": 0, "hd": 0, "preview": 0, "rejected": 0, "duplicates": 0, "requests_failed": 0}, "candidates": []}
     result = image_diagnostic(row)
     assert result["code"] == "zero_provider_hits"
+
+
+def test_stale_image_row_is_not_presented_as_current_search_result():
+    row = {"quality_version": "retrieval-quality-8", "search_attempts": [{"provider": "PexelsPhotoSource", "query": "old query", "hits": 7}], "counts": {"raw": 7, "hd": 7, "preview": 7}, "candidates": []}
+    assert image_diagnostic(row)["code"] == "not_searched"
 
 
 def test_route_comparison_query_gets_searchable_retrieval_aliases():
