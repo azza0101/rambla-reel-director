@@ -77,6 +77,23 @@ def test_worker_preflight_names_the_unreadable_input_path():
         shutil.rmtree(root)
 
 
+def test_worker_log_filter_suppresses_only_exact_ytdlp_python_deprecation():
+    from backend.app.debug_server import suppress_worker_log_line
+    noisy = "Deprecated Feature: Support for Python version 3.10 has been deprecated. Please update to Python 3.11 or above"
+    assert suppress_worker_log_line(noisy) is True
+    assert suppress_worker_log_line("ERROR: yt-dlp provider failed") is False
+
+
+def test_staged_progress_does_not_mark_old_candidate_artifact_complete():
+    from backend.app.debug_server import ArtifactProgressTracker
+    root = _project_test_root()
+    try:
+        (root / "online-candidates.json").write_text("[]", encoding="utf-8")
+        assert ArtifactProgressTracker(root, ignore_existing=True).scan() == []
+    finally:
+        shutil.rmtree(root)
+
+
 def test_windows_winerror5_fallback_streams_real_worker_events(monkeypatch):
     import asyncio
     import backend.app.debug_server as server

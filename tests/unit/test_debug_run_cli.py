@@ -4,7 +4,7 @@ import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
-from backend.app.debug_run_cli import _consume_segments, analysis_input_signature, build_short_outline, build_video_diagnostics, editorial_artifacts_match, invalidate_stale_analysis_outputs, persist_analysis_signature, semantic_query_variants
+from backend.app.debug_run_cli import _consume_segments, analysis_input_signature, build_image_intent, build_short_outline, build_video_diagnostics, editorial_artifacts_match, invalidate_stale_analysis_outputs, persist_analysis_signature, semantic_query_variants
 
 
 def workspace_dir() -> Path:
@@ -120,6 +120,20 @@ def test_semantic_queries_remove_narration_filler_and_keep_visual_subject():
     assert all("avevo trovato" not in query for query in queries)
 
 
+def test_image_intent_inherits_nearby_editorial_context_for_abstract_phrase():
+    chunks = [
+        {"id": "chunk-1", "text": "Possiamo chiamarlo turismo sostenibile."},
+        {"id": "chunk-2", "text": "Per arrivarci prendiamo tre voli, autobus e barche."},
+        {"id": "chunk-3", "text": "Quindi, il punto non è non partire."},
+    ]
+    outline = {"beats": [{"id": "chunk-3", "intent": "responsible travel choices", "broll_queries": []}]}
+    intent = build_image_intent(2, chunks, outline)
+    assert intent["intent"] == "responsible travel choices versus transport carbon emissions"
+    assert 2 <= len(intent["queries"]) <= 3
+    assert "air travel carbon emissions" in intent["queries"]
+    assert all("point" not in query.casefold() for query in intent["queries"])
+
+
 def test_partial_asr_callback_exposes_growing_transcript():
     words = lambda text, start: [SimpleNamespace(word=text, start=start, end=start + .4)]
     segments = [
@@ -162,11 +176,13 @@ def test_independent_sourcing_stages_reuse_analysis_without_cross_calls(monkeypa
         assert (video_output / "video-sourcing.json").is_file()
 
         image_calls = []
-        monkeypatch.setattr(cli.subprocess, "run", lambda *_a, **_k: image_calls.append(True))
-        monkeypatch.setattr(cli, "discover_image_candidates", lambda chunks, output: {"chunks": {chunks[0]["id"]: {"candidates": []}}})
+        def run_images(command, check):
+            image_calls.append(command)
+            (image_output / "image-candidates.json").write_text('{"chunks":{"chunk-1":{"candidates":[]}}}', encoding="utf-8")
+        monkeypatch.setattr(cli.subprocess, "run", run_images)
         monkeypatch.setattr("sys.argv", ["debug_run_cli", "--video", str(source), "--output-dir", str(image_output), "--stage", "images"])
         cli.main()
-        assert image_calls == []
+        assert len(image_calls) == 1 and "backend.app.image_sourcing_cli" in image_calls[0]
         assert (image_output / "image-sourcing.json").is_file()
     finally:
         shutil.rmtree(root)

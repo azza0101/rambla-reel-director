@@ -8,6 +8,7 @@ import hashlib
 import inspect
 import json
 import os
+import sys
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -32,6 +33,23 @@ class AcquisitionPort(Protocol):
     def acquire(self, request: AcquisitionRequest, output_path: Path) -> Any: ...
 
 
+class _YtDlpLogger:
+    """Drop only yt-dlp's known Python 3.10 lifecycle notice."""
+    exact_notice = "Deprecated Feature: Support for Python version 3.10 has been deprecated. Please update to Python 3.11 or above"
+    def debug(self, _message: str) -> None: pass
+    def info(self, _message: str) -> None: pass
+    def warning(self, message: str) -> None:
+        if str(message).strip().rstrip(".") != self.exact_notice:
+            print(message, file=sys.stderr, flush=True)
+    def error(self, message: str) -> None:
+        print(message, file=sys.stderr, flush=True)
+
+
+def _is_python310_notice(message: str) -> bool:
+    text = str(message).strip().rstrip(".")
+    return text.removeprefix("Deprecated Feature: ") == "Support for Python version 3.10 has been deprecated. Please update to Python 3.11 or above"
+
+
 def _write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
 
@@ -46,9 +64,12 @@ def _rehash_plan(plan: dict[str, Any]) -> None:
 def _discover_youtube(query: str, limit: int, *, ydl_factory: Any = None) -> list[dict[str, Any]]:
     if ydl_factory is None:
         from yt_dlp import YoutubeDL
-
-        ydl_factory = YoutubeDL
-    options = {"quiet": True, "no_warnings": True, "skip_download": True, "extract_flat": "in_playlist"}
+        class RamblaYoutubeDL(YoutubeDL):
+            def deprecated_feature(self, message: str) -> None:
+                if not _is_python310_notice(message):
+                    super().deprecated_feature(message)
+        ydl_factory = RamblaYoutubeDL
+    options = {"quiet": True, "no_warnings": True, "skip_download": True, "extract_flat": "in_playlist", "logger": _YtDlpLogger()}
     with ydl_factory(options) as ydl:
         payload = ydl.extract_info(f"ytsearch{limit}:{query}", download=False)
     output = []
@@ -74,6 +95,7 @@ async def _source_outline(
     client_id: str,
     transcript: dict[str, Any] | None = None,
     taste_context: TasteContext | None = None,
+    event_callback: Any = None,
 ) -> tuple[
     dict[str, list[dict[str, Any]]],
     list[dict[str, Any]],
@@ -85,7 +107,12 @@ async def _source_outline(
     if not slots:
         return {}, [], {}
 
+    providers = [str(getattr(source, "provider_name", "") or type(source).__name__.replace("OnlineSourceAdapter", "").replace("Source", "")).casefold() for source in engine.sources]
+    if event_callback:
+        event_callback("coverage", 100.0, "Coverage slots planned", slots=len(slots), providers=providers)
+
     tasks = []
+    completed_count = 0
     route_by_slot: dict[str, Any] = {}
     context_by_slot: dict[str, str] = {}
     for slot in slots:
@@ -108,8 +135,7 @@ async def _source_outline(
                 "evidence_intent": intent,
                 "source_strategy": plan_source_strategy(intent, route, taste_context),
             }
-        tasks.append(
-            engine.source_beat(
+        task = engine.source_beat(
                 beat_id=slot.id,
                 client_id=client_id,
                 queries=list(slot.queries)[: engine.max_queries],
@@ -120,7 +146,22 @@ async def _source_outline(
                 orientation=None,
                 **editorial,
             )
-        )
+        async def source_with_progress(slot_value: Any = slot, task_value: Any = task) -> Any:
+            nonlocal completed_count
+            result = await task_value
+            completed_count += 1
+            completed = completed_count
+            progress = 100.0 * completed / len(slots)
+            candidates = list(result.get("candidates") or [])
+            rejected = list(result.get("rejected_candidates") or [])
+            queries = list(slot_value.queries)[: engine.max_queries]
+            if event_callback:
+                event_callback("online_search", progress, f"Slot {completed}/{len(slots)} searched", slot_id=slot_value.id, query=queries, providers=providers, raw=len(candidates) + len(rejected), accepted=len(candidates), rejected=len(rejected), errors=result.get("errors", []))
+                event_callback("qwen_final", progress, f"Slot {completed}/{len(slots)} Qwen ranked", slot_id=slot_value.id, ranked=[{"id": row.get("id"), "score": row.get("qwen_score", row.get("score"))} for row in candidates[:3]])
+                event_callback("bounded_acquisition", progress, f"Slot {completed}/{len(slots)} previews materialized", slot_id=slot_value.id, previews=sum(bool(row.get("preview_path")) for row in candidates), cache_hits=result.get("preview_cache_hits", 0))
+                event_callback("review", progress, f"Slot {completed}/{len(slots)} proposals ready", slot_id=slot_value.id, proposals=sum(isinstance((result.get("proposals") or {}).get(key), dict) for key in ("proposal_A", "proposal_B", "proposal_C")))
+            return result
+        tasks.append(source_with_progress())
     results = await asyncio.gather(*tasks)
 
     coverage_by_beat: dict[str, list[dict[str, Any]]] = {}
@@ -295,6 +336,7 @@ def run_online_from_artifacts(
     acquisition_adapter: AcquisitionPort | None = None,
     acquire_alternates: bool = False,
     taste_context: TasteContext | None = None,
+    event_callback: Any = None,
 ) -> dict[str, Any]:
     if not client_id:
         raise ValueError("client_id is required")
@@ -314,7 +356,7 @@ def run_online_from_artifacts(
     sourcing_started = time.perf_counter()
     candidate_map, sourcing_results, coverage_map = asyncio.run(
         _source_outline(outline, sourcing_engine, client_id=client_id,
-                        transcript=normalized, taste_context=taste_context)
+                        transcript=normalized, taste_context=taste_context, event_callback=event_callback)
     )
     sourcing_seconds = time.perf_counter() - sourcing_started
 
@@ -455,6 +497,7 @@ def main() -> None:
         client_id=args.client_id,
         source_frames=args.source_frames,
         sourcing_engine=engine,
+        event_callback=lambda stage, progress, message, **data: print("RAMBLA_EVENT " + json.dumps({"stage": stage, "progress": progress, "message": message, "data": data}, ensure_ascii=False), flush=True),
     )
     benchmark = json.loads(
         (args.output_dir / "online-sourcing-benchmark.json").read_text(encoding="utf-8")

@@ -8,6 +8,7 @@ from backend.app.online_assets import ProviderError
 @pytest.mark.asyncio
 async def test_wikimedia_source_normalizes_public_thumbnail():
     async def handler(request):
+        assert "rambla-reel-director" in request.headers["user-agent"].casefold()
         return httpx.Response(200, json={"query": {"pages": {"1": {
             "title": "File:Elephant.jpg", "imageinfo": [{
                 "url": "https://upload.wikimedia.org/full.jpg",

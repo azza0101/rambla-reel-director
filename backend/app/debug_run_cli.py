@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import inspect
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable
@@ -99,24 +100,66 @@ def has_editorial_artifacts(output_dir: Path) -> bool:
     ))
 
 
+def _source_name(source: Any) -> str:
+    return str(getattr(source, "provider_name", "") or type(source).__name__.replace("ImageSource", "").replace("PhotoSource", "")).casefold()
+
+
+def build_image_intent(index: int, chunks: list[dict[str, Any]], outline: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Build a concise English visual intent from the phrase and its narrative neighbours."""
+    current = str(chunks[index].get("text") or "").strip()
+    nearby = " ".join(str(chunks[pos].get("text") or "") for pos in range(max(0, index - 2), min(len(chunks), index + 2)))
+    beat = next((row for row in (outline or {}).get("beats", []) if str(row.get("id")) == str(chunks[index].get("id"))), {})
+    editorial = str(beat.get("intent") or "").strip()
+    folded = (nearby + " " + editorial).casefold()
+    current_folded = current.casefold()
+    transport = any(word in folded for word in ("voli", "volo", "flights", "autobus", "bus", "barche", "boats"))
+    sustainable = any(word in folded for word in ("sostenib", "sustainab", "responsib", "carbon", "emission"))
+    abstract_tokens = {word.casefold().strip(".,;:!?") for word in current.split()}
+    abstract = "punto" in abstract_tokens or current.casefold().startswith(("quindi", "ma ", "però", "pero"))
+    if any(word in current_folded for word in ("etichetta verde", "ecolo", "fingere")) or ("racconto che ci" in current_folded and not transport):
+        intent = "greenwashing claims versus measurable sustainable practice"
+        queries = ["greenwashing", "eco label", "sustainable tourism advertising"]
+    elif transport and sustainable:
+        intent = "responsible travel choices versus transport carbon emissions" if abstract else "sustainable travel contradiction across multiple transport modes"
+        queries = ["air travel carbon emissions", "sustainable tourism transport footprint", "planes bus boats travel montage"]
+    elif any(word in folded for word in ("elefant", "cavalcate", "thailand")):
+        intent = "ethical elephant sanctuary evidence and animal welfare"
+        queries = ["ethical elephant sanctuary Thailand", "elephant welfare sanctuary no riding", "responsible wildlife tourism"]
+    elif any(word in folded for word in ("plastica", "orto", "galline", "strutture locali", "guide solo del posto")):
+        intent = "locally run low waste accommodation and community livelihoods"
+        queries = ["local eco lodge community", "zero waste sustainable accommodation", "local guides organic garden tourism"]
+    elif any(word in folded for word in ("intercontinentale", "bangkok", "impatto", "pianeta")):
+        intent = "long haul travel impact and practical emissions tradeoffs"
+        queries = ["air travel", "aviation carbon emissions", "sustainable travel"]
+    elif any(word in folded for word in ("sfrutta", "persone o animali", "impoverisce", "territori")):
+        intent = "ethical tourism protecting local communities and animal welfare"
+        queries = ["ethical tourism local communities", "responsible travel animal welfare", "community based sustainable tourism"]
+    elif any(word in folded for word in ("compromesso", "ridurre il danno", "scelte", "non dobbiamo viaggiare")):
+        intent = "responsible travel choices that reduce environmental harm"
+        queries = ["responsible travel choices", "reduce tourism environmental impact", "lower carbon sustainable journey"]
+    elif any(word in folded for word in ("preconfezionati", "commerciali", "scrivisi", "costruiamo insieme", "dm")):
+        intent = "personalized responsible travel planning with a local advisor"
+        queries = ["travel planning", "travel advisor", "custom journey"]
+    else:
+        combined = " ".join(part for part in (current if not abstract else nearby, editorial) if part)
+        queries = semantic_query_variants(combined)
+        intent = " ".join(queries) or "editorial travel context"
+    return {"intent": intent, "queries": list(dict.fromkeys(queries))[:3], "context": nearby.strip(), "editorial_intent": editorial}
+
+
 def discover_image_candidates(
-    chunks: list[dict[str, Any]], output_dir: Path, *, sources: list[Any] | None = None
+    chunks: list[dict[str, Any]], output_dir: Path, *, sources: list[Any] | None = None,
+    outline: dict[str, Any] | None = None, ranker: Any = None,
+    preview_fetcher: Callable[[str], Any] | None = None, relevance_floor: float = 0.12,
+    client_id: str = "debug-kura", event_callback: Callable[..., None] | None = None,
 ) -> dict[str, Any]:
-    """Persist lightweight image discovery once; subsequent runner calls reuse it."""
+    """Search, locally materialize and Qwen-rank images with per-chunk resumability."""
     artifact = output_dir / "image-candidates.json"
-    query_plan = {
-        str(chunk["id"]): (semantic_query_variants(str(chunk.get("text") or "").strip()) or [str(chunk.get("text") or "").strip()])[0]
-        for chunk in chunks
-    }
+    intents = {str(chunk["id"]): build_image_intent(index, chunks, outline) for index, chunk in enumerate(chunks)}
     if artifact.is_file():
-        cached = json.loads(artifact.read_text(encoding="utf-8"))
-        cached_chunks = cached.get("chunks", {})
-        cache_matches = set(cached_chunks) == set(query_plan) and all(
-            str(cached_chunks[chunk_id].get("query") or "") == query
-            for chunk_id, query in query_plan.items()
-        )
-        if cache_matches and any(row.get("candidates") for row in cached_chunks.values()):
-            return cached
+        try: cached = json.loads(artifact.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError): cached = {"chunks": {}}
+    else: cached = {"chunks": {}}
 
     from .image_sources import PexelsPhotoSource, WikimediaImageSource, search_image_candidates
 
@@ -124,16 +167,64 @@ def discover_image_candidates(
     if sources is None and os.environ.get("PEXELS_API_KEY", "").strip():
         active_sources.append(PexelsPhotoSource(os.environ["PEXELS_API_KEY"]))
 
+    async def fetch(url: str) -> bytes:
+        if preview_fetcher is not None:
+            value = preview_fetcher(url)
+            return await value if inspect.isawaitable(value) else value
+        import httpx
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True, headers={"User-Agent": "RAMBLA-Reel-Director/0.2 (https://github.com/azza0101/rambla-reel-director)"}) as client:
+            response = await client.get(url); response.raise_for_status(); return response.content
+
     async def collect() -> dict[str, Any]:
-        result: dict[str, Any] = {"schema_version": "curation-images-0.1", "chunks": {}, "errors": []}
-        for chunk in chunks:
-            query = query_plan[str(chunk["id"])]
-            rows, errors = await search_image_candidates(query, sources=active_sources)
-            result["chunks"][str(chunk["id"])] = {
-                "query": query,
-                "candidates": [asdict(row) for row in rows],
-            }
-            result["errors"].extend({"chunk_id": str(chunk["id"]), **error} for error in errors)
+        result: dict[str, Any] = {"schema_version": "curation-images-0.2", "chunks": {}, "errors": [], "active_providers": [_source_name(source) for source in active_sources]}
+        reused = 0; retried = 0
+        cache_root = output_dir / "image-cache"; cache_root.mkdir(parents=True, exist_ok=True)
+        for index, chunk in enumerate(chunks):
+            chunk_id = str(chunk["id"]); intent = intents[chunk_id]; queries = intent["queries"] or [str(chunk.get("text") or "image")]
+            previous = cached.get("chunks", {}).get(chunk_id, {})
+            previous_queries = previous.get("queries") or ([previous.get("query")] if previous.get("query") else [])
+            if previous.get("candidates") and previous_queries == queries:
+                row = dict(previous, cache_status="reused"); result["chunks"][chunk_id] = row; reused += 1
+                if event_callback: event_callback("image_search", 100 * (index + 1) / max(1, len(chunks)), "Image chunk reused", chunk_id=chunk_id, **{key: row.get(key) for key in ("raw_count", "accepted_count", "active_providers")})
+                continue
+            retried += 1; gathered = {}; errors = []
+            for query in queries:
+                rows, query_errors = await search_image_candidates(query, sources=active_sources, per_source_limit=5)
+                errors.extend({"query": query, **error} for error in query_errors)
+                for candidate in rows: gathered.setdefault((candidate.provider, candidate.provider_id), candidate)
+            materialized = []
+            for candidate in gathered.values():
+                suffix = Path(candidate.thumbnail_url.split("?", 1)[0]).suffix.lower()
+                if suffix not in {".jpg", ".jpeg", ".png", ".webp"}: suffix = ".jpg"
+                path = cache_root / f"{hashlib.sha256((candidate.provider + ':' + candidate.provider_id).encode()).hexdigest()[:20]}{suffix}"
+                try:
+                    if ranker is not None or sources is None:
+                        if not path.is_file(): path.write_bytes(await fetch(candidate.thumbnail_url))
+                        preview_path = str(path)
+                    else:
+                        preview_path = None
+                    materialized.append({**asdict(candidate), "id": f"{candidate.provider}:{candidate.provider_id}", "client_id": client_id, "path": preview_path or candidate.thumbnail_url, "preview_path": preview_path, "source": candidate.provider, "description": candidate.description or candidate.title})
+                except Exception as exc:
+                    errors.append({"query": candidate.query, "provider": candidate.provider, "code": "preview_error", "message": str(exc)})
+            ranked = ranker.rank(intent["intent"], materialized) if ranker is not None else [dict(item, score=1.0, embedding_score=None, reason="provider order; Qwen ranker unavailable") for item in materialized]
+            accepted = []
+            originals = {item["id"]: item for item in materialized}
+            for ranked_row in ranked:
+                score = float(ranked_row.get("score", 0))
+                if score < relevance_floor: continue
+                original = originals.get(str(ranked_row.get("id")), {})
+                accepted.append({**original, "score": score, "embedding_score": ranked_row.get("embedding_score"), "rank_reason": ranked_row.get("reason"), "matched_query": original.get("query")})
+                if len(accepted) == 4: break
+            zero_reason = None
+            if not gathered: zero_reason = "0 provider results" if not errors else "provider search failed"
+            elif not materialized: zero_reason = "all previews failed"
+            elif not accepted: zero_reason = f"all candidates below relevance floor {relevance_floor:.2f}"
+            row = {"status": "searched", "cache_status": "refreshed", "intent": intent["intent"], "context": intent["context"], "queries": queries, "query": queries[0], "active_providers": result["active_providers"], "raw_count": len(gathered), "accepted_count": len(accepted), "zero_result_reason": zero_reason, "errors": errors, "candidates": accepted}
+            result["chunks"][chunk_id] = row; result["errors"].extend({"chunk_id": chunk_id, **error} for error in errors)
+            result["cache_reused_chunks"] = reused; result["retried_chunks"] = retried
+            _write_json(artifact, result)
+            if event_callback: event_callback("image_search", 100 * (index + 1) / max(1, len(chunks)), "Image chunk searched", chunk_id=chunk_id, query=queries, providers=row["active_providers"], raw=row["raw_count"], accepted=row["accepted_count"], zero_reason=zero_reason, errors=errors)
+        result["cache_reused_chunks"] = reused; result["retried_chunks"] = retried
         return result
 
     payload = asyncio.run(collect())
@@ -354,7 +445,9 @@ def semantic_query_variants(text: str) -> list[str]:
         token for index, token in enumerate(tokens)
         if token and token[0].isupper() and index > 0 and token.casefold() not in stop
     )
-    return list(dict.fromkeys(query for query in (visual, named, context, literal) if len(query.split()) >= 2))[:2]
+    if visual:
+        return list(dict.fromkeys((visual, f"{visual} documentary photography", f"{visual} editorial image")))[:3]
+    return list(dict.fromkeys(query for query in (named, context, literal) if len(query.split()) >= 2))[:3]
 
 
 def build_video_diagnostics(results: list[dict[str, Any]]) -> dict[str, Any]:
@@ -405,6 +498,15 @@ def _video_sourcing_command(output: Path, transcript_path: Path, outline_path: P
     ]
 
 
+def _image_sourcing_command(output: Path, chunks_path: Path, outline_path: Path, client_id: str) -> list[str]:
+    return [
+        str(DEFAULT_PIPELINE_PYTHON if DEFAULT_PIPELINE_PYTHON.is_file() else Path(sys.executable)),
+        "-m", "backend.app.image_sourcing_cli", "--chunks", str(chunks_path),
+        "--outline", str(outline_path), "--output-dir", str(output), "--client-id", client_id,
+        "--model-root", str(DEFAULT_MODEL_ROOT), "--embedding-code-root", str(DEFAULT_EMBEDDING_CODE),
+    ]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the existing RAMBLA editorial smoke from a raw video")
     parser.add_argument("--video", type=Path, required=True)
@@ -441,7 +543,8 @@ def main() -> None:
         chunks = json.loads(chunks_path.read_text(encoding="utf-8"))
         if args.stage == "images":
             _event("image_search", 1, "Image sourcing avviato", items=len(chunks))
-            images = discover_image_candidates(chunks, output)
+            subprocess.run(_image_sourcing_command(output, chunks_path, outline_path, args.client_id), check=True)
+            images = json.loads((output / "image-candidates.json").read_text(encoding="utf-8"))
             _write_json(output / "image-sourcing.json", {"status": "complete", "chunks": len(chunks)})
             _event("image_search", 100, "Image sourcing completato", chunks=len(images.get("chunks", {})))
             return

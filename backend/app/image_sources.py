@@ -46,7 +46,7 @@ class WikimediaImageSource:
         params = {"action": "query", "format": "json", "generator": "search", "gsrsearch": query,
                   "gsrnamespace": 6, "gsrlimit": min(max(limit * 3, limit), 20), "prop": "imageinfo",
                   "iiprop": "url|size|mime|mediatype|extmetadata", "iiurlwidth": 640}
-        async with httpx.AsyncClient(transport=self.transport, timeout=10, headers={"User-Agent": "RAMBLA-Curation/0.1 (local preview)"}) as client:
+        async with httpx.AsyncClient(transport=self.transport, timeout=10, headers={"User-Agent": "RAMBLA-Reel-Director/0.2 (https://github.com/azza0101/rambla-reel-director)"}) as client:
             response = await client.get(self.endpoint, params=params)
         if response.status_code >= 400:
             raise ProviderError("wikimedia", "http_error", "Wikimedia request failed")

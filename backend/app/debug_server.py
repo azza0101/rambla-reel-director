@@ -71,6 +71,11 @@ def parse_worker_line(line: str) -> DebugEvent:
     return DebugEvent("log", text)
 
 
+def suppress_worker_log_line(line: str) -> bool:
+    text = line.strip()
+    return text.rstrip(".") == "Deprecated Feature: Support for Python version 3.10 has been deprecated. Please update to Python 3.11 or above"
+
+
 class ArtifactProgressTracker:
     ARTIFACTS = (
         ("asr", ("transcript-raw.json", "transcript.json"), "Trascrizione pronta"),
@@ -81,9 +86,14 @@ class ArtifactProgressTracker:
         ("review", ("review.html",), "Review HTML pronta"),
     )
 
-    def __init__(self, output_dir: Path):
+    def __init__(self, output_dir: Path, *, ignore_existing: bool = False):
         self.output_dir = output_dir
         self.seen: set[str] = set()
+        if ignore_existing:
+            self.seen = {
+                stage for stage, names, _message in self.ARTIFACTS
+                if any((self.output_dir / name).exists() for name in names)
+            }
 
     def scan(self) -> list[DebugEvent]:
         out: list[DebugEvent] = []
@@ -389,7 +399,7 @@ async def _run(state: RunState) -> None:
         command = _command(state)
         cwd = Path.cwd()
         preflight = _preflight_worker(state, command, cwd)
-        tracker = ArtifactProgressTracker(state.output_dir)
+        tracker = ArtifactProgressTracker(state.output_dir, ignore_existing=True)
         await _emit(state, DebugEvent("prepare", "Run avviata", 100.0))
         await _emit(state, DebugEvent("preflight", "Worker preflight completato", 100.0, preflight))
         await _emit(state, DebugEvent("log", "Comando: " + " ".join(shlex.quote(x) for x in command)))
@@ -408,7 +418,9 @@ async def _run(state: RunState) -> None:
             line = await process.readline()
             if not line:
                 break
-            await _emit(state, parse_worker_line(line.decode("utf-8", errors="replace")))
+            decoded = line.decode("utf-8", errors="replace")
+            if not suppress_worker_log_line(decoded):
+                await _emit(state, parse_worker_line(decoded))
         state.return_code = await process.wait()
         watcher.cancel()
         try:
@@ -567,18 +579,23 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
         saved = project_selection_store(project_id).load()
         diagnostics = _read_json(project_run_root(project_id) / "video-sourcing-diagnostics.json", {"chunks": []})
         video_diagnostics = {str(row.get("chunk_id")): row for row in diagnostics.get("chunks", [])}
+        image_artifact = _read_json(project_run_root(project_id) / "image-candidates.json", {"chunks": {}})
+        image_diagnostics = image_artifact.get("chunks", {}) if isinstance(image_artifact, dict) else {}
         def video_reason(chunk_id: str) -> str:
             row = video_diagnostics.get(chunk_id, {})
             if row.get("errors"): return "provider error: " + str(row["errors"][0])
             if row.get("raw_results", 0) == 0: return "0 provider results"
             if row.get("rejected", 0): return "all rejected: " + ", ".join(row.get("rejection_reasons", []))
             return "preview failed"
+        def image_reason(chunk_id: str) -> str:
+            row = image_diagnostics.get(chunk_id, {})
+            return str(row.get("zero_result_reason") or "images not searched")
         return {
             "project_id": project_id,
             "chunks": [{"id": row.chunk_id, "text": row.text,
                 "error": any(item.preview_error for item in (*row.video_candidates, *row.image_candidates)),
                 "video_reason": None if row.video_candidates else video_reason(row.chunk_id),
-                "image_reason": None if row.image_candidates else "0 provider results or source unavailable",
+                "image_reason": None if row.image_candidates else image_reason(row.chunk_id),
                 "assets": [
                 {"asset_id": item.asset_id, "chunk_id": item.chunk_id, "kind": item.kind,
                  "provider": item.provider, "title": item.title, "rights_state": item.rights_state,

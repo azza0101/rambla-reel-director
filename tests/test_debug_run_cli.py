@@ -13,6 +13,48 @@ from backend.app.debug_run_cli import (
 )
 
 
+def test_image_discovery_retries_zero_cache_and_persists_qwen_ranked_coverage():
+    from backend.app.image_sources import RemoteImageCandidate
+
+    class Source:
+        provider_name = "wikimedia"
+        calls = []
+        async def search(self, query, *, limit):
+            self.calls.append(query)
+            return [RemoteImageCandidate("wikimedia", str(i), query, f"https://example.test/{i}", f"Candidate {i}", "", f"https://example.test/{i}.jpg", f"https://example.test/{i}.jpg", 640, 360, "landscape", "known_public_license", i) for i in range(5)]
+
+    class Ranker:
+        def rank(self, query, assets):
+            return [dict(asset, score=score, embedding_score=score, reason="multimodal semantic embedding") for asset, score in zip(reversed(assets), (.91, .82, .71, .60, .05))]
+
+    tmp_path = Path.cwd() / ".test-debug-cli" / uuid.uuid4().hex
+    tmp_path.mkdir(parents=True)
+    cached = {
+        "schema_version": "curation-images-0.2",
+        "chunks": {
+            "chunk-1": {"status": "searched", "queries": ["tourism sustainable", "tourism sustainable documentary photography", "tourism sustainable editorial image"], "candidates": [{"provider": "wikimedia", "provider_id": "cached"}]},
+            "chunk-2": {"status": "searched", "queries": ["families local village", "families local village documentary photography", "families local village editorial image"], "candidates": [], "zero_result_reason": "0 provider results"},
+        },
+    }
+    try:
+        (tmp_path / "image-candidates.json").write_text(__import__("json").dumps(cached), encoding="utf-8")
+        source = Source()
+        payload = discover_image_candidates(
+            [{"id": "chunk-1", "text": "turismo sostenibile"}, {"id": "chunk-2", "text": "famiglie locali villaggio"}],
+            tmp_path,
+            sources=[source], ranker=Ranker(), preview_fetcher=lambda _url: b"jpeg", relevance_floor=.1,
+        )
+        assert payload["chunks"]["chunk-1"]["cache_status"] == "reused"
+        retried = payload["chunks"]["chunk-2"]
+        assert retried["status"] == "searched" and retried["raw_count"] >= 5
+        assert retried["accepted_count"] == 4
+        assert [row["score"] for row in retried["candidates"]] == [.91, .82, .71, .6]
+        assert all(row["preview_path"] for row in retried["candidates"])
+        assert payload["cache_reused_chunks"] == 1 and payload["retried_chunks"] == 1
+    finally:
+        shutil.rmtree(tmp_path)
+
+
 def test_image_discovery_serializes_candidates_without_provider_credentials():
     class Source:
         async def search(self, query, *, limit):
@@ -46,17 +88,22 @@ def test_image_discovery_refreshes_stale_full_phrase_query_cache():
             root,
             sources=[source],
         )
-        assert source.calls == ["tourism sustainable families local"]
+        assert source.calls == ["tourism sustainable families local", "tourism sustainable families local documentary photography", "tourism sustainable families local editorial image"]
         assert payload["chunks"]["chunk-1"]["candidates"] == []
     finally:
         shutil.rmtree(root)
 
 
-def test_existing_editorial_artifacts_skip_expensive_upstream(tmp_path):
-    assert has_editorial_artifacts(tmp_path) is False
-    for name in ("online-candidates.json", "edit-plan.json", "review.html"):
-        (tmp_path / name).write_text("{}", encoding="utf-8")
-    assert has_editorial_artifacts(tmp_path) is True
+def test_existing_editorial_artifacts_skip_expensive_upstream():
+    root = Path.cwd() / ".test-debug-cli" / uuid.uuid4().hex
+    root.mkdir(parents=True)
+    try:
+        assert has_editorial_artifacts(root) is False
+        for name in ("online-candidates.json", "edit-plan.json", "review.html"):
+            (root / name).write_text("{}", encoding="utf-8")
+        assert has_editorial_artifacts(root) is True
+    finally:
+        shutil.rmtree(root)
 
 
 def test_build_short_outline_preserves_words_and_uses_eight_second_safety_cap():
