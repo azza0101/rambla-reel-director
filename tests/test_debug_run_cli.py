@@ -1,12 +1,27 @@
 from types import SimpleNamespace
 from pathlib import Path
+from unittest.mock import patch
 
 from backend.app.debug_run_cli import (
     build_short_outline,
+    discover_image_candidates,
     has_editorial_artifacts,
     normalize_faster_whisper,
     run_asr_stage,
 )
+
+
+def test_image_discovery_serializes_candidates_without_provider_credentials():
+    class Source:
+        async def search(self, query, *, limit):
+            from backend.app.image_sources import RemoteImageCandidate
+            return [RemoteImageCandidate("wikimedia", "1", query, "https://example.test/file", "File", "", "https://example.test/t.jpg", "https://example.test/f.jpg", 640, 360, "landscape", "known_public_license", 0)]
+
+    captured = {}
+    with patch("backend.app.debug_run_cli._write_json", side_effect=lambda path, payload: captured.update(payload)):
+        payload = discover_image_candidates([{"id": "chunk-1", "text": "turismo sostenibile"}], Path("not-created"), sources=[Source()])
+    assert payload["chunks"]["chunk-1"]["candidates"][0]["provider"] == "wikimedia"
+    assert captured["chunks"]["chunk-1"]["query"] == "turismo sostenibile"
 
 
 def test_existing_editorial_artifacts_skip_expensive_upstream(tmp_path):

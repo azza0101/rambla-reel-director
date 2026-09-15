@@ -10,8 +10,10 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict
+
+from .curation_ui import render_curation_page
 
 DEFAULT_VIDEO = r"Z:\APP REEL TEST\VIDEO BASE\KURA_Finto etico_draft 1.mp4"
 DEFAULT_OUTPUT = r"Z:\APP REEL TEST\qwen-embedding-smoke\kura-finto-etico-smoke\run"
@@ -91,6 +93,11 @@ class RunRequest(BaseModel):
     output_dir: str = DEFAULT_OUTPUT
 
 
+class CurationSelectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    selections: dict[str, str]
+
+
 @dataclass(slots=True)
 class RunState:
     run_id: str
@@ -124,6 +131,54 @@ class RunState:
 
 
 RUNS: dict[str, RunState] = {}
+
+
+def _read_json(path: Path, default: Any) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return default
+
+
+def _curation_payload(output_dir: Path) -> dict[str, Any]:
+    chunks = _read_json(output_dir / "semantic-chunks.json", [])
+    online = _read_json(output_dir / "online-candidates.json", [])
+    image_data = _read_json(output_dir / "image-candidates.json", {"chunks": {}})
+    selected = _read_json(output_dir / "curation-selection.json", {"selections": {}}).get("selections", {})
+    by_chunk: dict[str, list[dict[str, Any]]] = {}
+    for slot in online if isinstance(online, list) else []:
+        parent = str(slot.get("parent_beat_id") or str(slot.get("beat_id", "")).split(":", 1)[0])
+        for row in slot.get("candidates", [])[:3]:
+            preview = row.get("preview_path") or row.get("path")
+            by_chunk.setdefault(parent, []).append({
+                "asset_id": str(row.get("id")), "chunk_id": parent, "kind": "video",
+                "provider": str(row.get("source") or "online"), "title": str(row.get("description") or row.get("id")),
+                "rights_state": str(row.get("rights_state") or "review_required"), "orientation": str(row.get("orientation") or "unknown"),
+                "preview_path": str(preview) if preview else None,
+            })
+    for chunk_id, details in image_data.get("chunks", {}).items() if isinstance(image_data, dict) else []:
+        for row in details.get("candidates", [])[:4]:
+            by_chunk.setdefault(chunk_id, []).append({"asset_id": f"{row.get('provider')}:{row.get('provider_id')}", "chunk_id": chunk_id, "kind": "image", "provider": row.get("provider"), "title": row.get("title"), "rights_state": row.get("rights_state"), "orientation": row.get("orientation"), "preview_path": None})
+    result = []
+    for chunk in chunks if isinstance(chunks, list) else []:
+        cid = str(chunk.get("id"))
+        assets = by_chunk.get(cid, [])
+        for asset in assets:
+            path = asset.pop("preview_path", None)
+            asset["preview_url"] = f"/api/curation/media?path={path}" if path and Path(path).is_file() else None
+        result.append({"id": cid, "text": chunk.get("text", ""), "assets": assets[:7]})
+    return {"chunks": result, "selections": selected, "resolve_calls": 0}
+
+
+def _selection_path(output_dir: Path) -> Path:
+    return output_dir / "curation-selection.json"
+
+
+def _write_selection(output_dir: Path, selections: dict[str, str]) -> None:
+    target = _selection_path(output_dir)
+    temporary = target.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps({"schema_version": "curation-selection-0.1", "selections": selections}, indent=2), encoding="utf-8")
+    temporary.replace(target)
 
 
 def _command(state: RunState) -> list[str]:
@@ -243,6 +298,34 @@ def create_app() -> FastAPI:
     @app.get("/debug", response_class=HTMLResponse)
     async def page() -> str:
         return render_debug_page()
+
+    @app.get("/debug/curation", response_class=HTMLResponse)
+    async def curation_page() -> str:
+        return render_curation_page()
+
+    @app.get("/api/curation/run/default")
+    async def get_curation() -> dict[str, Any]:
+        return _curation_payload(Path(DEFAULT_OUTPUT))
+
+    @app.put("/api/curation/run/default/selection")
+    async def put_curation_selection(request: CurationSelectionRequest) -> dict[str, Any]:
+        if any(value != "NO_BROLL" and not value.strip() for value in request.selections.values()):
+            raise HTTPException(status_code=422, detail="selezione non valida")
+        output = Path(DEFAULT_OUTPUT)
+        _write_selection(output, request.selections)
+        return {"selections": request.selections, "resolve_calls": 0}
+
+    @app.get("/api/curation/media")
+    async def get_curation_media(path: str) -> FileResponse:
+        candidate = Path(path)
+        root = Path(DEFAULT_OUTPUT).resolve()
+        try:
+            candidate.resolve().relative_to(root)
+        except ValueError as exc:
+            raise HTTPException(status_code=403, detail="media fuori dalla run") from exc
+        if not candidate.is_file():
+            raise HTTPException(status_code=404, detail="media non trovata")
+        return FileResponse(candidate)
 
     @app.post("/v1/debug/runs")
     async def create_run(request: RunRequest) -> dict[str, Any]:

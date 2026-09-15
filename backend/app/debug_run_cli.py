@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
+import os
 import subprocess
 import sys
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable
 
@@ -61,6 +64,39 @@ def has_editorial_artifacts(output_dir: Path) -> bool:
     return all((output_dir / name).is_file() for name in (
         "online-candidates.json", "edit-plan.json", "review.html",
     ))
+
+
+def discover_image_candidates(
+    chunks: list[dict[str, Any]], output_dir: Path, *, sources: list[Any] | None = None
+) -> dict[str, Any]:
+    """Persist lightweight image discovery once; subsequent runner calls reuse it."""
+    artifact = output_dir / "image-candidates.json"
+    if artifact.is_file():
+        cached = json.loads(artifact.read_text(encoding="utf-8"))
+        if any(row.get("candidates") for row in cached.get("chunks", {}).values()):
+            return cached
+
+    from .image_sources import PexelsPhotoSource, WikimediaImageSource, search_image_candidates
+
+    active_sources = sources if sources is not None else [WikimediaImageSource()]
+    if sources is None and os.environ.get("PEXELS_API_KEY", "").strip():
+        active_sources.append(PexelsPhotoSource(os.environ["PEXELS_API_KEY"]))
+
+    async def collect() -> dict[str, Any]:
+        result: dict[str, Any] = {"schema_version": "curation-images-0.1", "chunks": {}, "errors": []}
+        for chunk in chunks:
+            query = str(chunk.get("text") or "").strip()
+            rows, errors = await search_image_candidates(query, sources=active_sources)
+            result["chunks"][str(chunk["id"])] = {
+                "query": query,
+                "candidates": [asdict(row) for row in rows],
+            }
+            result["errors"].extend({"chunk_id": str(chunk["id"]), **error} for error in errors)
+        return result
+
+    payload = asyncio.run(collect())
+    _write_json(artifact, payload)
+    return payload
 
 
 def run_asr_stage(
@@ -243,6 +279,9 @@ def main() -> None:
     _write_json(outline_path, outline)
     _write_json(output / "semantic-chunks.json", chunks)
     _event("semantic_chunking", 100, "Chunk e outline pronti", chunks=len(chunks))
+
+    images = discover_image_candidates(chunks, output)
+    _event("image_search", 100, "Candidati immagini pronti", chunks=len(images.get("chunks", {})))
 
     if has_editorial_artifacts(output):
         _event("online_search", 100, "Artifact Editorial Intelligence riusati")
