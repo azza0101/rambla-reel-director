@@ -20,15 +20,22 @@ def test_parse_worker_line_accepts_structured_event():
     assert event == DebugEvent("qwen_final", "5 frames", 72.0, {"candidate": "A"})
 
 
-def test_artifact_tracker_reports_real_milestones_once(tmp_path: Path):
-    tracker = ArtifactProgressTracker(tmp_path)
-    assert tracker.scan() == []
-    (tmp_path / "transcript-raw.json").write_text("{}", encoding="utf-8")
-    assert [(e.stage, e.progress) for e in tracker.scan()] == [("asr", 100.0)]
-    assert tracker.scan() == []
-    (tmp_path / "semantic-beats.json").write_text("{}", encoding="utf-8")
-    (tmp_path / "online-candidates.json").write_text("[]", encoding="utf-8")
-    assert [(e.stage, e.progress) for e in tracker.scan()] == [("semantic_chunking", 100.0), ("online_search", 100.0)]
+def test_artifact_tracker_reports_real_milestones_once():
+    root = _project_test_root()
+    try:
+        tracker = ArtifactProgressTracker(root)
+        assert tracker.scan() == []
+        (root / "transcript-raw.json").write_text("{}", encoding="utf-8")
+        assert [(e.stage, e.progress) for e in tracker.scan()] == [("asr", 100.0)]
+        assert tracker.scan() == []
+        (root / "semantic-beats.json").write_text("{}", encoding="utf-8")
+        (root / "visual-plan.json").write_text("{}", encoding="utf-8")
+        (root / "online-candidates.json").write_text("[]", encoding="utf-8")
+        assert [(e.stage, e.progress) for e in tracker.scan()] == [
+            ("semantic_chunking", 100.0), ("visual_planning", 100.0), ("online_search", 100.0)
+        ]
+    finally:
+        shutil.rmtree(root)
 
 
 def test_weighted_total_progress_is_monotonic():
@@ -354,12 +361,15 @@ def test_project_hydration_reads_artifacts_and_persists_no_broll():
         run = root / "projects" / project_id / "run"; run.mkdir()
         (run / "semantic-chunks.json").write_text('[{"id":"chunk-1","text":"A line"}]', encoding="utf-8")
         (run / "online-candidates.json").write_text('[]', encoding="utf-8")
+        (run / "visual-plan.json").write_text('{"chunks":{"chunk-1":{"editorial_function":"contrast","core_meaning":"physical travel cost","subtext":"claims hide transport","visual_mode":"sequence","avoid":["generic beach"],"shots":[{"shot_id":"airplane","description":"passengers board airplane","image_queries":["airport passengers boarding plane"],"video_queries":["passengers boarding plane"]}],"image_search":{"providers":["wikimedia"],"raw":5,"accepted":1,"selected":[{"score":0.5}]}}}}', encoding="utf-8")
 
         hydrated = client.get(f"/api/curation/projects/{project_id}/curation")
         saved = client.put(f"/api/curation/projects/{project_id}/curation/chunks/chunk-1/selection", json={"asset_ids": [], "no_broll": True})
 
         assert hydrated.status_code == 200
         assert hydrated.json()["chunks"][0]["text"] == "A line"
+        assert hydrated.json()["chunks"][0]["visual_plan"]["shots"][0]["image_queries"] == ["airport passengers boarding plane"]
+        assert hydrated.json()["chunks"][0]["visual_plan"]["image_search"]["raw"] == 5
         assert saved.status_code == 200
         assert saved.json()["selection"] == {"chunk_id": "chunk-1", "no_broll": True, "selected_assets": []}
         assert (run / "selection-plan.json").is_file()

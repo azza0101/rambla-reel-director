@@ -83,3 +83,11 @@ def test_staged_curation_controller_separates_actions_and_inspection():
     assert "if(video)target.play().catch" in page
     assert "r.transcript_status==='active'" in page
     assert "Analysis failed before ASR:" in page
+
+
+def test_analysis_details_render_concrete_visual_plan_and_search_evidence():
+    page = render_curation_page("planner")
+    assert 'id="visualPlanDetails"' in page
+    assert "editorial_function" in page and "core_meaning" in page and "visual_mode" in page
+    assert "image_queries" in page and "video_queries" in page and "avoid" in page
+    assert "image_search" in page and "video_search" in page

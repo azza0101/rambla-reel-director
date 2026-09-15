@@ -26,6 +26,7 @@ from .qwen_stack import LocalQwenEmbedder, QwenConfig, QwenMultimodalRanker
 from .source_strategy import plan_source_strategy
 from .taste_profile import TasteContext
 from .visual_routing import plan_visual_route
+from .visual_planner import apply_visual_plan_to_outline, load_or_create_visual_plan, merge_visual_diagnostics, persist_visual_plan
 from .youtube_source import YouTubeOnlineSourceAdapter, YouTubeSource
 
 
@@ -337,6 +338,7 @@ def run_online_from_artifacts(
     acquire_alternates: bool = False,
     taste_context: TasteContext | None = None,
     event_callback: Any = None,
+    outline_override: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not client_id:
         raise ValueError("client_id is required")
@@ -346,7 +348,8 @@ def run_online_from_artifacts(
         raise ValueError("taste context violates client isolation")
     started = time.perf_counter()
     transcript = FasterWhisperArtifact(transcript_path).load()
-    outline = json.loads(outline_path.read_text(encoding="utf-8"))
+    stored_outline = json.loads(outline_path.read_text(encoding="utf-8"))
+    outline = outline_override or stored_outline
     normalized = dict(transcript)
     normalized["segments"] = [
         dict(segment, text=" ".join(str(segment["text"]).split()))
@@ -394,7 +397,7 @@ def run_online_from_artifacts(
     output_dir.mkdir(parents=True, exist_ok=True)
     _write_json(output_dir / "transcript-raw.json", transcript)
     _write_json(output_dir / "transcript-normalized.json", normalized)
-    _write_json(output_dir / "semantic-beats.json", outline)
+    _write_json(output_dir / "semantic-beats.json", stored_outline)
     _write_json(output_dir / "online-candidates.json", sourcing_results)
     _write_json(output_dir / "edit-plan.json", plan)
     (output_dir / "review.html").write_text(render_report(plan), encoding="utf-8")
@@ -448,9 +451,10 @@ def _real_engine(
     embedding_code_root: Path | None,
     cache_root: Path,
     max_candidates: int,
+    embedder: LocalQwenEmbedder | None = None,
 ) -> OnlineSourcingEngine:
     config = QwenConfig(model_root=model_root, embedding_code_root=embedding_code_root)
-    embedder = LocalQwenEmbedder(config)
+    embedder = embedder or LocalQwenEmbedder(config)
     ranker = QwenMultimodalRanker(client_id=client_id, embed=embedder, rerank=None)
     sources: list[Any] = [YouTubeOnlineSourceAdapter(YouTubeSource(discover=_discover_youtube))]
     if pexels_api_key:
@@ -471,6 +475,7 @@ def main() -> None:
     )
     parser.add_argument("--transcript", type=Path, required=True)
     parser.add_argument("--outline", type=Path, required=True)
+    parser.add_argument("--chunks", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--client-id", required=True)
     parser.add_argument("--source-frames", type=int, required=True)
@@ -482,6 +487,13 @@ def main() -> None:
     if args.max_candidates <= 0 or args.max_candidates > 40:
         raise SystemExit("--max-candidates must be between 1 and 40")
     key = os.environ.get(args.pexels_key_env)
+    chunks_path = args.chunks or args.output_dir / "semantic-chunks.json"
+    chunks = json.loads(chunks_path.read_text(encoding="utf-8"))
+    stored_outline = json.loads(args.outline.read_text(encoding="utf-8"))
+    embedder = LocalQwenEmbedder(QwenConfig(model_root=args.model_root, embedding_code_root=args.embedding_code_root))
+    visual_plan = load_or_create_visual_plan(chunks, stored_outline, args.output_dir, embed=embedder,
+        event_callback=lambda stage, progress, message, **data: print("RAMBLA_EVENT " + json.dumps({"stage": stage, "progress": progress, "message": message, "data": data}, ensure_ascii=False), flush=True))
+    sourcing_outline = apply_visual_plan_to_outline(stored_outline, visual_plan)
     engine = _real_engine(
         client_id=args.client_id,
         pexels_api_key=key,
@@ -489,6 +501,7 @@ def main() -> None:
         embedding_code_root=args.embedding_code_root,
         cache_root=args.output_dir / "asset-cache",
         max_candidates=args.max_candidates,
+        embedder=embedder,
     )
     plan = run_online_from_artifacts(
         args.transcript,
@@ -498,7 +511,31 @@ def main() -> None:
         source_frames=args.source_frames,
         sourcing_engine=engine,
         event_callback=lambda stage, progress, message, **data: print("RAMBLA_EVENT " + json.dumps({"stage": stage, "progress": progress, "message": message, "data": data}, ensure_ascii=False), flush=True),
+        outline_override=sourcing_outline,
     )
+    sourcing_rows = json.loads((args.output_dir / "online-candidates.json").read_text(encoding="utf-8"))
+    video_diagnostics: dict[str, dict[str, Any]] = {}
+    for row in sourcing_rows:
+        chunk_id = str(row.get("parent_beat_id") or "")
+        target = video_diagnostics.setdefault(chunk_id, {"providers": [], "raw": 0, "accepted": 0, "rejected": 0, "proposals": 0, "errors": [], "selected": []})
+        candidates = list(row.get("candidates") or [])
+        rejected = list(row.get("rejected_candidates") or [])
+        target["providers"] = sorted(set(target["providers"]) | {str(candidate.get("source")) for candidate in candidates if candidate.get("source")})
+        target["raw"] += int(row.get("raw_result_count") or len(candidates) + len(rejected))
+        target["accepted"] += len(candidates); target["rejected"] += len(rejected)
+        target["proposals"] += sum(isinstance((row.get("proposals") or {}).get(key), dict) for key in ("proposal_A", "proposal_B", "proposal_C"))
+        target["errors"].extend(row.get("errors") or [])
+        planned_shots = visual_plan.get("chunks", {}).get(chunk_id, {}).get("shots", [])
+        query_to_shot = {query: shot.get("shot_id") for shot in planned_shots for query in shot.get("video_queries", [])}
+        target["selected"].extend({"asset_id": candidate.get("id"), "shot_id": query_to_shot.get(candidate.get("query")), "query": candidate.get("query"), "provider": candidate.get("source"), "score": candidate.get("qwen_score", candidate.get("score"))} for candidate in candidates[:3])
+    for target in video_diagnostics.values():
+        target["zero_result_reason"] = (
+            None if target["accepted"] else
+            "provider search failed" if target["errors"] else
+            "0 provider results" if target["raw"] == 0 else
+            "all candidates rejected"
+        )
+    persist_visual_plan(args.output_dir / "visual-plan.json", merge_visual_diagnostics(visual_plan, "video", video_diagnostics))
     benchmark = json.loads(
         (args.output_dir / "online-sourcing-benchmark.json").read_text(encoding="utf-8")
     )

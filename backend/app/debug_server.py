@@ -27,6 +27,7 @@ STAGES = (
     ("prepare", "Preparazione", 3.0),
     ("asr", "ASR / trascrizione", 12.0),
     ("semantic_chunking", "Chunk semantici", 9.0),
+    ("visual_planning", "Concrete visual planning", 8.0),
     ("image_search", "Ricerca immagini", 12.0),
     ("coverage", "CoveragePlanner", 7.0),
     ("evidence_intent", "EvidenceIntent", 8.0),
@@ -80,6 +81,7 @@ class ArtifactProgressTracker:
     ARTIFACTS = (
         ("asr", ("transcript-raw.json", "transcript.json"), "Trascrizione pronta"),
         ("semantic_chunking", ("semantic-chunks.json", "semantic-beats.json"), "Chunk semantici pronti"),
+        ("visual_planning", ("visual-plan.json",), "Concrete visual plan pronto"),
         ("coverage", ("coverage-metrics.json",), "Coverage planning disponibile"),
         ("online_search", ("online-candidates.json", "candidate-metrics.json"), "Candidati online disponibili"),
         ("edit_plan", ("edit-plan.json",), "Edit Plan scritto"),
@@ -150,8 +152,8 @@ class RunState:
     def total(self) -> float:
         scopes = {
             "analyze": {"prepare", "asr", "semantic_chunking", "analysis"},
-            "videos": {"prepare", "coverage", "evidence_intent", "source_strategy", "online_search", "qwen_coarse", "bounded_acquisition", "qwen_final", "edit_plan", "review"},
-            "images": {"prepare", "image_search"},
+            "videos": {"prepare", "visual_planning", "coverage", "evidence_intent", "source_strategy", "online_search", "qwen_coarse", "bounded_acquisition", "qwen_final", "edit_plan", "review"},
+            "images": {"prepare", "visual_planning", "image_search"},
         }
         keys = scopes.get(self.stage_type, set(WEIGHTS))
         total_weight = sum(WEIGHTS.get(key, 0) for key in keys)
@@ -581,6 +583,8 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
         video_diagnostics = {str(row.get("chunk_id")): row for row in diagnostics.get("chunks", [])}
         image_artifact = _read_json(project_run_root(project_id) / "image-candidates.json", {"chunks": {}})
         image_diagnostics = image_artifact.get("chunks", {}) if isinstance(image_artifact, dict) else {}
+        visual_artifact = _read_json(project_run_root(project_id) / "visual-plan.json", {"chunks": {}})
+        visual_plans = visual_artifact.get("chunks", {}) if isinstance(visual_artifact, dict) else {}
         def video_reason(chunk_id: str) -> str:
             row = video_diagnostics.get(chunk_id, {})
             if row.get("errors"): return "provider error: " + str(row["errors"][0])
@@ -593,6 +597,7 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
         return {
             "project_id": project_id,
             "chunks": [{"id": row.chunk_id, "text": row.text,
+                "visual_plan": visual_plans.get(row.chunk_id),
                 "error": any(item.preview_error for item in (*row.video_candidates, *row.image_candidates)),
                 "video_reason": None if row.video_candidates else video_reason(row.chunk_id),
                 "image_reason": None if row.image_candidates else image_reason(row.chunk_id),

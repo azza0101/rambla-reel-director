@@ -82,13 +82,23 @@ def editorial_artifacts_match(output_dir: Path, analysis_signature: str) -> bool
         recorded = json.loads(marker.read_text(encoding="utf-8")).get("analysis_signature")
     except (OSError, json.JSONDecodeError):
         return False
-    return recorded == analysis_signature and has_editorial_artifacts(output_dir)
+    return recorded == analysis_signature and has_editorial_artifacts(output_dir) and has_concrete_visual_video_artifact(output_dir)
+
+
+def has_concrete_visual_video_artifact(output_dir: Path) -> bool:
+    path = output_dir / "visual-plan.json"
+    try:
+        artifact = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    chunks = artifact.get("chunks", {}) if isinstance(artifact, dict) else {}
+    return bool(chunks) and all(isinstance(row.get("video_search"), dict) for row in chunks.values())
 
 
 def invalidate_stale_analysis_outputs(output_dir: Path, analysis_signature: str) -> None:
     if editorial_artifacts_match(output_dir, analysis_signature):
         return
-    for name in ("online-candidates.json", "image-candidates.json", "video-sourcing.json", "image-sourcing.json", "video-sourcing-diagnostics.json", "edit-plan.json", "review.html", "analysis-signature.json"):
+    for name in ("online-candidates.json", "image-candidates.json", "video-sourcing.json", "image-sourcing.json", "video-sourcing-diagnostics.json", "visual-plan.json", "edit-plan.json", "review.html", "analysis-signature.json"):
         path = output_dir / name
         if path.is_file():
             path.unlink()
@@ -152,10 +162,26 @@ def discover_image_candidates(
     outline: dict[str, Any] | None = None, ranker: Any = None,
     preview_fetcher: Callable[[str], Any] | None = None, relevance_floor: float = 0.12,
     client_id: str = "debug-kura", event_callback: Callable[..., None] | None = None,
+    visual_plan: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Search, locally materialize and Qwen-rank images with per-chunk resumability."""
     artifact = output_dir / "image-candidates.json"
-    intents = {str(chunk["id"]): build_image_intent(index, chunks, outline) for index, chunk in enumerate(chunks)}
+    intents = {}
+    for index, chunk in enumerate(chunks):
+        chunk_id = str(chunk["id"])
+        planned = (visual_plan or {}).get("chunks", {}).get(chunk_id)
+        if not planned:
+            intents[chunk_id] = build_image_intent(index, chunks, outline)
+            continue
+        shots = list(planned.get("shots") or [])
+        queries = [shot["image_queries"][0] for shot in shots if shot.get("image_queries")]
+        queries.extend(query for shot in shots for query in shot.get("image_queries", [])[1:])
+        intents[chunk_id] = {
+            "intent": planned["core_meaning"], "queries": queries, "context": planned.get("local_context", ""),
+            "editorial_function": planned.get("editorial_function"), "subtext": planned.get("subtext"),
+            "visual_mode": planned.get("visual_mode"), "shots": shots, "avoid": planned.get("avoid", []),
+            "planner_provider": planned.get("planner_provider"), "planning_score": planned.get("planning_score"),
+        }
     if artifact.is_file():
         try: cached = json.loads(artifact.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError): cached = {"chunks": {}}
@@ -188,6 +214,9 @@ def discover_image_candidates(
                 if event_callback: event_callback("image_search", 100 * (index + 1) / max(1, len(chunks)), "Image chunk reused", chunk_id=chunk_id, **{key: row.get(key) for key in ("raw_count", "accepted_count", "active_providers")})
                 continue
             retried += 1; gathered = {}; errors = []
+            query_to_shot = {
+                query: shot for shot in intent.get("shots", []) for query in shot.get("image_queries", [])
+            }
             for query in queries:
                 rows, query_errors = await search_image_candidates(query, sources=active_sources, per_source_limit=5)
                 errors.extend({"query": query, **error} for error in query_errors)
@@ -203,23 +232,32 @@ def discover_image_candidates(
                         preview_path = str(path)
                     else:
                         preview_path = None
-                    materialized.append({**asdict(candidate), "id": f"{candidate.provider}:{candidate.provider_id}", "client_id": client_id, "path": preview_path or candidate.thumbnail_url, "preview_path": preview_path, "source": candidate.provider, "description": candidate.description or candidate.title})
+                    shot = query_to_shot.get(candidate.query, {})
+                    materialized.append({**asdict(candidate), "id": f"{candidate.provider}:{candidate.provider_id}", "client_id": client_id, "path": preview_path or candidate.thumbnail_url, "preview_path": preview_path, "source": candidate.provider, "description": candidate.description or candidate.title, "shot_id": shot.get("shot_id"), "shot_description": shot.get("description")})
                 except Exception as exc:
                     errors.append({"query": candidate.query, "provider": candidate.provider, "code": "preview_error", "message": str(exc)})
-            ranked = ranker.rank(intent["intent"], materialized) if ranker is not None else [dict(item, score=1.0, embedding_score=None, reason="provider order; Qwen ranker unavailable") for item in materialized]
-            accepted = []
             originals = {item["id"]: item for item in materialized}
-            for ranked_row in ranked:
-                score = float(ranked_row.get("score", 0))
-                if score < relevance_floor: continue
-                original = originals.get(str(ranked_row.get("id")), {})
-                accepted.append({**original, "score": score, "embedding_score": ranked_row.get("embedding_score"), "rank_reason": ranked_row.get("reason"), "matched_query": original.get("query")})
-                if len(accepted) == 4: break
+            ranked_groups: list[list[dict[str, Any]]] = []
+            shot_rows = intent.get("shots") or [{"shot_id": None, "description": intent["intent"]}]
+            for shot in shot_rows:
+                group = [item for item in materialized if item.get("shot_id") == shot.get("shot_id")] if intent.get("shots") else materialized
+                ranking_intent = f"Concrete shot: {shot.get('description')}. Editorial use: {intent['intent']}. Avoid: {', '.join(intent.get('avoid', []))}"
+                ranked = ranker.rank(ranking_intent, group) if ranker is not None else [dict(item, score=1.0, embedding_score=None, reason="provider order; Qwen ranker unavailable") for item in group]
+                accepted_group = []
+                for ranked_row in ranked:
+                    score = float(ranked_row.get("score", 0))
+                    if score < relevance_floor: continue
+                    original = originals.get(str(ranked_row.get("id")), {})
+                    accepted_group.append({**original, "score": score, "embedding_score": ranked_row.get("embedding_score"), "rank_reason": ranked_row.get("reason"), "matched_query": original.get("query"), "shot_id": shot.get("shot_id"), "shot": shot.get("description")})
+                ranked_groups.append(accepted_group)
+            accepted = [group[0] for group in ranked_groups if group]
+            remainder = sorted((candidate for group in ranked_groups for candidate in group[1:]), key=lambda item: (-float(item.get("score", 0)), str(item.get("id"))))
+            accepted = (accepted + remainder)[:4]
             zero_reason = None
             if not gathered: zero_reason = "0 provider results" if not errors else "provider search failed"
             elif not materialized: zero_reason = "all previews failed"
             elif not accepted: zero_reason = f"all candidates below relevance floor {relevance_floor:.2f}"
-            row = {"status": "searched", "cache_status": "refreshed", "intent": intent["intent"], "context": intent["context"], "queries": queries, "query": queries[0], "active_providers": result["active_providers"], "raw_count": len(gathered), "accepted_count": len(accepted), "zero_result_reason": zero_reason, "errors": errors, "candidates": accepted}
+            row = {"status": "searched", "cache_status": "refreshed", "intent": intent["intent"], "context": intent["context"], "editorial_function": intent.get("editorial_function"), "subtext": intent.get("subtext"), "visual_mode": intent.get("visual_mode"), "shots": intent.get("shots", []), "avoid": intent.get("avoid", []), "planner_provider": intent.get("planner_provider"), "planning_score": intent.get("planning_score"), "queries": queries, "query": queries[0], "active_providers": result["active_providers"], "raw_count": len(gathered), "accepted_count": len(accepted), "zero_result_reason": zero_reason, "errors": errors, "candidates": accepted}
             result["chunks"][chunk_id] = row; result["errors"].extend({"chunk_id": chunk_id, **error} for error in errors)
             result["cache_reused_chunks"] = reused; result["retried_chunks"] = retried
             _write_json(artifact, result)
@@ -492,7 +530,7 @@ def _video_sourcing_command(output: Path, transcript_path: Path, outline_path: P
     return [
         str(DEFAULT_PIPELINE_PYTHON if DEFAULT_PIPELINE_PYTHON.is_file() else Path(sys.executable)),
         "-m", "backend.app.online_sourcing_cli", "--transcript", str(transcript_path),
-        "--outline", str(outline_path), "--output-dir", str(output), "--client-id", client_id,
+        "--outline", str(outline_path), "--chunks", str(output / "semantic-chunks.json"), "--output-dir", str(output), "--client-id", client_id,
         "--source-frames", str(source_frames), "--model-root", str(DEFAULT_MODEL_ROOT),
         "--embedding-code-root", str(DEFAULT_EMBEDDING_CODE),
     ]
@@ -599,7 +637,8 @@ def main() -> None:
         _event("analysis", 100, "Analisi transcript completata", chunks=len(chunks))
         return
 
-    images = discover_image_candidates(chunks, output)
+    subprocess.run(_image_sourcing_command(output, chunks_path, outline_path, args.client_id), check=True)
+    images = json.loads((output / "image-candidates.json").read_text(encoding="utf-8"))
     _event("image_search", 100, "Candidati immagini pronti", chunks=len(images.get("chunks", {})))
 
     if editorial_artifacts_match(output, analysis_signature):

@@ -7,6 +7,7 @@ from unittest.mock import patch
 from backend.app.debug_run_cli import (
     build_short_outline,
     discover_image_candidates,
+    has_concrete_visual_video_artifact,
     has_editorial_artifacts,
     normalize_faster_whisper,
     run_asr_stage,
@@ -53,6 +54,41 @@ def test_image_discovery_retries_zero_cache_and_persists_qwen_ranked_coverage():
         assert payload["cache_reused_chunks"] == 1 and payload["retried_chunks"] == 1
     finally:
         shutil.rmtree(tmp_path)
+
+
+def test_image_discovery_searches_each_concrete_shot_and_persists_shot_ranking():
+    from backend.app.image_sources import RemoteImageCandidate
+
+    class Source:
+        provider_name = "wikimedia"
+        async def search(self, query, *, limit):
+            provider_id = query.split()[0]
+            return [RemoteImageCandidate("wikimedia", provider_id, query, f"https://example.test/{provider_id}", query, "", f"https://example.test/{provider_id}.jpg", f"https://example.test/{provider_id}.jpg", 640, 360, "landscape", "known_public_license", 0)]
+
+    class Ranker:
+        def rank(self, query, assets):
+            return [dict(asset, score=.75, embedding_score=.75, reason="multimodal semantic embedding") for asset in assets]
+
+    root = Path.cwd() / ".test-debug-cli" / uuid.uuid4().hex
+    root.mkdir(parents=True)
+    visual_plan = {"chunks": {"chunk-1": {
+        "core_meaning": "a journey requires multiple transport legs",
+        "shots": [
+            {"shot_id": "airplane", "description": "passengers board a commercial airplane", "image_queries": ["airport passengers boarding plane"]},
+            {"shot_id": "ferry", "description": "travelers board a passenger ferry", "image_queries": ["passengers boarding ferry"]},
+        ],
+    }}}
+    try:
+        payload = discover_image_candidates(
+            [{"id": "chunk-1", "text": "travel"}], root, sources=[Source()], ranker=Ranker(),
+            preview_fetcher=lambda _url: b"jpeg", visual_plan=visual_plan,
+        )
+        row = payload["chunks"]["chunk-1"]
+        assert row["queries"] == ["airport passengers boarding plane", "passengers boarding ferry"]
+        assert {candidate["shot_id"] for candidate in row["candidates"]} == {"airplane", "ferry"}
+        assert all(candidate["rank_reason"] == "multimodal semantic embedding" for candidate in row["candidates"])
+    finally:
+        shutil.rmtree(root)
 
 
 def test_image_discovery_serializes_candidates_without_provider_credentials():
@@ -102,6 +138,24 @@ def test_existing_editorial_artifacts_skip_expensive_upstream():
         for name in ("online-candidates.json", "edit-plan.json", "review.html"):
             (root / name).write_text("{}", encoding="utf-8")
         assert has_editorial_artifacts(root) is True
+    finally:
+        shutil.rmtree(root)
+
+
+def test_concrete_visual_video_artifact_requires_diagnostics_for_every_chunk():
+    root = Path.cwd() / ".test-debug-cli" / uuid.uuid4().hex
+    root.mkdir(parents=True)
+    try:
+        (root / "visual-plan.json").write_text(
+            '{"chunks":{"chunk-1":{"shots":[]},"chunk-2":{"shots":[],"video_search":{}}}}',
+            encoding="utf-8",
+        )
+        assert has_concrete_visual_video_artifact(root) is False
+        (root / "visual-plan.json").write_text(
+            '{"chunks":{"chunk-1":{"shots":[],"video_search":{}},"chunk-2":{"shots":[],"video_search":{}}}}',
+            encoding="utf-8",
+        )
+        assert has_concrete_visual_video_artifact(root) is True
     finally:
         shutil.rmtree(root)
 
