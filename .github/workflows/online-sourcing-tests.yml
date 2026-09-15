@@ -27,7 +27,12 @@ jobs:
         shell: bash
         run: |
           if [[ "$GITHUB_REF_NAME" == "feat/vertical-social-dense-coverage" ]]; then
-            pytest -q tests/unit/test_dense_coverage.py tests/unit/test_vertical_social.py
+            pytest -q \
+              tests/unit/test_dense_coverage.py \
+              tests/unit/test_vertical_social.py \
+              tests/unit/test_youtube_source.py \
+              tests/unit/test_retrieval_quality.py \
+              tests/unit/test_online_sourcing.py
           else
             pytest -q
           fi
