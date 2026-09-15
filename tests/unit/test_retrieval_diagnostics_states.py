@@ -54,3 +54,9 @@ def test_search_relaxes_nonessential_travel_modifiers():
     variants = expand_queries(["custom travel itinerary planning"], "image")
     assert "travel itinerary planning" in variants
     assert "travel planning map" in variants
+
+
+def test_video_retrieval_version_changes_when_localization_contract_changes():
+    from backend.app.quality_video import QUALITY_VERSION
+
+    assert QUALITY_VERSION == "clip-quality-9"
