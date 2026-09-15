@@ -1,93 +1,46 @@
 # RAMBLA REEL DIRECTOR — collaboration rules
 
-This repository is an architectural project. Product implementation is forbidden until the design, technical specification, and implementation plan have each been explicitly approved.
+## Source of truth for current work
 
-## Mandatory startup workflow
+Current implementation phase: **Professional Curation UI Redesign** on branch `feat/curation-ui-v1`.
 
-Before any task:
+For routine execution in this phase, read:
+1. `docs/NEXT_TASK.md` — **self-contained authoritative execution mirror for the active batch**.
+2. Directly relevant source/test files for that batch.
+3. `docs/DECISIONS.md` only if a product/architecture ambiguity arises.
 
-1. Synchronize the repository without discarding local work.
-2. Read `docs/PROJECT_BRIEF.md`.
-3. Read `docs/ARCHITECTURE.md`.
-4. Read `docs/DECISIONS.md`.
-5. Read `docs/NEXT_TASK.md`.
-6. If `docs/NEXT_TASK.md` points to a current spec/plan/approval, read only the sections needed for the active execution batch.
-7. Do not contradict approved decisions in `docs/DECISIONS.md`.
-8. Treat the repository as source of truth over stale chat context.
-9. Do not reconstruct old project history unless a concrete ambiguity requires it.
+The full approved redesign spec/plan live on branch `design/curation-ui-professional-redesign`. **Do not fetch/reread them during ordinary batch execution.** `docs/NEXT_TASK.md` already mirrors the requirements needed for the active implementation batches. Consult the design branch only if `NEXT_TASK.md` is genuinely ambiguous.
 
-### Sandboxed-task synchronization fallback
+Old Editorial Intelligence + StyleDNA execution instructions and the old debug-style Curation UI contract are superseded wherever they conflict with `docs/NEXT_TASK.md`.
 
-Some Codex Windows sandboxes may be unable to write `.git/FETCH_HEAD` or access the host credential helper even when the source workspace has already been synchronized outside the sandbox. In that case, do not abort solely because `git pull` cannot run inside the sandbox if the intended branch/base is externally verified and local work is preserved. Never discard local edits to force synchronization.
+## Execution mode
 
-## Delivery workflow
-
-- Use the implementation branch named by the active approved plan.
-- Add/update automated tests before considering behavior complete.
-- Commit/push logical changes without rewriting useful history.
-- Never merge autonomously.
-- Apply review corrections on the same branch.
-
-### Git writes and network access from the Windows sandbox
-
-The Windows sandbox may allow workspace edits while denying `.git` writes/network/credential-helper access.
-
-- Do not ask the user to manually run commands just to work around sandbox limitations.
-- Prefer narrowly scoped permission requests first.
-- Use authenticated GitHub API transport if local Git writes remain blocked.
-- Never force-push.
-- Preserve stale/dirty source checkout and current runtime caches.
+- Single worker, sequential, LOW-CREDIT.
+- Preserve all existing local/uncommitted work; never reset/clean/restart completed work merely because remote lags.
+- The Codex client/harness has shown a finite per-turn execution budget independent of weekly/account quota.
+- Therefore execute the redesign in the coherent turn batches defined in `docs/NEXT_TASK.md`.
+- Inside a batch, do not emit user-visible progress after individual tasks/tests/commits. Continue until the batch is complete or a genuine blocker occurs.
+- `BATCH_A_COMPLETE` and `BATCH_B_COMPLETE` are valid safe end-of-turn checkpoints, not blockers.
+- `TESTABLE=YES` is the final completion state after Batch C.
+- `HARD_BLOCKER` is reserved for a real issue requiring user action/decision; ordinary turn-budget exhaustion should instead checkpoint the current batch safely and report the nearest completed batch/sub-block.
+- No routine subagents/reviewers; Normal Chat is the external reviewer.
+- Use focused tests while iterating; full suite only at the final gate specified in `NEXT_TASK.md`.
 
 ## Safety boundaries
 
-- Never modify the original Resolve timeline.
-- AI reasoning must not mutate Resolve before an explicitly approved persisted Edit Plan.
+- `resolve_calls=0`; do not mutate Resolve.
 - Do not modify ComfyUI or its Python environment.
-- Do not modify global Python/PATH/CUDA/system configuration without approval.
-- Do not commit secrets, credentials, private media, model weights, caches, runtime logs, proxies, renders, or downloaded B-roll.
+- Do not modify global Python/PATH/CUDA/system configuration.
+- Do not commit credentials, private media, models, caches, runtime logs, renders, proxies, or downloaded B-roll.
+- Source media remains read-only after registration.
 - Keep client assets isolated.
-- Keep the backend independently runnable/testable without Resolve.
+- Heavy runtime/model/media artifacts stay under approved `Z:\APP REEL TEST` roots.
+- Never force-push or merge autonomously.
 
-## Current phase — Professional Curation UI Redesign
+## Delivery
 
-The Professional Curation UI Redesign spec and implementation plan were explicitly approved on 2026-09-15.
-
-Authoritative documents:
-- `docs/superpowers/specs/2026-09-15-curation-ui-professional-redesign.md`
-- `docs/superpowers/plans/2026-09-15-curation-ui-professional-redesign.md`
-- `docs/approvals/2026-09-15-curation-ui-professional-redesign-plan-approved.md`
-- `docs/NEXT_TASK.md` for the active turn-batch schedule.
-
-Implementation branch: `feat/curation-ui-v1`.
-
-The previous debug-style Curation UI contract and older Editorial Intelligence execution instructions are superseded where they conflict with this phase.
-
-### Execution mode
-
-- **Single-agent sequential execution**, LOW-CREDIT.
-- Normal Chat is the external reviewer; no routine internal subagents/reviewers.
-- Preserve useful existing local work/commits; do not reset/clean/restart completed work merely because remote lags.
-- TDD/focused tests while iterating; full suite only at final acceptance as specified by `docs/NEXT_TASK.md`.
-- The Codex client/harness has demonstrated a finite per-turn execution budget independent of weekly/account quota. Therefore the approved implementation is intentionally split into the coherent turn batches defined in `docs/NEXT_TASK.md`.
-- Inside a batch, do not emit user-visible progress after individual tasks/tests/commits; continue until the batch is complete or a genuine blocker occurs.
-- A batch completion (`BATCH_A_COMPLETE` or `BATCH_B_COMPLETE`) is a valid end-of-turn checkpoint and is **not** a product blocker. The next user turn resumes from that checkpoint without redoing completed work.
-- Final completion is `TESTABLE=YES` after Batch C acceptance.
-- `HARD_BLOCKER` is reserved only for a real issue requiring user action/decision, not for ordinary per-turn budget exhaustion when the current batch can be safely checkpointed.
-
-### Product target
-
-- `/curation` is the professional user surface; `/debug` stays engineering-only.
-- source-video picker/upload + advanced local-path registration;
-- source-video player + metadata;
-- source-audio extraction/cache as guide audio + optional replacement guide audio;
-- reuse-first analysis;
-- up to 3 real playable video previews + 4 real image thumbnails per phrase;
-- real video/image cards, lightbox/inspector, separate selection controls;
-- ordered mixed-media multi-select mapped deterministically to V2/V3/V4...;
-- mutually exclusive NO BROLL;
-- autosave + refresh persistence + atomic `selection-plan.json`;
-- safe asset-id media routes, never arbitrary filesystem paths in the professional UI;
-- standard runtime with no GPT/OpenAI/Codex call;
-- `resolve_calls=0`.
-
-Never merge autonomously.
+- Work on `feat/curation-ui-v1`.
+- Commit/push logical changes without rewriting useful history when the environment allows it.
+- If local Git writes are sandbox-blocked, preserve workspace changes and use authenticated GitHub API transport where available rather than asking the user to run manual commands.
+- Keep `/debug` engineering-facing; `/curation` is the professional product.
+- Standard product runtime must require no GPT/OpenAI/Codex calls.
