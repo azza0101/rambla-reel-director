@@ -35,8 +35,16 @@ if (Test-Path -LiteralPath (Join-Path $scriptRoot '.git')) {
         foreach ($entry in $remoteFiles) {
             $target = Join-Path $workRoot $entry.path
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
-            $encoded = (gh api "repos/$repo/git/blobs/$($entry.sha)" --jq .content) -replace '\s',''
+            $encoded = $null
+            foreach ($attempt in 1..3) {
+                $blobText = & gh api "repos/$repo/git/blobs/$($entry.sha)" --jq .content
+                if ($LASTEXITCODE -eq 0 -and $blobText) { $encoded = $blobText -replace '\s',''; break }
+                Start-Sleep -Milliseconds (500 * $attempt)
+            }
+            if (-not $encoded) { throw "Remote blob download failed after 3 attempts: $($entry.path)" }
             [IO.File]::WriteAllBytes($target, [Convert]::FromBase64String($encoded))
+            $actualBlob = (git hash-object --no-filters -- $target).Trim()
+            if ($actualBlob -ne $entry.sha) { throw "Remote blob verification failed: $($entry.path)" }
         }
         Set-Content -LiteralPath $complete -Value $fullSha -Encoding ascii
     }

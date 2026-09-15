@@ -60,6 +60,8 @@ def test_launcher_browser_failure_is_nonfatal_and_manual_url_is_always_emitted()
     assert "Default browser failed" in launcher
     assert "msedge.exe" in launcher
     assert "Browser could not be opened" in launcher
+    assert "Remote blob download failed after 3 attempts" in launcher
+    assert "git hash-object --no-filters" in launcher
     assert launcher.rstrip().endswith("exit 0")
     browser_section = launcher[browser:]
     assert "Stop-Process -Id $process.Id" not in browser_section
