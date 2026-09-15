@@ -11,39 +11,46 @@ Read first:
 
 The older Editorial Intelligence execution instructions and the old debug-style Curation UI contract are superseded wherever they conflict with the approved Professional Curation UI Redesign.
 
-## Execution mode — restored continuous workflow
+## Execution mode — continuous workflow with GitHub API transport
 
-The active implementation workspace MUST be a **real Git checkout/worktree on `feat/curation-ui-v1`**. A plain directory materialized from GitHub API may be used only as a migration/source snapshot, not as the long-running implementation workspace.
+The current Codex Windows sandbox cannot create a normal Git clone/worktree because Git for Windows fails before credential-helper invocation with a signal-pipe Win32 access error. This is an environment limitation, not a project blocker.
 
-Use single-worker sequential execution in the same style that previously completed the Editorial Intelligence plan successfully:
+Use the existing verified plain workspace:
 
+`Z:\APP REEL TEST\qwen-embedding-smoke\curation-ui-plain`
+
+Treat GitHub remote state as authoritative and use the already-working authenticated GitHub API / `gh api` transport for delivery. Do **not** retry `git clone`, `git fetch`, `git pull`, reset, clean, or other `.git`-dependent loops in this sandbox.
+
+Execution must match the earlier successful continuous style:
+
+- single worker, sequential execution;
 - execute the approved implementation plan continuously, task by task;
 - for production behavior changes use RED -> GREEN -> REFACTOR;
 - run the focused verification named for the task;
-- commit each completed logical task on `feat/curation-ui-v1`;
+- after each completed logical task, publish the verified file set to `feat/curation-ui-v1` through GitHub API as one logical commit, verifying the expected remote parent first and verifying the new remote SHA after publication;
 - continue immediately to the next task without a user-facing status stop;
-- maintain a tiny local execution ledger (untracked is fine) with current task, last commit, tests run, remaining item, next action so a new turn can resume without reconstructing history;
-- Normal Chat is the external reviewer; do not spawn routine reviewer/subagent loops unless a concrete task genuinely benefits from one;
+- maintain a tiny local execution ledger (untracked is fine) with current task, latest remote SHA, files changed, tests run, remaining item, next action;
+- Normal Chat is the external reviewer; no routine internal reviewer/subagent loops;
 - do not reread old Issue #3 history on every turn.
 
-`BATCH_A_COMPLETE`, `BATCH_B_CHECKPOINT`, `BATCH_B_COMPLETE`, WIP snapshot publication, token-presence checks, successful compilation alone, or a single smoke endpoint are **not completion gates and are not reasons to end execution**.
+`BATCH_*`, WIP publication, token-presence checks, compilation alone, or a single smoke endpoint are **not completion gates and are not reasons to end execution**.
 
-Do not optimize for producing a checkpoint. Optimize for completing working end-to-end behavior from the approved plan.
-
-A user signal `.` means: read the newest relevant Normal Chat instruction on Issue #3, read the local execution ledger, and **resume implementation immediately**. It is not a request for a status report.
+A user signal `.` means: read the newest relevant Normal Chat instruction on Issue #3, read the local execution ledger, and resume implementation immediately. It is not a request for a status report.
 
 Stop/end a turn only for:
 - a genuine blocker requiring user action/decision that cannot be solved within approved scope; or
-- the final `TESTABLE=YES` acceptance state.
+- final `TESTABLE=YES`.
 
 If the product harness interrupts a turn for its own limit, preserve code/tests/ledger exactly where they are. On the next user signal, resume from the ledger without re-planning or emitting a status-only turn.
 
 ## Delivery
 
-- Work on `feat/curation-ui-v1` in a real Git checkout/worktree.
-- Commit logical task completions locally and push them to the feature branch when the task verification is green, so Normal Chat can inspect the actual remote diff.
+- Implementation target remains `feat/curation-ui-v1`.
+- Use GitHub API commits as the delivery mechanism in this sandbox.
+- Before every publication: verify remote branch head equals the expected parent.
+- After every publication: verify the remote branch advanced to the new commit and inspect the changed-file set.
 - Never force-push and never merge autonomously.
-- The current `wip/curation-ui-batch-b-review` branch is not the implementation target.
+- `wip/curation-ui-batch-b-review` is not the implementation target.
 
 ## Safety boundaries
 
