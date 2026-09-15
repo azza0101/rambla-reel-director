@@ -13,6 +13,11 @@ Copy project_id and transcript_signature exactly. Cover every chunk once, in ord
 Group adjacent chunks into visual beats; do NOT create new B-roll per chunk.
 Choose BROLL, KEEP_TALKING_HEAD, or CONTINUE_PREVIOUS_VISUAL (reference the
 immediately preceding BROLL/continuation via continuation_from). Only BROLL has shots.
+Aim for dense short-form visual coverage: normally keep roughly 90-98% of spoken
+duration under BROLL or CONTINUE_PREVIOUS_VISUAL when factual/retrievable visuals exist.
+KEEP_TALKING_HEAD is a deliberate exception for intro, CTA, punchline or delivery-critical
+moments; prefer continuing a strong previous visual over leaving avoidable visual gaps.
+Do not invent filler merely to reach the coverage target.
 Current spoken meaning is authoritative. Neighbors only clarify references; never
 import future or unrelated objects. Global theme is not a source of shot nouns.
 Never turn suspicion into fact or contradict explicit speech, including negations.
@@ -22,6 +27,25 @@ forced metaphors. Avoid visual repetition across the reel. Describe visible thin
 and actions; write 1–3 simple concrete English queries per medium per shot.
 Use exact start/end seconds and concatenate covered original texts in order.
 Do not change transcript text. Do not invent facts or provider URLs.'''
+
+
+def visual_coverage_ratio(plan):
+    """Fraction of spoken beat duration visually covered by BROLL/CONTINUE.
+
+    The imported plan remains authoritative; this is a diagnostic metric only.
+    """
+    beats = list((plan or {}).get('visual_beats') or [])
+    total = 0.0
+    visual = 0.0
+    for beat in beats:
+        try:
+            duration = max(0.0, float(beat['end']) - float(beat['start']))
+        except (KeyError, TypeError, ValueError):
+            continue
+        total += duration
+        if beat.get('action') in {'BROLL', 'CONTINUE_PREVIOUS_VISUAL'}:
+            visual += duration
+    return round(visual / total, 6) if total > 0 else 0.0
 
 
 def digest(value):
