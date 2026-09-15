@@ -20,6 +20,21 @@ def _result(code, counts):
     return {"code": code, "message": MESSAGES[code], "counts": counts}
 
 
+def current_video_rows(rows):
+    """Return only rows produced by the current clip-localization contract."""
+    from .quality_video import QUALITY_VERSION
+    return [row for row in (rows or []) if row.get("quality_version") == QUALITY_VERSION]
+
+
+def current_image_chunks(artifact):
+    """Ignore stale image artifacts after query/ranking contract changes."""
+    from .retrieval_quality import VERSION
+    if not isinstance(artifact, dict) or artifact.get("schema_version") != VERSION:
+        return {}
+    chunks = artifact.get("chunks")
+    return chunks if isinstance(chunks, dict) else {}
+
+
 def empty_reason(c):
     if c.get("accepted"):
         code = "available"
@@ -64,7 +79,7 @@ def image_diagnostic(row):
         "requests_failed": int(stored.get("requests_failed", sum(bool(a.get("error")) for a in attempts)) or 0),
         "ranker_unavailable": bool(stored.get("ranker_unavailable", row.get("ranking_warning"))),
         "accepted": len(candidates),
-        # No provider attempt means no search happened for this beat.  Never
+        # No provider attempt means no search happened for this beat. Never
         # translate missing artifacts into a real zero-hit provider response.
         "searched": bool(attempts or candidates),
     }
