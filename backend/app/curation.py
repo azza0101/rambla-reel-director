@@ -5,6 +5,7 @@ from typing import Literal
 
 
 CandidateKind = Literal["video", "image"]
+VERTICAL_SOCIAL_PROVIDERS = {"youtube_shorts", "tiktok", "instagram"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +44,8 @@ class CandidateShelf:
     images: tuple[CurationCandidate, ...]
     social: tuple[CurationCandidate, ...] = ()
     stock: tuple[CurationCandidate, ...] = ()
+    vertical_social: tuple[CurationCandidate, ...] = ()
+    general_social: tuple[CurationCandidate, ...] = ()
 
 
 def build_candidate_shelf(
@@ -57,13 +60,22 @@ def build_candidate_shelf(
         if key not in seen:
             seen.add(key)
             ordered.append(row)
-    def per_shot(kind, limit, stock=None):
-        rows=[r for r in ordered if r.kind==kind and (stock is None or (r.provider=="pexels")==stock)]
+
+    def balanced(bucket: list[CurationCandidate], limit: int) -> tuple[CurationCandidate, ...]:
         primary=[]; remaining=[]; shots=set()
-        for row in rows:
+        for row in bucket:
             if row.shot_id not in shots:
                 primary.append(row); shots.add(row.shot_id)
-            else: remaining.append(row)
+            else:
+                remaining.append(row)
         return tuple((primary+remaining)[:limit])
-    social=per_shot('video',video_limit,False); stock=per_shot('video',video_limit,True)
-    return CandidateShelf(video=social+stock, images=per_shot('image',image_limit),social=social,stock=stock)
+
+    videos=[r for r in ordered if r.kind=='video']
+    vertical=balanced([r for r in videos if r.provider in VERTICAL_SOCIAL_PROVIDERS and r.orientation=='portrait'],video_limit)
+    general=balanced([r for r in videos if r.provider!='pexels' and r.provider not in VERTICAL_SOCIAL_PROVIDERS],video_limit)
+    stock=balanced([r for r in videos if r.provider=='pexels'],video_limit)
+    images=balanced([r for r in ordered if r.kind=='image'],image_limit)
+    social=vertical+general
+    # Ordering is editorial: native vertical social first, general web video only
+    # as fallback, stock last. The UI may split these into separate shelves.
+    return CandidateShelf(video=vertical+general+stock,images=images,social=social,stock=stock,vertical_social=vertical,general_social=general)
