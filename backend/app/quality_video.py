@@ -10,8 +10,9 @@ from .range_media import range_media
 from .retrieval_quality import metadata_quality,expand_queries
 from .video_preview import materialize_clip,probe_preview
 from .media_quality import perceptual_hash,diverse_candidates
+from .social_acquisition import download_authenticated_section, fallback_acquisition_state, profile_root_from_env
 
-QUALITY_VERSION='clip-quality-12'
+QUALITY_VERSION='clip-quality-13'
 VERTICAL_PROVIDERS={'youtube_shorts','tiktok','instagram'}
 
 
@@ -60,11 +61,20 @@ def _range_clip(url,directory,identity,start,provider):
 
 
 def _section_clip(url,directory,identity,start,provider):
-    """Use yt-dlp's bounded section path for public TikTok/Instagram posts."""
-    directory.mkdir(parents=True,exist_ok=True);key=hashlib.sha256((identity+'|social-section-v1|'+str(start)).encode()).hexdigest()[:24];raw=directory/(key+'-source.mp4')
+    """Use authenticated yt-dlp first, then the public bounded section path."""
+    directory.mkdir(parents=True,exist_ok=True);key=hashlib.sha256((identity+'|social-section-v2|'+str(start)).encode()).hexdigest()[:24];raw=directory/(key+'-source.mp4')
     if not raw.is_file() or raw.stat().st_size==0:
         end=start+3.5
-        subprocess.run([sys.executable,'-m','yt_dlp','--no-playlist','--no-warnings','--socket-timeout','10','--retries','0','--download-sections',f'*{start:.3f}-{end:.3f}','--force-keyframes-at-cuts','-f','b[height<=720]/best[height<=720]/best','--merge-output-format','mp4','-o',str(raw),url],check=True,capture_output=True,text=True,encoding='utf-8',timeout=45)
+        profile_root=profile_root_from_env();profile_dir=profile_root/provider
+        authenticated=False
+        if profile_dir.is_dir():
+            try:
+                download_authenticated_section(url,provider,raw,start=start,duration=3.5,profile_root=profile_root)
+                authenticated=True
+            except Exception:
+                raw.unlink(missing_ok=True)
+        if not authenticated:
+            subprocess.run([sys.executable,'-m','yt_dlp','--no-playlist','--no-warnings','--socket-timeout','10','--retries','0','--download-sections',f'*{start:.3f}-{end:.3f}','--force-keyframes-at-cuts','-f','b[height<=720]/best[height<=720]/best','--merge-output-format','mp4','-o',str(raw),url],check=True,capture_output=True,text=True,encoding='utf-8',timeout=45)
     clip=materialize_clip(str(raw),directory,identity+f':{provider}:section:{start:.3f}',start_seconds=0);clip['source_start_seconds']=start;clip['source_end_seconds']=start+float(clip['preview_duration']);return clip
 
 
@@ -102,6 +112,13 @@ def _discovery_priority(candidate,intent):
     return (vertical,authenticity,meta,-int(getattr(candidate,'provider_rank',0) or 0))
 
 
+def _manual_discovery_base(candidate,asset_id,client_id,meta,*,reason,preview_path=None):
+    remote_preview=str(getattr(candidate,'preview_url','') or '')
+    has_preview=bool(preview_path or remote_preview)
+    state=fallback_acquisition_state(has_preview=has_preview,reason=reason)
+    return {'id':asset_id,'client_id':client_id,'source':candidate.provider,'provider':candidate.provider,'provider_id':candidate.provider_id,'source_page':candidate.source_page,'source_url':candidate.source_page,'title':candidate.title,'description':candidate.description or candidate.title,'query':candidate.query,'matched_query':candidate.query,'width':candidate.width,'height':candidate.height,'orientation':candidate.orientation,'rights_state':candidate.rights_state,'license_name':None,'license_url':None,'attribution':candidate.creator_name,'path':str(preview_path) if preview_path else None,'preview_path':str(preview_path) if preview_path else None,'poster_path':str(preview_path) if preview_path else None,'keyframe_path':str(preview_path) if preview_path else None,'preview_url':remote_preview or None,'kind':'video','preview_status':'preview_pending' if has_preview else 'manual','quality_state':'source_found','score':round(meta*.6,4),'source_start_seconds':None,'source_end_seconds':None,'selected_full_download':False,'source_authenticity':getattr(candidate,'source_authenticity',None),**state}
+
+
 async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_duration,orientation,retrieval_intent=None,**ignored):
     output={'beat_id':beat_id,'queries':queries,'candidates':[],'rejected_candidates':[],'errors':[],'search_attempts':[],'preview_cache_hits':0,'selected_cache_hit':False,'proposals':{'proposal_A':None,'proposal_B':None,'proposal_C':None},'quality_version':QUALITY_VERSION}
     def emit(message,**data):
@@ -132,10 +149,15 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
             asset_id=f'{candidate.provider}:{candidate.provider_id}';meta,contradictions,missing,generic=metadata_quality(intent,candidate.title+' '+candidate.description)
             if candidate.provider in VERTICAL_PROVIDERS and candidate.orientation!='portrait':
                 output['rejected_candidates'].append({'id':asset_id,'source':candidate.provider,'source_url':candidate.source_page,'matched_query':candidate.query,'score':0,'quality_reasons':['vertical-social candidate is not portrait']});continue
-            try:preview=await engine.cache.materialize_preview(candidate)
-            except Exception as exc:output['errors'].append({'provider':candidate.provider,'code':'poster_failed','error_type':type(exc).__name__});continue
+            try:
+                preview=await engine.cache.materialize_preview(candidate)
+            except Exception as exc:
+                output['errors'].append({'provider':candidate.provider,'code':'poster_failed','error_type':type(exc).__name__})
+                if candidate.provider in VERTICAL_PROVIDERS:
+                    pending.append(_manual_discovery_base(candidate,asset_id,client_id,meta,reason=f'preview unavailable ({type(exc).__name__})'))
+                continue
             output['preview_cache_hits']+=int(preview.cache_hit)
-            base={'id':asset_id,'client_id':client_id,'source':candidate.provider,'provider':candidate.provider,'provider_id':candidate.provider_id,'source_page':candidate.source_page,'source_url':candidate.source_page,'title':candidate.title,'description':candidate.description or candidate.title,'query':candidate.query,'matched_query':candidate.query,'width':candidate.width,'height':candidate.height,'orientation':candidate.orientation,'rights_state':candidate.rights_state,'license_name':'Pexels License' if candidate.provider=='pexels' else None,'license_url':'https://www.pexels.com/license/' if candidate.provider=='pexels' else None,'attribution':candidate.creator_name,'path':str(preview.path),'preview_path':str(preview.path),'poster_path':str(preview.path),'keyframe_path':str(preview.path),'kind':'image','preview_status':'preview_pending','quality_state':'source_found','score':round(meta*.6,4),'source_start_seconds':None,'source_end_seconds':None,'clip_verified':False,'selected_full_download':False,'source_authenticity':getattr(candidate,'source_authenticity',None)}
+            base={'id':asset_id,'client_id':client_id,'source':candidate.provider,'provider':candidate.provider,'provider_id':candidate.provider_id,'source_page':candidate.source_page,'source_url':candidate.source_page,'title':candidate.title,'description':candidate.description or candidate.title,'query':candidate.query,'matched_query':candidate.query,'width':candidate.width,'height':candidate.height,'orientation':candidate.orientation,'rights_state':candidate.rights_state,'license_name':'Pexels License' if candidate.provider=='pexels' else None,'license_url':'https://www.pexels.com/license/' if candidate.provider=='pexels' else None,'attribution':candidate.creator_name,'path':str(preview.path),'preview_path':str(preview.path),'poster_path':str(preview.path),'keyframe_path':str(preview.path),'preview_url':getattr(candidate,'preview_url',None),'kind':'video','preview_status':'preview_pending','quality_state':'source_found','score':round(meta*.6,4),'source_start_seconds':None,'source_end_seconds':None,'clip_verified':False,'selected_full_download':False,'source_authenticity':getattr(candidate,'source_authenticity',None),'acquisition_state':'PREVIEW_ONLY','manual_reason':None}
             duration=float(candidate.duration);starts=temporal_starts(duration,candidate.provider);measured=[];shape_rejected=False
             for start in starts:
                 emit('Materializing bounded clip',provider=candidate.provider,query=candidate.query,source_start_seconds=start,source_end_seconds=start+3.5)
@@ -148,17 +170,21 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
                     emit('Ranking actual clip frames',provider=candidate.provider,query=candidate.query,frames=len(frames));scored=engine.ranker.rank(intent,frame_rows);semantic=sum(r['score'] for r in scored)/max(1,len(scored));verified=len(scored)==len(frames) and bool(scored) and all(r.get('quality_state') in {'accepted','needs_review'} for r in scored)
                     phone_bonus=.035 if verified and candidate.provider in VERTICAL_PROVIDERS else 0
                     score=min(1.0,semantic+phone_bonus)
-                    row={**base,**clip,'kind':'video','score':round(score,4),'semantic_score':round(semantic,4),'phone_native_bonus':phone_bonus,'frame_scores':[r['score'] for r in scored],'embedding_score':sum(r['embedding_score'] for r in scored)/len(scored) if scored and all(r.get('embedding_score') is not None for r in scored) else None,'quality_state':('needs_review' if any(r.get('quality_state')=='needs_review' for r in scored) else 'accepted') if verified else 'metadata_only','clip_verified':verified,'rank_reason':'Sampled clip frames ranked against editorial context'+(' · verified vertical-social bonus' if phone_bonus else ''),'preview_status':'ready','localization_method':'sampled source window; frame relevance checked' if verified else 'sampled source window; relevance unverified','quality_reasons':[reason for r in scored for reason in r.get('quality_reasons',[])]}
+                    row={**base,**clip,'kind':'video','score':round(score,4),'semantic_score':round(semantic,4),'phone_native_bonus':phone_bonus,'frame_scores':[r['score'] for r in scored],'embedding_score':sum(r['embedding_score'] for r in scored)/len(scored) if scored and all(r.get('embedding_score') is not None for r in scored) else None,'quality_state':('needs_review' if any(r.get('quality_state')=='needs_review' for r in scored) else 'accepted') if verified else 'metadata_only','clip_verified':verified,'rank_reason':'Sampled clip frames ranked against editorial context'+(' · verified vertical-social bonus' if phone_bonus else ''),'preview_status':'ready','localization_method':'sampled source window; frame relevance checked' if verified else 'sampled source window; relevance unverified','quality_reasons':[reason for r in scored for reason in r.get('quality_reasons',[])],'acquisition_state':'CLIP_READY' if verified else 'PREVIEW_ONLY','manual_reason':None}
                     row['perceptual_hash']=perceptual_hash(Path(frames[0]));measured.append(row);emit('Clip quality measured',provider=candidate.provider,score=row['score'],clip_verified=verified)
                 except Exception as exc:
                     output['errors'].append({'provider':candidate.provider,'code':'clip_preview_failed','error_type':type(exc).__name__})
                     if not measured:break
-            if shape_rejected:continue
+            if shape_rejected:
+                if candidate.provider in VERTICAL_PROVIDERS:pending.append({**base,**fallback_acquisition_state(has_preview=True,reason='automatic clip was not portrait; source link retained')})
+                continue
             if measured:
                 best=max(measured,key=lambda r:(r['clip_verified'],r['score']))
                 if best['semantic_score']>=.50 and best['clip_verified']:accepted.append(best)
-                else:output['rejected_candidates'].append({k:best.get(k) for k in ('id','source','source_url','matched_query','score','semantic_score','frame_scores','source_start_seconds','source_end_seconds','quality_reasons')})
-            else:pending.append(base)
+                else:
+                    output['rejected_candidates'].append({k:best.get(k) for k in ('id','source','source_url','matched_query','score','semantic_score','frame_scores','source_start_seconds','source_end_seconds','quality_reasons')})
+                    if candidate.provider in VERTICAL_PROVIDERS:pending.append({**base,**fallback_acquisition_state(has_preview=True,reason='automatic clip did not pass relevance verification')})
+            else:pending.append({**base,**fallback_acquisition_state(has_preview=True,reason='automatic clip download unavailable')})
             if len(accepted)>=3:break
-        accepted,_=diverse_candidates(sorted(accepted,key=lambda r:(r.get('source') in VERTICAL_PROVIDERS,r['score']),reverse=True),[],limit=3);output['candidates'].extend(accepted[:3]);output.setdefault('discovery_sources',[]).extend(pending)
+        accepted,_=diverse_candidates(sorted(accepted,key=lambda r:(r.get('source') in VERTICAL_PROVIDERS,r['score']),reverse=True),[],limit=3);output['candidates'].extend(accepted[:3]);output.setdefault('discovery_sources',[]).extend(pending[:3])
     output['eligible_candidate_count']=sum(c.get('clip_verified',False) for c in output['candidates']);output['raw_result_count']=sum(r['hits'] for r in output['search_attempts']);output['ranking_warning']=getattr(engine.ranker,'warning',None);return output
