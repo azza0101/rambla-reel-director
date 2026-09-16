@@ -269,14 +269,27 @@ class VerticalSocialSource:
             return []
 
 
+def _feature_flag(name: str, *, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return str(raw).casefold().strip() in {"1", "true", "yes", "on"}
+
+
 def build_default_vertical_sources() -> list[Any]:
-    """Build Shorts/social sources plus an optional Google Videos discovery lane."""
+    """Build Shorts/social sources plus an optional Google Videos discovery lane.
+
+    Older launchers already set RAMBLA_ENABLE_VERTICAL_SOCIAL=1. Browser-backed
+    social and Google Videos inherit that switch unless explicitly overridden,
+    so updating backend code cannot silently leave the new providers disabled.
+    """
     public = {
         provider: VerticalSocialSource(provider)
         for provider in ("youtube_shorts", "tiktok", "instagram")
     }
-    browser_enabled = str(os.environ.get("RAMBLA_ENABLE_SOCIAL_BROWSER", "")).casefold() in {"1", "true", "yes", "on"}
-    web_enabled = str(os.environ.get("RAMBLA_ENABLE_WEB_VIDEO", "")).casefold() in {"1", "true", "yes", "on"}
+    vertical_enabled = _feature_flag("RAMBLA_ENABLE_VERTICAL_SOCIAL")
+    browser_enabled = _feature_flag("RAMBLA_ENABLE_SOCIAL_BROWSER", default=vertical_enabled)
+    web_enabled = _feature_flag("RAMBLA_ENABLE_WEB_VIDEO", default=vertical_enabled)
 
     if browser_enabled:
         from .browser_profiles import BrowserProfileManager
