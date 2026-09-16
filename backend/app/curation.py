@@ -80,8 +80,9 @@ def build_candidate_shelf(
     general=balanced([r for r in videos if r.provider!='pexels' and r.provider not in VERTICAL_SOCIAL_PROVIDERS and r.provider!='web_video'],video_limit)
     stock=balanced([r for r in videos if r.provider=='pexels'],video_limit)
     images=balanced([r for r in ordered if r.kind=='image'],image_limit)
-    vertical=shorts+tiktok+instagram
+    vertical=tuple(sorted((*shorts,*tiktok,*instagram),key=lambda row:(-row.score,row.asset_id)))
     social=vertical+web+general
     # Each UI shelf gets its own bounded candidate budget. TikTok, Instagram and
-    # Shorts must not evict one another before the curator can compare them.
+    # Shorts must not evict one another before the curator can compare them; the
+    # legacy aggregate vertical_social still remains globally score-ordered.
     return CandidateShelf(video=vertical+web+general+stock,images=images,social=social,stock=stock,vertical_social=vertical,general_social=web+general)
