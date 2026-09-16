@@ -68,7 +68,10 @@ def expand_queries(queries,kind):
         variant=re.sub(r'\bplant\b','',q,flags=re.I)
         variant=' '.join(variant.split())
         if len(variant.split())>=2 and variant not in out:out.append(variant)
-    return out[:max(len(queries),8)]
+    # Keep expansion bounded: provider recall improves up to a handful of variants;
+    # beyond that latency/noise grows faster than relevance. Contextual specs may
+    # already supply >6 authoritative queries, in which case do not truncate them.
+    return out[:max(len(queries),6)]
 
 
 def metadata_quality(intent,text):
