@@ -10,6 +10,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 
+PROJECT_MANIFEST_VERSION = "rambla-project-1"
+PROJECT_MANIFEST_NAME = "project.rambla.json"
+
+
 @dataclass(frozen=True, slots=True)
 class SourceVideoInfo:
     path: str
@@ -55,7 +59,7 @@ class CurationProject:
 
 class ProjectStore:
     def __init__(self, root: Path, *, probe_runner: Callable[[Path], dict[str, Any]], audio_probe_runner: Callable[[Path], float] | None = None) -> None:
-        self.root, self.probe_runner = root, probe_runner
+        self.root, self.probe_runner = Path(root), probe_runner
         self.audio_probe_runner = audio_probe_runner or _probe_audio_duration
 
     def create(self, name: str) -> CurationProject:
@@ -68,6 +72,55 @@ class ProjectStore:
         source = SourceVideoInfo(**raw["source_video"]) if raw.get("source_video") else None
         guide = GuideAudioInfo(**raw["guide_audio"]) if raw.get("guide_audio") else None
         return CurationProject(raw["project_id"], raw["name"], source, guide)
+
+    def manifest_path(self, project_id: str) -> Path:
+        # Reuse the same validation as project.json so a crafted manifest cannot
+        # escape the configured local project store.
+        return self._path(project_id).parent / PROJECT_MANIFEST_NAME
+
+    def manifest_payload(self, project: CurationProject) -> dict[str, Any]:
+        project_dir = self._path(project.project_id).parent.resolve()
+        return {
+            "schema_version": PROJECT_MANIFEST_VERSION,
+            "project_id": project.project_id,
+            "name": project.name,
+            "analysis_signature": project.analysis_signature,
+            "project_dir": str(project_dir),
+            "run_dir": str(project_dir / "run"),
+            "source_video_path": project.source_video.path if project.source_video else None,
+            "guide_audio_path": project.guide_audio.path if project.guide_audio else None,
+        }
+
+    def load_manifest(self, path: Path) -> CurationProject:
+        path = Path(path)
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict) or raw.get("schema_version") != PROJECT_MANIFEST_VERSION:
+            raise ValueError("unsupported RAMBLA project file")
+        project_id = str(raw.get("project_id") or "")
+        project = self.load(project_id)
+        expected = str(raw.get("analysis_signature") or "")
+        if expected and expected != project.analysis_signature:
+            raise ValueError("RAMBLA project file does not match the saved local project state")
+        return project
+
+    def list_recent(self, *, limit: int = 12) -> list[dict[str, Any]]:
+        if limit <= 0:
+            return []
+        if not self.root.exists():
+            return []
+        rows: list[tuple[int, dict[str, Any]]] = []
+        for manifest in self.root.glob(f"*/{PROJECT_MANIFEST_NAME}"):
+            try:
+                raw = json.loads(manifest.read_text(encoding="utf-8"))
+                if raw.get("schema_version") != PROJECT_MANIFEST_VERSION:
+                    continue
+                project_id = str(raw.get("project_id") or "")
+                self._path(project_id)  # validate id/path
+                rows.append((manifest.stat().st_mtime_ns, {**raw, "manifest_path": str(manifest.resolve())}))
+            except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                continue
+        rows.sort(key=lambda pair: pair[0], reverse=True)
+        return [payload for _, payload in rows[:limit]]
 
     def register_local_video(self, project_id: str, source: Path) -> CurationProject:
         source = source.resolve()
@@ -136,6 +189,7 @@ class ProjectStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         from .atomic_io import write_json
         write_json(path, asdict(project))
+        write_json(self.manifest_path(project.project_id), self.manifest_payload(project))
 
 
 def _probe_audio_duration(path: Path) -> float:
