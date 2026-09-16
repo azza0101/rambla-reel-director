@@ -1,7 +1,6 @@
 """Authenticated browser-backed TikTok and Instagram Reel discovery."""
 from __future__ import annotations
 
-from dataclasses import replace
 from typing import Any
 from urllib.parse import quote_plus, urlparse
 
@@ -127,7 +126,10 @@ class BrowserSocialSource:
             browser_error = type(exc).__name__
 
         if raw:
-            duration_hint = max(float(min_duration), min(float(max_duration), 60.0))
+            # Browser search cards do not expose a trustworthy source duration.
+            # Keep a short localization hint so 3.5 s probes stay near the opening
+            # instead of jumping to 20–50 s in a Reel that may only last 5–15 s.
+            duration_hint = max(float(min_duration), min(float(max_duration), 12.0))
             rows = [
                 VerticalRemoteCandidate(
                     provider=self.provider_name,
