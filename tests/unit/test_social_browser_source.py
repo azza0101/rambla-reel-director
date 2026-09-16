@@ -91,14 +91,52 @@ def test_browser_social_source_falls_back_when_browser_fails():
     assert source.last_attempt["browser_error"] == "RuntimeError"
 
 
-def test_real_engine_actually_wires_vertical_sources(monkeypatch, tmp_path):
+def test_vertical_factory_upgrades_tiktok_instagram_to_browser_sources(monkeypatch, tmp_path):
+    from backend.app.social_browser_source import BrowserSocialSource
+    from backend.app.vertical_social import build_default_vertical_sources
+
+    monkeypatch.setenv("RAMBLA_ENABLE_SOCIAL_BROWSER", "1")
+    monkeypatch.setenv("RAMBLA_BROWSER_PROFILE_ROOT", str(tmp_path / "profiles"))
+    sources = build_default_vertical_sources()
+    assert [source.provider_name for source in sources] == ["youtube_shorts", "tiktok", "instagram"]
+    assert isinstance(sources[1], BrowserSocialSource)
+    assert isinstance(sources[2], BrowserSocialSource)
+    assert sources[1].fallback.provider_name == "tiktok"
+    assert sources[2].fallback.provider_name == "instagram"
+
+
+def test_real_engine_youtube_adapter_actually_searches_vertical_sources(monkeypatch, tmp_path):
     import backend.app.online_sourcing_cli as cli
+    from backend.app.vertical_social import VerticalRemoteCandidate
 
     monkeypatch.setattr(cli, "create_retrieval_ranker", lambda *_args, **_kwargs: object())
-    monkeypatch.delenv("RAMBLA_ENABLE_SOCIAL_BROWSER", raising=False)
+    monkeypatch.setenv("RAMBLA_ENABLE_VERTICAL_SOCIAL", "1")
     engine = cli._real_engine(
         client_id="test", pexels_api_key=None, model_root=tmp_path,
         embedding_code_root=None, cache_root=tmp_path / "cache", max_candidates=4,
     )
-    providers = {getattr(source, "provider_name", "") for source in engine.sources}
-    assert {"youtube_shorts", "tiktok", "instagram"}.issubset(providers)
+    adapter = engine.sources[0]
+
+    async def no_youtube(*_args, **_kwargs):
+        return []
+    adapter.source.search = no_youtube
+
+    class FakeVertical:
+        provider_name = "tiktok"
+        last_attempt = {"provider": "tiktok", "hits": 1}
+        async def search(self, query, **_kwargs):
+            return [VerticalRemoteCandidate(
+                provider="tiktok", provider_id="vertical", query=query,
+                source_page="https://www.tiktok.com/@x/video/vertical",
+                creator_name="x", creator_page=None, title="vertical", description="vertical",
+                duration=8, width=1080, height=1920, orientation="portrait",
+                preview_url="https://img.example/vertical.jpg",
+                selected_rendition_url="https://www.tiktok.com/@x/video/vertical",
+                rendition_width=1080, rendition_height=1920,
+                rights_state="review_required", provider_rank=0,
+            )]
+    adapter.vertical_sources = [FakeVertical()]
+    rows = asyncio.run(adapter.search(
+        "event", orientation=None, min_duration=1, max_duration=300, limit=3,
+    ))
+    assert [row.provider for row in rows] == ["tiktok"]
