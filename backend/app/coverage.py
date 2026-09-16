@@ -41,10 +41,9 @@ def plan_coverage_slots(
 ) -> list[CoverageSlot]:
     """Create short visual coverage windows without covering full long beats.
 
-    Beats without visual queries remain talking-head.  A normal eligible beat
-    gets one centered window.  A beat longer than two target windows plus the
-    configured gap may receive two separated windows so a long explanation can
-    return to the speaker between inserts.
+    Beats without visual queries remain talking-head. A normal eligible beat
+    gets one centered window. Imported editorial plans preserve their full beat
+    boundaries and one independent retrieval budget per supplied shot.
     """
 
     if not (0 < min_seconds <= target_seconds <= max_seconds):
@@ -71,9 +70,24 @@ def plan_coverage_slots(
             continue
 
         if beat.get('external_plan'):
-            # Preserve imported beat boundaries and search every supplied shot.
-            for shot in beat['visual_plan']['shots']:
-                slots.append(CoverageSlot(f"{beat_id}:shot:{shot['shot_id']}",beat_id,start,end,shot['description'],tuple(shot['video_queries']),'imported_shot',1))
+            from .editorial_relevance import build_retrieval_spec, encode_retrieval_intent
+
+            imported = beat['visual_plan']
+            for shot in imported['shots']:
+                spec = build_retrieval_spec(imported, shot, 'video')
+                slot_queries = tuple(spec['queries'])
+                if not slot_queries:
+                    continue
+                slots.append(CoverageSlot(
+                    f"{beat_id}:shot:{shot['shot_id']}",
+                    beat_id,
+                    start,
+                    end,
+                    encode_retrieval_intent(imported, shot),
+                    slot_queries,
+                    'imported_editorial_shot',
+                    1,
+                ))
             continue
 
         intent = str(beat.get("intent") or queries[0]).strip()
