@@ -104,5 +104,5 @@ async def test_normal_youtube_adapter_opt_in_prioritizes_vertical_social(monkeyp
 def test_vertical_clip_localization_contract_version_is_current():
     from backend.app.quality_video import QUALITY_VERSION, VERTICAL_PROVIDERS
 
-    assert QUALITY_VERSION == "clip-quality-12"
+    assert QUALITY_VERSION == "clip-quality-13"
     assert {"youtube_shorts", "tiktok", "instagram"} <= VERTICAL_PROVIDERS
