@@ -91,16 +91,50 @@ class ProjectStore:
             "guide_audio_path": project.guide_audio.path if project.guide_audio else None,
         }
 
+    def open_project_payload(self, raw: dict[str, Any]) -> tuple[CurationProject, bool]:
+        """Open either the current RAMBLA manifest or a legacy project.json payload.
+
+        The payload never creates a new project and never trusts its filesystem paths.
+        It resolves only an already-saved project id from this ProjectStore, verifies
+        available signatures against the authoritative local project, and writes the
+        modern manifest when migrating a legacy payload.
+        """
+        if not isinstance(raw, dict):
+            raise ValueError("unsupported RAMBLA project file")
+        schema = raw.get("schema_version")
+        if schema not in {None, PROJECT_MANIFEST_VERSION}:
+            raise ValueError("unsupported RAMBLA project file")
+        project_id = str(raw.get("project_id") or "")
+        if not project_id:
+            raise ValueError("RAMBLA project id is missing")
+        project = self.load(project_id)
+
+        if schema == PROJECT_MANIFEST_VERSION:
+            expected = str(raw.get("analysis_signature") or "")
+            if expected and expected != project.analysis_signature:
+                raise ValueError("RAMBLA project file does not match the saved local project state")
+            return project, False
+
+        # Legacy project.json: verify the strongest stable identities available.
+        legacy_source = raw.get("source_video") if isinstance(raw.get("source_video"), dict) else None
+        if legacy_source and project.source_video:
+            expected_source_signature = str(legacy_source.get("signature") or "")
+            if expected_source_signature and expected_source_signature != project.source_video.signature:
+                raise ValueError("RAMBLA project file does not match the saved local project state")
+        legacy_guide = raw.get("guide_audio") if isinstance(raw.get("guide_audio"), dict) else None
+        if legacy_guide and project.guide_audio:
+            expected_guide_signature = str(legacy_guide.get("signature") or "")
+            if expected_guide_signature and expected_guide_signature != project.guide_audio.signature:
+                raise ValueError("RAMBLA project file does not match the saved local project state")
+
+        from .atomic_io import write_json
+        write_json(self.manifest_path(project.project_id), self.manifest_payload(project))
+        return project, True
+
     def load_manifest(self, path: Path) -> CurationProject:
         path = Path(path)
         raw = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(raw, dict) or raw.get("schema_version") != PROJECT_MANIFEST_VERSION:
-            raise ValueError("unsupported RAMBLA project file")
-        project_id = str(raw.get("project_id") or "")
-        project = self.load(project_id)
-        expected = str(raw.get("analysis_signature") or "")
-        if expected and expected != project.analysis_signature:
-            raise ValueError("RAMBLA project file does not match the saved local project state")
+        project, _migrated = self.open_project_payload(raw)
         return project
 
     def list_recent(self, *, limit: int = 12) -> list[dict[str, Any]]:
