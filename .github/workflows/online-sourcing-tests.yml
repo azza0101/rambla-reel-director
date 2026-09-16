@@ -31,6 +31,7 @@ jobs:
             pytest -q \
               tests/unit/test_dense_coverage.py \
               tests/unit/test_vertical_social.py \
+              tests/unit/test_vertical_social_style_v2.py \
               tests/unit/test_youtube_source.py \
               tests/unit/test_retrieval_quality.py \
               tests/unit/test_online_sourcing.py \
