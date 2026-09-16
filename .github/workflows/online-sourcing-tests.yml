@@ -72,5 +72,15 @@ jobs:
           Path('/tmp/rambla-curation.js').write_text(scripts[0], encoding='utf-8')
           PY
           node --check /tmp/rambla-curation.js
+      - name: Check acceptance launcher PowerShell syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'tools/start_curation_acceptance.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
       - name: Compile backend
         run: python -m compileall backend
