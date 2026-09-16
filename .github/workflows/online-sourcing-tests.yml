@@ -44,6 +44,7 @@ jobs:
               tests/unit/test_beat_research.py \
               tests/unit/test_beat_research_worker.py \
               tests/unit/test_project_maintenance_api.py \
+              tests/unit/test_curation_management_ui.py \
               tests/unit/test_curation_product_v2.py \
               tests/unit/test_curation_project.py \
               tests/unit/test_curation.py \
@@ -58,8 +59,8 @@ jobs:
           python - <<'PY'
           import re
           from pathlib import Path
-          from backend.app.curation_ui import render_curation_page
-          html = render_curation_page('ci')
+          from backend.app.curation_ui_v2 import render_curation_page_v2
+          html = render_curation_page_v2('ci')
           scripts = re.findall(r'<script>(.*?)</script>', html, re.S)
           assert len(scripts) == 1
           Path('/tmp/rambla-curation.js').write_text(scripts[0], encoding='utf-8')
