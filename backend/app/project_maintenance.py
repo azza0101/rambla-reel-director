@@ -137,3 +137,142 @@ def delete_project_tree(store: ProjectStore, project_id: str) -> dict[str, Any]:
         "deleted_files": deleted_files,
         "resolve_calls": 0,
     }
+
+
+_RETRIEVAL_FILES = {
+    "online-candidates.json",
+    "video-sourcing-diagnostics.json",
+    "image-candidates.json",
+    "video-retrieval-plan.json",
+    "image-retrieval-plan.json",
+    "online-sourcing-benchmark.json",
+    "candidate-metrics.json",
+    "coverage-metrics.json",
+    "video-sourcing.json",
+    "image-sourcing.json",
+    "edit-plan.json",
+    "review.html",
+    "transcript-normalized.json",  # retrieval-root copy, not run-level source of truth
+    "semantic-beats.json",         # retrieval-root copy
+    "transcript-raw.json",        # retrieval-root copy
+}
+_RETRIEVAL_DIRS = {
+    "asset-cache", "image-cache", "quality-clips", "preview-cache", "media-cache"
+}
+
+
+def _remove_owned(path: Path) -> tuple[int, int, str | None]:
+    """Remove one owned retrieval path and report files/bytes/error."""
+    try:
+        if path.is_symlink() or path.is_file():
+            try:
+                size = int(path.lstat().st_size)
+            except OSError:
+                size = 0
+            path.unlink()
+            return 1, size, None
+        if path.is_dir():
+            size, files, _ = _walk_stats(path)
+            shutil.rmtree(path)
+            return files, size, None
+        return 0, 0, None
+    except OSError as exc:
+        return 0, 0, f"{path}: {type(exc).__name__}: {exc}"
+
+
+def _clear_selection_assets(selection_path: Path) -> tuple[int, int]:
+    if not selection_path.is_file():
+        return 0, 0
+    try:
+        payload = json.loads(selection_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return 0, 0
+    chunks = payload.get("chunks") if isinstance(payload, dict) else None
+    if not isinstance(chunks, dict):
+        return 0, 0
+    cleared = 0
+    preserved = 0
+    for row in chunks.values():
+        if not isinstance(row, dict):
+            continue
+        if row.get("no_broll") is True or row.get("action") == "CONTINUE_PREVIOUS_VISUAL":
+            preserved += 1
+            continue
+        selected = row.get("selected_assets")
+        if isinstance(selected, list) and selected:
+            cleared += len(selected)
+            row["selected_assets"] = []
+    from .atomic_io import write_json
+    write_json(selection_path, payload)
+    return cleared, preserved
+
+
+def _clean_editorial_root(root: Path, *, active: bool) -> tuple[int, int, list[str], int, int]:
+    deleted_files = 0
+    deleted_bytes = 0
+    failures: list[str] = []
+    cleared = 0
+    preserved = 0
+    if not root.is_dir():
+        return deleted_files, deleted_bytes, failures, cleared, preserved
+    if active:
+        cleared, preserved = _clear_selection_assets(root / "selection-plan.json")
+    # Editorial digest roots contain an immutable imported-plan snapshot plus
+    # disposable retrieval products. Preserve selection-plan after sanitizing it.
+    for child in list(root.iterdir()):
+        if child.name in {"imported-plan.json", "selection-plan.json"}:
+            continue
+        files, size, error = _remove_owned(child)
+        deleted_files += files
+        deleted_bytes += size
+        if error:
+            failures.append(error)
+    return deleted_files, deleted_bytes, failures, cleared, preserved
+
+
+def clean_project_media(run_root: Path, retrieval_root: Path) -> dict[str, Any]:
+    """Delete regenerable retrieval media while preserving analysis/editorial state.
+
+    Imported-plan digest directories are cleaned wholesale except for their plan
+    snapshot and sanitized selection plan. If no imported-plan root is active,
+    only a strict retrieval allowlist is removed from the run root.
+    """
+    run_root = Path(run_root).resolve()
+    retrieval_root = Path(retrieval_root).resolve()
+    if retrieval_root != run_root and not retrieval_root.is_relative_to(run_root):
+        raise ValueError("retrieval root escapes project run")
+
+    deleted_files = 0
+    deleted_bytes = 0
+    failures: list[str] = []
+    cleared = 0
+    preserved = 0
+
+    editorial_parent = run_root / "editorial"
+    if retrieval_root != run_root:
+        roots: list[Path] = []
+        if editorial_parent.is_dir():
+            roots.extend(path for path in editorial_parent.iterdir() if path.is_dir() and not path.is_symlink())
+        if retrieval_root not in roots:
+            roots.append(retrieval_root)
+        for root in roots:
+            files, size, errors, c, p = _clean_editorial_root(root, active=root == retrieval_root)
+            deleted_files += files; deleted_bytes += size; failures.extend(errors)
+            cleared += c; preserved += p
+    else:
+        cleared, preserved = _clear_selection_assets(run_root / "selection-plan.json")
+        for name in sorted(_RETRIEVAL_FILES | _RETRIEVAL_DIRS):
+            path = run_root / name
+            files, size, error = _remove_owned(path)
+            deleted_files += files; deleted_bytes += size
+            if error:
+                failures.append(error)
+
+    return {
+        "deleted_files": deleted_files,
+        "deleted_bytes": deleted_bytes,
+        "cleared_selections": cleared,
+        "preserved_decisions": preserved,
+        "partial_failures": failures,
+        "resolve_calls": 0,
+    }
