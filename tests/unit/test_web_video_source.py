@@ -63,17 +63,46 @@ def test_vertical_factory_can_add_web_video_source(monkeypatch):
     assert [source.provider_name for source in sources][-1] == "web_video"
 
 
-def test_real_engine_includes_web_video_when_enabled(monkeypatch, tmp_path):
+def test_real_engine_reaches_web_video_lane_when_enabled(monkeypatch, tmp_path):
     import backend.app.online_sourcing_cli as cli
+    import backend.app.vertical_social as vertical
+    from backend.app.web_video_source import WebVideoRemoteCandidate
 
     monkeypatch.setattr(cli, "create_retrieval_ranker", lambda *_args, **_kwargs: object())
+    monkeypatch.setenv("RAMBLA_ENABLE_VERTICAL_SOCIAL", "1")
     monkeypatch.setenv("RAMBLA_ENABLE_WEB_VIDEO", "1")
+
+    class FakeWeb:
+        provider_name = "web_video"
+        last_attempt = {}
+        async def search(self, query, **_kwargs):
+            self.last_attempt = {"provider": "web_video", "query": query, "hits": 1}
+            return [WebVideoRemoteCandidate(
+                provider="web_video", provider_id="story", query=query,
+                source_page="https://news.example/video/story",
+                creator_name=None, creator_page=None,
+                title="Eyewitness video", description="Eyewitness video",
+                duration=12, width=0, height=0, orientation="unknown",
+                preview_url="https://img.example/story.jpg",
+                selected_rendition_url="https://news.example/video/story",
+                rendition_width=0, rendition_height=0,
+                rights_state="review_required", provider_rank=0,
+            )]
+
+    monkeypatch.setattr(vertical, "build_default_vertical_sources", lambda: [FakeWeb()])
     engine = cli._real_engine(
         client_id="test", pexels_api_key=None, model_root=tmp_path,
         embedding_code_root=None, cache_root=tmp_path / "cache", max_candidates=4,
     )
-    providers = [getattr(source, "provider_name", "") for source in engine.sources]
-    assert "web_video" in providers
+    adapter = engine.sources[0]
+    async def no_youtube(*_args, **_kwargs):
+        return []
+    adapter.source.search = no_youtube
+    rows = asyncio.run(adapter.search(
+        "current event eyewitness", orientation=None,
+        min_duration=1, max_duration=300, limit=3,
+    ))
+    assert [row.provider for row in rows] == ["web_video"]
 
 
 def test_web_video_thumbnail_failure_keeps_manual_source_link():
