@@ -8,8 +8,9 @@ def test_social_ui_exposes_login_controls_and_provider_shelves():
         "CLIP READY", "PREVIEW", "MANUAL", "OPEN SOURCE",
     ):
         assert marker in html
-    assert "/social/tiktok/login" in html
-    assert "/social/instagram/login" in html
+    assert "/social/${provider}/login" in html
+    assert "socialLoginV2('tiktok')" in html
+    assert "socialLoginV2('instagram')" in html
     assert "/social/status" in html
 
 
