@@ -11,7 +11,7 @@ from .retrieval_quality import metadata_quality,expand_queries
 from .video_preview import materialize_clip,probe_preview
 from .media_quality import perceptual_hash,diverse_candidates
 
-QUALITY_VERSION='clip-quality-11'
+QUALITY_VERSION='clip-quality-12'
 VERTICAL_PROVIDERS={'youtube_shorts','tiktok','instagram'}
 
 
@@ -55,7 +55,7 @@ def _range_clip(url,directory,identity,start,provider):
     if probe_preview(str(cached))['playable']:
         facts=probe_preview(str(cached));poster=directory/(key+'.jpg')
         if not poster.is_file():subprocess.run(['ffmpeg','-v','error','-y','-ss','1','-i',str(cached),'-frames:v','1',str(poster)],check=True,capture_output=True,timeout=20)
-        return {'preview_path':str(cached),'poster_path':str(poster),'keyframe_path':str(poster),'preview_status':'ready','preview_duration':facts['duration'],'preview_mime':facts['mime'],'source_start_seconds':start,'source_end_seconds':start+facts['duration']}
+        return {'preview_path':str(cached),'poster_path':str(poster),'keyframe_path':str(poster),'preview_status':'ready','preview_duration':facts['duration'],'preview_mime':facts['mime'],'preview_width':facts.get('width',0),'preview_height':facts.get('height',0),'source_start_seconds':start,'source_end_seconds':start+facts['duration']}
     with range_media(_direct_media_url(url,provider)) as local_source:return materialize_clip(local_source,directory,identity,start_seconds=start,streaming=True)
 
 
@@ -85,6 +85,14 @@ def _frame_samples(clip):
 
 
 def _provider_name(source):return str(getattr(source,'provider_name','') or type(source).__name__)
+
+
+def _verified_portrait_clip(clip):
+    """Final vertical gate: trust the materialized media, never search metadata."""
+    facts=probe_preview(clip.get('preview_path'))
+    width=int(facts.get('width') or clip.get('preview_width') or 0)
+    height=int(facts.get('height') or clip.get('preview_height') or 0)
+    return bool(facts.get('playable')) and width>0 and height>width
 
 
 def _discovery_priority(candidate,intent):
@@ -128,20 +136,24 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
             except Exception as exc:output['errors'].append({'provider':candidate.provider,'code':'poster_failed','error_type':type(exc).__name__});continue
             output['preview_cache_hits']+=int(preview.cache_hit)
             base={'id':asset_id,'client_id':client_id,'source':candidate.provider,'provider':candidate.provider,'provider_id':candidate.provider_id,'source_page':candidate.source_page,'source_url':candidate.source_page,'title':candidate.title,'description':candidate.description or candidate.title,'query':candidate.query,'matched_query':candidate.query,'width':candidate.width,'height':candidate.height,'orientation':candidate.orientation,'rights_state':candidate.rights_state,'license_name':'Pexels License' if candidate.provider=='pexels' else None,'license_url':'https://www.pexels.com/license/' if candidate.provider=='pexels' else None,'attribution':candidate.creator_name,'path':str(preview.path),'preview_path':str(preview.path),'poster_path':str(preview.path),'keyframe_path':str(preview.path),'kind':'image','preview_status':'preview_pending','quality_state':'source_found','score':round(meta*.6,4),'source_start_seconds':None,'source_end_seconds':None,'clip_verified':False,'selected_full_download':False,'source_authenticity':getattr(candidate,'source_authenticity',None)}
-            duration=float(candidate.duration);starts=temporal_starts(duration,candidate.provider);measured=[]
+            duration=float(candidate.duration);starts=temporal_starts(duration,candidate.provider);measured=[];shape_rejected=False
             for start in starts:
                 emit('Materializing bounded clip',provider=candidate.provider,query=candidate.query,source_start_seconds=start,source_end_seconds=start+3.5)
                 try:
                     folder=Path(preview.path).parent/'quality-clips';clip=await asyncio.to_thread(materialize_clip,candidate.preview_rendition_url or candidate.selected_rendition_url,folder,asset_id,start_seconds=start) if candidate.provider=='pexels' else await asyncio.to_thread(_social_clip,candidate.source_page,folder,asset_id,start,candidate.provider)
+                    if candidate.provider in VERTICAL_PROVIDERS and not _verified_portrait_clip(clip):
+                        output['rejected_candidates'].append({'id':asset_id,'source':candidate.provider,'source_url':candidate.source_page,'matched_query':candidate.query,'score':0,'source_start_seconds':clip.get('source_start_seconds'),'source_end_seconds':clip.get('source_end_seconds'),'quality_reasons':['materialized social clip is not portrait']})
+                        shape_rejected=True;break
                     frames=await asyncio.to_thread(_frame_samples,clip);frame_rows=[{**base,**clip,'id':asset_id+f':frame:{i}','kind':'video','path':clip['preview_path'],'keyframe_path':frame} for i,frame in enumerate(frames)]
                     emit('Ranking actual clip frames',provider=candidate.provider,query=candidate.query,frames=len(frames));scored=engine.ranker.rank(intent,frame_rows);semantic=sum(r['score'] for r in scored)/max(1,len(scored));verified=len(scored)==len(frames) and bool(scored) and all(r.get('quality_state') in {'accepted','needs_review'} for r in scored)
-                    phone_bonus=.035 if verified and candidate.provider in VERTICAL_PROVIDERS and candidate.orientation=='portrait' else 0
+                    phone_bonus=.035 if verified and candidate.provider in VERTICAL_PROVIDERS else 0
                     score=min(1.0,semantic+phone_bonus)
                     row={**base,**clip,'kind':'video','score':round(score,4),'semantic_score':round(semantic,4),'phone_native_bonus':phone_bonus,'frame_scores':[r['score'] for r in scored],'embedding_score':sum(r['embedding_score'] for r in scored)/len(scored) if scored and all(r.get('embedding_score') is not None for r in scored) else None,'quality_state':('needs_review' if any(r.get('quality_state')=='needs_review' for r in scored) else 'accepted') if verified else 'metadata_only','clip_verified':verified,'rank_reason':'Sampled clip frames ranked against editorial context'+(' · verified vertical-social bonus' if phone_bonus else ''),'preview_status':'ready','localization_method':'sampled source window; frame relevance checked' if verified else 'sampled source window; relevance unverified','quality_reasons':[reason for r in scored for reason in r.get('quality_reasons',[])]}
                     row['perceptual_hash']=perceptual_hash(Path(frames[0]));measured.append(row);emit('Clip quality measured',provider=candidate.provider,score=row['score'],clip_verified=verified)
                 except Exception as exc:
                     output['errors'].append({'provider':candidate.provider,'code':'clip_preview_failed','error_type':type(exc).__name__})
                     if not measured:break
+            if shape_rejected:continue
             if measured:
                 best=max(measured,key=lambda r:(r['clip_verified'],r['score']))
                 if best['semantic_score']>=.50 and best['clip_verified']:accepted.append(best)
