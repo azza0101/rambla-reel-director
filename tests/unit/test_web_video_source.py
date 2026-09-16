@@ -63,6 +63,19 @@ def test_vertical_factory_can_add_web_video_source(monkeypatch):
     assert [source.provider_name for source in sources][-1] == "web_video"
 
 
+def test_real_engine_includes_web_video_when_enabled(monkeypatch, tmp_path):
+    import backend.app.online_sourcing_cli as cli
+
+    monkeypatch.setattr(cli, "create_retrieval_ranker", lambda *_args, **_kwargs: object())
+    monkeypatch.setenv("RAMBLA_ENABLE_WEB_VIDEO", "1")
+    engine = cli._real_engine(
+        client_id="test", pexels_api_key=None, model_root=tmp_path,
+        embedding_code_root=None, cache_root=tmp_path / "cache", max_candidates=4,
+    )
+    providers = [getattr(source, "provider_name", "") for source in engine.sources]
+    assert "web_video" in providers
+
+
 def test_web_video_thumbnail_failure_keeps_manual_source_link():
     from backend.app.quality_video import source_video_beat
     from backend.app.web_video_source import WebVideoRemoteCandidate
