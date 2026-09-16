@@ -43,3 +43,19 @@ def test_vertical_social_final_gate_uses_real_clip_dimensions(monkeypatch):
         "width": 640, "height": 360,
     })
     assert quality._verified_portrait_clip({"preview_path": "landscape.mp4"}) is False
+
+
+def test_mixed_video_providers_keep_a_budget_per_provider_before_curation_shelves():
+    from backend.app.media_quality import diverse_candidates
+
+    rows = [
+        {"id": f"short-{i}", "kind": "video", "source": "youtube_shorts", "source_page": f"https://youtube.test/short/{i}"}
+        for i in range(3)
+    ] + [
+        {"id": f"tik-{i}", "kind": "video", "source": "tiktok", "source_page": f"https://tiktok.test/video/{i}"}
+        for i in range(3)
+    ]
+    selected, rejected = diverse_candidates(rows, [], limit=3)
+    assert len(selected) == 6
+    assert rejected == 0
+    assert {row["source"] for row in selected} == {"youtube_shorts", "tiktok"}
