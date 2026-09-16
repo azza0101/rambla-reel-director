@@ -270,31 +270,32 @@ class VerticalSocialSource:
 
 
 def build_default_vertical_sources() -> list[Any]:
-    """Build vertical sources, optionally upgrading TikTok/Instagram to browser search.
-
-    YouTube Shorts always uses the cheap public discovery path. When the social
-    browser flag is enabled, TikTok and Instagram use RAMBLA-owned persistent
-    profiles first and fall back to the public-web sources on provider/browser
-    failures. No account credential is passed through this factory.
-    """
+    """Build Shorts/social sources plus an optional Google Videos discovery lane."""
     public = {
         provider: VerticalSocialSource(provider)
         for provider in ("youtube_shorts", "tiktok", "instagram")
     }
-    enabled = str(os.environ.get("RAMBLA_ENABLE_SOCIAL_BROWSER", "")).casefold() in {"1", "true", "yes", "on"}
-    if not enabled:
-        return [public["youtube_shorts"], public["tiktok"], public["instagram"]]
+    browser_enabled = str(os.environ.get("RAMBLA_ENABLE_SOCIAL_BROWSER", "")).casefold() in {"1", "true", "yes", "on"}
+    web_enabled = str(os.environ.get("RAMBLA_ENABLE_WEB_VIDEO", "")).casefold() in {"1", "true", "yes", "on"}
 
-    from .browser_profiles import BrowserProfileManager
-    from .social_browser_source import BrowserSocialSource
+    if browser_enabled:
+        from .browser_profiles import BrowserProfileManager
+        from .social_browser_source import BrowserSocialSource
 
-    root = Path(os.environ.get(
-        "RAMBLA_BROWSER_PROFILE_ROOT",
-        str(Path.home() / ".rambla-reel-director" / "browser-profiles"),
-    ))
-    manager = BrowserProfileManager(root)
-    return [
-        public["youtube_shorts"],
-        BrowserSocialSource("tiktok", manager, fallback=public["tiktok"]),
-        BrowserSocialSource("instagram", manager, fallback=public["instagram"]),
-    ]
+        root = Path(os.environ.get(
+            "RAMBLA_BROWSER_PROFILE_ROOT",
+            str(Path.home() / ".rambla-reel-director" / "browser-profiles"),
+        ))
+        manager = BrowserProfileManager(root)
+        sources: list[Any] = [
+            public["youtube_shorts"],
+            BrowserSocialSource("tiktok", manager, fallback=public["tiktok"]),
+            BrowserSocialSource("instagram", manager, fallback=public["instagram"]),
+        ]
+    else:
+        sources = [public["youtube_shorts"], public["tiktok"], public["instagram"]]
+
+    if web_enabled:
+        from .web_video_source import WebVideoSource
+        sources.append(WebVideoSource())
+    return sources
