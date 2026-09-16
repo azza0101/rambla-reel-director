@@ -7,6 +7,15 @@ $scriptRoot = Split-Path -Parent $PSScriptRoot
 $runtime = 'Z:\APP REEL TEST\qwen-embedding-smoke\editorial-intelligence-worktree\.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $runtime -PathType Leaf)) { throw "Scoped Python runtime not found: $runtime" }
 
+# Browser automation is an application dependency, never a global install. The
+# existing RAMBLA venv may predate this feature, so bootstrap Playwright once.
+& $runtime -c "import playwright" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Output 'Installing Playwright into the scoped RAMBLA runtime...'
+    & $runtime -m pip install 'playwright>=1.54,<2'
+    if ($LASTEXITCODE -ne 0) { throw 'Playwright install failed in scoped RAMBLA runtime' }
+}
+
 $workRoot = $scriptRoot
 if (Test-Path -LiteralPath (Join-Path $scriptRoot '.git')) {
     $actualBranch = (git -C $scriptRoot branch --show-current).Trim()
@@ -56,7 +65,7 @@ if (Test-Path -LiteralPath $recordPath -PathType Leaf) {
     try {
         $old = Get-Content -LiteralPath $recordPath -Raw | ConvertFrom-Json
         if ($old.pid) {
-            $oldProcess = Get-Process -Id ([int]$old.pid) -ErrorAction SilentlyContinue
+            $oldProcess = Get-Process -Id ([int]$old.pid -ErrorAction SilentlyContinue)
             if ($oldProcess -and $oldProcess.Path -eq $runtime) {
                 Stop-Process -Id $oldProcess.Id -Force -ErrorAction Stop
                 Wait-Process -Id $oldProcess.Id -Timeout 5 -ErrorAction SilentlyContinue
