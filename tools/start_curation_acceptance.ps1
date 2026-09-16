@@ -65,7 +65,7 @@ if (Test-Path -LiteralPath $recordPath -PathType Leaf) {
     try {
         $old = Get-Content -LiteralPath $recordPath -Raw | ConvertFrom-Json
         if ($old.pid) {
-            $oldProcess = Get-Process -Id ([int]$old.pid -ErrorAction SilentlyContinue)
+            $oldProcess = Get-Process -Id ([int]$old.pid) -ErrorAction SilentlyContinue
             if ($oldProcess -and $oldProcess.Path -eq $runtime) {
                 Stop-Process -Id $oldProcess.Id -Force -ErrorAction Stop
                 Wait-Process -Id $oldProcess.Id -Timeout 5 -ErrorAction SilentlyContinue
