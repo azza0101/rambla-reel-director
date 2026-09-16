@@ -123,6 +123,12 @@ foreach ($attempt in 1..40) {
 if (-not $ready) { Stop-Process -Id $process.Id -ErrorAction SilentlyContinue; throw "Acceptance server failed health check: $health" }
 $response = Invoke-WebRequest -Uri $url -UseBasicParsing -Headers @{'Cache-Control'='no-cache'}
 if (-not $response.Content.Contains($marker)) { Stop-Process -Id $process.Id -ErrorAction SilentlyContinue; throw "Build marker verification failed. Expected: $marker" }
+$requiredUiMarkers = @('PROJECTS','TIKTOK LOGIN','INSTAGRAM LOGIN','WEB / NEWS VIDEO','NEW SEARCH')
+$missingUiMarkers = @($requiredUiMarkers | Where-Object { -not $response.Content.Contains($_) })
+if ($missingUiMarkers.Count -gt 0) {
+    Stop-Process -Id $process.Id -ErrorAction SilentlyContinue
+    throw "UI V2 verification failed. Missing markers: $($missingUiMarkers -join ', ')"
+}
 $record = @{pid=$process.Id;port=$port;url=$url;project_id=$latestProjectId;branch=$actualBranch;sha=$fullSha;short_sha=$shortSha;build_marker=$marker;browser_profile_root=$browserProfileRoot;started_at=(Get-Date).ToString('o')}
 $record | ConvertTo-Json | Set-Content -LiteralPath $recordPath -Encoding utf8
 $record | Format-List
