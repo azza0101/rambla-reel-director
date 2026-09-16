@@ -152,13 +152,19 @@ def normalize_social_metadata(provider: str, source_page: str, query: str, info:
     if provider in {"tiktok", "instagram"}: source_page = _provider_url(source_page, provider) or ""
     if not source_page.startswith(("http://", "https://")): raise ValueError("public source URL is required")
     width, height = _dimensions(info)
-    if width <= 0 or height <= 0 or height <= width: raise ValueError("vertical social result must be portrait")
+    dimensions_known = width > 0 and height > 0
+    if dimensions_known and height <= width:
+        raise ValueError("vertical social result must be portrait")
+    if not dimensions_known and provider != "youtube_shorts":
+        raise ValueError("vertical social result must be portrait")
     duration = float(info.get("duration") or 0.0)
     if duration <= 0: raise ValueError("duration is required")
-    thumb = _thumbnail(info)
-    if not thumb: raise ValueError("thumbnail is required")
     provider_id = str(info.get("id") or source_page.rstrip("/").split("/")[-1]).strip()
     if not provider_id: raise ValueError("provider id is required")
+    thumb = _thumbnail(info)
+    if not thumb and provider == "youtube_shorts":
+        thumb = f"https://i.ytimg.com/vi/{provider_id}/hqdefault.jpg"
+    if not thumb: raise ValueError("thumbnail is required")
     title = str(info.get("title") or info.get("description") or f"{provider} video {provider_id}").strip()
     creator = str(info.get("uploader") or info.get("channel") or info.get("creator") or "").strip() or None
     authenticity = .94 if provider == "youtube_shorts" else .98
@@ -181,10 +187,21 @@ def _probe_with_ytdlp(url: str) -> dict[str, Any]:
 
 
 def _search_youtube_shorts(query: str, limit: int) -> list[dict[str, Any]]:
+    """Use cheap flat discovery; real orientation is verified on the bounded clip.
+
+    Fully extracting every ytsearch entry multiplied network calls and also made
+    Shorts discovery brittle. Flat rows normally contain id/title/duration, which
+    is enough to build /shorts/{id}; missing dimensions are intentionally deferred.
+    """
     from yt_dlp import YoutubeDL
-    options = {"quiet": True,"no_warnings": True,"skip_download": True,"extract_flat": False,"playlistend": max(4, limit * 3),"socket_timeout": 10,"retries": 0}
+    count = max(6, min(18, limit * 4))
+    options = {
+        "quiet": True,"no_warnings": True,"skip_download": True,
+        "extract_flat": "in_playlist","playlistend": count,
+        "socket_timeout": 10,"retries": 0,
+    }
     with YoutubeDL(options) as ydl:
-        payload = ydl.extract_info(f"ytsearch{max(4, limit * 3)}:{query} #shorts", download=False)
+        payload = ydl.extract_info(f"ytsearch{count}:{query} #shorts", download=False)
     return [entry for entry in payload.get("entries", []) if isinstance(entry, dict)] if isinstance(payload, dict) else []
 
 
@@ -220,7 +237,7 @@ class VerticalSocialSource:
                 if len(candidates) >= limit: break
                 used_phrases.append(phrase)
                 if self.provider_name == "youtube_shorts":
-                    infos = await asyncio.to_thread(_search_youtube_shorts, phrase, min(limit * 2, 8))
+                    infos = await asyncio.to_thread(_search_youtube_shorts, phrase, min(limit * 3, 12))
                     rows = []
                     for info in infos:
                         video_id = str(info.get("id") or "").strip()
