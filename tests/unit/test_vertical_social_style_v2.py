@@ -27,3 +27,19 @@ def test_vertical_social_candidates_are_marked_high_authenticity():
     )
     assert row.source_authenticity is not None
     assert row.source_authenticity >= .9
+
+
+def test_vertical_social_final_gate_uses_real_clip_dimensions(monkeypatch):
+    import backend.app.quality_video as quality
+
+    monkeypatch.setattr(quality, "probe_preview", lambda _path: {
+        "playable": True, "duration": 3.5, "mime": "video/mp4",
+        "width": 360, "height": 640,
+    })
+    assert quality._verified_portrait_clip({"preview_path": "portrait.mp4"}) is True
+
+    monkeypatch.setattr(quality, "probe_preview", lambda _path: {
+        "playable": True, "duration": 3.5, "mime": "video/mp4",
+        "width": 640, "height": 360,
+    })
+    assert quality._verified_portrait_clip({"preview_path": "landscape.mp4"}) is False
