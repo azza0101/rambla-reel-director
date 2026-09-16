@@ -45,11 +45,22 @@ def same_visual(left: dict, right: dict) -> bool:
 def diverse_candidates(rows: list[dict], history: list[dict], *, limit: int) -> tuple[list[dict], int]:
     selected = []
     rejected = 0
+    # A mixed video list is later rendered in provider-specific shelves. A
+    # global limit of 3 here used to let Shorts consume every slot before
+    # TikTok/Instagram/Web Video reached the curator. Each provider therefore
+    # receives the caller's bounded budget, while same-provider calls and image
+    # calls retain the historical exact limit.
+    video_providers = {
+        str(row.get('source') or row.get('provider') or '')
+        for row in rows
+        if row.get('kind') == 'video' and (row.get('source') or row.get('provider'))
+    }
+    effective_limit = limit * len(video_providers) if len(video_providers) > 1 else limit
     for row in rows:
         if any(same_visual(row, prior) for prior in [*history, *selected]):
             rejected += 1
             continue
-        if len(selected) < limit:
+        if len(selected) < effective_limit:
             selected.append(row)
     return selected, rejected
 
