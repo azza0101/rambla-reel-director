@@ -59,6 +59,9 @@ jobs:
           else
             pytest -q
           fi
+      - name: Full repository test suite
+        if: github.ref_name == 'feat/curation-ui-v1'
+        run: pytest -q
       - name: Check embedded curation JavaScript syntax
         shell: bash
         run: |
