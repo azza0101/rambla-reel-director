@@ -36,6 +36,32 @@ def test_vertical_metadata_normalization_rejects_landscape():
         normalize_social_metadata("instagram","https://www.instagram.com/reel/ABC123/","local guide travelers",{"id": "ABC123", "duration": 12, "width": 1920, "height": 1080, "thumbnail": "https://img.example/a.jpg"},provider_rank=0)
 
 
+def test_youtube_short_with_missing_search_dimensions_is_deferred_to_clip_verification():
+    """yt-dlp search rows can omit media dimensions even for real Shorts.
+
+    Discovery must not discard the source before we materialize a bounded clip;
+    the actual clip dimensions are verified later by ffprobe.
+    """
+    from backend.app.vertical_social import normalize_social_metadata
+
+    row = normalize_social_metadata(
+        "youtube_shorts",
+        "https://www.youtube.com/shorts/abc123XYZ",
+        "boarding airplane iphone",
+        {
+            "id": "abc123XYZ",
+            "title": "Boarding my flight #shorts",
+            "duration": 24,
+            "thumbnail": "https://img.example/short.jpg",
+        },
+        provider_rank=0,
+    )
+    assert row.provider == "youtube_shorts"
+    assert row.orientation == "portrait"
+    assert row.width == 0 and row.height == 0
+    assert row.source_page == "https://www.youtube.com/shorts/abc123XYZ"
+
+
 @pytest.mark.asyncio
 async def test_youtube_adapter_can_emit_youtube_shorts_provider_and_filter_portrait():
     from backend.app.youtube_source import YouTubeOnlineSourceAdapter, YouTubeSource
