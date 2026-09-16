@@ -39,9 +39,24 @@ jobs:
               tests/unit/test_project_manifest_v2.py \
               tests/unit/test_curation_product_v2.py \
               tests/unit/test_curation_project.py \
-              tests/unit/test_curation.py
+              tests/unit/test_curation.py \
+              tests/unit/test_curation_ui.py \
+              tests/test_debug_server.py
           else
             pytest -q
           fi
+      - name: Check embedded curation JavaScript syntax
+        shell: bash
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          from backend.app.curation_ui import render_curation_page
+          html = render_curation_page('ci')
+          scripts = re.findall(r'<script>(.*?)</script>', html, re.S)
+          assert len(scripts) == 1
+          Path('/tmp/rambla-curation.js').write_text(scripts[0], encoding='utf-8')
+          PY
+          node --check /tmp/rambla-curation.js
       - name: Compile backend
         run: python -m compileall backend
