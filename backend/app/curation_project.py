@@ -71,7 +71,14 @@ class ProjectStore:
         raw = json.loads(self._path(project_id).read_text(encoding="utf-8"))
         source = SourceVideoInfo(**raw["source_video"]) if raw.get("source_video") else None
         guide = GuideAudioInfo(**raw["guide_audio"]) if raw.get("guide_audio") else None
-        return CurationProject(raw["project_id"], raw["name"], source, guide)
+        project = CurationProject(raw["project_id"], raw["name"], source, guide)
+        # Opening any pre-manifest project upgrades it in place without touching
+        # transcript/retrieval artifacts or starting analysis.
+        manifest = self.manifest_path(project.project_id)
+        if not manifest.is_file():
+            from .atomic_io import write_json
+            write_json(manifest, self.manifest_payload(project))
+        return project
 
     def manifest_path(self, project_id: str) -> Path:
         # Reuse the same validation as project.json so a crafted manifest cannot
@@ -107,6 +114,7 @@ class ProjectStore:
         project_id = str(raw.get("project_id") or "")
         if not project_id:
             raise ValueError("RAMBLA project id is missing")
+        manifest_existed = self.manifest_path(project_id).is_file()
         project = self.load(project_id)
 
         if schema == PROJECT_MANIFEST_VERSION:
@@ -126,10 +134,7 @@ class ProjectStore:
             expected_guide_signature = str(legacy_guide.get("signature") or "")
             if expected_guide_signature and expected_guide_signature != project.guide_audio.signature:
                 raise ValueError("RAMBLA project file does not match the saved local project state")
-
-        from .atomic_io import write_json
-        write_json(self.manifest_path(project.project_id), self.manifest_payload(project))
-        return project, True
+        return project, not manifest_existed
 
     def load_manifest(self, path: Path) -> CurationProject:
         path = Path(path)
