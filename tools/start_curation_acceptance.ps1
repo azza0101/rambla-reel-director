@@ -85,6 +85,7 @@ $previousVertical = $env:RAMBLA_ENABLE_VERTICAL_SOCIAL
 $previousSocialBrowser = $env:RAMBLA_ENABLE_SOCIAL_BROWSER
 $previousWebVideo = $env:RAMBLA_ENABLE_WEB_VIDEO
 $previousBrowserProfileRoot = $env:RAMBLA_BROWSER_PROFILE_ROOT
+$previousPythonPath = $env:PYTHONPATH
 $browserProfileRoot = Join-Path (Split-Path -Parent $scriptRoot) 'browser-profiles'
 New-Item -ItemType Directory -Force -Path $browserProfileRoot | Out-Null
 $env:RAMBLA_BUILD_TOKEN = $shortSha
@@ -92,14 +93,24 @@ $env:RAMBLA_ENABLE_VERTICAL_SOCIAL = '1'
 $env:RAMBLA_ENABLE_SOCIAL_BROWSER = '1'
 $env:RAMBLA_ENABLE_WEB_VIDEO = '1'
 $env:RAMBLA_BROWSER_PROFILE_ROOT = $browserProfileRoot
+$env:PYTHONPATH = $workRoot
+$importPath = $null
 try {
-    $process = Start-Process -FilePath $runtime -ArgumentList '-m','uvicorn','backend.app.curation_server:app','--host','127.0.0.1','--port',"$port" -WorkingDirectory $workRoot -WindowStyle Hidden -PassThru
+    $importPath = (& $runtime -c "import backend.app.curation_server as m; print(m.__file__)").Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $importPath) { throw 'Import provenance verification failed: curation_server import failed' }
+    $resolvedWorkRoot = (Resolve-Path -LiteralPath $workRoot).Path
+    $resolvedImportPath = (Resolve-Path -LiteralPath $importPath).Path
+    if (-not $resolvedImportPath.StartsWith($resolvedWorkRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Import provenance verification failed. Imported $resolvedImportPath instead of build under $resolvedWorkRoot"
+    }
+    $process = Start-Process -FilePath $runtime -ArgumentList '-m','uvicorn','backend.app.curation_server:app','--app-dir',$workRoot,'--host','127.0.0.1','--port',"$port" -WorkingDirectory $workRoot -WindowStyle Hidden -PassThru
 } finally {
     $env:RAMBLA_BUILD_TOKEN = $previousToken
     $env:RAMBLA_ENABLE_VERTICAL_SOCIAL = $previousVertical
     $env:RAMBLA_ENABLE_SOCIAL_BROWSER = $previousSocialBrowser
     $env:RAMBLA_ENABLE_WEB_VIDEO = $previousWebVideo
     $env:RAMBLA_BROWSER_PROFILE_ROOT = $previousBrowserProfileRoot
+    $env:PYTHONPATH = $previousPythonPath
 }
 $health = "http://127.0.0.1:$port/health"
 $stamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
@@ -123,13 +134,13 @@ foreach ($attempt in 1..40) {
 if (-not $ready) { Stop-Process -Id $process.Id -ErrorAction SilentlyContinue; throw "Acceptance server failed health check: $health" }
 $response = Invoke-WebRequest -Uri $url -UseBasicParsing -Headers @{'Cache-Control'='no-cache'}
 if (-not $response.Content.Contains($marker)) { Stop-Process -Id $process.Id -ErrorAction SilentlyContinue; throw "Build marker verification failed. Expected: $marker" }
-$requiredUiMarkers = @('PROJECTS','TIKTOK LOGIN','INSTAGRAM LOGIN','WEB / NEWS VIDEO','NEW SEARCH')
+$requiredUiMarkers = @('id="projectsV2"','id="tiktokLoginV2"','id="instagramLoginV2"','id="beatActionsV2"','id="webNewsVideosV2"')
 $missingUiMarkers = @($requiredUiMarkers | Where-Object { -not $response.Content.Contains($_) })
 if ($missingUiMarkers.Count -gt 0) {
     Stop-Process -Id $process.Id -ErrorAction SilentlyContinue
     throw "UI V2 verification failed. Missing markers: $($missingUiMarkers -join ', ')"
 }
-$record = @{pid=$process.Id;port=$port;url=$url;project_id=$latestProjectId;branch=$actualBranch;sha=$fullSha;short_sha=$shortSha;build_marker=$marker;browser_profile_root=$browserProfileRoot;started_at=(Get-Date).ToString('o')}
+$record = @{pid=$process.Id;port=$port;url=$url;project_id=$latestProjectId;branch=$actualBranch;sha=$fullSha;short_sha=$shortSha;build_marker=$marker;browser_profile_root=$browserProfileRoot;module_path=$importPath;started_at=(Get-Date).ToString('o')}
 $record | ConvertTo-Json | Set-Content -LiteralPath $recordPath -Encoding utf8
 $record | Format-List
 Write-Output "OPEN MANUALLY: $url"
