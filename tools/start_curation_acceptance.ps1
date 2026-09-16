@@ -73,13 +73,24 @@ finally { $listener.Stop() }
 
 $previousToken = $env:RAMBLA_BUILD_TOKEN
 $previousVertical = $env:RAMBLA_ENABLE_VERTICAL_SOCIAL
+$previousSocialBrowser = $env:RAMBLA_ENABLE_SOCIAL_BROWSER
+$previousWebVideo = $env:RAMBLA_ENABLE_WEB_VIDEO
+$previousBrowserProfileRoot = $env:RAMBLA_BROWSER_PROFILE_ROOT
+$browserProfileRoot = Join-Path (Split-Path -Parent $scriptRoot) 'browser-profiles'
+New-Item -ItemType Directory -Force -Path $browserProfileRoot | Out-Null
 $env:RAMBLA_BUILD_TOKEN = $shortSha
 $env:RAMBLA_ENABLE_VERTICAL_SOCIAL = '1'
+$env:RAMBLA_ENABLE_SOCIAL_BROWSER = '1'
+$env:RAMBLA_ENABLE_WEB_VIDEO = '1'
+$env:RAMBLA_BROWSER_PROFILE_ROOT = $browserProfileRoot
 try {
     $process = Start-Process -FilePath $runtime -ArgumentList '-m','uvicorn','backend.app.curation_server:app','--host','127.0.0.1','--port',"$port" -WorkingDirectory $workRoot -WindowStyle Hidden -PassThru
 } finally {
     $env:RAMBLA_BUILD_TOKEN = $previousToken
     $env:RAMBLA_ENABLE_VERTICAL_SOCIAL = $previousVertical
+    $env:RAMBLA_ENABLE_SOCIAL_BROWSER = $previousSocialBrowser
+    $env:RAMBLA_ENABLE_WEB_VIDEO = $previousWebVideo
+    $env:RAMBLA_BROWSER_PROFILE_ROOT = $previousBrowserProfileRoot
 }
 $health = "http://127.0.0.1:$port/health"
 $stamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
@@ -103,7 +114,7 @@ foreach ($attempt in 1..40) {
 if (-not $ready) { Stop-Process -Id $process.Id -ErrorAction SilentlyContinue; throw "Acceptance server failed health check: $health" }
 $response = Invoke-WebRequest -Uri $url -UseBasicParsing -Headers @{'Cache-Control'='no-cache'}
 if (-not $response.Content.Contains($marker)) { Stop-Process -Id $process.Id -ErrorAction SilentlyContinue; throw "Build marker verification failed. Expected: $marker" }
-$record = @{pid=$process.Id;port=$port;url=$url;project_id=$latestProjectId;branch=$actualBranch;sha=$fullSha;short_sha=$shortSha;build_marker=$marker;started_at=(Get-Date).ToString('o')}
+$record = @{pid=$process.Id;port=$port;url=$url;project_id=$latestProjectId;branch=$actualBranch;sha=$fullSha;short_sha=$shortSha;build_marker=$marker;browser_profile_root=$browserProfileRoot;started_at=(Get-Date).ToString('o')}
 $record | ConvertTo-Json | Set-Content -LiteralPath $recordPath -Encoding utf8
 $record | Format-List
 Write-Output "OPEN MANUALLY: $url"
