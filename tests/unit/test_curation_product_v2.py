@@ -46,13 +46,13 @@ def test_curation_page_exposes_real_project_file_and_vertical_social_controls():
     assert "instagram" in html
 
 
-def test_curation_page_project_file_uses_backend_migration_and_never_analyzes():
+def test_curation_page_accepts_legacy_project_json_and_never_analyzes_it():
     from backend.app.curation_ui import render_curation_page
 
     html = render_curation_page("test")
-    assert "await api('/projects/open-file'" in html
-    assert "project_file_migrated" in html
+    assert "legacy=!payload.schema_version&&payload.project_id" in html
     assert "Legacy project migrated" in html
     assert "Project file loaded" in html
+    assert "await api(`/projects/${payload.project_id}`)" in html
     open_handler = html[html.index("$('projectFile').onchange"):html.index("$('newProject').onclick")]
     assert "startStage('analyze')" not in open_handler
