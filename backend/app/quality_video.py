@@ -124,8 +124,8 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
     def emit(message,**data):
         callback=getattr(engine,'event_callback',None)
         if callback:callback('online_search',None,message,slot_id=beat_id,**data)
-    priority={'pexels':0,'youtube_shorts':1,'tiktok':2,'instagram':3,'youtube':4}
-    for source in sorted(engine.sources,key=lambda s:priority.get(_provider_name(s).casefold(),5)):
+    priority={'pexels':0,'youtube_shorts':1,'tiktok':2,'instagram':3,'web_video':4,'youtube':5}
+    for source in sorted(engine.sources,key=lambda s:priority.get(_provider_name(s).casefold(),6)):
         provider_label=_provider_name(source);pool=[];seen=set()
         for query_index,query in enumerate(expand_queries(queries,'video')):
             emit('Searching video source',provider=provider_label,query=query)
@@ -153,7 +153,7 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
                 preview=await engine.cache.materialize_preview(candidate)
             except Exception as exc:
                 output['errors'].append({'provider':candidate.provider,'code':'poster_failed','error_type':type(exc).__name__})
-                if candidate.provider in VERTICAL_PROVIDERS:
+                if candidate.provider in VERTICAL_PROVIDERS or candidate.provider=='web_video':
                     pending.append(_manual_discovery_base(candidate,asset_id,client_id,meta,reason=f'preview unavailable ({type(exc).__name__})'))
                 continue
             output['preview_cache_hits']+=int(preview.cache_hit)
