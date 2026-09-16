@@ -20,15 +20,7 @@ def test_vertical_metadata_normalization_accepts_only_portrait_public_video():
         "tiktok",
         "https://www.tiktok.com/@alice/video/1234567890",
         "passengers boarding ferry",
-        {
-            "id": "1234567890",
-            "title": "Boarding the ferry",
-            "uploader": "alice",
-            "duration": 18,
-            "width": 1080,
-            "height": 1920,
-            "thumbnail": "https://img.example/thumb.jpg",
-        },
+        {"id": "1234567890","title": "Boarding the ferry","uploader": "alice","duration": 18,"width": 1080,"height": 1920,"thumbnail": "https://img.example/thumb.jpg"},
         provider_rank=0,
     )
     assert row.provider == "tiktok"
@@ -41,13 +33,7 @@ def test_vertical_metadata_normalization_rejects_landscape():
     from backend.app.vertical_social import normalize_social_metadata
 
     with pytest.raises(ValueError, match="portrait"):
-        normalize_social_metadata(
-            "instagram",
-            "https://www.instagram.com/reel/ABC123/",
-            "local guide travelers",
-            {"id": "ABC123", "duration": 12, "width": 1920, "height": 1080, "thumbnail": "https://img.example/a.jpg"},
-            provider_rank=0,
-        )
+        normalize_social_metadata("instagram","https://www.instagram.com/reel/ABC123/","local guide travelers",{"id": "ABC123", "duration": 12, "width": 1920, "height": 1080, "thumbnail": "https://img.example/a.jpg"},provider_rank=0)
 
 
 @pytest.mark.asyncio
@@ -77,14 +63,9 @@ async def test_normal_youtube_adapter_opt_in_prioritizes_vertical_social(monkeyp
     class FakeTikTok:
         provider_name = "tiktok"
         last_attempt = {}
-
         async def search(self, query, **kwargs):
             self.last_attempt = {"provider": "tiktok", "query": query, "hits": 1}
-            return [normalize_social_metadata(
-                "tiktok", "https://www.tiktok.com/@alice/video/1234567890", query,
-                {"id": "1234567890", "title": "Vertical", "duration": 18, "width": 1080, "height": 1920, "thumbnail": "https://img.example/t.jpg"},
-                provider_rank=0,
-            )]
+            return [normalize_social_metadata("tiktok", "https://www.tiktok.com/@alice/video/1234567890", query,{"id": "1234567890", "title": "Vertical", "duration": 18, "width": 1080, "height": 1920, "thumbnail": "https://img.example/t.jpg"},provider_rank=0)]
 
     monkeypatch.setenv("RAMBLA_ENABLE_VERTICAL_SOCIAL", "1")
     adapter = YouTubeOnlineSourceAdapter(YouTubeSource(discover=discover), vertical_sources=[FakeTikTok()])
@@ -97,5 +78,5 @@ async def test_normal_youtube_adapter_opt_in_prioritizes_vertical_social(monkeyp
 def test_vertical_clip_localization_contract_version_is_current():
     from backend.app.quality_video import QUALITY_VERSION, VERTICAL_PROVIDERS
 
-    assert QUALITY_VERSION == "clip-quality-10"
+    assert QUALITY_VERSION == "clip-quality-11"
     assert {"youtube_shorts", "tiktok", "instagram"} <= VERTICAL_PROVIDERS
