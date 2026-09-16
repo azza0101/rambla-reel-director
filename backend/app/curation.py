@@ -73,11 +73,15 @@ def build_candidate_shelf(
         return tuple((primary+remaining)[:limit])
 
     videos=[r for r in ordered if r.kind=='video']
-    vertical=balanced([r for r in videos if r.provider in VERTICAL_SOCIAL_PROVIDERS and r.orientation=='portrait'],video_limit)
-    general=balanced([r for r in videos if r.provider!='pexels' and r.provider not in VERTICAL_SOCIAL_PROVIDERS],video_limit)
+    shorts=balanced([r for r in videos if r.provider=='youtube_shorts' and r.orientation=='portrait'],video_limit)
+    tiktok=balanced([r for r in videos if r.provider=='tiktok' and r.orientation=='portrait'],video_limit)
+    instagram=balanced([r for r in videos if r.provider=='instagram' and r.orientation=='portrait'],video_limit)
+    web=balanced([r for r in videos if r.provider=='web_video'],video_limit)
+    general=balanced([r for r in videos if r.provider!='pexels' and r.provider not in VERTICAL_SOCIAL_PROVIDERS and r.provider!='web_video'],video_limit)
     stock=balanced([r for r in videos if r.provider=='pexels'],video_limit)
     images=balanced([r for r in ordered if r.kind=='image'],image_limit)
-    social=vertical+general
-    # Ordering is editorial: native vertical social first, general web video only
-    # as fallback, stock last. The UI may split these into separate shelves.
-    return CandidateShelf(video=vertical+general+stock,images=images,social=social,stock=stock,vertical_social=vertical,general_social=general)
+    vertical=shorts+tiktok+instagram
+    social=vertical+web+general
+    # Each UI shelf gets its own bounded candidate budget. TikTok, Instagram and
+    # Shorts must not evict one another before the curator can compare them.
+    return CandidateShelf(video=vertical+web+general+stock,images=images,social=social,stock=stock,vertical_social=vertical,general_social=web+general)
