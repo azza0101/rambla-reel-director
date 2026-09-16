@@ -6,11 +6,20 @@ def test_acceptance_launcher_refuses_non_v2_curation_page():
 
     assert "$requiredUiMarkers" in script
     for marker in (
-        "PROJECTS",
-        "TIKTOK LOGIN",
-        "INSTAGRAM LOGIN",
-        "WEB / NEWS VIDEO",
-        "NEW SEARCH",
+        'id="projectsV2"',
+        'id="tiktokLoginV2"',
+        'id="instagramLoginV2"',
+        'id="beatActionsV2"',
+        'id="webNewsVideosV2"',
     ):
         assert marker in script
     assert "UI V2 verification failed" in script
+
+
+def test_acceptance_launcher_pins_python_imports_to_downloaded_build():
+    script = Path("tools/start_curation_acceptance.ps1").read_text(encoding="utf-8")
+
+    assert "$env:PYTHONPATH = $workRoot" in script
+    assert "'--app-dir',$workRoot" in script or "'--app-dir', $workRoot" in script
+    assert "backend.app.curation_server" in script
+    assert "Import provenance verification failed" in script
