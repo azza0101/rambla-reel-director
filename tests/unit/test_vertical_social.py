@@ -36,11 +36,11 @@ def test_vertical_metadata_normalization_rejects_landscape():
         normalize_social_metadata("instagram","https://www.instagram.com/reel/ABC123/","local guide travelers",{"id": "ABC123", "duration": 12, "width": 1920, "height": 1080, "thumbnail": "https://img.example/a.jpg"},provider_rank=0)
 
 
-def test_youtube_short_with_missing_search_dimensions_is_deferred_to_clip_verification():
-    """yt-dlp search rows can omit media dimensions even for real Shorts.
+def test_youtube_short_with_incomplete_search_metadata_is_deferred_to_clip_verification():
+    """Flat yt-dlp search rows often omit media dimensions and thumbnail details.
 
-    Discovery must not discard the source before we materialize a bounded clip;
-    the actual clip dimensions are verified later by ffprobe.
+    A /shorts/ source can survive discovery with a deterministic YouTube poster;
+    the real downloaded clip dimensions are verified later by ffprobe.
     """
     from backend.app.vertical_social import normalize_social_metadata
 
@@ -52,7 +52,6 @@ def test_youtube_short_with_missing_search_dimensions_is_deferred_to_clip_verifi
             "id": "abc123XYZ",
             "title": "Boarding my flight #shorts",
             "duration": 24,
-            "thumbnail": "https://img.example/short.jpg",
         },
         provider_rank=0,
     )
@@ -60,6 +59,7 @@ def test_youtube_short_with_missing_search_dimensions_is_deferred_to_clip_verifi
     assert row.orientation == "portrait"
     assert row.width == 0 and row.height == 0
     assert row.source_page == "https://www.youtube.com/shorts/abc123XYZ"
+    assert row.preview_url == "https://i.ytimg.com/vi/abc123XYZ/hqdefault.jpg"
 
 
 @pytest.mark.asyncio
@@ -104,5 +104,5 @@ async def test_normal_youtube_adapter_opt_in_prioritizes_vertical_social(monkeyp
 def test_vertical_clip_localization_contract_version_is_current():
     from backend.app.quality_video import QUALITY_VERSION, VERTICAL_PROVIDERS
 
-    assert QUALITY_VERSION == "clip-quality-11"
+    assert QUALITY_VERSION == "clip-quality-12"
     assert {"youtube_shorts", "tiktok", "instagram"} <= VERTICAL_PROVIDERS
