@@ -36,6 +36,8 @@ class CurationCandidate:
     quality_state: str | None = None
     clip_verified: bool = False
     quality_reasons: tuple[str, ...] = ()
+    acquisition_state: str | None = None
+    manual_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
