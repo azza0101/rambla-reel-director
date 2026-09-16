@@ -39,16 +39,18 @@ def test_authoritative_renderer_has_build_marker_and_no_legacy_ui():
     assert page.count("<script>") == 1
 
 
-def test_acceptance_launcher_uses_safe_dynamic_port_and_fast_forward_contract():
+def test_acceptance_launcher_uses_stable_port_and_fast_forward_contract():
     from pathlib import Path
     launcher = (Path(__file__).parents[2] / "tools" / "start_curation_acceptance.ps1").read_text(encoding="utf-8")
-    assert "8765..8799" in launcher
+    assert "$port = 8765" in launcher
+    assert "8765..8799" not in launcher
     assert "merge --ff-only" in launcher
     assert "status --porcelain" in launcher
     assert "RAMBLA_BUILD_TOKEN" in launcher
     assert "Start-Process $url" in launcher
     assert "reset --hard" not in launcher
-    assert "Stop-Process -Id $process.Id" in launcher
+    assert ".curation-acceptance-server.json" in launcher
+    assert "Stop-Process -Id $oldProcess.Id" in launcher
 
 
 def test_launcher_browser_failure_is_nonfatal_and_manual_url_is_always_emitted():
@@ -91,3 +93,14 @@ def test_analysis_details_render_concrete_visual_plan_and_search_evidence():
     assert "editorial_function" in page and "core_meaning" in page and "visual_mode" in page
     assert "image_queries" in page and "video_queries" in page and "avoid" in page
     assert "image_search" in page and "video_search" in page
+
+
+def test_project_controls_and_vertical_shelves_are_first_class_ui():
+    page = render_curation_page("project-v2")
+    assert "OPEN PROJECT FILE" in page
+    assert "SAVE PROJECT FILE" in page
+    assert "project.rambla.json" in page
+    assert "SOCIAL / SHORTS / REELS" in page
+    assert "YOUTUBE / GENERAL FALLBACK" in page
+    assert "STOCK / PEXELS" in page
+    assert "VERTICAL SOCIAL" in page
