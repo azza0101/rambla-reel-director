@@ -17,13 +17,15 @@ import uuid
 from typing import Any, Awaitable, Callable
 
 from fastapi import HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict
 
 from . import debug_server as debug
 from .curation_project import ProjectStore
+from .curation_ui_v2 import render_curation_page_v2
 from .editorial_import import active_retrieval_root
 from .project_maintenance import clean_project_media, delete_project_tree, project_library_rows, rename_project
-from .debug_research_cli import parse_research_stage, research_stage_type
+from .debug_research_cli import research_stage_type
 
 
 class RenameProjectRequest(BaseModel):
@@ -44,7 +46,6 @@ def _default_project_root() -> Path:
 
 
 def _project_payload(project) -> dict[str, Any]:
-    # Keep the public payload shape identical to the core server.
     return debug._project_payload(project)
 
 
@@ -149,6 +150,19 @@ def create_app(
         audio_probe_runner=audio_probe_runner,
         audio_command_runner=audio_command_runner,
     )
+
+    # Replace the core page route with the augmented product UI while retaining
+    # every existing core API/run endpoint.
+    app.router.routes[:] = [route for route in app.router.routes if getattr(route, "path", None) != "/curation"]
+
+    @app.get("/curation", response_class=HTMLResponse)
+    async def product_curation_page() -> HTMLResponse:
+        token = os.environ.get("RAMBLA_BUILD_TOKEN", "development")
+        return HTMLResponse(render_curation_page_v2(token), headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache", "Expires": "0",
+        })
+
     store = ProjectStore(root, probe_runner=probe_runner or debug._probe_source_video, audio_probe_runner=audio_probe_runner)
 
     def load_project(project_id: str):
@@ -191,14 +205,14 @@ def create_app(
 
     @app.post("/api/curation/projects/{project_id}/beats/{beat_id}/research")
     async def research_beat_route(project_id: str, beat_id: str, request: BeatResearchRequest) -> dict[str, Any]:
-        project = load_project(project_id); run = run_root(project_id)
+        project = load_project(project_id)
+        run = run_root(project_id)
         if request.mode not in {"replace", "append"}:
             raise HTTPException(status_code=422, detail="mode must be replace or append")
         _validate_broll_beat(run, beat_id)
         if project.source_video is None:
             raise HTTPException(status_code=422, detail="source video required")
-        active = _active_run_for(run)
-        if active:
+        if _active_run_for(run):
             raise HTTPException(status_code=409, detail="project stage already running")
         stage = research_stage_type(beat_id, request.mode)
         state = debug.RunState(
