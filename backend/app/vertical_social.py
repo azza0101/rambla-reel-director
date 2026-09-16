@@ -8,8 +8,10 @@ are isolated and never block YouTube Shorts, stock, images, or project restore.
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass
 from html.parser import HTMLParser
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -267,5 +269,32 @@ class VerticalSocialSource:
             return []
 
 
-def build_default_vertical_sources() -> list[VerticalSocialSource]:
-    return [VerticalSocialSource("youtube_shorts"), VerticalSocialSource("tiktok"), VerticalSocialSource("instagram")]
+def build_default_vertical_sources() -> list[Any]:
+    """Build vertical sources, optionally upgrading TikTok/Instagram to browser search.
+
+    YouTube Shorts always uses the cheap public discovery path. When the social
+    browser flag is enabled, TikTok and Instagram use RAMBLA-owned persistent
+    profiles first and fall back to the public-web sources on provider/browser
+    failures. No account credential is passed through this factory.
+    """
+    public = {
+        provider: VerticalSocialSource(provider)
+        for provider in ("youtube_shorts", "tiktok", "instagram")
+    }
+    enabled = str(os.environ.get("RAMBLA_ENABLE_SOCIAL_BROWSER", "")).casefold() in {"1", "true", "yes", "on"}
+    if not enabled:
+        return [public["youtube_shorts"], public["tiktok"], public["instagram"]]
+
+    from .browser_profiles import BrowserProfileManager
+    from .social_browser_source import BrowserSocialSource
+
+    root = Path(os.environ.get(
+        "RAMBLA_BROWSER_PROFILE_ROOT",
+        str(Path.home() / ".rambla-reel-director" / "browser-profiles"),
+    ))
+    manager = BrowserProfileManager(root)
+    return [
+        public["youtube_shorts"],
+        BrowserSocialSource("tiktok", manager, fallback=public["tiktok"]),
+        BrowserSocialSource("instagram", manager, fallback=public["instagram"]),
+    ]
