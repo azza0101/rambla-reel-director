@@ -12,6 +12,7 @@ from .image_sources import PexelsPhotoSource,GoogleImageSource,WikimediaImageSou
 from .media_quality import image_quality,diverse_candidates,other_media_history,cross_chunk_duplicate_rate,balance_shots
 from .project_config import load_project_credentials,provider_status
 from .retrieval_quality import VERSION,expand_queries,QualityRanker
+from .editorial_relevance import build_retrieval_spec,encode_retrieval_intent
 
 
 def configured_sources():
@@ -38,12 +39,12 @@ async def source_images(chunks,output,plan,ranker,client_id,*,sources=None,fetch
     result['quality_signature']=signature
     async def fetch(url):
         if fetcher: return await fetcher(url)
-        async with httpx.AsyncClient(timeout=20,follow_redirects=True,headers={'User-Agent':'RAMBLA-Reel-Director/0.3 (https://github.com/azza0101/rambla-reel-director)'}) as client:
+        async with httpx.AsyncClient(timeout=20,follow_redirects=True,headers={'User-Agent':'RAMBLA-Reel-Director/0.4 (https://github.com/azza0101/rambla-reel-director)'}) as client:
             response=await client.get(url);response.raise_for_status();return response.content
     for index,chunk in enumerate(chunks):
         bid=chunk['id']; beat=plan['chunks'][bid]; cross=other_media_history(output,'video',bid)
         row={'quality_version':VERSION,'status':'searched','visual_action':beat.get('visual_action','BROLL'),'candidates':[],'rejected_candidates':[],
-            'search_attempts':[],'queries':[q for s in beat['shots'] for q in s['image_queries']],'raw_count':0,'accepted_count':0,'errors':[],'active_providers':[]}
+            'search_attempts':[],'queries':[],'raw_count':0,'accepted_count':0,'errors':[],'active_providers':[]}
         result['chunks'][bid]=row
         counts={'raw':0,'hd':0,'preview':0,'preview_failed':0,'rejected':0,'duplicates':0,'requests_failed':0}
         row['counts']=counts
@@ -55,13 +56,18 @@ async def source_images(chunks,output,plan,ranker,client_id,*,sources=None,fetch
             row['accepted_count']=len(row['candidates']);row['cache_status']='reused';history.extend(row['candidates']);result['duplicates_rejected']+=n;result['cache_reused_chunks']+=1;continue
         result['retried_chunks']+=1
         for shot in beat['shots']:
-            accepted=[];seen=set(); variants=expand_queries(shot['image_queries'],'image')
+            accepted=[];seen=set()
+            spec=build_retrieval_spec(beat,shot,'image')
+            row['queries'].extend(q for q in spec['queries'] if q not in row['queries'])
+            variants=expand_queries(spec['queries'],'image')
+            editorial_intent=encode_retrieval_intent(beat,shot)
             # Finish the primary source (including expansions) before secondary/fallback.
             for provider in providers:
                 provider_name=getattr(provider,'provider_name',type(provider).__name__)
                 row['active_providers'].append(provider_name)
                 for query in variants:
-                    attempt={'provider':provider_name,'query':query,'shot_id':shot['shot_id'],'expanded':query not in shot['image_queries'],'expanded_from':shot['image_queries'] if query not in shot['image_queries'] else None}
+                    attempt={'provider':provider_name,'query':query,'shot_id':shot['shot_id'],'expanded':query not in shot['image_queries'],'expanded_from':shot['image_queries'] if query not in shot['image_queries'] else None,
+                        'contextual_fallback':query not in shot['image_queries'] and query in spec['queries'],'generic_shot_demoted':spec['generic_shot_demoted']}
                     row['search_attempts'].append(attempt)
                     if event_callback:event_callback('image_search',100*index/max(1,len(chunks)),'Searching photos',chunk_id=bid,**attempt)
                     try: remote=await provider.search(query,limit=12)
@@ -81,16 +87,17 @@ async def source_images(chunks,output,plan,ranker,client_id,*,sources=None,fetch
                             if not local.exists():local.write_bytes(await fetch(c.thumbnail_url))
                             quality=image_quality(local)
                             counts['preview']+=1
-                            pool.append({**asdict(c),**quality,'id':c.provider+':'+c.provider_id,'client_id':client_id,'path':str(local),'preview_path':str(local),'kind':'image','source':c.provider,'description':c.description or c.title,'shot_id':shot['shot_id'],'shot_description':shot['description'],'matched_query':query})
+                            pool.append({**asdict(c),**quality,'id':c.provider+':'+c.provider_id,'client_id':client_id,'path':str(local),'preview_path':str(local),'kind':'image','source':c.provider,'description':c.description or c.title,'shot_id':shot['shot_id'],'shot_description':shot['description'],'matched_query':query,'retrieval_query':query,
+                                'editorial_positive':spec['positive'],'editorial_negatives':spec['negatives'],'generic_shot_demoted':spec['generic_shot_demoted']})
                         except Exception as exc:
                             dimension_failure=isinstance(exc,ValueError) and str(exc)=='image below usable dimensions'
                             if dimension_failure:counts['hd']-=1
                             else:counts['preview_failed']+=1
                             row['errors'].append({'provider':c.provider,'code':'no_hd_candidates' if dimension_failure else 'preview_failed','error_type':type(exc).__name__})
-                    ranked=ranker.rank(shot['description'],pool)
-                    strong=[r for r in ranked if r.get('quality_state')!='rejected' and r.get('score',0)>=.42]
+                    ranked=ranker.rank(editorial_intent,pool)
+                    strong=[r for r in ranked if r.get('quality_state')!='rejected' and r.get('score',0)>=.40]
                     counts['rejected']+=len(ranked)-len(strong)
-                    row['rejected_candidates'].extend({k:r.get(k) for k in ('id','provider','title','source_page','matched_query','score','embedding_score','shot_embedding_score','query_embedding_score','condition_counter_score','metadata_score','quality_reasons')} for r in ranked if r not in strong)
+                    row['rejected_candidates'].extend({k:r.get(k) for k in ('id','provider','title','source_page','matched_query','score','embedding_score','shot_embedding_score','query_embedding_score','negative_embedding_score','condition_counter_score','metadata_score','quality_reasons','editorial_positive','editorial_negatives')} for r in ranked if r not in strong)
                     accepted,n=diverse_candidates(accepted+strong,history+cross+row['candidates'],limit=2)
                     result['duplicates_rejected']+=n;attempt['accepted']=len(accepted)
                     counts['duplicates']+=n
