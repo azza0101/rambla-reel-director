@@ -1,8 +1,8 @@
 """Product server extension for RAMBLA project/media lifecycle controls.
 
 The proven debug_server remains the core project/curation runtime. This module
-adds project-library, clean-media and beat-scoped research routes without
-coupling those operations to Analyze/ASR.
+adds project-library, clean-media, social login and beat-scoped research routes
+without coupling those operations to Analyze/ASR.
 """
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict
 
 from . import debug_server as debug
+from .browser_profiles import BrowserProfileManager, SUPPORTED_SOCIAL_PROVIDERS
 from .curation_project import ProjectStore
 from .curation_ui_v2 import render_curation_page_v2
 from .editorial_import import active_retrieval_root
@@ -43,6 +44,13 @@ ResearchRunner = Callable[[debug.RunState, str, str], Awaitable[Any] | Any]
 
 def _default_project_root() -> Path:
     return Path(os.environ.get("RAMBLA_PROJECT_ROOT", str(Path(debug.DEFAULT_OUTPUT).parent / "curation-projects")))
+
+
+def _default_browser_profile_root(project_root: Path) -> Path:
+    value = os.environ.get("RAMBLA_BROWSER_PROFILE_ROOT", "").strip()
+    if value:
+        return Path(value)
+    return project_root.parent / "browser-profiles"
 
 
 def _project_payload(project) -> dict[str, Any]:
@@ -140,6 +148,7 @@ def create_app(
     audio_probe_runner: Any = None,
     audio_command_runner: Any = None,
     research_runner: ResearchRunner | None = None,
+    browser_profile_manager: Any = None,
 ):
     root = Path(project_root or _default_project_root())
     app = debug.create_app(
@@ -164,6 +173,7 @@ def create_app(
         })
 
     store = ProjectStore(root, probe_runner=probe_runner or debug._probe_source_video, audio_probe_runner=audio_probe_runner)
+    social_profiles = browser_profile_manager or BrowserProfileManager(_default_browser_profile_root(root))
 
     def load_project(project_id: str):
         try:
@@ -174,6 +184,21 @@ def create_app(
     def run_root(project_id: str) -> Path:
         load_project(project_id)
         return root / project_id / "run"
+
+    @app.get("/api/curation/social/status")
+    async def social_status() -> dict[str, Any]:
+        return {"providers": social_profiles.status(), "resolve_calls": 0}
+
+    @app.post("/api/curation/social/{provider}/login")
+    async def social_login(provider: str) -> dict[str, Any]:
+        clean = str(provider or "").casefold().strip()
+        if clean not in SUPPORTED_SOCIAL_PROVIDERS:
+            raise HTTPException(status_code=404, detail="social provider non supportato")
+        try:
+            result = social_profiles.open_login(clean)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=503, detail=f"browser social non disponibile: {type(exc).__name__}") from exc
+        return {**result, "resolve_calls": 0}
 
     @app.get("/api/curation/projects")
     async def list_projects() -> dict[str, Any]:
