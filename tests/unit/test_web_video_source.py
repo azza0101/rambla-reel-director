@@ -63,6 +63,53 @@ def test_vertical_factory_can_add_web_video_source(monkeypatch):
     assert [source.provider_name for source in sources][-1] == "web_video"
 
 
+def test_web_video_thumbnail_failure_keeps_manual_source_link():
+    from backend.app.quality_video import source_video_beat
+    from backend.app.web_video_source import WebVideoRemoteCandidate
+
+    candidate = WebVideoRemoteCandidate(
+        provider="web_video", provider_id="story42", query="rome news video",
+        source_page="https://news.example/video/42", creator_name=None, creator_page=None,
+        title="Rome eyewitness video", description="Rome eyewitness video",
+        duration=12, width=0, height=0, orientation="unknown",
+        preview_url="https://img.example/blocked.jpg",
+        selected_rendition_url="https://news.example/video/42",
+        rendition_width=0, rendition_height=0,
+        rights_state="review_required", provider_rank=0,
+    )
+
+    class Source:
+        provider_name = "web_video"
+
+    class Cache:
+        async def materialize_preview(self, _candidate):
+            raise RuntimeError("thumbnail blocked")
+
+    class Ranker:
+        warning = None
+
+    class Engine:
+        sources = [Source()]
+        cache = Cache()
+        ranker = Ranker()
+        query_intents = {}
+        event_callback = None
+
+        async def _search_one(self, _source, _query, **_kwargs):
+            return [candidate], None
+
+    result = asyncio.run(source_video_beat(
+        Engine(), beat_id="b1", client_id="test", queries=["rome news video"],
+        min_duration=1, max_duration=300, orientation=None,
+        retrieval_intent="rome news eyewitness video",
+    ))
+    manual = result["discovery_sources"]
+    assert manual and manual[0]["source"] == "web_video"
+    assert manual[0]["source_page"] == "https://news.example/video/42"
+    assert manual[0]["preview_status"] in {"preview_pending", "manual"}
+    assert manual[0]["acquisition_state"] in {"PREVIEW_ONLY", "MANUAL_LINK"}
+
+
 def test_curation_artifacts_expose_discovery_source_when_clip_download_failed(tmp_path, monkeypatch):
     import json
     import backend.app.curation_artifacts as artifacts
