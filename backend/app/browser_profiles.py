@@ -33,7 +33,12 @@ async def _default_playwright_runner(
     start_url: str | None,
     callback: Callable[[Any, Any], Any],
 ) -> Any:
-    """Run one callback inside a headed persistent Edge/Chrome context."""
+    """Run one callback in the saved Edge/Chrome profile without opening UI.
+
+    Login is a separate headed process. Retrieval reuses those cookies in a
+    background persistent context so a reel search does not flash many browser
+    windows while querying several beats.
+    """
     from playwright.async_api import async_playwright
 
     profile_dir.mkdir(parents=True, exist_ok=True)
@@ -44,7 +49,7 @@ async def _default_playwright_runner(
             try:
                 kwargs = {
                     "user_data_dir": str(profile_dir),
-                    "headless": False,
+                    "headless": True,
                     "accept_downloads": True,
                 }
                 if channel:
