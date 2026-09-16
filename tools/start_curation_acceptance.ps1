@@ -76,7 +76,7 @@ $previousVertical = $env:RAMBLA_ENABLE_VERTICAL_SOCIAL
 $env:RAMBLA_BUILD_TOKEN = $shortSha
 $env:RAMBLA_ENABLE_VERTICAL_SOCIAL = '1'
 try {
-    $process = Start-Process -FilePath $runtime -ArgumentList '-m','uvicorn','backend.app.debug_server:app','--host','127.0.0.1','--port',"$port" -WorkingDirectory $workRoot -WindowStyle Hidden -PassThru
+    $process = Start-Process -FilePath $runtime -ArgumentList '-m','uvicorn','backend.app.curation_server:app','--host','127.0.0.1','--port',"$port" -WorkingDirectory $workRoot -WindowStyle Hidden -PassThru
 } finally {
     $env:RAMBLA_BUILD_TOKEN = $previousToken
     $env:RAMBLA_ENABLE_VERTICAL_SOCIAL = $previousVertical
