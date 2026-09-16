@@ -21,12 +21,22 @@ Do not invent filler merely to reach the coverage target.
 Current spoken meaning is authoritative. Neighbors only clarify references; never
 import future or unrelated objects. Global theme is not a source of shot nouns.
 Never turn suspicion into fact or contradict explicit speech, including negations.
-Prefer ONE physical, retrievable shot. Use 2–3 only for an explicitly justified
+Prefer ONE physical, retrievable shot. Use 2-3 only for an explicitly justified
 sequence/juxtaposition. No staged composites, invented props, symbolic filler or
-forced metaphors. Avoid visual repetition across the reel. Describe visible things
-and actions; write 1–3 simple concrete English queries per medium per shot.
-Use exact start/end seconds and concatenate covered original texts in order.
-Do not change transcript text. Do not invent facts or provider URLs.'''
+forced metaphors. Avoid visual repetition across the reel.
+Never default to a person using a laptop, generic hotel room, travel-planning map,
+tutorial, infographic, presenter or stock office scene unless that physical object/action
+is actually supported by the CURRENT spoken beat. Generic activity is not a substitute
+for editorial meaning. For rhetorical questions, investigation, doubt or a spoken
+"silence/no answer", prefer the named subject plus a truthful reaction/evasion/silence
+visual; never fabricate wrongdoing. Concrete named entities in the current beat outrank
+generic props. Put recurring unwanted shortcuts and contradictions in avoid so retrieval
+can treat them as hard negatives. For short-form video, prefer simple visible actions
+that can plausibly exist as candid vertical phone footage (Shorts/Reels/TikTok style),
+without adding facts not present in speech.
+Describe visible things and actions; write 1-3 simple concrete English queries per
+medium per shot. Use exact start/end seconds and concatenate covered original texts in
+order. Do not change transcript text. Do not invent facts or provider URLs.'''
 
 
 def visual_coverage_ratio(plan):
