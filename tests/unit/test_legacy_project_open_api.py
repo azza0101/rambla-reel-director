@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 
-def test_open_project_file_api_migrates_legacy_project_json_without_analyze(tmp_path):
+def test_get_existing_legacy_project_auto_writes_manifest_without_analyze(tmp_path):
     from backend.app.debug_server import create_app
 
     source = tmp_path / "allowed" / "source.mp4"
@@ -25,32 +25,28 @@ def test_open_project_file_api_migrates_legacy_project_json_without_analyze(tmp_
     project_id = client.post("/api/curation/projects", json={"name": "Legacy reel"}).json()["project_id"]
     assert client.post(f"/api/curation/projects/{project_id}/source/local", json={"path": str(source)}).status_code == 200
 
-    legacy_path = project_root / project_id / "project.json"
-    legacy = json.loads(legacy_path.read_text(encoding="utf-8"))
     manifest = project_root / project_id / "project.rambla.json"
     manifest.unlink()
+    assert (project_root / project_id / "project.json").is_file()
 
-    response = client.post("/api/curation/projects/open-file", json=legacy)
-    assert response.status_code == 200
-    body = response.json()
-    assert body["project_id"] == project_id
-    assert body["project_file_migrated"] is True
-    assert body["resolve_calls"] == 0
-    assert manifest.is_file()
-
-
-def test_open_project_file_api_accepts_current_manifest(tmp_path):
-    from backend.app.debug_server import create_app
-
-    project_root = tmp_path / "projects"
-    client = TestClient(create_app(
-        project_root=project_root,
-        probe_runner=lambda _: {"duration": 3, "fps": 25, "width": 640, "height": 360, "has_audio": False},
-    ))
-    project_id = client.post("/api/curation/projects", json={"name": "Current reel"}).json()["project_id"]
-    payload = json.loads((project_root / project_id / "project.rambla.json").read_text(encoding="utf-8"))
-
-    response = client.post("/api/curation/projects/open-file", json=payload)
+    response = client.get(f"/api/curation/projects/{project_id}")
     assert response.status_code == 200
     assert response.json()["project_id"] == project_id
-    assert response.json()["project_file_migrated"] is False
+    assert response.json()["resolve_calls"] == 0
+    assert manifest.is_file()
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == "rambla-project-1"
+    assert payload["project_id"] == project_id
+
+
+def test_current_project_manifest_remains_openable_after_auto_migration(tmp_path):
+    from backend.app.curation_project import ProjectStore
+
+    store = ProjectStore(
+        tmp_path / "projects",
+        probe_runner=lambda _: {"duration": 3, "fps": 25, "width": 640, "height": 360, "has_audio": False},
+    )
+    project = store.create("Current reel")
+    manifest = store.manifest_path(project.project_id)
+    opened = store.load_manifest(manifest)
+    assert opened.project_id == project.project_id
