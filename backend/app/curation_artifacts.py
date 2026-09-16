@@ -30,12 +30,21 @@ def _video_candidate(cid: str, row: dict, *, discovery: bool = False) -> Curatio
     poster = row.get("poster_path") or (preview_path if preview_path and not playable else None)
     remote_preview = None if preview_path else row.get("preview_url") or row.get("thumbnail_url")
     clip_verified = bool(row.get("clip_verified")) and playable
+    explicit_status = str(row.get("preview_status") or "").strip()
     if clip_verified:
         acquisition_state = "CLIP_READY"
         preview_status = "ready"
     else:
         acquisition_state = str(row.get("acquisition_state") or ("PREVIEW_ONLY" if (preview_path or remote_preview) else "MANUAL_LINK"))
-        preview_status = "preview_pending" if (preview_path or remote_preview) else "manual"
+        if explicit_status in {"preview_pending", "manual", "discovery"}:
+            preview_status = explicit_status
+        elif discovery:
+            preview_status = "preview_pending" if (preview_path or remote_preview) else "manual"
+        else:
+            # Legacy candidate rows used a thumbnail as discovery evidence only.
+            # Never silently upgrade those old artifacts to PREVIEW_ONLY just
+            # because a local JPEG path exists.
+            preview_status = "discovery"
     provider = str(row.get("source") or row.get("provider") or "online")
     provider_id = str(row.get("provider_id") or row.get("id") or "source")
     asset_id = f"{cid}--{row.get('id') or provider + ':' + provider_id}"
