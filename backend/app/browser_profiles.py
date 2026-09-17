@@ -9,8 +9,8 @@ import asyncio
 import inspect
 import os
 from pathlib import Path
+import shutil
 import subprocess
-import sys
 from typing import Any, Awaitable, Callable
 
 
@@ -75,17 +75,43 @@ async def _default_playwright_runner(
                 pass
 
 
+def _installed_browser() -> str | None:
+    """Return an installed Chromium browser without reading a user's main profile."""
+    for name in ("msedge", "msedge.exe", "chrome", "chrome.exe", "google-chrome"):
+        found = shutil.which(name)
+        if found:
+            return found
+    if os.name == "nt":
+        candidates = []
+        for root in (os.environ.get("PROGRAMFILES"), os.environ.get("PROGRAMFILES(X86)"), os.environ.get("LOCALAPPDATA")):
+            if not root:
+                continue
+            candidates.extend((
+                Path(root) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+                Path(root) / "Google" / "Chrome" / "Application" / "chrome.exe",
+            ))
+        for candidate in candidates:
+            if candidate.is_file():
+                return str(candidate)
+    return None
+
+
 def _default_login_launcher(provider: str, profile_dir: Path, start_url: str) -> int:
+    """Open the login page in a RAMBLA-owned persistent browser profile.
+
+    Login itself does not need Playwright. This keeps credentials in the real
+    browser and lets the curation UI work even when the server venv has no pip.
+    """
+    del provider  # provider is already encoded by start_url/profile_dir
     profile_dir.mkdir(parents=True, exist_ok=True)
+    browser = _installed_browser()
+    if not browser:
+        raise BrowserUnavailableError("No supported Edge/Chrome browser found")
     command = [
-        sys.executable,
-        "-m",
-        "backend.app.social_browser_login",
-        "--provider",
-        provider,
-        "--profile-dir",
-        str(profile_dir),
-        "--url",
+        browser,
+        f"--user-data-dir={profile_dir}",
+        "--no-first-run",
+        "--no-default-browser-check",
         start_url,
     ]
     kwargs: dict[str, Any] = {"stdin": subprocess.DEVNULL}
