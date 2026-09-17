@@ -123,6 +123,11 @@ $env:RAMBLA_ENABLE_WEB_VIDEO = '1'
 $env:RAMBLA_BROWSER_PROFILE_ROOT = $browserProfileRoot
 $env:PYTHONPATH = $workRoot
 $importPath = $null
+$serverLogDir = Join-Path $scriptRoot '.curation-logs'
+New-Item -ItemType Directory -Force -Path $serverLogDir | Out-Null
+$serverStdout = Join-Path $serverLogDir "server-$shortSha-$port.stdout.log"
+$serverStderr = Join-Path $serverLogDir "server-$shortSha-$port.stderr.log"
+Remove-Item -LiteralPath $serverStdout,$serverStderr -Force -ErrorAction SilentlyContinue
 try {
     $importPath = (& $runtime -c "import backend.app.curation_server as m; print(m.__file__)").Trim()
     if ($LASTEXITCODE -ne 0 -or -not $importPath) { throw 'Import provenance verification failed: curation_server import failed' }
@@ -131,7 +136,7 @@ try {
     if (-not $resolvedImportPath.StartsWith($resolvedWorkRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "Import provenance verification failed. Imported $resolvedImportPath instead of build under $resolvedWorkRoot"
     }
-    $process = Start-Process -FilePath $runtime -ArgumentList '-m','uvicorn','backend.app.curation_server:app','--app-dir',$workRoot,'--host','127.0.0.1','--port',"$port" -WorkingDirectory $workRoot -WindowStyle Hidden -PassThru
+    $process = Start-Process -FilePath $runtime -ArgumentList '-m','uvicorn','backend.app.curation_server:app','--app-dir',$workRoot,'--host','127.0.0.1','--port',"$port" -WorkingDirectory $workRoot -WindowStyle Hidden -RedirectStandardOutput $serverStdout -RedirectStandardError $serverStderr -PassThru
 } finally {
     $env:RAMBLA_BUILD_TOKEN = $previousToken
     $env:RAMBLA_ENABLE_VERTICAL_SOCIAL = $previousVertical
@@ -157,9 +162,25 @@ $url = "http://127.0.0.1:$port/curation?$query"
 $ready = $false
 foreach ($attempt in 1..40) {
     Start-Sleep -Milliseconds 250
+    $process.Refresh()
+    if ($process.HasExited) { break }
     try { if ((Invoke-RestMethod -Uri $health -TimeoutSec 2).status -eq 'ok') { $ready = $true; break } } catch {}
 }
-if (-not $ready) { Stop-Process -Id $process.Id -ErrorAction SilentlyContinue; throw "Acceptance server failed health check: $health" }
+if (-not $ready) {
+    $process.Refresh()
+    $processState = if ($process.HasExited) { "exited with code $($process.ExitCode)" } else { 'still running' }
+    Write-Output "Acceptance server process: PID $($process.Id) · $processState"
+    if (Test-Path -LiteralPath $serverStdout -PathType Leaf) {
+        Write-Output '----- SERVER STDOUT -----'
+        Get-Content -LiteralPath $serverStdout -ErrorAction SilentlyContinue | Write-Output
+    }
+    if (Test-Path -LiteralPath $serverStderr -PathType Leaf) {
+        Write-Output '----- SERVER STDERR -----'
+        Get-Content -LiteralPath $serverStderr -ErrorAction SilentlyContinue | Write-Output
+    }
+    if (-not $process.HasExited) { Stop-Process -Id $process.Id -ErrorAction SilentlyContinue }
+    throw "Acceptance server failed health check: $health"
+}
 $response = Invoke-WebRequest -Uri $url -UseBasicParsing -Headers @{'Cache-Control'='no-cache'}
 if (-not $response.Content.Contains($marker)) { Stop-Process -Id $process.Id -ErrorAction SilentlyContinue; throw "Build marker verification failed. Expected: $marker" }
 $requiredUiMarkers = @('id="projectsV2"','id="tiktokLoginV2"','id="instagramLoginV2"','id="beatActionsV2"','id="webNewsVideosV2"')
@@ -168,7 +189,7 @@ if ($missingUiMarkers.Count -gt 0) {
     Stop-Process -Id $process.Id -ErrorAction SilentlyContinue
     throw "UI V2 verification failed. Missing markers: $($missingUiMarkers -join ', ')"
 }
-$record = @{pid=$process.Id;port=$port;url=$url;project_id=$latestProjectId;branch=$actualBranch;sha=$fullSha;short_sha=$shortSha;build_marker=$marker;browser_profile_root=$browserProfileRoot;module_path=$importPath;started_at=(Get-Date).ToString('o')}
+$record = @{pid=$process.Id;port=$port;url=$url;project_id=$latestProjectId;branch=$actualBranch;sha=$fullSha;short_sha=$shortSha;build_marker=$marker;browser_profile_root=$browserProfileRoot;module_path=$importPath;stdout_log=$serverStdout;stderr_log=$serverStderr;started_at=(Get-Date).ToString('o')}
 $record | ConvertTo-Json | Set-Content -LiteralPath $recordPath -Encoding utf8
 $record | Format-List
 Write-Output "OPEN MANUALLY: $url"
