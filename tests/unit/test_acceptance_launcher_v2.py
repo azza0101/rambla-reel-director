@@ -40,12 +40,12 @@ def test_launcher_self_refreshes_from_remote_branch_before_starting_server():
     assert "powershell.exe" in script
 
 
-def test_playwright_bootstrap_treats_failed_import_as_exit_code_not_powershell_error():
+def test_launcher_does_not_require_playwright_or_pip_before_serving_curation():
     script = Path("tools/start_curation_acceptance.ps1").read_text(encoding="utf-8")
 
-    # Windows PowerShell with ErrorActionPreference=Stop can promote native stderr
-    # into a terminating NativeCommandError. The dependency probe must therefore
-    # use Start-Process and inspect ExitCode instead of invoking python directly.
-    assert "$playwrightProbe = Start-Process" in script
-    assert "$playwrightProbe.ExitCode" in script
-    assert '& $runtime -c "import playwright"' not in script
+    # Browser automation is optional at server startup. The curation UI must be
+    # able to start even when the scoped ASR venv intentionally has no pip and
+    # no Playwright package yet.
+    assert 'import playwright' not in script
+    assert "pip install 'playwright" not in script
+    assert 'No module named pip' not in script
