@@ -38,3 +38,14 @@ def test_launcher_self_refreshes_from_remote_branch_before_starting_server():
     assert "tools/start_curation_acceptance.ps1?ref=$branch" in script
     assert "WriteAllText" in script
     assert "powershell.exe" in script
+
+
+def test_playwright_bootstrap_treats_failed_import_as_exit_code_not_powershell_error():
+    script = Path("tools/start_curation_acceptance.ps1").read_text(encoding="utf-8")
+
+    # Windows PowerShell with ErrorActionPreference=Stop can promote native stderr
+    # into a terminating NativeCommandError. The dependency probe must therefore
+    # use Start-Process and inspect ExitCode instead of invoking python directly.
+    assert "$playwrightProbe = Start-Process" in script
+    assert "$playwrightProbe.ExitCode" in script
+    assert '& $runtime -c "import playwright"' not in script
