@@ -46,6 +46,7 @@ def test_launcher_does_not_require_playwright_or_pip_before_serving_curation():
     # Browser automation is optional at server startup. The curation UI must be
     # able to start even when the scoped ASR venv intentionally has no pip and
     # no Playwright package yet.
-    assert 'import playwright' not in script
-    assert "pip install 'playwright" not in script
-    assert 'No module named pip' not in script
+    assert "playwrightProbe" not in script
+    assert "playwrightInstall" not in script
+    assert 'find_spec("playwright")' not in script
+    assert "'pip','install','playwright" not in script
