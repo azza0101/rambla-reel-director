@@ -23,11 +23,12 @@ def test_editorial_input_requests_dense_visual_coverage():
     assert "keep_talking_head" in text
 
 
-def test_acceptance_launcher_uses_stable_origin_for_project_restore():
+def test_acceptance_launcher_restores_project_on_selected_dynamic_origin():
     text = Path("tools/start_curation_acceptance.ps1").read_text(encoding="utf-8")
-    assert "$port = 8765" in text
-    assert "8765..8799" not in text
+    assert "8765..8799" in text
+    assert "$port = $null" in text
     assert ".curation-acceptance-server.json" in text
     assert "curation-projects" in text
     assert "project.json" in text
     assert "&project=" in text
+    assert 'http://127.0.0.1:$port/curation' in text
