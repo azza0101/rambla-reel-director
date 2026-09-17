@@ -14,6 +14,14 @@ def test_social_ui_exposes_login_controls_and_provider_shelves():
     assert "/social/status" in html
 
 
+def test_social_ui_identifies_itself_as_curation_v2():
+    from backend.app.curation_ui_v2 import render_curation_page_v2
+
+    html = render_curation_page_v2("social-test")
+    assert "CURATION V2 · build social-test" in html
+    assert "CURATION V1 · build social-test" not in html
+
+
 def test_social_login_ui_never_runs_analyze_or_accepts_credentials():
     from backend.app.curation_ui_v2 import render_curation_page_v2
 
