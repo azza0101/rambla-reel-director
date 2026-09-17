@@ -92,10 +92,55 @@ if (Test-Path -LiteralPath $recordPath -PathType Leaf) {
 }
 
 $port = 8765
+$portOccupied = $false
 $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $port)
 try { $listener.Start() }
-catch { throw "Port 8765 is already in use by an unrelated process. Close it, then relaunch RAMBLA." }
-finally { $listener.Stop() }
+catch { $portOccupied = $true }
+finally { try { $listener.Stop() } catch {} }
+
+if ($portOccupied) {
+    $connection = $null
+    try {
+        $connection = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction Stop | Select-Object -First 1
+    } catch {}
+
+    $listenerProcess = $null
+    if ($connection -and $connection.OwningProcess) {
+        $listenerProcess = Get-Process -Id ([int]$connection.OwningProcess) -ErrorAction SilentlyContinue
+    }
+
+    $healthyRambla = $false
+    if ($listenerProcess -and $listenerProcess.Path -eq $runtime) {
+        try {
+            $healthProbe = Invoke-RestMethod -Uri "http://127.0.0.1:$port/health" -TimeoutSec 2
+            $curationProbe = Invoke-WebRequest -Uri "http://127.0.0.1:$port/curation" -UseBasicParsing -TimeoutSec 2
+            $healthyRambla = ($healthProbe.status -eq 'ok' -and $curationProbe.Content.Contains('RAMBLA Curation'))
+        } catch {}
+    }
+
+    if ($listenerProcess -and $listenerProcess.Path -eq $runtime -and $healthyRambla) {
+        Write-Output "Reclaiming stale RAMBLA server on port $port (PID $($listenerProcess.Id))..."
+        Stop-Process -Id $listenerProcess.Id -Force -ErrorAction Stop
+        Wait-Process -Id $listenerProcess.Id -Timeout 5 -ErrorAction SilentlyContinue
+
+        $released = $false
+        foreach ($attempt in 1..20) {
+            Start-Sleep -Milliseconds 150
+            $probeListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $port)
+            try {
+                $probeListener.Start()
+                $released = $true
+                break
+            } catch {
+            } finally {
+                try { $probeListener.Stop() } catch {}
+            }
+        }
+        if (-not $released) { throw "Stale RAMBLA server did not release port $port" }
+    } else {
+        throw "Port 8765 is already in use by an unrelated process. Close it, then relaunch RAMBLA."
+    }
+}
 
 $previousToken = $env:RAMBLA_BUILD_TOKEN
 $previousVertical = $env:RAMBLA_ENABLE_VERTICAL_SOCIAL
