@@ -23,3 +23,8 @@ def test_acceptance_launcher_pins_python_imports_to_downloaded_build():
     assert "'--app-dir',$workRoot" in script or "'--app-dir', $workRoot" in script
     assert "backend.app.curation_server" in script
     assert "Import provenance verification failed" in script
+
+
+def test_backend_is_regular_package_so_old_launcher_cannot_merge_with_installed_copy():
+    marker = Path("backend/__init__.py")
+    assert marker.is_file(), "backend must be a regular package in downloaded acceptance builds"
