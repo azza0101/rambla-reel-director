@@ -39,11 +39,11 @@ def test_authoritative_renderer_has_build_marker_and_no_legacy_ui():
     assert page.count("<script>") == 1
 
 
-def test_acceptance_launcher_uses_stable_port_and_fast_forward_contract():
+def test_acceptance_launcher_uses_dynamic_local_port_and_fast_forward_contract():
     from pathlib import Path
     launcher = (Path(__file__).parents[2] / "tools" / "start_curation_acceptance.ps1").read_text(encoding="utf-8")
-    assert "$port = 8765" in launcher
-    assert "8765..8799" not in launcher
+    assert "8765..8799" in launcher
+    assert "$port = $null" in launcher
     assert "merge --ff-only" in launcher
     assert "status --porcelain" in launcher
     assert "RAMBLA_BUILD_TOKEN" in launcher
