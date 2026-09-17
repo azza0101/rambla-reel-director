@@ -75,3 +75,14 @@ def test_launcher_prints_uvicorn_stdout_stderr_when_health_check_fails():
     assert "SERVER STDERR" in script
     assert "ExitCode" in script
     assert "Acceptance server failed health check" in script
+
+
+def test_launcher_is_windows_powershell_51_encoding_safe():
+    script = Path("tools/start_curation_acceptance.ps1").read_text(encoding="utf-8")
+
+    # Windows PowerShell 5.1 treats UTF-8 without BOM as the active ANSI codepage.
+    # Keep the script itself ASCII-safe and write refreshed copies with a BOM so
+    # non-ASCII bytes can never be misread as smart quote delimiters.
+    assert script.isascii()
+    assert "[Text.UTF8Encoding]::new($true)" in script
+    assert "[Text.UTF8Encoding]::new($false)" not in script
