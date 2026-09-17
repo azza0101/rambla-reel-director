@@ -30,17 +30,8 @@ if ($env:RAMBLA_LAUNCHER_REFRESHED -ne '1' -and -not (Test-Path -LiteralPath (Jo
 $runtime = 'Z:\APP REEL TEST\qwen-embedding-smoke\editorial-intelligence-worktree\.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $runtime -PathType Leaf)) { throw "Scoped Python runtime not found: $runtime" }
 
-# Browser automation is an application dependency, never a global install. The
-# existing RAMBLA venv may predate this feature. Probe via Start-Process so
-# Windows PowerShell cannot promote native stderr into a terminating error while
-# ErrorActionPreference is Stop.
-$probeCode = 'import importlib.util,sys;sys.exit(0 if importlib.util.find_spec("playwright") else 1)'
-$playwrightProbe = Start-Process -FilePath $runtime -ArgumentList @('-c', ('"' + $probeCode + '"')) -Wait -PassThru -NoNewWindow
-if ($playwrightProbe.ExitCode -ne 0) {
-    Write-Output 'Installing Playwright into the scoped RAMBLA runtime...'
-    $playwrightInstall = Start-Process -FilePath $runtime -ArgumentList @('-m','pip','install','playwright>=1.54,<2') -Wait -PassThru -NoNewWindow
-    if ($playwrightInstall.ExitCode -ne 0) { throw 'Playwright install failed in scoped RAMBLA runtime' }
-}
+# Playwright is intentionally NOT required to start the curation server.
+# Social browser automation is loaded lazily only when a social action is used.
 
 $workRoot = $scriptRoot
 if (Test-Path -LiteralPath (Join-Path $scriptRoot '.git')) {
