@@ -52,16 +52,13 @@ def test_launcher_does_not_require_playwright_or_pip_before_serving_curation():
     assert "'pip','install','playwright" not in script
 
 
-def test_launcher_reclaims_stale_rambla_listener_but_never_kills_unrelated_port_owner():
+def test_launcher_chooses_first_free_port_without_killing_unrelated_processes():
     script = Path("tools/start_curation_acceptance.ps1").read_text(encoding="utf-8")
 
-    # A stale acceptance server can survive when the PID record is missing or
-    # stale. Reclaim port 8765 only after both checks identify it as RAMBLA:
-    # same scoped Python executable and a healthy RAMBLA HTTP endpoint.
-    assert "Get-NetTCPConnection" in script
-    assert "OwningProcess" in script
-    assert "$listenerProcess.Path -eq $runtime" in script
-    assert "Invoke-RestMethod -Uri \"http://127.0.0.1:$port/health\"" in script
-    assert "Reclaiming stale RAMBLA server" in script
-    assert "Stop-Process -Id $listenerProcess.Id" in script
-    assert "Port 8765 is already in use by an unrelated process" in script
+    assert "8765..8799" in script
+    assert "$port = $null" in script
+    assert "TcpListener" in script
+    assert "No free RAMBLA port found in 8765..8799" in script
+    assert "Port 8765 is already in use by an unrelated process" not in script
+    assert "Get-NetTCPConnection" not in script
+    assert "Reclaiming stale RAMBLA server" not in script
