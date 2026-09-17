@@ -62,3 +62,16 @@ def test_launcher_chooses_first_free_port_without_killing_unrelated_processes():
     assert "Port 8765 is already in use by an unrelated process" not in script
     assert "Get-NetTCPConnection" not in script
     assert "Reclaiming stale RAMBLA server" not in script
+
+
+def test_launcher_prints_uvicorn_stdout_stderr_when_health_check_fails():
+    script = Path("tools/start_curation_acceptance.ps1").read_text(encoding="utf-8")
+
+    assert "RedirectStandardOutput" in script
+    assert "RedirectStandardError" in script
+    assert "$serverStdout" in script
+    assert "$serverStderr" in script
+    assert "SERVER STDOUT" in script
+    assert "SERVER STDERR" in script
+    assert "ExitCode" in script
+    assert "Acceptance server failed health check" in script
