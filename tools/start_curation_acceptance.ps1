@@ -4,6 +4,29 @@ $ErrorActionPreference = 'Stop'
 $branch = 'feat/curation-ui-v1'
 $repo = 'azza0101/rambla-reel-director'
 $scriptRoot = Split-Path -Parent $PSScriptRoot
+$launcherPath = $MyInvocation.MyCommand.Path
+
+# Non-git acceptance copies do not update this launcher when they download a
+# fresh backend build. Refresh the launcher itself once, then re-exec so future
+# feature wiring (server module, validation, env flags) cannot remain stale.
+if ($env:RAMBLA_LAUNCHER_REFRESHED -ne '1' -and -not (Test-Path -LiteralPath (Join-Path $scriptRoot '.git'))) {
+    $remoteLauncherPath = "repos/$repo/contents/tools/start_curation_acceptance.ps1?ref=$branch"
+    $remoteLauncher = & gh api -H 'Accept: application/vnd.github.raw+json' $remoteLauncherPath 2>$null
+    if ($LASTEXITCODE -eq 0 -and $remoteLauncher) {
+        if ($remoteLauncher -is [array]) { $remoteLauncher = $remoteLauncher -join "`n" }
+        $remoteLauncher = [string]$remoteLauncher
+        $localLauncher = Get-Content -LiteralPath $launcherPath -Raw
+        $remoteNormalized = $remoteLauncher -replace "`r`n", "`n"
+        $localNormalized = $localLauncher -replace "`r`n", "`n"
+        if ($remoteNormalized -ne $localNormalized) {
+            [IO.File]::WriteAllText($launcherPath, $remoteLauncher, [Text.UTF8Encoding]::new($false))
+            $env:RAMBLA_LAUNCHER_REFRESHED = '1'
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcherPath
+            exit $LASTEXITCODE
+        }
+    }
+}
+
 $runtime = 'Z:\APP REEL TEST\qwen-embedding-smoke\editorial-intelligence-worktree\.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $runtime -PathType Leaf)) { throw "Scoped Python runtime not found: $runtime" }
 
