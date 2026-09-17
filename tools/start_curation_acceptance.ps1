@@ -91,56 +91,22 @@ if (Test-Path -LiteralPath $recordPath -PathType Leaf) {
     } catch { Write-Warning "Previous acceptance server cleanup skipped: $($_.Exception.Message)" }
 }
 
-$port = 8765
-$portOccupied = $false
-$listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $port)
-try { $listener.Start() }
-catch { $portOccupied = $true }
-finally { try { $listener.Stop() } catch {} }
-
-if ($portOccupied) {
-    $connection = $null
+# Never block RAMBLA on one hard-coded local port. Pick the first free port in
+# a small deterministic range and leave unrelated listeners completely alone.
+$port = $null
+foreach ($candidatePort in 8765..8799) {
+    $probeListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $candidatePort)
     try {
-        $connection = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction Stop | Select-Object -First 1
-    } catch {}
-
-    $listenerProcess = $null
-    if ($connection -and $connection.OwningProcess) {
-        $listenerProcess = Get-Process -Id ([int]$connection.OwningProcess) -ErrorAction SilentlyContinue
-    }
-
-    $healthyRambla = $false
-    if ($listenerProcess -and $listenerProcess.Path -eq $runtime) {
-        try {
-            $healthProbe = Invoke-RestMethod -Uri "http://127.0.0.1:$port/health" -TimeoutSec 2
-            $curationProbe = Invoke-WebRequest -Uri "http://127.0.0.1:$port/curation" -UseBasicParsing -TimeoutSec 2
-            $healthyRambla = ($healthProbe.status -eq 'ok' -and $curationProbe.Content.Contains('RAMBLA Curation'))
-        } catch {}
-    }
-
-    if ($listenerProcess -and $listenerProcess.Path -eq $runtime -and $healthyRambla) {
-        Write-Output "Reclaiming stale RAMBLA server on port $port (PID $($listenerProcess.Id))..."
-        Stop-Process -Id $listenerProcess.Id -Force -ErrorAction Stop
-        Wait-Process -Id $listenerProcess.Id -Timeout 5 -ErrorAction SilentlyContinue
-
-        $released = $false
-        foreach ($attempt in 1..20) {
-            Start-Sleep -Milliseconds 150
-            $probeListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $port)
-            try {
-                $probeListener.Start()
-                $released = $true
-                break
-            } catch {
-            } finally {
-                try { $probeListener.Stop() } catch {}
-            }
-        }
-        if (-not $released) { throw "Stale RAMBLA server did not release port $port" }
-    } else {
-        throw "Port 8765 is already in use by an unrelated process. Close it, then relaunch RAMBLA."
+        $probeListener.Start()
+        $port = $candidatePort
+        break
+    } catch {
+    } finally {
+        try { $probeListener.Stop() } catch {}
     }
 }
+if ($null -eq $port) { throw 'No free RAMBLA port found in 8765..8799' }
+Write-Output "RAMBLA using local port $port"
 
 $previousToken = $env:RAMBLA_BUILD_TOKEN
 $previousVertical = $env:RAMBLA_ENABLE_VERTICAL_SOCIAL
