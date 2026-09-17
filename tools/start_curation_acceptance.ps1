@@ -169,7 +169,7 @@ foreach ($attempt in 1..40) {
 if (-not $ready) {
     $process.Refresh()
     $processState = if ($process.HasExited) { "exited with code $($process.ExitCode)" } else { 'still running' }
-    Write-Output "Acceptance server process: PID $($process.Id) · $processState"
+    Write-Output "Acceptance server process: PID $($process.Id) - $processState"
     if (Test-Path -LiteralPath $serverStdout -PathType Leaf) {
         Write-Output '----- SERVER STDOUT -----'
         Get-Content -LiteralPath $serverStdout -ErrorAction SilentlyContinue | Write-Output
