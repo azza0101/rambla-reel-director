@@ -19,7 +19,7 @@ if ($env:RAMBLA_LAUNCHER_REFRESHED -ne '1' -and -not (Test-Path -LiteralPath (Jo
         $remoteNormalized = $remoteLauncher -replace "`r`n", "`n"
         $localNormalized = $localLauncher -replace "`r`n", "`n"
         if ($remoteNormalized -ne $localNormalized) {
-            [IO.File]::WriteAllText($launcherPath, $remoteLauncher, [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText($launcherPath, $remoteLauncher, [Text.UTF8Encoding]::new($true))
             $env:RAMBLA_LAUNCHER_REFRESHED = '1'
             & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcherPath
             exit $LASTEXITCODE
