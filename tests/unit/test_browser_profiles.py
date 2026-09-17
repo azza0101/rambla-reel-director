@@ -68,6 +68,37 @@ def test_open_login_uses_dedicated_profile_without_credentials(tmp_path):
     assert "token" not in serialized
 
 
+def test_default_login_opens_real_browser_profile_without_playwright(monkeypatch, tmp_path):
+    import backend.app.browser_profiles as profiles
+
+    launched = []
+
+    class FakeProcess:
+        pid = 987
+
+    def fake_which(name):
+        return r"C:\Program Files\Microsoft\Edge\Application\msedge.exe" if name in {"msedge", "msedge.exe"} else None
+
+    def fake_popen(command, **kwargs):
+        launched.append((command, kwargs))
+        return FakeProcess()
+
+    monkeypatch.setattr(profiles.shutil, "which", fake_which)
+    monkeypatch.setattr(profiles.subprocess, "Popen", fake_popen)
+
+    pid = profiles._default_login_launcher("tiktok", tmp_path / "tiktok", "https://www.tiktok.com/")
+
+    assert pid == 987
+    command = launched[0][0]
+    assert command[0].lower().endswith("msedge.exe")
+    assert f"--user-data-dir={tmp_path / 'tiktok'}" in command
+    assert "https://www.tiktok.com/" in command
+    joined = " ".join(command).casefold()
+    assert "playwright" not in joined
+    assert "social_browser_login" not in joined
+    assert "password" not in joined
+
+
 def test_status_exposes_readiness_not_profile_path_or_secrets(tmp_path):
     from backend.app.browser_profiles import BrowserProfileManager
 
