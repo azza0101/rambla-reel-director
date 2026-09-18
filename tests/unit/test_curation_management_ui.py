@@ -17,9 +17,8 @@ def test_management_ui_exposes_project_library_clean_media_and_per_beat_research
     assert "method:'DELETE'" in html
     assert "/media/clean" in html
     assert "/research`" in html or "/research" in html
-    assert "mode:'replace'" in html
-    assert "mode:'append'" in html
-    assert "['tiktok','instagram']" in html
+    assert "researchBeatV2('replace')" in html
+    assert "researchBeatV2('append',['tiktok','instagram'])" in html
     assert "startStage('analyze')" not in html[html.index("async function researchBeatV2"):html.index("function installManagementV2")]
 
 
