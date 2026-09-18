@@ -208,13 +208,14 @@ class YouTubeOnlineSourceAdapter:
         "CLOSE_SEMANTIC_EDITORIAL",
     )
 
-    def __init__(self, source: YouTubeSource, *, provider_name: str = "youtube", portrait_only: bool = False, vertical_sources: list[Any] | None = None):
+    def __init__(self, source: YouTubeSource, *, provider_name: str = "youtube", portrait_only: bool = False, vertical_sources: list[Any] | None = None, include_base_youtube: bool = True):
         if provider_name not in {"youtube", "youtube_shorts"}:
             raise ValueError("unsupported YouTube provider identity")
         self.source = source
         self.provider_name = provider_name
         self.portrait_only = bool(portrait_only)
         self.vertical_sources = vertical_sources
+        self.include_base_youtube = bool(include_base_youtube)
         self._vertical_attempts: list[dict[str, Any]] = []
 
     def drain_vertical_attempts(self) -> list[dict[str, Any]]:
@@ -225,7 +226,9 @@ class YouTubeOnlineSourceAdapter:
     async def search(self, query: str, *, orientation: str | None, min_duration: float, max_duration: float, limit: int) -> list[Any]:
         if orientation is not None and orientation not in {"portrait", "landscape", "square"}:
             raise ValueError("unsupported orientation")
-        rows = await self.source.search(query, min_duration=min_duration, max_duration=max_duration, limit=max(limit, limit * 3 if self.portrait_only else limit))
+        rows = []
+        if self.include_base_youtube:
+            rows = await self.source.search(query, min_duration=min_duration, max_duration=max_duration, limit=max(limit, limit * 3 if self.portrait_only else limit))
         normal: list[YouTubeRemoteCandidate] = []
         for rank, row in enumerate(rows):
             if self.portrait_only and row.orientation != "portrait":
@@ -251,7 +254,8 @@ class YouTubeOnlineSourceAdapter:
             if len(normal) >= limit:
                 break
 
-        if self.provider_name != "youtube" or str(os.environ.get('RAMBLA_ENABLE_VERTICAL_SOCIAL','')).casefold() not in {'1','true','yes','on'}:
+        vertical_enabled = self.vertical_sources is not None or str(os.environ.get('RAMBLA_ENABLE_VERTICAL_SOCIAL','')).casefold() in {'1','true','yes','on'}
+        if self.provider_name != "youtube" or not vertical_enabled:
             return normal[:limit]
 
         if self.vertical_sources is None:
