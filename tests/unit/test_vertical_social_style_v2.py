@@ -59,3 +59,44 @@ def test_mixed_video_providers_keep_a_budget_per_provider_before_curation_shelve
     assert len(selected) == 6
     assert rejected == 0
     assert {row["source"] for row in selected} == {"youtube_shorts", "tiktok"}
+
+
+def test_social_browser_error_is_promoted_to_visible_video_error():
+    import asyncio
+    from backend.app.quality_video import source_video_beat
+
+    class Source:
+        provider_name = "youtube"
+        def drain_vertical_attempts(self):
+            return [{
+                "provider": "tiktok",
+                "query": "ethical travel",
+                "hits": 0,
+                "browser_error": "ModuleNotFoundError",
+                "fallback_used": True,
+            }]
+
+    class Ranker:
+        warning = None
+
+    class Engine:
+        sources = [Source()]
+        query_intents = {}
+        ranker = Ranker()
+        async def _search_one(self, source, query, **kwargs):
+            return [], None
+
+    result = asyncio.run(source_video_beat(
+        Engine(),
+        beat_id="beat-1",
+        client_id="rambla",
+        queries=["ethical travel"],
+        min_duration=1,
+        max_duration=15,
+        orientation="portrait",
+    ))
+    assert any(
+        row.get("provider") == "tiktok"
+        and row.get("error_type") == "ModuleNotFoundError"
+        for row in result["errors"]
+    )
