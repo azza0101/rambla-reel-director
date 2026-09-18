@@ -27,14 +27,35 @@ def test_browser_social_source_uses_profile_and_returns_portrait_candidates(tmp_
         url = "https://www.tiktok.com/search/video?q=elephants"
         calls = 0
         async def eval_on_selector_all(self, selector, _script):
-            assert selector == "a[href]"
             self.calls += 1
+            if selector == "a[href]":
+                return [
+                    {
+                        "href": "https://www.tiktok.com/@my_account/video/111",
+                        "text": "account shell video",
+                        "aria": "",
+                        "img": "https://img.example/111.jpg",
+                    },
+                    {
+                        "href": "https://www.tiktok.com/@wildlife/video/777",
+                        "text": "elephant sanctuary thailand",
+                        "aria": "",
+                        "img": "https://img.example/777.jpg",
+                    },
+                ]
+            assert "search-card-video" in selector
             return [{
                 "href": "https://www.tiktok.com/@wildlife/video/777",
                 "text": "elephant sanctuary thailand",
                 "aria": "",
                 "img": "https://img.example/777.jpg",
             }]
+        async def wait_for_selector(self, selector, timeout):
+            assert "search-card-video" in selector
+            assert timeout == 12000
+            return object()
+        async def title(self):
+            return "elephants - Search | TikTok"
         async def evaluate(self, _script):
             return None
         async def wait_for_timeout(self, _milliseconds):
@@ -60,6 +81,9 @@ def test_browser_social_source_uses_profile_and_returns_portrait_candidates(tmp_
     assert rows[0].provider_id == "777"
     assert rows[0].orientation == "portrait"
     assert rows[0].preview_url == "https://img.example/777.jpg"
+    assert source.last_attempt["authenticated_search_valid"] is True
+    assert source.last_attempt["all_video_link_count"] == 2
+    assert source.last_attempt["search_result_link_count"] == 1
 
 
 def test_browser_social_source_falls_back_when_browser_fails():
@@ -89,6 +113,40 @@ def test_browser_social_source_falls_back_when_browser_fails():
     assert [row.provider_id for row in rows] == ["fallback"]
     assert source.last_attempt["fallback_used"] is True
     assert source.last_attempt["browser_error"] == "RuntimeError"
+    assert source.last_attempt["browser_error_detail"] == "login wall"
+
+
+def test_chromium_dom_fallback_keeps_only_tiktok_search_cards():
+    from backend.app.browser_profiles import _DumpDomPage
+    from backend.app.social_browser_source import extract_social_result_links
+
+    html = """
+    <html><body>
+      <nav>
+        <a href="https://www.tiktok.com/@my_account/video/111">my own shell video</a>
+        <a href="https://www.tiktok.com/@my_account/video/222">another account link</a>
+      </nav>
+      <main>
+        <div data-e2e="search-card-video">
+          <a data-e2e="search-card-video-link" href="https://www.tiktok.com/@creator_a/video/901">
+            <img src="https://img.example/901.jpg">boarding ferry
+          </a>
+        </div>
+        <div class="tiktok-abc-DivItemContainerForSearch">
+          <a href="https://www.tiktok.com/@creator_b/video/902">passengers on ferry</a>
+        </div>
+        <div data-e2e="search-card-video">
+          <a href="https://www.tiktok.com/@creator_c/video/903">boat boarding</a>
+        </div>
+      </main>
+    </body></html>
+    """
+    page = _DumpDomPage(html, "https://www.tiktok.com/search/video?q=passengers+boarding+ferry")
+    scoped = asyncio.run(page.search_result_anchors("tiktok"))
+    rows = extract_social_result_links("tiktok", scoped)
+
+    assert [row["provider_id"] for row in rows] == ["901", "902", "903"]
+    assert all("my_account" not in row["source_page"] for row in rows)
 
 
 def test_vertical_factory_upgrades_tiktok_instagram_to_browser_sources(monkeypatch, tmp_path):
