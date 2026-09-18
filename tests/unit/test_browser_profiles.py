@@ -110,3 +110,49 @@ def test_status_exposes_readiness_not_profile_path_or_secrets(tmp_path):
     assert status["instagram"]["profile_ready"] is False
     assert "profile_dir" not in status["tiktok"]
     assert "cookies" not in repr(status).casefold()
+
+
+def test_chromium_dom_runner_reuses_profile_without_playwright(monkeypatch, tmp_path):
+    import asyncio
+    import backend.app.browser_profiles as profiles
+
+    calls = []
+
+    class Result:
+        returncode = 0
+        stdout = '<html><body><a href="/@wildlife/video/777">elephant clip</a></body></html>'
+        stderr = ''
+
+    monkeypatch.setattr(profiles, "_installed_browser", lambda: r"C:\Program Files\Microsoft\Edge\Application\msedge.exe")
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return Result()
+    monkeypatch.setattr(profiles.subprocess, "run", fake_run)
+
+    async def collect(page, _context):
+        return await page.eval_on_selector_all("a[href]", "ignored")
+
+    rows = asyncio.run(profiles._default_chromium_dom_runner(
+        tmp_path / "tiktok",
+        "https://www.tiktok.com/search/video?q=elephants",
+        collect,
+    ))
+    assert rows[0]["href"] == "https://www.tiktok.com/@wildlife/video/777"
+    command = calls[0][0]
+    assert "--headless=new" in command
+    assert "--dump-dom" in command
+    assert any(part.startswith("--user-data-dir=") for part in command)
+
+
+def test_status_reports_usable_social_search_backend_without_exposing_profile_path(monkeypatch, tmp_path):
+    import backend.app.browser_profiles as profiles
+
+    monkeypatch.setattr(profiles.importlib.util, "find_spec", lambda name: None if name == "playwright" else object())
+    monkeypatch.setattr(profiles, "_installed_browser", lambda: r"C:\Program Files\Microsoft\Edge\Application\msedge.exe")
+    (tmp_path / "tiktok").mkdir(parents=True)
+    status = profiles.BrowserProfileManager(tmp_path).status()
+
+    assert status["tiktok"]["profile_ready"] is True
+    assert status["tiktok"]["search_ready"] is True
+    assert status["tiktok"]["search_backend"] == "chromium_dom"
+    assert "profile_dir" not in repr(status).casefold()
