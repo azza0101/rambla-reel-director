@@ -26,3 +26,15 @@ def test_research_stage_name_encodes_beat_and_mode_without_analyze():
     assert stage == "research:append:beat-12"
     assert parse_research_stage(stage) == ("beat-12", "append")
     assert "analyze" not in stage
+
+
+def test_scoped_social_append_command_limits_video_providers():
+    from backend.app.debug_research_cli import video_sourcing_command
+
+    command = video_sourcing_command(
+        Path("run"), Path("transcript.json"), Path("outline.json"), "client", 300,
+        beat_id="beat-7", research_mode="append", providers=("tiktok", "instagram"),
+    )
+    assert "--providers" in command
+    i = command.index("--providers")
+    assert command[i + 1:i + 3] == ["tiktok", "instagram"]
