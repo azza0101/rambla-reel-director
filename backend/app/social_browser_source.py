@@ -13,6 +13,18 @@ SOCIAL_SEARCH_URLS = {
     "instagram": "https://www.instagram.com/explore/search/keyword/?q={query}",
 }
 
+# Scope authenticated extraction to the actual result surface.  Reading every
+# a[href] on an authenticated TikTok page also sees account/sidebar links and
+# can therefore mistake the user's own videos for search results.
+SOCIAL_RESULT_SELECTORS = {
+    "tiktok": (
+        '[data-e2e="search-card-video-link"][href*="/video/"], '
+        '[data-e2e="search-card-video"] a[href*="/video/"], '
+        'div[class*="DivItemContainerForSearch"] a[href*="/video/"]'
+    ),
+    "instagram": 'main a[href*="/reel/"], main a[href*="/reels/"]',
+}
+
 
 def _canonical_social_url(provider: str, value: str) -> tuple[str, str, str | None] | None:
     try:
@@ -62,16 +74,51 @@ def extract_social_result_links(provider: str, anchors: list[dict[str, Any]]) ->
     return output
 
 
-async def _page_anchors(page: Any) -> list[dict[str, Any]]:
+async def _page_anchors(
+    page: Any,
+    provider: str | None = None,
+    *,
+    search_only: bool = False,
+) -> list[dict[str, Any]]:
+    if search_only:
+        if provider not in SOCIAL_RESULT_SELECTORS:
+            raise ValueError("unsupported social provider")
+        # The --dump-dom fallback cannot execute selector JS, but exposes an
+        # equivalent scoped extractor populated by its HTML parser.
+        dump_extractor = getattr(page, "search_result_anchors", None)
+        if callable(dump_extractor):
+            rows = dump_extractor(provider)
+            return await rows if hasattr(rows, "__await__") else rows
+        selector = SOCIAL_RESULT_SELECTORS[provider]
+    else:
+        selector = "a[href]"
     return await page.eval_on_selector_all(
-        "a[href]",
-        """els => els.map(a => ({
-          href: a.href || '',
-          text: (a.innerText || a.textContent || '').trim(),
-          aria: a.getAttribute('aria-label') || '',
-          img: (a.querySelector('img') && (a.querySelector('img').currentSrc || a.querySelector('img').src)) || ''
-        }))""",
+        selector,
+        """els => els.map(a => {
+          const card = a.closest(
+            '[data-e2e="search-card-video"], div[class*="DivItemContainerForSearch"], article'
+          ) || a;
+          const image = card.querySelector('img') || a.querySelector('img');
+          return {
+            href: a.href || '',
+            text: (card.innerText || a.innerText || a.textContent || '').trim(),
+            aria: a.getAttribute('aria-label') || '',
+            img: (image && (image.currentSrc || image.src)) || ''
+          };
+        })""",
     )
+
+
+async def _page_title(page: Any) -> str:
+    title = getattr(page, "title", None)
+    if not callable(title):
+        return ""
+    try:
+        value = title()
+        value = await value if hasattr(value, "__await__") else value
+    except Exception:
+        return ""
+    return " ".join(str(value or "").split())[:180]
 
 
 class BrowserSocialSource:
@@ -85,24 +132,65 @@ class BrowserSocialSource:
         self.fallback = fallback
         self.last_attempt: dict[str, Any] = {}
 
-    async def _browser_search(self, query: str, limit: int) -> list[dict[str, Any]]:
+    async def _browser_search(self, query: str, limit: int) -> dict[str, Any]:
         url = SOCIAL_SEARCH_URLS[self.provider_name].format(query=quote_plus(query))
 
-        async def collect(page: Any, _context: Any) -> list[dict[str, Any]]:
+        async def collect(page: Any, _context: Any) -> dict[str, Any]:
             found: list[dict[str, Any]] = []
             seen: set[str] = set()
-            for scroll_index in range(3):
-                anchors = await _page_anchors(page)
+            current_url = str(getattr(page, "url", "") or "")
+            parsed = urlparse(current_url)
+            if self.provider_name == "tiktok":
+                if not (parsed.hostname or "").casefold().endswith("tiktok.com") or not parsed.path.startswith("/search/video"):
+                    raise RuntimeError(f"TikTok search navigation left /search/video: {current_url[:220]}")
+            elif self.provider_name == "instagram":
+                if not (parsed.hostname or "").casefold().endswith("instagram.com"):
+                    raise RuntimeError(f"Instagram search navigation left instagram.com: {current_url[:220]}")
+
+            wait_error = ""
+            waiter = getattr(page, "wait_for_selector", None)
+            if callable(waiter):
+                try:
+                    await waiter(SOCIAL_RESULT_SELECTORS[self.provider_name], timeout=12_000)
+                except Exception as exc:
+                    # A real zero-result page and a delayed SPA both land here.
+                    # Continue through the bounded scroll loop, but retain the
+                    # state so diagnostics distinguish it from a valid grid.
+                    wait_error = type(exc).__name__
+
+            all_video_links = 0
+            try:
+                all_anchors = await _page_anchors(page)
+                all_video_links = len(extract_social_result_links(self.provider_name, all_anchors))
+            except Exception:
+                pass
+
+            for scroll_index in range(4):
+                anchors = await _page_anchors(page, self.provider_name, search_only=True)
                 for row in extract_social_result_links(self.provider_name, anchors):
                     if row["source_page"] not in seen:
                         seen.add(row["source_page"])
                         found.append(row)
                     if len(found) >= limit:
-                        return found
-                if scroll_index < 2:
-                    await page.evaluate("window.scrollBy(0, Math.max(window.innerHeight * 1.6, 1200))")
-                    await page.wait_for_timeout(550)
-            return found
+                        break
+                if len(found) >= limit:
+                    break
+                if scroll_index < 3:
+                    await page.evaluate("window.scrollBy(0, Math.max(window.innerHeight * 1.8, 1400))")
+                    await page.wait_for_timeout(900)
+
+            state = "search_results" if found else ("search_results_timeout" if wait_error else "zero_results")
+            return {
+                "rows": found[:limit],
+                "diagnostics": {
+                    "browser_state": state,
+                    "current_url": current_url[:300],
+                    "page_title": await _page_title(page),
+                    "all_video_link_count": all_video_links,
+                    "search_result_link_count": len(found),
+                    **({"search_wait_error": wait_error} if wait_error else {}),
+                },
+            }
 
         return await self.profile_manager.run_in_profile(self.provider_name, collect, start_url=url)
 
@@ -119,11 +207,16 @@ class BrowserSocialSource:
         if not clean or limit <= 0 or orientation not in {None, "portrait"}:
             return []
         browser_error: str | None = None
+        browser_error_detail: str | None = None
+        browser_diagnostics: dict[str, Any] = {}
         raw: list[dict[str, Any]] = []
         try:
-            raw = await self._browser_search(clean, limit)
+            payload = await self._browser_search(clean, limit)
+            raw = list(payload.get("rows") or [])
+            browser_diagnostics = dict(payload.get("diagnostics") or {})
         except Exception as exc:
             browser_error = type(exc).__name__
+            browser_error_detail = " ".join(str(exc).split())[:240] or None
 
         if raw:
             # Browser search cards do not expose a trustworthy source duration.
@@ -163,6 +256,8 @@ class BrowserSocialSource:
                 "hits": len(rows),
                 "browser": True,
                 "fallback_used": False,
+                "authenticated_search_valid": True,
+                **browser_diagnostics,
             }
             return rows
 
@@ -181,7 +276,10 @@ class BrowserSocialSource:
             "hits": len(fallback_rows),
             "browser": True,
             "fallback_used": bool(self.fallback is not None),
+            "authenticated_search_valid": False,
+            **browser_diagnostics,
             **({"browser_error": browser_error} if browser_error else {}),
+            **({"browser_error_detail": browser_error_detail} if browser_error_detail else {}),
         }
         return fallback_rows
 
