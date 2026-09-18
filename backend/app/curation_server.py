@@ -179,6 +179,83 @@ async def _run_research_state(
         state.process = None
 
 
+
+async def _default_social_runner(state: debug.RunState) -> None:
+    command = [
+        sys.executable, "-m", "backend.app.debug_social_cli",
+        "--video", str(state.video_path),
+        "--output-dir", str(state.output_dir),
+        "--client-id", f"project-{state.output_dir.parent.name}",
+    ]
+    cwd = Path.cwd()
+    preflight = debug._preflight_worker(state, command, cwd)
+    await debug._emit(state, debug.DebugEvent(
+        "preflight", "Social worker preflight completato", 100.0, preflight,
+    ))
+    await debug._emit(
+        state,
+        debug.DebugEvent("log", "Comando: " + " ".join(shlex.quote(x) for x in command)),
+    )
+    process = await debug._spawn_worker(command, cwd)
+    state.process = process
+    await debug._emit(
+        state,
+        debug.DebugEvent("worker", "Social worker avviato", data={"spawn_mode": process.spawn_mode}),
+    )
+    while True:
+        line = await process.readline()
+        if not line:
+            break
+        decoded = line.decode("utf-8", errors="replace")
+        if not debug.suppress_worker_log_line(decoded):
+            await debug._emit(state, debug.parse_worker_line(decoded))
+    state.return_code = await process.wait()
+    if state.return_code != 0:
+        raise RuntimeError(f"social sourcing worker exited with code {state.return_code}")
+
+
+async def _run_social_state(state: debug.RunState) -> None:
+    state.status = "RUNNING"
+    try:
+        await debug._emit(
+            state,
+            debug.DebugEvent(
+                "online_search",
+                "TikTok + Instagram search avviata",
+                1.0,
+                {"providers": ["tiktok", "instagram"]},
+            ),
+        )
+        await _default_social_runner(state)
+        if state.status != "CANCELLED":
+            state.status = "SUCCEEDED"
+            state.return_code = 0
+            await debug._emit(
+                state,
+                debug.DebugEvent(
+                    "online_search",
+                    "TikTok + Instagram search completata",
+                    100.0,
+                    {"providers": ["tiktok", "instagram"]},
+                ),
+            )
+    except Exception as exc:
+        if state.status != "CANCELLED":
+            state.status = "FAILED"
+            state.return_code = state.return_code if state.return_code is not None else 1
+            await debug._emit(
+                state,
+                debug.DebugEvent(
+                    "error",
+                    str(exc),
+                    data={"providers": ["tiktok", "instagram"]},
+                ),
+            )
+    finally:
+        if state.process is not None and state.process.returncode is None:
+            await debug._stop_worker(state.process)
+        state.process = None
+
 def create_app(
     *,
     project_root: Path | None = None,
@@ -267,6 +344,39 @@ def create_app(
             raise HTTPException(status_code=409, detail="project stage already running")
         cleanup = clean_project_media(run, active_retrieval_root(run))
         return {"project_id": project_id, "cleanup": cleanup, "resolve_calls": 0}
+
+    @app.post("/api/curation/projects/{project_id}/source/social")
+    async def source_project_social(project_id: str) -> dict[str, Any]:
+        project = load_project(project_id)
+        run = run_root(project_id)
+        for required in ("transcript-raw.json", "semantic-chunks.json", "semantic-beats.json"):
+            if not (run / required).is_file():
+                raise HTTPException(status_code=422, detail="analysis required before social sourcing")
+        visual_plan = _read_json(run / "visual-plan.json", {})
+        beats = visual_plan.get("visual_beats", []) if isinstance(visual_plan, dict) else []
+        if not any(isinstance(row, dict) and row.get("action") == "BROLL" for row in beats):
+            raise HTTPException(status_code=422, detail="no BROLL beats available for social sourcing")
+        if project.source_video is None:
+            raise HTTPException(status_code=422, detail="source video required")
+        if _active_run_for(run):
+            raise HTTPException(status_code=409, detail="project stage already running")
+        state = debug.RunState(
+            uuid.uuid4().hex[:12],
+            Path(project.source_video.path),
+            run,
+            guide_audio=Path(project.guide_audio.path) if project.guide_audio else None,
+            analysis_signature=project.analysis_signature,
+            stage_type="social",
+        )
+        debug.RUNS[state.run_id] = state
+        asyncio.create_task(_run_social_state(state))
+        return {
+            "status": "started",
+            "run_id": state.run_id,
+            "stage": "social",
+            "providers": ["tiktok", "instagram"],
+            "resolve_calls": 0,
+        }
 
     @app.post("/api/curation/projects/{project_id}/beats/{beat_id}/research")
     async def research_beat_route(project_id: str, beat_id: str, request: BeatResearchRequest) -> dict[str, Any]:
