@@ -135,7 +135,8 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
             if callable(drain):
                 for extra in drain():
                     extra=dict(extra);extra.setdefault('query',query);extra.setdefault('hits',0);extra['expanded']=query not in queries;output['search_attempts'].append(extra)
-                    if extra.get('error'):output['errors'].append({'provider':extra.get('provider'),'code':'provider_request_failed','error_type':extra.get('error')})
+                    failure=extra.get('error') or extra.get('browser_error')
+                    if failure:output['errors'].append({'provider':extra.get('provider'),'code':'provider_request_failed','error_type':failure})
             if error:
                 output['errors'].append(error);attempt['error']=error.get('code') if isinstance(error,dict) else type(error).__name__
             for row in rows:
