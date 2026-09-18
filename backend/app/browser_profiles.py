@@ -32,40 +32,66 @@ class BrowserUnavailableError(RuntimeError):
 
 
 class _DomAnchorParser(HTMLParser):
+    _STRUCTURAL_TAGS = {"html", "body", "main", "section", "div", "article", "li", "a"}
+
     def __init__(self, base_url: str) -> None:
         super().__init__()
         self.base_url = base_url
-        self.rows: list[dict[str, str]] = []
+        self.rows: list[dict[str, Any]] = []
         self.current: dict[str, Any] | None = None
+        self._stack: list[tuple[str, dict[str, str | None]]] = []
+
+    def _scope_flags(self, tag: str, values: dict[str, str | None]) -> tuple[bool, bool]:
+        frames = [*self._stack, (tag, values)]
+        tiktok = any(
+            attrs.get("data-e2e") in {"search-card-video", "search-card-video-link"}
+            or "DivItemContainerForSearch" in str(attrs.get("class") or "")
+            for _name, attrs in frames
+        )
+        instagram = any(name == "main" for name, _attrs in frames)
+        return tiktok, instagram
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        clean_tag = tag.casefold()
         values = {key: value for key, value in attrs}
-        if tag.casefold() == "a" and values.get("href"):
+        if clean_tag == "a" and values.get("href"):
+            tiktok_scope, instagram_scope = self._scope_flags(clean_tag, values)
             self.current = {
                 "href": urljoin(self.base_url, str(values["href"])),
                 "text_parts": [],
                 "aria": str(values.get("aria-label") or ""),
                 "img": "",
+                "_tiktok_search_scope": tiktok_scope,
+                "_instagram_search_scope": instagram_scope,
             }
-        elif self.current is not None and tag.casefold() == "img":
+        elif self.current is not None and clean_tag == "img":
             source = values.get("src") or values.get("data-src")
             if source:
                 self.current["img"] = urljoin(self.base_url, str(source))
+        if clean_tag in self._STRUCTURAL_TAGS:
+            self._stack.append((clean_tag, values))
 
     def handle_data(self, data: str) -> None:
         if self.current is not None and data.strip():
             self.current["text_parts"].append(data.strip())
 
     def handle_endtag(self, tag: str) -> None:
-        if tag.casefold() != "a" or self.current is None:
-            return
-        self.rows.append({
-            "href": str(self.current["href"]),
-            "text": " ".join(self.current["text_parts"]),
-            "aria": str(self.current["aria"]),
-            "img": str(self.current["img"]),
-        })
-        self.current = None
+        clean_tag = tag.casefold()
+        if clean_tag == "a" and self.current is not None:
+            self.rows.append({
+                "href": str(self.current["href"]),
+                "text": " ".join(self.current["text_parts"]),
+                "aria": str(self.current["aria"]),
+                "img": str(self.current["img"]),
+                "_tiktok_search_scope": bool(self.current["_tiktok_search_scope"]),
+                "_instagram_search_scope": bool(self.current["_instagram_search_scope"]),
+            })
+            self.current = None
+        if clean_tag in self._STRUCTURAL_TAGS:
+            for index in range(len(self._stack) - 1, -1, -1):
+                if self._stack[index][0] == clean_tag:
+                    del self._stack[index:]
+                    break
 
 
 class _DumpDomPage:
@@ -75,10 +101,25 @@ class _DumpDomPage:
         self._anchors = parser.rows
         self.url = url
 
+    @staticmethod
+    def _public_row(row: dict[str, Any]) -> dict[str, str]:
+        return {
+            "href": str(row.get("href") or ""),
+            "text": str(row.get("text") or ""),
+            "aria": str(row.get("aria") or ""),
+            "img": str(row.get("img") or ""),
+        }
+
     async def eval_on_selector_all(self, selector: str, _script: str) -> list[dict[str, str]]:
         if selector != "a[href]":
             return []
-        return list(self._anchors)
+        return [self._public_row(row) for row in self._anchors]
+
+    async def search_result_anchors(self, provider: str) -> list[dict[str, str]]:
+        key = "_tiktok_search_scope" if provider == "tiktok" else "_instagram_search_scope"
+        if provider not in {"tiktok", "instagram"}:
+            raise ValueError("unsupported social provider")
+        return [self._public_row(row) for row in self._anchors if row.get(key)]
 
     async def evaluate(self, _script: str) -> None:
         return None
