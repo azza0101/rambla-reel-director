@@ -8,7 +8,7 @@ def test_management_ui_exposes_project_library_clean_media_and_per_beat_research
 
     html = render_curation_page_v2("management-test")
     for text in (
-        "PROJECTS", "CLEAN MEDIA", "NEW SEARCH", "ADD RESULTS",
+        "PROJECTS", "CLEAN MEDIA", "NEW SEARCH", "ADD TIKTOK + IG",
         "Project Library", "Disk usage", "RENAME", "DELETE",
     ):
         assert text in html
@@ -19,6 +19,7 @@ def test_management_ui_exposes_project_library_clean_media_and_per_beat_research
     assert "/research`" in html or "/research" in html
     assert "mode:'replace'" in html
     assert "mode:'append'" in html
+    assert "['tiktok','instagram']" in html
     assert "startStage('analyze')" not in html[html.index("async function researchBeatV2"):html.index("function installManagementV2")]
 
 
@@ -55,7 +56,7 @@ def test_product_server_serves_management_curation_page(tmp_path):
     assert "PROJECTS" in response.text
     assert "CLEAN MEDIA" in response.text
     assert "NEW SEARCH" in response.text
-    assert "ADD RESULTS" in response.text
+    assert "ADD TIKTOK + IG" in response.text
 
 
 def test_acceptance_launcher_starts_product_server():
