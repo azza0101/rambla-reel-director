@@ -39,7 +39,17 @@ def _pipeline_python() -> str:
     return str(DEFAULT_PIPELINE_PYTHON if DEFAULT_PIPELINE_PYTHON.is_file() else Path(sys.executable))
 
 
-def video_sourcing_command(output: Path, transcript_path: Path, outline_path: Path, client_id: str, source_frames: int, *, beat_id: str, research_mode: str) -> list[str]:
+def video_sourcing_command(
+    output: Path,
+    transcript_path: Path,
+    outline_path: Path,
+    client_id: str,
+    source_frames: int,
+    *,
+    beat_id: str,
+    research_mode: str,
+    providers: tuple[str, ...] = (),
+) -> list[str]:
     command = [
         _pipeline_python(), "-m", "backend.app.online_sourcing_cli",
         "--transcript", str(transcript_path), "--outline", str(outline_path),
@@ -51,6 +61,8 @@ def video_sourcing_command(output: Path, transcript_path: Path, outline_path: Pa
     # Append asks providers for a wider discovery pool. Merge semantics still
     # enforce the same verification thresholds and project-wide dedupe.
     command += ["--max-candidates", "24" if research_mode == "append" else "12"]
+    if providers:
+        command += ["--providers", *providers]
     return command
 
 
@@ -93,7 +105,15 @@ def _clear_target_selection(path: Path, beat_id: str) -> None:
     write_json(path, payload)
 
 
-def run_research(*, video: Path, output: Path, beat_id: str, mode: str, client_id: str) -> dict:
+def run_research(
+    *,
+    video: Path,
+    output: Path,
+    beat_id: str,
+    mode: str,
+    client_id: str,
+    providers: tuple[str, ...] = (),
+) -> dict:
     if mode not in {"replace", "append"}: raise ValueError("research mode must be replace or append")
     if not video.is_file(): raise FileNotFoundError(video)
     transcript = output / "transcript-raw.json"; outline = output / "semantic-beats.json"; chunks_path = output / "semantic-chunks.json"
@@ -116,26 +136,45 @@ def run_research(*, video: Path, output: Path, beat_id: str, mode: str, client_i
     existing_images = _read_json(image_artifact, {"chunks": {}})
     _, source_frames = _probe(video)
 
-    _event("research", 1, "Beat media research started", beat_id=beat_id, mode=mode)
+    provider_scope = tuple(dict.fromkeys(str(value).casefold().strip() for value in providers if str(value).strip()))
+    _event(
+        "research", 1, "Beat media research started",
+        beat_id=beat_id, mode=mode, providers=list(provider_scope),
+    )
     try:
-        subprocess.run(image_sourcing_command(output, chunks_path, outline, client_id, beat_id=beat_id, research_mode=mode), check=True)
-        fresh_images = _read_json(image_artifact, {"chunks": {}})
-        merged_images = merge_image_artifact(existing_images, fresh_images, beat_id, mode)
-        write_json(image_artifact, merged_images)
-        _event("research", 45, "Beat image research merged", beat_id=beat_id, mode=mode, candidates=len(merged_images.get("chunks", {}).get(beat_id, {}).get("candidates", [])))
+        if not provider_scope:
+            subprocess.run(image_sourcing_command(output, chunks_path, outline, client_id, beat_id=beat_id, research_mode=mode), check=True)
+            fresh_images = _read_json(image_artifact, {"chunks": {}})
+            merged_images = merge_image_artifact(existing_images, fresh_images, beat_id, mode)
+            write_json(image_artifact, merged_images)
+            _event("research", 45, "Beat image research merged", beat_id=beat_id, mode=mode, candidates=len(merged_images.get("chunks", {}).get(beat_id, {}).get("candidates", [])))
+        else:
+            _event(
+                "research", 35, "Provider-scoped video research; image search skipped",
+                beat_id=beat_id, mode=mode, providers=list(provider_scope),
+            )
 
-        subprocess.run(video_sourcing_command(output, transcript, outline, client_id, source_frames, beat_id=beat_id, research_mode=mode), check=True)
+        subprocess.run(
+            video_sourcing_command(
+                output, transcript, outline, client_id, source_frames,
+                beat_id=beat_id, research_mode=mode, providers=provider_scope,
+            ),
+            check=True,
+        )
         fresh_video = _read_json(video_artifact, [])
         merged_video = merge_video_rows(existing_video, fresh_video, beat_id, mode)
         write_json(video_artifact, merged_video)
         persist_video_diagnostics(retrieval_root)
         if mode == "replace": _clear_target_selection(selection, beat_id)
         count = sum(len(row.get("candidates") or []) for row in merged_video if str(row.get("parent_beat_id")) == beat_id)
-        _event("research", 100, "Beat media research completed", beat_id=beat_id, mode=mode, video_candidates=count)
+        _event(
+            "research", 100, "Beat media research completed",
+            beat_id=beat_id, mode=mode, providers=list(provider_scope), video_candidates=count,
+        )
     except Exception:
         _restore(snapshot)
         raise
-    return {"beat_id": beat_id, "mode": mode, "resolve_calls": 0}
+    return {"beat_id": beat_id, "mode": mode, "providers": list(provider_scope), "resolve_calls": 0}
 
 
 def main() -> None:
@@ -144,9 +183,17 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--beat-id", required=True)
     parser.add_argument("--research-mode", choices=("replace", "append"), required=True)
+    parser.add_argument("--providers", nargs="+")
     parser.add_argument("--client-id", default="debug-reel")
     args = parser.parse_args()
-    run_research(video=args.video.resolve(), output=args.output_dir.resolve(), beat_id=args.beat_id, mode=args.research_mode, client_id=args.client_id)
+    run_research(
+        video=args.video.resolve(),
+        output=args.output_dir.resolve(),
+        beat_id=args.beat_id,
+        mode=args.research_mode,
+        client_id=args.client_id,
+        providers=tuple(args.providers or ()),
+    )
 
 
 if __name__ == "__main__": main()
