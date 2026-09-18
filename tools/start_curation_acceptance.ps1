@@ -136,7 +136,7 @@ try {
     if (-not $resolvedImportPath.StartsWith($resolvedWorkRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "Import provenance verification failed. Imported $resolvedImportPath instead of build under $resolvedWorkRoot"
     }
-    $process = Start-Process -FilePath $runtime -ArgumentList '-m','uvicorn','backend.app.curation_server:app','--app-dir',$workRoot,'--host','127.0.0.1','--port',"$port" -WorkingDirectory $workRoot -WindowStyle Hidden -RedirectStandardOutput $serverStdout -RedirectStandardError $serverStderr -PassThru
+    $process = Start-Process -FilePath $runtime -ArgumentList '-m','uvicorn','backend.app.curation_server:app','--host','127.0.0.1','--port',"$port" -WorkingDirectory $workRoot -WindowStyle Hidden -RedirectStandardOutput $serverStdout -RedirectStandardError $serverStderr -PassThru
 } finally {
     $env:RAMBLA_BUILD_TOKEN = $previousToken
     $env:RAMBLA_ENABLE_VERTICAL_SOCIAL = $previousVertical
