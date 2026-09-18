@@ -20,7 +20,8 @@ def test_acceptance_launcher_pins_python_imports_to_downloaded_build():
     script = Path("tools/start_curation_acceptance.ps1").read_text(encoding="utf-8")
 
     assert "$env:PYTHONPATH = $workRoot" in script
-    assert "'--app-dir',$workRoot" in script or "'--app-dir', $workRoot" in script
+    assert "-WorkingDirectory $workRoot" in script
+    assert "'--app-dir'" not in script
     assert "backend.app.curation_server" in script
     assert "Import provenance verification failed" in script
 
