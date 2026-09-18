@@ -51,6 +51,8 @@ $('projectsV2').onclick=async()=>{$('projectLibraryV2').showModal();await refres
 
 def render_curation_page_v2(build_token: str | None = None) -> str:
     html = render_curation_page(build_token)
+    html = html.replace('<h1>RAMBLA Curation</h1>', '<h1>RAMBLA Curation V2</h1>', 1)
+    html = html.replace('CURATION V1 · build', 'CURATION V2 · build', 1)
     html = html.replace(
         '<button id="saveProject" class="ghost" disabled>SAVE PROJECT FILE</button>',
         '<button id="saveProject" class="ghost" disabled>SAVE PROJECT FILE</button><button id="projectsV2" class="ghost">PROJECTS</button>',
