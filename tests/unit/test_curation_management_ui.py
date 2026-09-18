@@ -62,3 +62,14 @@ def test_acceptance_launcher_starts_product_server():
     launcher = Path("tools/start_curation_acceptance.ps1").read_text(encoding="utf-8")
     assert "backend.app.curation_server:app" in launcher
     assert "RAMBLA_ENABLE_VERTICAL_SOCIAL = '1'" in launcher
+
+
+def test_product_ui_has_global_social_only_search_next_to_broll():
+    from backend.app.curation_ui_v2 import render_curation_page_v2
+
+    html = render_curation_page_v2("social-global")
+    assert 'id="findVideos"' in html
+    assert 'id="findSocial"' in html
+    assert html.index('id="findVideos"') < html.index('id="findSocial"') < html.index('id="findImages"')
+    assert "FIND SOCIAL" in html
+    assert "startStage('source/social')" in html
