@@ -501,10 +501,33 @@ def _real_engine(
     cache_root: Path,
     max_candidates: int,
     embedder: LocalQwenEmbedder | None = None,
+    providers: set[str] | None = None,
 ) -> OnlineSourcingEngine:
     ranker = create_retrieval_ranker(client_id, model_root, embedding_code_root)
-    sources: list[Any] = [YouTubeOnlineSourceAdapter(YouTubeSource(discover=_discover_youtube))]
-    if pexels_api_key:
+    provider_filter = {str(value).casefold().strip() for value in (providers or set()) if str(value).strip()}
+    sources: list[Any] = []
+    include_youtube = not provider_filter or "youtube" in provider_filter
+    vertical_names = {"youtube_shorts", "tiktok", "instagram", "web_video"}
+    requested_vertical = vertical_names if not provider_filter else (provider_filter & vertical_names)
+
+    if include_youtube or requested_vertical:
+        if provider_filter:
+            from .vertical_social import build_default_vertical_sources
+            vertical_sources = [
+                source for source in build_default_vertical_sources()
+                if str(getattr(source, "provider_name", "")).casefold() in requested_vertical
+            ]
+            sources.append(
+                YouTubeOnlineSourceAdapter(
+                    YouTubeSource(discover=_discover_youtube),
+                    vertical_sources=vertical_sources,
+                    include_base_youtube=include_youtube,
+                )
+            )
+        else:
+            sources.append(YouTubeOnlineSourceAdapter(YouTubeSource(discover=_discover_youtube)))
+
+    if pexels_api_key and (not provider_filter or "pexels" in provider_filter):
         sources.append(PexelsSource(pexels_api_key))
     engine = OnlineSourcingEngine(
         sources=sources,
@@ -532,6 +555,11 @@ def main() -> None:
     parser.add_argument("--model-root", type=Path, required=True)
     parser.add_argument("--embedding-code-root", type=Path)
     parser.add_argument('--beat-ids',nargs='+')
+    parser.add_argument(
+        "--providers",
+        nargs="+",
+        choices=("youtube", "youtube_shorts", "tiktok", "instagram", "web_video", "pexels"),
+    )
     parser.add_argument("--pexels-key-env", default="PEXELS_API_KEY")
     parser.add_argument("--max-candidates", type=int, default=12)
     args = parser.parse_args()
@@ -554,6 +582,7 @@ def main() -> None:
         embedding_code_root=args.embedding_code_root,
         cache_root=args.output_dir / "asset-cache",
         max_candidates=args.max_candidates,
+        providers=set(args.providers or ()),
     )
     engine.retrieval_output = args.output_dir
     engine.query_intents = {q: shot['description'] for beat in visual_plan['chunks'].values() for shot in beat['shots'] for q in shot['video_queries']}
