@@ -43,3 +43,15 @@ def test_v2_renderer_labels_itself_as_v2_without_changing_internal_build_sentine
     assert "CURATION V2 · build label-test" in html
     assert "CURATION V1 · build label-test" not in html
     assert "CURATION-V1-build-label-test" in html
+
+
+def test_social_ui_explains_profile_vs_search_backend_and_provider_attempts():
+    from backend.app.curation_ui_v2 import render_curation_page_v2
+
+    html = render_curation_page_v2("social-status")
+    assert "PROFILE SAVED" in html
+    assert "search_backend" in html
+    assert "search_ready" in html
+    assert "video_attempts" in html
+    assert "browser_error" in html
+    assert "does not verify login" in html
