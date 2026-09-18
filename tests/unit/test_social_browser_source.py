@@ -140,3 +140,23 @@ def test_real_engine_youtube_adapter_actually_searches_vertical_sources(monkeypa
         "event", orientation=None, min_duration=1, max_duration=300, limit=3,
     ))
     assert [row.provider for row in rows] == ["tiktok"]
+
+
+def test_real_engine_provider_filter_builds_social_only_adapter(monkeypatch, tmp_path):
+    import backend.app.online_sourcing_cli as cli
+
+    monkeypatch.setattr(cli, "create_retrieval_ranker", lambda *_args, **_kwargs: object())
+    engine = cli._real_engine(
+        client_id="test",
+        pexels_api_key="pexels-key",
+        model_root=tmp_path,
+        embedding_code_root=None,
+        cache_root=tmp_path / "cache",
+        max_candidates=4,
+        providers={"tiktok", "instagram"},
+    )
+
+    assert len(engine.sources) == 1
+    adapter = engine.sources[0]
+    assert adapter.include_base_youtube is False
+    assert [source.provider_name for source in adapter.vertical_sources] == ["tiktok", "instagram"]
