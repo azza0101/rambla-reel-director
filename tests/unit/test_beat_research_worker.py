@@ -38,3 +38,18 @@ def test_scoped_social_append_command_limits_video_providers():
     assert "--providers" in command
     i = command.index("--providers")
     assert command[i + 1:i + 3] == ["tiktok", "instagram"]
+
+
+def test_global_social_command_targets_all_beats_and_only_tiktok_instagram():
+    from backend.app.debug_social_cli import social_sourcing_command
+
+    command = social_sourcing_command(
+        Path("run"), Path("transcript.json"), Path("outline.json"),
+        "client", 300, beat_ids=("beat-1", "beat-2"),
+    )
+    assert "--beat-ids" in command
+    beat_index = command.index("--beat-ids")
+    assert command[beat_index + 1:beat_index + 3] == ["beat-1", "beat-2"]
+    provider_index = command.index("--providers")
+    assert command[provider_index + 1:provider_index + 3] == ["tiktok", "instagram"]
+    assert "image_sourcing_cli" not in " ".join(command)
