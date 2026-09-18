@@ -102,10 +102,14 @@ def test_beat_research_endpoint_starts_dedicated_worker_without_analyze(tmp_path
     rr = active_retrieval_root(run); rr.mkdir(parents=True, exist_ok=True)
     (rr / "imported-plan.json").write_text((run / "visual-plan.json").read_text(encoding="utf-8"), encoding="utf-8")
 
-    response = client.post(f"/api/curation/projects/{pid}/beats/beat-1/research", json={"mode": "append"})
+    response = client.post(
+        f"/api/curation/projects/{pid}/beats/beat-1/research",
+        json={"mode": "append", "providers": ["tiktok", "instagram"]},
+    )
     assert response.status_code == 200
     body = response.json()
     assert body["stage"] == "research:append:beat-1"
+    assert body["providers"] == ["tiktok", "instagram"]
     assert body["resolve_calls"] == 0
     import time; time.sleep(.05)
     assert calls == [("research:append:beat-1", "beat-1", "append")]
