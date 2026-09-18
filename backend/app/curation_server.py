@@ -37,6 +37,7 @@ class RenameProjectRequest(BaseModel):
 class BeatResearchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     mode: str
+    providers: tuple[str, ...] = ()
 
 
 ResearchRunner = Callable[[debug.RunState, str, str], Awaitable[Any] | Any]
@@ -91,13 +92,20 @@ def _validate_broll_beat(run_root: Path, beat_id: str) -> dict[str, Any]:
     return beat
 
 
-async def _default_research_runner(state: debug.RunState, beat_id: str, mode: str) -> None:
+async def _default_research_runner(
+    state: debug.RunState,
+    beat_id: str,
+    mode: str,
+    providers: tuple[str, ...] = (),
+) -> None:
     command = [
         sys.executable, "-m", "backend.app.debug_research_cli",
         "--video", str(state.video_path), "--output-dir", str(state.output_dir),
         "--beat-id", beat_id, "--research-mode", mode,
         "--client-id", f"project-{state.output_dir.parent.name}",
     ]
+    if providers:
+        command += ["--providers", *providers]
     cwd = Path.cwd()
     preflight = debug._preflight_worker(state, command, cwd)
     await debug._emit(state, debug.DebugEvent("preflight", "Research worker preflight completato", 100.0, preflight))
@@ -117,22 +125,54 @@ async def _default_research_runner(state: debug.RunState, beat_id: str, mode: st
         raise RuntimeError(f"beat research worker exited with code {state.return_code}")
 
 
-async def _run_research_state(state: debug.RunState, beat_id: str, mode: str, runner: ResearchRunner | None) -> None:
+async def _run_research_state(
+    state: debug.RunState,
+    beat_id: str,
+    mode: str,
+    providers: tuple[str, ...],
+    runner: ResearchRunner | None,
+) -> None:
     state.status = "RUNNING"
     try:
-        await debug._emit(state, debug.DebugEvent("research", "Beat research avviata", 1.0, {"beat_id": beat_id, "mode": mode}))
-        result = (runner or _default_research_runner)(state, beat_id, mode)
+        await debug._emit(
+            state,
+            debug.DebugEvent(
+                "research",
+                "Beat research avviata",
+                1.0,
+                {"beat_id": beat_id, "mode": mode, "providers": list(providers)},
+            ),
+        )
+        if runner is None:
+            result = _default_research_runner(state, beat_id, mode, providers)
+        else:
+            result = runner(state, beat_id, mode)
         if inspect.isawaitable(result):
             await result
         if state.status != "CANCELLED":
             state.status = "SUCCEEDED"
             state.return_code = 0
-            await debug._emit(state, debug.DebugEvent("research", "Beat research completata", 100.0, {"beat_id": beat_id, "mode": mode}))
+            await debug._emit(
+                state,
+                debug.DebugEvent(
+                    "research",
+                    "Beat research completata",
+                    100.0,
+                    {"beat_id": beat_id, "mode": mode, "providers": list(providers)},
+                ),
+            )
     except Exception as exc:
         if state.status != "CANCELLED":
             state.status = "FAILED"
             state.return_code = state.return_code if state.return_code is not None else 1
-            await debug._emit(state, debug.DebugEvent("error", str(exc), data={"beat_id": beat_id, "mode": mode}))
+            await debug._emit(
+                state,
+                debug.DebugEvent(
+                    "error",
+                    str(exc),
+                    data={"beat_id": beat_id, "mode": mode, "providers": list(providers)},
+                ),
+            )
     finally:
         if state.process is not None and state.process.returncode is None:
             await debug._stop_worker(state.process)
@@ -234,6 +274,10 @@ def create_app(
         run = run_root(project_id)
         if request.mode not in {"replace", "append"}:
             raise HTTPException(status_code=422, detail="mode must be replace or append")
+        provider_scope = tuple(dict.fromkeys(str(value).casefold().strip() for value in request.providers if str(value).strip()))
+        allowed_providers = {"youtube", "youtube_shorts", "tiktok", "instagram", "web_video", "pexels"}
+        if any(value not in allowed_providers for value in provider_scope):
+            raise HTTPException(status_code=422, detail="unsupported research provider")
         _validate_broll_beat(run, beat_id)
         if project.source_video is None:
             raise HTTPException(status_code=422, detail="source video required")
@@ -246,8 +290,14 @@ def create_app(
             analysis_signature=project.analysis_signature, stage_type=stage,
         )
         debug.RUNS[state.run_id] = state
-        asyncio.create_task(_run_research_state(state, beat_id, request.mode, research_runner))
-        return {"status": "started", "run_id": state.run_id, "stage": stage, "resolve_calls": 0}
+        asyncio.create_task(_run_research_state(state, beat_id, request.mode, provider_scope, research_runner))
+        return {
+            "status": "started",
+            "run_id": state.run_id,
+            "stage": stage,
+            "providers": list(provider_scope),
+            "resolve_calls": 0,
+        }
 
     return app
 
