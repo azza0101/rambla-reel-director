@@ -68,6 +68,7 @@ class GroqDirectorClient:
         self._first_prompt: str | None = None
 
     def _emit(self, event: str, **data: Any) -> None:
+        data.setdefault("provider", "groq")
         if self._event_callback is not None:
             self._event_callback(event, data)
 
