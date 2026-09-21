@@ -52,7 +52,21 @@ def _gemini_progress(event: str, data: dict[str, Any]) -> None:
     if event == "request_start":
         print(
             f"[{stamp}] Gemini · {data.get('model')} · attempt "
-            f"{data.get('attempt')}/{data.get('attempts_for_model')} · sending...",
+            f"{data.get('attempt')}/{data.get('attempts_for_model')} · sending "
+            f"(read timeout {float(data.get('timeout_seconds') or 0):.0f}s)...",
+            flush=True,
+        )
+    elif event == "waiting":
+        print(
+            f"[{stamp}] Gemini · {data.get('model')} · still waiting · "
+            f"{float(data.get('elapsed_seconds') or 0):.0f}s elapsed",
+            flush=True,
+        )
+    elif event == "transport_error":
+        detail = str(data.get("detail") or "").strip()
+        suffix = f" · {detail}" if detail else ""
+        print(
+            f"[{stamp}] Gemini · {data.get('error_type')} on {data.get('model')}{suffix}",
             flush=True,
         )
     elif event == "retry":
