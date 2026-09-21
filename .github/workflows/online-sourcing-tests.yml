@@ -1,6 +1,9 @@
 name: Online sourcing tests
 
 on:
+  pull_request:
+    branches:
+      - feat/curation-ui-v1
   push:
     branches:
       - feat/online-sourcing-engine-v1
