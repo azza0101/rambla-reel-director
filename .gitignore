@@ -41,6 +41,7 @@ renders/
 output/
 outputs/
 *.log
+.curation-acceptance-server.json
 
 # AI models and weights
 models/
