@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param()
 $ErrorActionPreference = 'Stop'
-$branch = 'feat/curation-ui-v1'
+$branch = 'feat/api-first-text-first-v1'
 $repo = 'azza0101/rambla-reel-director'
 $scriptRoot = Split-Path -Parent $PSScriptRoot
 $launcherPath = $MyInvocation.MyCommand.Path
@@ -36,13 +36,18 @@ if (-not (Test-Path -LiteralPath $runtime -PathType Leaf)) { throw "Scoped Pytho
 $workRoot = $scriptRoot
 if (Test-Path -LiteralPath (Join-Path $scriptRoot '.git')) {
     $actualBranch = (git -C $scriptRoot branch --show-current).Trim()
-    if ($actualBranch -ne $branch) { throw "Wrong branch: $actualBranch (expected $branch)" }
+    if ($actualBranch -and $actualBranch -ne $branch) { throw "Wrong branch: $actualBranch (expected $branch or detached V5 worktree)" }
     $dirty = @(git -C $scriptRoot status --porcelain)
     if ($dirty.Count) { throw "Dirty worktree; aborting. Changed files:`n$($dirty -join "`n")" }
     git -C $scriptRoot fetch origin $branch
     if ($LASTEXITCODE) { throw 'git fetch failed' }
-    git -C $scriptRoot merge --ff-only "origin/$branch"
-    if ($LASTEXITCODE) { throw 'fast-forward-only update failed' }
+    if ($actualBranch) {
+        git -C $scriptRoot merge --ff-only "origin/$branch"
+        if ($LASTEXITCODE) { throw 'fast-forward-only update failed' }
+    } else {
+        git -C $scriptRoot checkout --detach "origin/$branch"
+        if ($LASTEXITCODE) { throw 'detached V5 update failed' }
+    }
     $fullSha = (git -C $scriptRoot rev-parse HEAD).Trim()
 } else {
     $fullSha = (gh api "repos/$repo/git/ref/heads/$branch" --jq .object.sha).Trim()
@@ -183,7 +188,7 @@ if (-not $ready) {
 }
 $response = Invoke-WebRequest -Uri $url -UseBasicParsing -Headers @{'Cache-Control'='no-cache'}
 if (-not $response.Content.Contains($marker)) { Stop-Process -Id $process.Id -ErrorAction SilentlyContinue; throw "Build marker verification failed. Expected: $marker" }
-$requiredUiMarkers = @('id="projectsV2"','id="tiktokLoginV2"','id="instagramLoginV2"','id="beatActionsV2"','id="webNewsVideosV2"')
+$requiredUiMarkers = @('id="projectsV2"','id="tiktokLoginV2"','id="instagramLoginV2"','id="beatActionsV2"','id="webNewsVideosV2"','id="directorProviderV5"','id="generateDirectorV5"')
 $missingUiMarkers = @($requiredUiMarkers | Where-Object { -not $response.Content.Contains($_) })
 if ($missingUiMarkers.Count -gt 0) {
     Stop-Process -Id $process.Id -ErrorAction SilentlyContinue
