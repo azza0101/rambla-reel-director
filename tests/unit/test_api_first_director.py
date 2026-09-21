@@ -499,3 +499,59 @@ def test_cli_configures_utf8_stdio_without_crashing_on_windows_style_streams(mon
 
     assert out.calls == [{"encoding": "utf-8", "errors": "replace"}]
     assert err.calls == [{"encoding": "utf-8", "errors": "replace"}]
+
+
+def test_gemini_429_skips_same_model_retries_and_falls_back_immediately():
+    from backend.app.gemini_interactions import GeminiInteractionsClient
+
+    success_payload = {
+        "id": "int-quota-fallback",
+        "status": "completed",
+        "steps": [
+            {
+                "type": "model_output",
+                "content": [{"type": "text", "text": '{"global_topic":"x","beats":[]}'}],
+            }
+        ],
+    }
+
+    class Response:
+        def __init__(self, status, payload):
+            self.status_code = status
+            self._payload = payload
+            self.headers = {}
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"http {self.status_code}")
+
+        def json(self):
+            return self._payload
+
+    class HTTP:
+        def __init__(self):
+            self.calls = []
+            self.responses = [
+                Response(429, {"error": {"message": "rate limit exceeded"}}),
+                Response(200, success_payload),
+            ]
+
+        def post(self, url, **kwargs):
+            self.calls.append(kwargs["json"]["model"])
+            return self.responses.pop(0)
+
+    events = []
+    http = HTTP()
+    client = GeminiInteractionsClient(
+        "placeholder",
+        http_client=http,
+        sleeper=lambda _seconds: None,
+        event_callback=lambda event, data: events.append((event, data)),
+    )
+
+    reply = client.generate_json("hello", {"type": "object"})
+
+    assert http.calls == ["gemini-3.8-flash", "gemini-3.7-flash"]
+    assert reply.model == "gemini-3.7-flash"
+    assert reply.fallback_used is True
+    assert any(event == "quota_exhausted" for event, _data in events)
