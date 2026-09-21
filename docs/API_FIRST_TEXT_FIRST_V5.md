@@ -61,7 +61,8 @@ allowed to replace `visual-plan.json`.
 Normal path:
 
 1. **one** Director request for the entire reel;
-2. zero repair requests when the structured result validates.
+2. zero repair requests when the structured result validates;
+3. subsequent identical runs reuse the transcript/model/prompt-signature cache with zero API calls.
 
 Failure path:
 
@@ -106,12 +107,21 @@ Command:
 python -m backend.app.api_first_director_cli --run-dir "<PROJECT>\run"
 ```
 
-Output:
+Output by default:
 
-- canonical `run/visual-plan.json`;
-- canonical hashed editorial import root;
+- candidate canonical plan at `run/api-first/visual-plan.json`;
 - `run/api-first/director-decisions.json`;
 - `run/api-first/director-run.json`.
+
+The V4 active `run/visual-plan.json` is left untouched. After A/B review, explicitly activate
+the V5 plan with:
+
+```powershell
+python -m backend.app.api_first_director_cli --run-dir "<PROJECT>\run" --activate
+```
+
+Activation reuses a matching cached V5 plan and writes the existing canonical hashed
+editorial import root without another model call.
 
 The audit explicitly records:
 
