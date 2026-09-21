@@ -185,7 +185,7 @@ async def _run_research_state(
 
 
 
-async def _default_director_runner(state: debug.RunState) -> None:
+async def _default_director_runner(state: debug.RunState, provider: str) -> None:
     command = [
         sys.executable,
         "-m",
@@ -193,6 +193,8 @@ async def _default_director_runner(state: debug.RunState) -> None:
         "--run-dir",
         str(state.output_dir),
         "--activate",
+        "--provider",
+        provider,
     ]
     cwd = Path.cwd()
     preflight = debug._preflight_worker(state, command, cwd)
@@ -235,19 +237,19 @@ async def _default_director_runner(state: debug.RunState) -> None:
         raise RuntimeError(f"API Director worker exited with code {state.return_code}")
 
 
-async def _run_director_state(state: debug.RunState) -> None:
+async def _run_director_state(state: debug.RunState, provider: str) -> None:
     state.status = "RUNNING"
     try:
         await debug._emit(
             state,
             debug.DebugEvent(
                 "visual_planning",
-                "Gemini API Director avviato",
+                "API Director avviato",
                 1.0,
-                {"provider": "gemini", "source_video_sent_to_ai": False},
+                {"provider": provider, "source_video_sent_to_ai": False},
             ),
         )
-        await _default_director_runner(state)
+        await _default_director_runner(state, provider)
         if state.status != "CANCELLED":
             state.status = "SUCCEEDED"
             state.return_code = 0
@@ -256,10 +258,10 @@ async def _run_director_state(state: debug.RunState) -> None:
                 state,
                 debug.DebugEvent(
                     "visual_planning",
-                    "Gemini API Director completato",
+                    "API Director completato",
                     100.0,
                     {
-                        "provider": audit.get("provider", "gemini"),
+                        "provider": audit.get("provider", provider),
                         "model": audit.get("model"),
                         "requested_model": audit.get("requested_model"),
                         "fallback_used": audit.get("fallback_used", False),
@@ -277,7 +279,7 @@ async def _run_director_state(state: debug.RunState) -> None:
                 debug.DebugEvent(
                     "error",
                     str(exc),
-                    data={"provider": "gemini", "source_video_sent_to_ai": False},
+                    data={"provider": provider, "source_video_sent_to_ai": False},
                 ),
             )
     finally:
@@ -411,14 +413,46 @@ def create_app(
     @app.get("/api/curation/ai/status")
     async def ai_status() -> dict[str, Any]:
         from .gemini_interactions import DEFAULT_GEMINI_MODEL
+        from .groq_api import DEFAULT_GROQ_MODEL
+        thinking = os.environ.get("RAMBLA_DIRECTOR_THINKING", "high").strip()
+        gemini_configured = bool(os.environ.get("GEMINI_API_KEY", "").strip())
+        groq_configured = bool(os.environ.get("GROQ_API_KEY", "").strip())
         return {
             "providers": {
-                "gemini": {
-                    "configured": bool(os.environ.get("GEMINI_API_KEY", "").strip()),
-                    "model": os.environ.get("RAMBLA_DIRECTOR_MODEL", DEFAULT_GEMINI_MODEL).strip(),
-                    "thinking_level": os.environ.get("RAMBLA_DIRECTOR_THINKING", "high").strip(),
+                "auto": {
+                    "configured": gemini_configured or groq_configured,
+                    "chain": [
+                        *(
+                            [
+                                os.environ.get("RAMBLA_DIRECTOR_MODEL", DEFAULT_GEMINI_MODEL).strip(),
+                                "gemini-3.7-flash",
+                            ]
+                            if gemini_configured else []
+                        ),
+                        *(
+                            [
+                                os.environ.get("RAMBLA_GROQ_DIRECTOR_MODEL", DEFAULT_GROQ_MODEL).strip(),
+                                "openai/gpt-oss-120b",
+                            ]
+                            if groq_configured else []
+                        ),
+                    ],
+                    "thinking_level": thinking,
                     "source_video_sent_to_ai": False,
-                }
+                },
+                "gemini": {
+                    "configured": gemini_configured,
+                    "model": os.environ.get("RAMBLA_DIRECTOR_MODEL", DEFAULT_GEMINI_MODEL).strip(),
+                    "thinking_level": thinking,
+                    "source_video_sent_to_ai": False,
+                },
+                "groq": {
+                    "configured": groq_configured,
+                    "model": os.environ.get("RAMBLA_GROQ_DIRECTOR_MODEL", DEFAULT_GROQ_MODEL).strip(),
+                    "fallback_model": "openai/gpt-oss-120b",
+                    "thinking_level": thinking,
+                    "source_video_sent_to_ai": False,
+                },
             },
             "resolve_calls": 0,
         }
@@ -427,11 +461,18 @@ def create_app(
     async def run_project_director(project_id: str, request: DirectorRequest) -> dict[str, Any]:
         project = load_project(project_id)
         run = run_root(project_id)
-        provider = str(request.provider or "").casefold().strip()
-        if provider != "gemini":
+        provider = str(request.provider or "auto").casefold().strip()
+        if provider not in {"auto", "gemini", "groq"}:
             raise HTTPException(status_code=422, detail="unsupported AI director provider")
-        if not os.environ.get("GEMINI_API_KEY", "").strip():
+        if provider == "gemini" and not os.environ.get("GEMINI_API_KEY", "").strip():
             raise HTTPException(status_code=422, detail="GEMINI_API_KEY is not configured")
+        if provider == "groq" and not os.environ.get("GROQ_API_KEY", "").strip():
+            raise HTTPException(status_code=422, detail="GROQ_API_KEY is not configured")
+        if provider == "auto" and not (
+            os.environ.get("GEMINI_API_KEY", "").strip()
+            or os.environ.get("GROQ_API_KEY", "").strip()
+        ):
+            raise HTTPException(status_code=422, detail="No cloud Director API is configured")
         for required in ("transcript-raw.json", "semantic-chunks.json", "analysis-signature.json"):
             if not (run / required).is_file():
                 raise HTTPException(status_code=422, detail="analyze transcript before running the API Director")
@@ -448,12 +489,12 @@ def create_app(
             stage_type="director_api",
         )
         debug.RUNS[state.run_id] = state
-        asyncio.create_task(_run_director_state(state))
+        asyncio.create_task(_run_director_state(state, provider))
         return {
             "status": "started",
             "run_id": state.run_id,
             "stage": "director_api",
-            "provider": "gemini",
+            "provider": provider,
             "source_video_sent_to_ai": False,
             "resolve_calls": 0,
         }
