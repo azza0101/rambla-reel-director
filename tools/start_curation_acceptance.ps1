@@ -35,8 +35,9 @@ if (-not (Test-Path -LiteralPath $runtime -PathType Leaf)) { throw "Scoped Pytho
 
 $workRoot = $scriptRoot
 if (Test-Path -LiteralPath (Join-Path $scriptRoot '.git')) {
-    $actualBranch = [string](git -C $scriptRoot branch --show-current)
-    $actualBranch = $actualBranch.Trim()
+    $actualBranchLines = @(git -C $scriptRoot branch --show-current 2>$null)
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to read current Git branch' }
+    $actualBranch = if ($actualBranchLines.Count) { ([string]$actualBranchLines[0]).Trim() } else { '' }
     if ($actualBranch -and $actualBranch -ne $branch) { throw "Wrong branch: $actualBranch (expected $branch or detached V5 worktree)" }
     $dirty = @(git -C $scriptRoot status --porcelain)
     if ($dirty.Count) { throw "Dirty worktree; aborting. Changed files:`n$($dirty -join "`n")" }
@@ -49,9 +50,13 @@ if (Test-Path -LiteralPath (Join-Path $scriptRoot '.git')) {
         git -C $scriptRoot checkout --detach "origin/$branch"
         if ($LASTEXITCODE) { throw 'detached V5 update failed' }
     }
-    $fullSha = (git -C $scriptRoot rev-parse HEAD).Trim()
+    $fullShaLines = @(git -C $scriptRoot rev-parse HEAD 2>$null)
+    if ($LASTEXITCODE -ne 0 -or -not $fullShaLines.Count) { throw 'Unable to resolve current Git SHA' }
+    $fullSha = ([string]$fullShaLines[0]).Trim()
 } else {
-    $fullSha = (gh api "repos/$repo/git/ref/heads/$branch" --jq .object.sha).Trim()
+    $fullShaLines = @(& gh api "repos/$repo/git/ref/heads/$branch" --jq .object.sha 2>$null)
+    if ($LASTEXITCODE -ne 0 -or -not $fullShaLines.Count) { throw "Unable to resolve remote branch SHA: $branch" }
+    $fullSha = ([string]$fullShaLines[0]).Trim()
     $commit = gh api "repos/$repo/git/commits/$fullSha" | ConvertFrom-Json
     $rootTree = (gh api "repos/$repo/git/trees/$($commit.tree.sha)" | ConvertFrom-Json).tree
     $backendSha = ($rootTree | Where-Object path -eq 'backend').sha
@@ -73,7 +78,9 @@ if (Test-Path -LiteralPath (Join-Path $scriptRoot '.git')) {
             }
             if (-not $encoded) { throw "Remote blob download failed after 3 attempts: $($entry.path)" }
             [IO.File]::WriteAllBytes($target, [Convert]::FromBase64String($encoded))
-            $actualBlob = (git hash-object --no-filters -- $target).Trim()
+            $actualBlobLines = @(git hash-object --no-filters -- $target 2>$null)
+            if ($LASTEXITCODE -ne 0 -or -not $actualBlobLines.Count) { throw "Blob hash failed: $($entry.path)" }
+            $actualBlob = ([string]$actualBlobLines[0]).Trim()
             if ($actualBlob -ne $entry.sha) { throw "Remote blob verification failed: $($entry.path)" }
         }
         Set-Content -LiteralPath $complete -Value $fullSha -Encoding ascii
@@ -135,8 +142,14 @@ $serverStdout = Join-Path $serverLogDir "server-$shortSha-$port.stdout.log"
 $serverStderr = Join-Path $serverLogDir "server-$shortSha-$port.stderr.log"
 Remove-Item -LiteralPath $serverStdout,$serverStderr -Force -ErrorAction SilentlyContinue
 try {
-    $importPath = (& $runtime -c "import backend.app.curation_server as m; print(m.__file__)").Trim()
-    if ($LASTEXITCODE -ne 0 -or -not $importPath) { throw 'Import provenance verification failed: curation_server import failed' }
+    $importLines = @(& $runtime -c "import backend.app.curation_server as m; print(m.__file__)" 2>&1)
+    $importExit = $LASTEXITCODE
+    if ($importExit -ne 0) {
+        throw "Import provenance verification failed: curation_server import failed (exit $importExit):`n$($importLines -join "`n")"
+    }
+    if (-not $importLines.Count) { throw 'Import provenance verification failed: curation_server produced no module path' }
+    $importPath = ([string]$importLines[-1]).Trim()
+    if (-not $importPath) { throw 'Import provenance verification failed: curation_server module path is empty' }
     $resolvedWorkRoot = (Resolve-Path -LiteralPath $workRoot).Path
     $resolvedImportPath = (Resolve-Path -LiteralPath $importPath).Path
     if (-not $resolvedImportPath.StartsWith($resolvedWorkRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
