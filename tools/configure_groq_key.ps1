@@ -1,0 +1,42 @@
+$ErrorActionPreference = "Stop"
+
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$envFile = Join-Path $repoRoot ".env.local"
+
+Write-Host ""
+Write-Host "APP REEL - Groq API setup"
+Write-Host "Paste the GROQ_API_KEY. Characters will stay hidden."
+$secure = Read-Host "GROQ_API_KEY" -AsSecureString
+
+$ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+try {
+    $groqKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+}
+finally {
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+}
+
+if ([string]::IsNullOrWhiteSpace($groqKey)) {
+    throw "GROQ_API_KEY is empty"
+}
+
+$lines = @()
+if (Test-Path -LiteralPath $envFile) {
+    $lines = @(
+        Get-Content -LiteralPath $envFile |
+        Where-Object { $_ -notmatch '^\s*GROQ_API_KEY\s*=' }
+    )
+}
+
+$lines += "GROQ_API_KEY=$groqKey"
+[IO.File]::WriteAllLines(
+    $envFile,
+    $lines,
+    [Text.UTF8Encoding]::new($false)
+)
+
+$groqKey = $null
+Write-Host ""
+Write-Host "Groq configured locally in:"
+Write-Host $envFile
+Write-Host "The key was not printed and is not committed to Git."
