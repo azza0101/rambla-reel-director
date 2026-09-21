@@ -436,3 +436,46 @@ def test_gemini_read_timeout_moves_directly_to_fallback():
     assert reply.model == "gemini-3.7-flash"
     assert reply.fallback_used is True
     assert reply.transport_attempts == 2
+
+
+def test_director_rejects_overlong_multi_chunk_beats():
+    from backend.app.api_first_director import compile_director_decisions
+
+    package = package_fixture()
+    package["chunks"] = [
+        {"id": "c0", "start": 0.0, "end": 2.0, "text": "uno"},
+        {"id": "c1", "start": 2.0, "end": 4.0, "text": "due"},
+        {"id": "c2", "start": 4.0, "end": 6.0, "text": "tre"},
+    ]
+    decisions = {
+        "global_topic": "x",
+        "beats": [
+            {
+                "first_chunk_id": "c0",
+                "last_chunk_id": "c2",
+                "action": "BROLL",
+                "editorial_function": "x",
+                "core_meaning": "x",
+                "subtext": "",
+                "visual_mode": "single",
+                "shots": [{
+                    "description": "x",
+                    "image_queries": ["real world action"],
+                    "video_queries": ["real world action"],
+                }],
+                "avoid": [],
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="at most 2 transcript chunks"):
+        compile_director_decisions(package, decisions)
+
+
+def test_director_prompt_explicitly_targets_short_fast_cut_beats():
+    from backend.app.api_first_director import build_director_prompt
+
+    prompt = build_director_prompt(package_fixture())
+    assert "roughly 2.0-3.5 seconds per beat" in prompt
+    assert "never more than 2" in prompt
+    assert "<=4.5 seconds" in prompt
