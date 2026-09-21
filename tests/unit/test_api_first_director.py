@@ -144,6 +144,12 @@ def test_gemini_interactions_client_sends_structured_schema_and_parses_final_tex
             return {
                 "id": "int-123",
                 "status": "completed",
+                "usage": {
+                    "total_input_tokens": 120,
+                    "total_output_tokens": 30,
+                    "total_thought_tokens": 20,
+                    "total_tokens": 170,
+                },
                 "steps": [
                     {"type": "user_input", "content": [{"type": "text", "text": "prompt"}]},
                     {
@@ -175,6 +181,7 @@ def test_gemini_interactions_client_sends_structured_schema_and_parses_final_tex
 
     assert reply.interaction_id == "int-123"
     assert reply.data["global_topic"] == "x"
+    assert reply.usage["total_tokens"] == 170
     _, kwargs = http.call
     assert kwargs["headers"]["x-goog-api-key"] == "placeholder"
     assert "placeholder" not in json.dumps(kwargs["json"])
@@ -242,6 +249,7 @@ def test_api_first_cli_writes_visual_plan_without_source_video_input(tmp_path):
     reused = run_api_first_director(run_dir=run, provider=provider)
     assert reused["cache_status"] == "reused"
     assert reused["attempts"] == 0
+    assert reused["api_calls_this_run"] == 0
     assert provider.calls == 1
 
     activated = run_api_first_director(run_dir=run, provider=provider, activate=True)
