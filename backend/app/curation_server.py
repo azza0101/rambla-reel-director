@@ -42,7 +42,7 @@ class BeatResearchRequest(BaseModel):
 
 class DirectorRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    provider: str = "gemini"
+    provider: str = "auto"
 
 
 ResearchRunner = Callable[[debug.RunState, str, str], Awaitable[Any] | Any]
