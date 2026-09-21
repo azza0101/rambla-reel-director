@@ -50,6 +50,14 @@ if (-not $hasKey) {
 $oldPythonPath = $env:PYTHONPATH
 $env:PYTHONPATH = $repoRoot
 try {
+    Write-Output "Running focused V5 offline tests before any API call..."
+    & $runtime -m pytest -q (Join-Path $repoRoot 'tests\unit\test_api_first_director.py')
+    if ($LASTEXITCODE -ne 0) {
+        throw "V5 offline tests failed with code $LASTEXITCODE. Gemini was not called."
+    }
+    Write-Output "Offline tests passed."
+    Write-Output ""
+
     $argsList = @(
         '-m', 'backend.app.api_first_director_cli',
         '--run-dir', $RunDir,
