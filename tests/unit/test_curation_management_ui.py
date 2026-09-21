@@ -85,7 +85,9 @@ def test_management_ui_keeps_existing_layout_and_adds_api_director_controls():
     assert 'id="directorProviderV5"' in html
     assert 'id="generateDirectorV5"' in html
     assert "MANUAL / IMPORT" in html
+    assert "AUTO" in html
     assert "GEMINI API" in html
+    assert "GROQ API" in html
     assert "GENERATE PLAN" in html
     assert "source video NOT sent" in html
     assert "api('/ai/status')" in html
@@ -109,6 +111,8 @@ def test_product_server_ai_status_never_exposes_api_key(monkeypatch, tmp_path):
     assert body["providers"]["gemini"]["configured"] is True
     assert body["providers"]["gemini"]["model"] == "gemini-3.8-flash"
     assert body["providers"]["gemini"]["source_video_sent_to_ai"] is False
+    assert "groq" in body["providers"]
+    assert "auto" in body["providers"]
     assert "test-key-do-not-expose" not in repr(body)
 
 
