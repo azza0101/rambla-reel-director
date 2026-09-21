@@ -142,7 +142,7 @@ def run_api_first_director(
         interaction_id = result.interaction_id
         validation_errors = list(result.validation_errors)
         api_usage = [dict(row) for row in result.usage]
-        api_calls_this_run = result.attempts
+        api_calls_this_run = result.transport_attempts
         cache_status = "generated"
         write_json(decisions_path, result.decisions)
         write_json(candidate_plan_path, plan)
