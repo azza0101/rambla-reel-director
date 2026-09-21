@@ -122,3 +122,12 @@ def test_api_first_product_keeps_curation_identity_without_v2_branding():
     assert "Choose the editorial engine" in html
     assert "GEMINI API" in html
     assert "transcript only" in html
+
+
+def test_product_ui_clears_stale_director_running_state_on_terminal_failure():
+    from backend.app.curation_ui_v2 import render_curation_page_v2
+
+    html = render_curation_page_v2("director-terminal")
+    assert "window.ramblaRunTerminal" in html
+    assert "stage_type==='director_api'" in html
+    assert "Director ${String(r.status||'FAILED').toLowerCase()}" in html
