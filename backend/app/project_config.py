@@ -2,7 +2,7 @@
 import os
 from pathlib import Path
 
-KEYS={'PEXELS_API_KEY','GOOGLE_API_KEY','GOOGLE_CSE_ID'}
+KEYS={'PEXELS_API_KEY','GOOGLE_API_KEY','GOOGLE_CSE_ID','GEMINI_API_KEY'}
 
 
 def load_project_credentials(root=None):
