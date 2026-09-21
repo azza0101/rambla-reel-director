@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import time
 from typing import Any
 
 from .api_first_director import DirectorProvider, build_director_prompt, director_schema, generate_director_plan
@@ -44,6 +45,42 @@ def _request_signature(
     return hashlib.sha256(
         json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+
+
+def _gemini_progress(event: str, data: dict[str, Any]) -> None:
+    stamp = time.strftime("%H:%M:%S")
+    if event == "request_start":
+        print(
+            f"[{stamp}] Gemini · {data.get('model')} · attempt "
+            f"{data.get('attempt')}/{data.get('attempts_for_model')} · sending...",
+            flush=True,
+        )
+    elif event == "retry":
+        detail = str(data.get("detail") or "").strip()
+        suffix = f" · {detail}" if detail else ""
+        print(
+            f"[{stamp}] Gemini · HTTP {data.get('status')} · retry in "
+            f"{float(data.get('delay_seconds') or 0):.1f}s{suffix}",
+            flush=True,
+        )
+    elif event == "model_exhausted":
+        print(
+            f"[{stamp}] Gemini · {data.get('model')} still unavailable after retries.",
+            flush=True,
+        )
+    elif event == "fallback":
+        print(
+            f"[{stamp}] Gemini · fallback {data.get('from_model')} → {data.get('to_model')}",
+            flush=True,
+        )
+    elif event == "request_complete":
+        usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+        total = usage.get("total_tokens")
+        token_text = f" · {total} tokens" if total is not None else ""
+        print(
+            f"[{stamp}] Gemini · completed on {data.get('model')}{token_text}",
+            flush=True,
+        )
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -130,6 +167,7 @@ def run_api_first_director(
                 api_key,
                 model=model,
                 thinking_level=thinking_level,
+                event_callback=_gemini_progress,
             )
         result = generate_director_plan(package, provider, max_attempts=max_attempts)
         plan = result.plan
