@@ -10,6 +10,7 @@ on:
       - feat/editorial-intelligence-style-dna-v1
       - feat/vertical-social-dense-coverage
       - feat/curation-ui-v1
+      - feat/api-first-text-first-v1
   workflow_dispatch:
 
 jobs:
@@ -27,7 +28,7 @@ jobs:
       - name: Tests
         shell: bash
         run: |
-          if [[ "$GITHUB_REF_NAME" == "feat/vertical-social-dense-coverage" || "$GITHUB_REF_NAME" == "feat/curation-ui-v1" ]]; then
+          if [[ "$GITHUB_REF_NAME" == "feat/vertical-social-dense-coverage" || "$GITHUB_REF_NAME" == "feat/curation-ui-v1" || "$GITHUB_REF_NAME" == "feat/api-first-text-first-v1" ]]; then
             pytest -q \
               tests/unit/test_dense_coverage.py \
               tests/unit/test_vertical_social.py \
@@ -60,7 +61,7 @@ jobs:
             pytest -q
           fi
       - name: Full repository test suite
-        if: github.ref_name == 'feat/curation-ui-v1'
+        if: github.ref_name == 'feat/curation-ui-v1' || github.ref_name == 'feat/api-first-text-first-v1'
         run: pytest -q
       - name: Check embedded curation JavaScript syntax
         shell: bash
