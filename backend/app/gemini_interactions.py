@@ -67,6 +67,35 @@ def _json_object(text: str) -> dict[str, Any]:
     return value
 
 
+_GEMINI_SCHEMA_KEYS = {
+    "$id", "$defs", "$ref", "$anchor", "type", "format", "title", "description",
+    "enum", "items", "prefixItems", "minItems", "maxItems", "minimum", "maximum",
+    "anyOf", "oneOf", "properties", "additionalProperties", "required", "propertyOrdering",
+}
+
+
+def gemini_schema_subset(value: Any) -> Any:
+    """Strip JSON-Schema keywords unsupported by Gemini structured outputs.
+
+    APP REEL still applies its stricter canonical validator after generation.
+    """
+    if isinstance(value, list):
+        return [gemini_schema_subset(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    output: dict[str, Any] = {}
+    for key, item in value.items():
+        if key not in _GEMINI_SCHEMA_KEYS:
+            continue
+        if key == "properties" and isinstance(item, dict):
+            output[key] = {name: gemini_schema_subset(schema) for name, schema in item.items()}
+        elif key == "$defs" and isinstance(item, dict):
+            output[key] = {name: gemini_schema_subset(schema) for name, schema in item.items()}
+        else:
+            output[key] = gemini_schema_subset(item)
+    return output
+
+
 class GeminiInteractionsClient:
     """Synchronous structured-output client using the current Interactions REST API."""
 
@@ -104,7 +133,7 @@ class GeminiInteractionsClient:
                 {
                     "type": "text",
                     "mime_type": "application/json",
-                    "schema": schema,
+                    "schema": gemini_schema_subset(schema),
                 }
             ],
         }
