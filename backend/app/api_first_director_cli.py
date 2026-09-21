@@ -166,6 +166,7 @@ def main() -> None:
     parser.add_argument("--duration", type=float)
     parser.add_argument("--max-attempts", type=int, default=2)
     parser.add_argument("--activate", action="store_true", help="replace the active run/visual-plan.json after validation")
+    parser.add_argument("--review", action="store_true", help="write a V4 vs V5 side-by-side A/B review")
     parser.add_argument("--no-reuse", action="store_true", help="ignore a matching API-first cache")
     args = parser.parse_args()
     summary = run_api_first_director(
@@ -176,6 +177,15 @@ def main() -> None:
         activate=args.activate,
         reuse=not args.no_reuse,
     )
+    if args.review:
+        from .api_first_review import build_review
+        try:
+            review = build_review(args.run_dir)
+        except ValueError as exc:
+            summary["review_error"] = str(exc)
+        else:
+            summary["review_html"] = review["review_html"]
+            summary["review_json"] = review["review_json"]
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
 
