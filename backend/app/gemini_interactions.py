@@ -158,6 +158,7 @@ class GeminiInteractionsClient:
         self._sticky_model: str | None = None
 
     def _emit(self, event: str, **data: Any) -> None:
+        data.setdefault("provider", "gemini")
         callback = self._event_callback
         if callback is not None:
             callback(event, data)
