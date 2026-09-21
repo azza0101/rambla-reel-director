@@ -386,3 +386,53 @@ def test_gemini_retries_overload_then_falls_back_to_37_and_sticks_for_repair():
     assert http.calls[-1] == "gemini-3.7-flash"
     assert repair.model == "gemini-3.7-flash"
     assert repair.transport_attempts == 1
+
+
+def test_gemini_read_timeout_moves_directly_to_fallback():
+    import httpx
+    from backend.app.gemini_interactions import GeminiInteractionsClient
+
+    success_payload = {
+        "id": "int-timeout-fallback",
+        "status": "completed",
+        "steps": [
+            {
+                "type": "model_output",
+                "content": [{"type": "text", "text": '{"global_topic":"x","beats":[]}'}],
+            }
+        ],
+    }
+
+    class Response:
+        status_code = 200
+        headers = {}
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return success_payload
+
+    class HTTP:
+        def __init__(self):
+            self.calls = []
+
+        def post(self, url, **kwargs):
+            model = kwargs["json"]["model"]
+            self.calls.append(model)
+            if len(self.calls) == 1:
+                raise httpx.ReadTimeout("model took too long")
+            return Response()
+
+    http = HTTP()
+    client = GeminiInteractionsClient(
+        "placeholder",
+        http_client=http,
+        sleeper=lambda _seconds: None,
+    )
+    reply = client.generate_json("hello", {"type": "object"})
+
+    assert http.calls == ["gemini-3.8-flash", "gemini-3.7-flash"]
+    assert reply.model == "gemini-3.7-flash"
+    assert reply.fallback_used is True
+    assert reply.transport_attempts == 2
