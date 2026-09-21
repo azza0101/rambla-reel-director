@@ -162,14 +162,14 @@ def test_gemini_interactions_client_sends_structured_schema_and_parses_final_tex
             return Response()
 
     http = HTTP()
-    client = GeminiInteractionsClient("secret", http_client=http)
+    client = GeminiInteractionsClient("placeholder", http_client=http)
     reply = client.generate_json("hello", {"type": "object"})
 
     assert reply.interaction_id == "int-123"
     assert reply.data["global_topic"] == "x"
     _, kwargs = http.call
-    assert kwargs["headers"]["x-goog-api-key"] == "secret"
-    assert "secret" not in json.dumps(kwargs["json"])
+    assert kwargs["headers"]["x-goog-api-key"] == "placeholder"
+    assert "placeholder" not in json.dumps(kwargs["json"])
     assert kwargs["json"]["response_format"][0]["mime_type"] == "application/json"
     assert kwargs["json"]["response_format"][0]["schema"] == {"type": "object"}
 
