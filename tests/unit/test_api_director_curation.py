@@ -10,7 +10,8 @@ def test_api_director_route_requires_transcript_and_never_accepts_source_video_p
     debug.RUNS.clear()
     monkeypatch.setenv("GEMINI_API_KEY", "configured-for-test")
 
-    async def fake_director(state):
+    async def fake_director(state, provider):
+        assert provider in {"auto", "gemini", "groq"}
         state.status = "SUCCEEDED"
         state.return_code = 0
 
@@ -44,7 +45,7 @@ def test_api_director_route_requires_transcript_and_never_accepts_source_video_p
 
     missing = client.post(
         f"/api/curation/projects/{pid}/director",
-        json={"provider": "gemini"},
+        json={"provider": "auto"},
     )
     assert missing.status_code == 422
     assert "analyze transcript" in missing.json()["detail"]
@@ -66,12 +67,13 @@ def test_api_director_route_requires_transcript_and_never_accepts_source_video_p
 
     started = client.post(
         f"/api/curation/projects/{pid}/director",
-        json={"provider": "gemini"},
+        json={"provider": "auto"},
     )
     assert started.status_code == 200
     body = started.json()
     assert body["status"] == "started"
     assert body["stage"] == "director_api"
+    assert body["provider"] == "auto"
     assert body["source_video_sent_to_ai"] is False
     assert "video" not in body or body.get("video") is None
     assert body["run_id"] in debug.RUNS
@@ -99,3 +101,30 @@ def test_api_director_route_rejects_unknown_provider(monkeypatch, tmp_path):
         json={"provider": "openai"},
     )
     assert response.status_code in {404, 422}
+
+
+def test_ai_status_exposes_auto_gemini_and_groq_without_keys(monkeypatch, tmp_path):
+    import backend.app.curation_server as server
+
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-test")
+    monkeypatch.setenv("GROQ_API_KEY", "groq-test")
+    client = TestClient(server.create_app(
+        project_root=tmp_path / "projects",
+        allowed_media_roots=[tmp_path],
+        probe_runner=lambda _: {
+            "duration": 1,
+            "fps": 25,
+            "width": 1080,
+            "height": 1920,
+            "has_audio": False,
+        },
+    ))
+
+    body = client.get("/api/curation/ai/status").json()
+    assert body["providers"]["auto"]["configured"] is True
+    assert body["providers"]["gemini"]["configured"] is True
+    assert body["providers"]["groq"]["configured"] is True
+    assert body["providers"]["groq"]["model"] == "qwen/qwen3.8-27b"
+    serialized = repr(body)
+    assert "gemini-test" not in serialized
+    assert "groq-test" not in serialized
