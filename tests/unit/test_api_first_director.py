@@ -557,67 +557,6 @@ def test_gemini_429_skips_same_model_retries_and_falls_back_immediately():
     assert any(event == "quota_exhausted" for event, _data in events)
 
 
-def test_gemini_falls_through_37_overload_to_36():
-    from backend.app.gemini_interactions import GeminiInteractionsClient
-
-    success_payload = {
-        "id": "int-36",
-        "status": "completed",
-        "steps": [
-            {
-                "type": "model_output",
-                "content": [{"type": "text", "text": '{"global_topic":"x","beats":[]}'}],
-            }
-        ],
-    }
-
-    class Response:
-        def __init__(self, status, payload):
-            self.status_code = status
-            self._payload = payload
-            self.headers = {}
-
-        def raise_for_status(self):
-            if self.status_code >= 400:
-                raise RuntimeError(f"http {self.status_code}")
-
-        def json(self):
-            return self._payload
-
-    class HTTP:
-        def __init__(self):
-            self.calls = []
-            self.responses = [
-                Response(429, {"error": {"message": "retry in 60s"}}),
-                Response(503, {"error": {"message": "high demand"}}),
-                Response(503, {"error": {"message": "high demand"}}),
-                Response(503, {"error": {"message": "high demand"}}),
-                Response(200, success_payload),
-            ]
-
-        def post(self, url, **kwargs):
-            self.calls.append(kwargs["json"]["model"])
-            return self.responses.pop(0)
-
-    http = HTTP()
-    client = GeminiInteractionsClient(
-        "placeholder",
-        http_client=http,
-        sleeper=lambda _seconds: None,
-    )
-    reply = client.generate_json("hello", {"type": "object"})
-
-    assert http.calls == [
-        "gemini-3.8-flash",
-        "gemini-3.7-flash",
-        "gemini-3.7-flash",
-        "gemini-3.7-flash",
-        "gemini-3.6-flash",
-    ]
-    assert reply.model == "gemini-3.6-flash"
-    assert reply.fallback_used is True
-
-
 def test_gemini_quota_cooldown_persists_across_client_runs(tmp_path):
     from backend.app.gemini_interactions import GeminiInteractionsClient
 
@@ -689,3 +628,143 @@ def test_gemini_quota_cooldown_persists_across_client_runs(tmp_path):
         event == "model_skipped" and data.get("model") == "gemini-3.8-flash"
         for event, data in events
     )
+
+
+def test_groq_director_uses_qwen_high_reasoning_and_strict_structured_output():
+    from backend.app.groq_api import GroqDirectorClient
+
+    class Response:
+        status_code = 200
+        headers = {}
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "id": "chatcmpl-test",
+                "choices": [{
+                    "message": {
+                        "content": '{"global_topic":"x","beats":[]}'
+                    }
+                }],
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 20,
+                    "total_tokens": 120,
+                },
+            }
+
+    class HTTP:
+        def __init__(self):
+            self.call = None
+
+        def post(self, url, **kwargs):
+            self.call = (url, kwargs)
+            return Response()
+
+    http = HTTP()
+    client = GroqDirectorClient("placeholder", http_client=http)
+    reply = client.generate_json(
+        "hello",
+        {
+            "type": "object",
+            "properties": {"name": {"type": "string", "minLength": 1}},
+            "required": ["name"],
+        },
+    )
+
+    url, kwargs = http.call
+    assert url == "https://api.groq.com/openai/v1/chat/completions"
+    assert kwargs["headers"]["Authorization"] == "Bearer placeholder"
+    body = kwargs["json"]
+    assert body["model"] == "qwen/qwen3.8-27b"
+    assert body["reasoning_effort"] == "high"
+    assert body["reasoning_format"] == "hidden"
+    assert body["response_format"]["type"] == "json_schema"
+    assert body["response_format"]["json_schema"]["strict"] is True
+    assert body["response_format"]["json_schema"]["schema"]["properties"]["name"] == {"type": "string"}
+    assert reply.model == "qwen/qwen3.8-27b"
+    assert reply.usage["total_tokens"] == 120
+
+
+def test_groq_repair_resends_original_transcript_context():
+    from backend.app.groq_api import GroqDirectorClient
+
+    class Response:
+        status_code = 200
+        headers = {}
+
+        def __init__(self, completion_id):
+            self.completion_id = completion_id
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "id": self.completion_id,
+                "choices": [{
+                    "message": {
+                        "content": '{"global_topic":"x","beats":[]}'
+                    }
+                }],
+            }
+
+    class HTTP:
+        def __init__(self):
+            self.calls = []
+
+        def post(self, url, **kwargs):
+            self.calls.append(kwargs["json"])
+            return Response(f"chat-{len(self.calls)}")
+
+    http = HTTP()
+    client = GroqDirectorClient("placeholder", http_client=http)
+
+    first = client.generate_json("WHOLE_TRANSCRIPT_SENTINEL", {"type": "object"})
+    client.generate_json(
+        "repair only this error",
+        {"type": "object"},
+        previous_interaction_id=first.interaction_id,
+    )
+
+    repair_prompt = http.calls[1]["messages"][0]["content"]
+    assert "WHOLE_TRANSCRIPT_SENTINEL" in repair_prompt
+    assert "repair only this error" in repair_prompt
+
+
+def test_auto_provider_falls_from_gemini_to_groq():
+    from backend.app.director_provider import FailoverDirectorProvider
+    from backend.app.gemini_interactions import GeminiAPIError, GeminiJSONReply
+
+    class Gemini:
+        provider_name = "gemini"
+        model = "gemini-3.8-flash"
+        thinking_level = "high"
+
+        def generate_json(self, prompt, schema, *, previous_interaction_id=None):
+            raise GeminiAPIError("Gemini request failed (429)")
+
+    class Groq:
+        provider_name = "groq"
+        model = "qwen/qwen3.8-27b"
+        thinking_level = "high"
+
+        def generate_json(self, prompt, schema, *, previous_interaction_id=None):
+            return GeminiJSONReply(
+                {"global_topic": "x", "beats": []},
+                "groq-1",
+                self.model,
+            )
+
+    events = []
+    auto = FailoverDirectorProvider(
+        [Gemini(), Groq()],
+        event_callback=lambda event, data: events.append((event, data)),
+    )
+    reply = auto.generate_json("hello", {"type": "object"})
+
+    assert reply.model == "qwen/qwen3.8-27b"
+    assert auto.provider_name == "groq"
+    assert any(event == "provider_fallback" for event, _data in events)
