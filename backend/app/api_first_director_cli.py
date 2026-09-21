@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import sys
 import time
 from typing import Any
 
@@ -45,6 +46,17 @@ def _request_signature(
     return hashlib.sha256(
         json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+
+
+def _configure_utf8_stdio() -> None:
+    """Keep Windows subprocess logging UTF-8 safe when stdout/stderr are piped."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass
 
 
 def _gemini_progress(event: str, data: dict[str, Any]) -> None:
@@ -248,6 +260,7 @@ def run_api_first_director(
     }
 
 def main() -> None:
+    _configure_utf8_stdio()
     parser = argparse.ArgumentParser(
         description="Generate canonical APP REEL visual-plan.json from transcript only via cloud AI"
     )
