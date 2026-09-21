@@ -253,3 +253,52 @@ def test_api_first_cli_writes_visual_plan_without_source_video_input(tmp_path):
     assert audit["source_video_sent_to_ai"] is False
     assert audit["word_timestamps_sent_to_director"] is False
     assert audit["activated"] is True
+
+
+def test_ab_review_compares_same_transcript_without_declaring_a_winner(tmp_path):
+    from backend.app.api_first_review import build_review, comparison_payload
+
+    baseline = {
+        "schema_version": "rambla-visual-plan-1",
+        "project_id": "abc123def456",
+        "transcript_signature": "same-transcript",
+        "global_topic": "ferry",
+        "visual_beats": [
+            {
+                "id": "old_1", "start": 0.0, "end": 3.0,
+                "covered_chunk_ids": ["c0"], "original_text": "first",
+                "action": "BROLL", "editorial_function": "show",
+                "core_meaning": "ferry boarding", "subtext": "",
+                "visual_mode": "single",
+                "shots": [{"shot_id": "old_s1", "description": "people boarding ferry",
+                           "image_queries": ["people boarding ferry"],
+                           "video_queries": ["people boarding ferry"]}],
+                "avoid": [],
+            },
+            {
+                "id": "old_2", "start": 3.0, "end": 6.0,
+                "covered_chunk_ids": ["c1"], "original_text": "second",
+                "action": "KEEP_TALKING_HEAD", "editorial_function": "delivery",
+                "core_meaning": "punchline", "subtext": "",
+                "visual_mode": "single", "shots": [], "avoid": [],
+            },
+        ],
+    }
+    candidate = json.loads(json.dumps(baseline))
+    candidate["visual_beats"][1]["action"] = "CONTINUE_PREVIOUS_VISUAL"
+    candidate["visual_beats"][1]["continuation_from"] = "old_1"
+
+    comparison = comparison_payload(baseline, candidate)
+    assert comparison["action_agreement_ratio"] == 0.5
+    assert "winner" not in comparison
+
+    run = tmp_path / "run"
+    (run / "api-first").mkdir(parents=True)
+    (run / "visual-plan.json").write_text(json.dumps(baseline), encoding="utf-8")
+    (run / "api-first" / "visual-plan.json").write_text(json.dumps(candidate), encoding="utf-8")
+    result = build_review(run)
+    html = (run / "api-first" / "ab-review.html").read_text(encoding="utf-8")
+    assert "V4 BASELINE" in html
+    assert "V5 API-FIRST" in html
+    assert "No automatic winner" in html
+    assert result["candidate"]["continue_beats"] == 1
