@@ -30,6 +30,7 @@ jobs:
         run: |
           if [[ "$GITHUB_REF_NAME" == "feat/vertical-social-dense-coverage" || "$GITHUB_REF_NAME" == "feat/curation-ui-v1" || "$GITHUB_REF_NAME" == "feat/api-first-text-first-v1" ]]; then
             pytest -q \
+              tests/unit/test_api_first_director.py \
               tests/unit/test_dense_coverage.py \
               tests/unit/test_vertical_social.py \
               tests/unit/test_vertical_social_style_v2.py \
