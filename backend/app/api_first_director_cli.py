@@ -92,8 +92,17 @@ def _gemini_progress(event: str, data: dict[str, Any]) -> None:
     elif event == "quota_exhausted":
         detail = str(data.get("detail") or "").strip()
         suffix = f" · {detail}" if detail else ""
+        cooldown = float(data.get("cooldown_seconds") or 0)
+        cooldown_text = f" · cooldown {cooldown:.0f}s" if cooldown else ""
         print(
-            f"[{stamp}] Gemini · quota/rate limit on {data.get('model')} · switching model{suffix}",
+            f"[{stamp}] Gemini · quota/rate limit on {data.get('model')} · switching model"
+            f"{cooldown_text}{suffix}",
+            flush=True,
+        )
+    elif event == "model_skipped":
+        wait = float(data.get("retry_in_seconds") or 0)
+        print(
+            f"[{stamp}] Gemini · skip {data.get('model')} · quota cooldown · retry in {wait:.0f}s",
             flush=True,
         )
     elif event == "model_exhausted":
@@ -201,6 +210,7 @@ def run_api_first_director(
                 model=model,
                 thinking_level=thinking_level,
                 event_callback=_gemini_progress,
+                cooldown_state_path=audit_dir / "provider-health.json",
             )
         result = generate_director_plan(package, provider, max_attempts=max_attempts)
         plan = result.plan
