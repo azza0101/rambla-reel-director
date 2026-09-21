@@ -28,10 +28,16 @@ def _duration_from_chunks(run_dir: Path) -> float:
     return max((float(row["end"]) for row in rows), default=0.0)
 
 
-def _request_signature(package: dict[str, Any], provider_name: str, model: str) -> str:
+def _request_signature(
+    package: dict[str, Any],
+    provider_name: str,
+    model: str,
+    thinking_level: str,
+) -> str:
     payload = {
         "provider": provider_name,
         "model": model,
+        "thinking_level": thinking_level,
         "prompt": build_director_prompt(package),
         "schema": director_schema(),
     }
@@ -71,7 +77,13 @@ def run_api_first_director(
         getattr(provider, "model", "")
         or os.environ.get("RAMBLA_DIRECTOR_MODEL", DEFAULT_GEMINI_MODEL)
     ).strip()
-    signature = _request_signature(package, provider_name, model)
+    thinking_level = str(
+        getattr(provider, "thinking_level", "")
+        or os.environ.get("RAMBLA_DIRECTOR_THINKING", "high")
+    ).casefold().strip()
+    if thinking_level not in {"low", "medium", "high"}:
+        raise ValueError("RAMBLA_DIRECTOR_THINKING must be low, medium or high")
+    signature = _request_signature(package, provider_name, model, thinking_level)
 
     audit_dir = run_dir / "api-first"
     audit_dir.mkdir(parents=True, exist_ok=True)
@@ -109,7 +121,11 @@ def run_api_first_director(
                 raise RuntimeError(
                     "GEMINI_API_KEY missing. Add it to .env.local or the process environment."
                 )
-            provider = GeminiInteractionsClient(api_key, model=model)
+            provider = GeminiInteractionsClient(
+                api_key,
+                model=model,
+                thinking_level=thinking_level,
+            )
         result = generate_director_plan(package, provider, max_attempts=max_attempts)
         plan = result.plan
         result_provider = result.provider
@@ -131,6 +147,7 @@ def run_api_first_director(
             "schema_version": "rambla-api-first-director-run-1",
             "provider": result_provider,
             "model": result_model,
+            "thinking_level": thinking_level,
             "attempts": attempts,
             "interaction_id": interaction_id,
             "validation_errors": validation_errors,
@@ -148,6 +165,7 @@ def run_api_first_director(
     return {
         "provider": result_provider,
         "model": result_model,
+        "thinking_level": thinking_level,
         "attempts": attempts,
         "cache_status": cache_status,
         "beats": len(plan["visual_beats"]),
