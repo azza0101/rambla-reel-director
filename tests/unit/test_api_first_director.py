@@ -163,7 +163,15 @@ def test_gemini_interactions_client_sends_structured_schema_and_parses_final_tex
 
     http = HTTP()
     client = GeminiInteractionsClient("placeholder", http_client=http)
-    reply = client.generate_json("hello", {"type": "object"})
+    reply = client.generate_json(
+        "hello",
+        {
+            "type": "object",
+            "properties": {"name": {"type": "string", "minLength": 1, "pattern": ".+"}},
+            "required": ["name"],
+            "allOf": [{"type": "object"}],
+        },
+    )
 
     assert reply.interaction_id == "int-123"
     assert reply.data["global_topic"] == "x"
@@ -171,7 +179,12 @@ def test_gemini_interactions_client_sends_structured_schema_and_parses_final_tex
     assert kwargs["headers"]["x-goog-api-key"] == "placeholder"
     assert "placeholder" not in json.dumps(kwargs["json"])
     assert kwargs["json"]["response_format"][0]["mime_type"] == "application/json"
-    assert kwargs["json"]["response_format"][0]["schema"] == {"type": "object"}
+    sent_schema = kwargs["json"]["response_format"][0]["schema"]
+    assert sent_schema == {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
+    }
 
 
 def test_api_first_cli_writes_visual_plan_without_source_video_input(tmp_path):
@@ -204,15 +217,39 @@ def test_api_first_cli_writes_visual_plan_without_source_video_input(tmp_path):
         provider_name = "fake-cloud"
         model = "test-model"
 
+        def __init__(self):
+            self.calls = 0
+
         def generate_json(self, prompt, schema, *, previous_interaction_id=None):
+            self.calls += 1
             assert "source_video" not in prompt
             return GeminiJSONReply(valid_decisions(), "int-test", self.model)
 
-    summary = run_api_first_director(run_dir=run, provider=Provider())
+    provider = Provider()
+    summary = run_api_first_director(run_dir=run, provider=provider)
 
     assert summary["source_video_sent_to_ai"] is False
-    plan = json.loads((run / "visual-plan.json").read_text(encoding="utf-8"))
+    assert summary["activated"] is False
+    assert summary["cache_status"] == "generated"
+    assert provider.calls == 1
+    assert not (run / "visual-plan.json").exists()
+
+    candidate = run / "api-first" / "visual-plan.json"
+    plan = json.loads(candidate.read_text(encoding="utf-8"))
     assert len(plan["visual_beats"]) == 2
+
+    reused = run_api_first_director(run_dir=run, provider=provider)
+    assert reused["cache_status"] == "reused"
+    assert reused["attempts"] == 0
+    assert provider.calls == 1
+
+    activated = run_api_first_director(run_dir=run, provider=provider, activate=True)
+    assert activated["activated"] is True
+    assert activated["cache_status"] == "reused"
+    assert provider.calls == 1
+    assert (run / "visual-plan.json").is_file()
+
     audit = json.loads((run / "api-first" / "director-run.json").read_text(encoding="utf-8"))
     assert audit["source_video_sent_to_ai"] is False
     assert audit["word_timestamps_sent_to_director"] is False
+    assert audit["activated"] is True
