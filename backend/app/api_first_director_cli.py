@@ -14,7 +14,9 @@ from typing import Any
 from .api_first_director import DirectorProvider, build_director_prompt, director_schema, generate_director_plan
 from .atomic_io import write_json
 from .editorial_import import import_plan, normalized_chunks, transcript_package
+from .director_provider import FailoverDirectorProvider
 from .gemini_interactions import DEFAULT_GEMINI_MODEL, GeminiInteractionsClient
+from .groq_api import DEFAULT_GROQ_MODEL, GroqDirectorClient
 from .project_config import load_project_credentials
 
 
@@ -61,16 +63,18 @@ def _configure_utf8_stdio() -> None:
 
 def _gemini_progress(event: str, data: dict[str, Any]) -> None:
     stamp = time.strftime("%H:%M:%S")
+    provider = str(data.get("provider") or "ai").casefold()
+    label = {"gemini": "Gemini", "groq": "Groq", "auto": "AUTO"}.get(provider, provider.upper())
     if event == "request_start":
         print(
-            f"[{stamp}] Gemini · {data.get('model')} · attempt "
+            f"[{stamp}] {label} · {data.get('model')} · attempt "
             f"{data.get('attempt')}/{data.get('attempts_for_model')} · sending "
             f"(read timeout {float(data.get('timeout_seconds') or 0):.0f}s)...",
             flush=True,
         )
     elif event == "waiting":
         print(
-            f"[{stamp}] Gemini · {data.get('model')} · still waiting · "
+            f"[{stamp}] {label} · {data.get('model')} · still waiting · "
             f"{float(data.get('elapsed_seconds') or 0):.0f}s elapsed",
             flush=True,
         )
@@ -78,14 +82,14 @@ def _gemini_progress(event: str, data: dict[str, Any]) -> None:
         detail = str(data.get("detail") or "").strip()
         suffix = f" · {detail}" if detail else ""
         print(
-            f"[{stamp}] Gemini · {data.get('error_type')} on {data.get('model')}{suffix}",
+            f"[{stamp}] {label} · {data.get('error_type')} on {data.get('model')}{suffix}",
             flush=True,
         )
     elif event == "retry":
         detail = str(data.get("detail") or "").strip()
         suffix = f" · {detail}" if detail else ""
         print(
-            f"[{stamp}] Gemini · HTTP {data.get('status')} · retry in "
+            f"[{stamp}] {label} · HTTP {data.get('status')} · retry in "
             f"{float(data.get('delay_seconds') or 0):.1f}s{suffix}",
             flush=True,
         )
@@ -95,24 +99,29 @@ def _gemini_progress(event: str, data: dict[str, Any]) -> None:
         cooldown = float(data.get("cooldown_seconds") or 0)
         cooldown_text = f" · cooldown {cooldown:.0f}s" if cooldown else ""
         print(
-            f"[{stamp}] Gemini · quota/rate limit on {data.get('model')} · switching model"
+            f"[{stamp}] {label} · quota/rate limit on {data.get('model')} · switching model"
             f"{cooldown_text}{suffix}",
             flush=True,
         )
     elif event == "model_skipped":
         wait = float(data.get("retry_in_seconds") or 0)
         print(
-            f"[{stamp}] Gemini · skip {data.get('model')} · quota cooldown · retry in {wait:.0f}s",
+            f"[{stamp}] {label} · skip {data.get('model')} · quota cooldown · retry in {wait:.0f}s",
             flush=True,
         )
     elif event == "model_exhausted":
         print(
-            f"[{stamp}] Gemini · {data.get('model')} still unavailable after retries.",
+            f"[{stamp}] {label} · {data.get('model')} still unavailable after retries.",
+            flush=True,
+        )
+    elif event == "provider_fallback":
+        print(
+            f"[{stamp}] AUTO · provider fallback {data.get('from_provider')} → {data.get('to_provider')}",
             flush=True,
         )
     elif event == "fallback":
         print(
-            f"[{stamp}] Gemini · fallback {data.get('from_model')} → {data.get('to_model')}",
+            f"[{stamp}] {label} · fallback {data.get('from_model')} → {data.get('to_model')}",
             flush=True,
         )
     elif event == "request_complete":
@@ -120,7 +129,7 @@ def _gemini_progress(event: str, data: dict[str, Any]) -> None:
         total = usage.get("total_tokens")
         token_text = f" · {total} tokens" if total is not None else ""
         print(
-            f"[{stamp}] Gemini · completed on {data.get('model')}{token_text}",
+            f"[{stamp}] {label} · completed on {data.get('model')}{token_text}",
             flush=True,
         )
 
@@ -139,6 +148,7 @@ def run_api_first_director(
     project_id: str | None = None,
     duration: float | None = None,
     provider: DirectorProvider | None = None,
+    provider_choice: str | None = None,
     max_attempts: int = 2,
     activate: bool = False,
     reuse: bool = True,
@@ -151,17 +161,39 @@ def run_api_first_director(
     package = transcript_package(run_dir, project_id, duration)
 
     load_project_credentials()
-    provider_name = str(getattr(provider, "provider_name", "gemini"))
-    model = str(
-        getattr(provider, "model", "")
-        or os.environ.get("RAMBLA_DIRECTOR_MODEL", DEFAULT_GEMINI_MODEL)
-    ).strip()
+    choice = str(
+        provider_choice
+        or os.environ.get("RAMBLA_DIRECTOR_PROVIDER", "auto")
+    ).casefold().strip()
+    if provider is None and choice not in {"auto", "gemini", "groq"}:
+        raise ValueError("RAMBLA_DIRECTOR_PROVIDER must be auto, gemini or groq")
+
     thinking_level = str(
         getattr(provider, "thinking_level", "")
         or os.environ.get("RAMBLA_DIRECTOR_THINKING", "high")
     ).casefold().strip()
     if thinking_level not in {"low", "medium", "high"}:
         raise ValueError("RAMBLA_DIRECTOR_THINKING must be low, medium or high")
+
+    if provider is not None:
+        provider_name = str(getattr(provider, "provider_name", "custom"))
+        model = str(getattr(provider, "model", "") or "custom").strip()
+    else:
+        provider_name = choice
+        gemini_model = os.environ.get("RAMBLA_DIRECTOR_MODEL", DEFAULT_GEMINI_MODEL).strip()
+        groq_model = os.environ.get("RAMBLA_GROQ_DIRECTOR_MODEL", DEFAULT_GROQ_MODEL).strip()
+        if choice == "gemini":
+            model = gemini_model
+        elif choice == "groq":
+            model = groq_model
+        else:
+            configured_models = []
+            if os.environ.get("GEMINI_API_KEY", "").strip():
+                configured_models.append("gemini:" + gemini_model)
+            if os.environ.get("GROQ_API_KEY", "").strip():
+                configured_models.append("groq:" + groq_model)
+            model = "|".join(configured_models) or "auto:no-provider"
+
     signature = _request_signature(package, provider_name, model, thinking_level)
 
     audit_dir = run_dir / "api-first"
@@ -200,18 +232,64 @@ def run_api_first_director(
         cache_status = "reused"
     else:
         if provider is None:
-            api_key = os.environ.get("GEMINI_API_KEY", "").strip()
-            if not api_key:
-                raise RuntimeError(
-                    "GEMINI_API_KEY missing. Add it to .env.local or the process environment."
+            gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
+            groq_key = os.environ.get("GROQ_API_KEY", "").strip()
+            gemini_model = os.environ.get("RAMBLA_DIRECTOR_MODEL", DEFAULT_GEMINI_MODEL).strip()
+            groq_model = os.environ.get("RAMBLA_GROQ_DIRECTOR_MODEL", DEFAULT_GROQ_MODEL).strip()
+
+            if choice == "gemini":
+                if not gemini_key:
+                    raise RuntimeError(
+                        "GEMINI_API_KEY missing. Add it to .env.local or the process environment."
+                    )
+                provider = GeminiInteractionsClient(
+                    gemini_key,
+                    model=gemini_model,
+                    thinking_level=thinking_level,
+                    event_callback=_gemini_progress,
+                    cooldown_state_path=audit_dir / "provider-health.json",
                 )
-            provider = GeminiInteractionsClient(
-                api_key,
-                model=model,
-                thinking_level=thinking_level,
-                event_callback=_gemini_progress,
-                cooldown_state_path=audit_dir / "provider-health.json",
-            )
+            elif choice == "groq":
+                if not groq_key:
+                    raise RuntimeError(
+                        "GROQ_API_KEY missing. Add it to .env.local or the process environment."
+                    )
+                provider = GroqDirectorClient(
+                    groq_key,
+                    model=groq_model,
+                    thinking_level=thinking_level,
+                    event_callback=_gemini_progress,
+                )
+            else:
+                providers = []
+                if gemini_key:
+                    providers.append(
+                        GeminiInteractionsClient(
+                            gemini_key,
+                            model=gemini_model,
+                            thinking_level=thinking_level,
+                            event_callback=_gemini_progress,
+                            cooldown_state_path=audit_dir / "provider-health.json",
+                        )
+                    )
+                if groq_key:
+                    providers.append(
+                        GroqDirectorClient(
+                            groq_key,
+                            model=groq_model,
+                            thinking_level=thinking_level,
+                            event_callback=_gemini_progress,
+                        )
+                    )
+                if not providers:
+                    raise RuntimeError(
+                        "No cloud Director API configured. Add GEMINI_API_KEY and/or GROQ_API_KEY to .env.local."
+                    )
+                provider = (
+                    providers[0]
+                    if len(providers) == 1
+                    else FailoverDirectorProvider(providers, event_callback=_gemini_progress)
+                )
         result = generate_director_plan(package, provider, max_attempts=max_attempts)
         plan = result.plan
         result_provider = result.provider
@@ -237,6 +315,7 @@ def run_api_first_director(
         {
             "schema_version": "rambla-api-first-director-run-1",
             "provider": result_provider,
+            "provider_choice": provider_name,
             "model": result_model,
             "requested_model": requested_model,
             "fallback_used": fallback_used,
@@ -260,6 +339,7 @@ def run_api_first_director(
     )
     return {
         "provider": result_provider,
+        "provider_choice": provider_name,
         "model": result_model,
         "requested_model": requested_model,
         "fallback_used": fallback_used,
@@ -284,6 +364,7 @@ def main() -> None:
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--project-id")
     parser.add_argument("--duration", type=float)
+    parser.add_argument("--provider", choices=("auto", "gemini", "groq"), default="auto")
     parser.add_argument("--max-attempts", type=int, default=2)
     parser.add_argument("--activate", action="store_true", help="replace the active run/visual-plan.json after validation")
     parser.add_argument("--review", action="store_true", help="write a V4 vs V5 side-by-side A/B review")
@@ -293,6 +374,7 @@ def main() -> None:
         run_dir=args.run_dir,
         project_id=args.project_id,
         duration=args.duration,
+        provider_choice=args.provider,
         max_attempts=args.max_attempts,
         activate=args.activate,
         reuse=not args.no_reuse,
