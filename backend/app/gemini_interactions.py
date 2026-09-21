@@ -25,6 +25,7 @@ class GeminiJSONReply:
     data: dict[str, Any]
     interaction_id: str | None
     model: str
+    usage: dict[str, int] | None = None
 
 
 def _final_text(payload: dict[str, Any]) -> str:
@@ -188,4 +189,23 @@ class GeminiInteractionsClient:
 
         data = _json_object(_final_text(payload))
         interaction_id = str(payload.get("id") or "").strip() or None
-        return GeminiJSONReply(data=data, interaction_id=interaction_id, model=self.model)
+        raw_usage = payload.get("usage")
+        usage: dict[str, int] = {}
+        if isinstance(raw_usage, dict):
+            for key in (
+                "total_input_tokens",
+                "total_output_tokens",
+                "total_thought_tokens",
+                "total_cached_tokens",
+                "total_tool_use_tokens",
+                "total_tokens",
+            ):
+                value = raw_usage.get(key)
+                if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                    usage[key] = value
+        return GeminiJSONReply(
+            data=data,
+            interaction_id=interaction_id,
+            model=self.model,
+            usage=usage or None,
+        )
