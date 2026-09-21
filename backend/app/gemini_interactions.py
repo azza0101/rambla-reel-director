@@ -108,6 +108,7 @@ class GeminiInteractionsClient:
         model: str = DEFAULT_GEMINI_MODEL,
         endpoint: str = DEFAULT_INTERACTIONS_ENDPOINT,
         timeout_seconds: float = 90.0,
+        thinking_level: str = "high",
         http_client: Any | None = None,
     ) -> None:
         clean_key = str(api_key or "").strip()
@@ -117,6 +118,10 @@ class GeminiInteractionsClient:
         self.model = str(model or DEFAULT_GEMINI_MODEL).strip()
         self.endpoint = str(endpoint).strip()
         self.timeout_seconds = float(timeout_seconds)
+        clean_thinking = str(thinking_level or "high").casefold().strip()
+        if clean_thinking not in {"low", "medium", "high"}:
+            raise ValueError("thinking_level must be low, medium or high")
+        self.thinking_level = clean_thinking
         self._http_client = http_client
 
     def generate_json(
@@ -129,6 +134,7 @@ class GeminiInteractionsClient:
         body: dict[str, Any] = {
             "model": self.model,
             "input": prompt,
+            "generation_config": {"thinking_level": self.thinking_level},
             "response_format": [
                 {
                     "type": "text",
