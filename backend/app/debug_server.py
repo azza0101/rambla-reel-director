@@ -157,6 +157,7 @@ class RunState:
             "analyze": {"prepare", "asr", "semantic_chunking", "analysis"},
             "videos": {"prepare", "visual_planning", "coverage", "evidence_intent", "source_strategy", "online_search", "qwen_coarse", "bounded_acquisition", "qwen_final", "edit_plan", "review"},
             "images": {"prepare", "visual_planning", "image_search"},
+            "director_api": {"visual_planning"},
         }
         keys = scopes.get(self.stage_type, set(WEIGHTS))
         total_weight = sum(WEIGHTS.get(key, 0) for key in keys)
