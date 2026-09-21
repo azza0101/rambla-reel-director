@@ -208,7 +208,7 @@ def render_review_html(
 *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,sans-serif}}
 main{{max-width:1500px;margin:auto;padding:28px}}h1{{margin:0 0 6px}}.muted,small{{color:var(--muted)}}
 .summary{{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:22px 0}}
-table{{border-collapse:collapse;width:100%;background:var(--panel);border:1px solid var(--line)}th,td{{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left}}
+table{{border-collapse:collapse;width:100%;background:var(--panel);border:1px solid var(--line)}}th,td{{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left}}
 .pair{{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:18px 0;border-top:1px solid var(--line);padding-top:18px}}
 .beat{{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:10px}}.empty{{color:var(--muted)}}
 .head{{display:flex;justify-content:space-between;gap:12px}}.head b{{color:var(--accent)}}.speech{{font-size:16px}}
