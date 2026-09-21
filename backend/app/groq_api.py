@@ -218,6 +218,15 @@ class GroqDirectorClient:
                     status = getattr(response, "status_code", None)
                     detail = self._error_detail(response)
                     retryable = isinstance(status, int) and status in RETRYABLE_HTTP_STATUSES
+                    if status == 429 and model_index < len(model_chain) - 1:
+                        self._emit(
+                            "quota_exhausted",
+                            model=active_model,
+                            status=status,
+                            detail=detail,
+                            cooldown_seconds=self._retry_delay(response, retry_index),
+                        )
+                        break
                     if retryable and retry_index < self.max_retries_per_model:
                         delay = self._retry_delay(response, retry_index)
                         self._emit(
