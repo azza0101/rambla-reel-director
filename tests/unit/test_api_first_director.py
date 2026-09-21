@@ -555,3 +555,137 @@ def test_gemini_429_skips_same_model_retries_and_falls_back_immediately():
     assert reply.model == "gemini-3.7-flash"
     assert reply.fallback_used is True
     assert any(event == "quota_exhausted" for event, _data in events)
+
+
+def test_gemini_falls_through_37_overload_to_36():
+    from backend.app.gemini_interactions import GeminiInteractionsClient
+
+    success_payload = {
+        "id": "int-36",
+        "status": "completed",
+        "steps": [
+            {
+                "type": "model_output",
+                "content": [{"type": "text", "text": '{"global_topic":"x","beats":[]}'}],
+            }
+        ],
+    }
+
+    class Response:
+        def __init__(self, status, payload):
+            self.status_code = status
+            self._payload = payload
+            self.headers = {}
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"http {self.status_code}")
+
+        def json(self):
+            return self._payload
+
+    class HTTP:
+        def __init__(self):
+            self.calls = []
+            self.responses = [
+                Response(429, {"error": {"message": "retry in 60s"}}),
+                Response(503, {"error": {"message": "high demand"}}),
+                Response(503, {"error": {"message": "high demand"}}),
+                Response(503, {"error": {"message": "high demand"}}),
+                Response(200, success_payload),
+            ]
+
+        def post(self, url, **kwargs):
+            self.calls.append(kwargs["json"]["model"])
+            return self.responses.pop(0)
+
+    http = HTTP()
+    client = GeminiInteractionsClient(
+        "placeholder",
+        http_client=http,
+        sleeper=lambda _seconds: None,
+    )
+    reply = client.generate_json("hello", {"type": "object"})
+
+    assert http.calls == [
+        "gemini-3.8-flash",
+        "gemini-3.7-flash",
+        "gemini-3.7-flash",
+        "gemini-3.7-flash",
+        "gemini-3.6-flash",
+    ]
+    assert reply.model == "gemini-3.6-flash"
+    assert reply.fallback_used is True
+
+
+def test_gemini_quota_cooldown_persists_across_client_runs(tmp_path):
+    from backend.app.gemini_interactions import GeminiInteractionsClient
+
+    state_path = tmp_path / "provider-health.json"
+
+    class Response:
+        def __init__(self, status, payload, headers=None):
+            self.status_code = status
+            self._payload = payload
+            self.headers = headers or {}
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"http {self.status_code}")
+
+        def json(self):
+            return self._payload
+
+    success = {
+        "id": "int-ok",
+        "status": "completed",
+        "steps": [{
+            "type": "model_output",
+            "content": [{"type": "text", "text": '{"global_topic":"x","beats":[]}'}],
+        }],
+    }
+
+    class HTTP1:
+        def __init__(self):
+            self.calls = []
+        def post(self, url, **kwargs):
+            model = kwargs["json"]["model"]
+            self.calls.append(model)
+            if model == "gemini-3.8-flash":
+                return Response(429, {"error": {"message": "Rate limit. Please retry in 120s"}})
+            return Response(200, success)
+
+    first_http = HTTP1()
+    first = GeminiInteractionsClient(
+        "placeholder",
+        http_client=first_http,
+        cooldown_state_path=state_path,
+        sleeper=lambda _seconds: None,
+    )
+    first.generate_json("hello", {"type": "object"})
+    assert first_http.calls == ["gemini-3.8-flash", "gemini-3.7-flash"]
+    assert state_path.is_file()
+
+    class HTTP2:
+        def __init__(self):
+            self.calls = []
+        def post(self, url, **kwargs):
+            self.calls.append(kwargs["json"]["model"])
+            return Response(200, success)
+
+    events = []
+    second_http = HTTP2()
+    second = GeminiInteractionsClient(
+        "placeholder",
+        http_client=second_http,
+        cooldown_state_path=state_path,
+        event_callback=lambda event, data: events.append((event, data)),
+    )
+    reply = second.generate_json("hello again", {"type": "object"})
+
+    assert second_http.calls == ["gemini-3.7-flash"]
+    assert reply.model == "gemini-3.7-flash"
+    assert any(
+        event == "model_skipped" and data.get("model") == "gemini-3.8-flash"
+        for event, data in events
+    )
