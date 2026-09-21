@@ -110,3 +110,15 @@ def test_product_server_ai_status_never_exposes_api_key(monkeypatch, tmp_path):
     assert body["providers"]["gemini"]["model"] == "gemini-3.8-flash"
     assert body["providers"]["gemini"]["source_video_sent_to_ai"] is False
     assert "test-key-do-not-expose" not in repr(body)
+
+
+def test_api_first_product_keeps_curation_identity_without_v2_branding():
+    from backend.app.curation_ui_v2 import render_curation_page_v2
+
+    html = render_curation_page_v2("v5-brand")
+    assert "<h1>RAMBLA Curation</h1>" in html
+    assert "RAMBLA Curation V2" not in html
+    assert "CURATION V2" not in html
+    assert "Choose the editorial engine" in html
+    assert "GEMINI API" in html
+    assert "transcript only" in html
