@@ -242,3 +242,32 @@ The Editorial Plan panel adds only:
 When Gemini is selected, the same Analysis Details console streams request/retry/fallback
 progress. On success the validated API-first plan becomes the active canonical visual plan
 and the existing curation interface hydrates the resulting beats normally.
+
+
+## Multi-provider Director routing
+
+The product UI exposes `AUTO`, `GEMINI API`, and `GROQ API`.
+
+`AUTO` keeps the same full-transcript Director prompt and canonical validation while
+routing around cloud quota/capacity failures:
+
+1. Gemini requested model (default `gemini-3.8-flash`);
+2. Gemini stable fallback (`gemini-3.7-flash`);
+3. Groq Qwen (`qwen/qwen3.8-27b`);
+4. Groq fallback (`openai/gpt-oss-120b`).
+
+Gemini quota responses are cached in `run/api-first/provider-health.json` for their
+retry window so subsequent runs do not immediately waste another request on a model
+known to be rate-limited.
+
+Groq uses strict JSON Schema Structured Outputs with high reasoning. A validation repair
+on Groq is stateless at the transport layer, so APP REEL resends the original whole
+transcript prompt plus the compact repair instruction. The source reel is never sent to
+either Director provider.
+
+Keys remain local-only in `.env.local`:
+
+- `GEMINI_API_KEY=...`
+- `GROQ_API_KEY=...`
+
+Use `tools/configure_groq_key.ps1` to add/update the Groq key without printing it.
