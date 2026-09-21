@@ -179,6 +179,7 @@ def test_gemini_interactions_client_sends_structured_schema_and_parses_final_tex
     assert kwargs["headers"]["x-goog-api-key"] == "placeholder"
     assert "placeholder" not in json.dumps(kwargs["json"])
     assert kwargs["json"]["response_format"][0]["mime_type"] == "application/json"
+    assert kwargs["json"]["generation_config"]["thinking_level"] == "high"
     sent_schema = kwargs["json"]["response_format"][0]["schema"]
     assert sent_schema == {
         "type": "object",
