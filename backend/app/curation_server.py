@@ -40,6 +40,11 @@ class BeatResearchRequest(BaseModel):
     providers: tuple[str, ...] = ()
 
 
+class DirectorRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    provider: str = "gemini"
+
+
 ResearchRunner = Callable[[debug.RunState, str, str], Awaitable[Any] | Any]
 
 
@@ -180,6 +185,107 @@ async def _run_research_state(
 
 
 
+async def _default_director_runner(state: debug.RunState) -> None:
+    command = [
+        sys.executable,
+        "-m",
+        "backend.app.api_first_director_cli",
+        "--run-dir",
+        str(state.output_dir),
+        "--activate",
+    ]
+    cwd = Path.cwd()
+    preflight = debug._preflight_worker(state, command, cwd)
+    preflight["source_video_sent_to_ai"] = False
+    await debug._emit(
+        state,
+        debug.DebugEvent(
+            "preflight",
+            "API Director preflight completato",
+            100.0,
+            preflight,
+        ),
+    )
+    await debug._emit(
+        state,
+        debug.DebugEvent(
+            "log",
+            "API Director command: " + " ".join(shlex.quote(x) for x in command),
+        ),
+    )
+    process = await debug._spawn_worker(command, cwd)
+    state.process = process
+    await debug._emit(
+        state,
+        debug.DebugEvent(
+            "worker",
+            "API Director worker avviato",
+            data={"spawn_mode": process.spawn_mode, "source_video_sent_to_ai": False},
+        ),
+    )
+    while True:
+        line = await process.readline()
+        if not line:
+            break
+        decoded = line.decode("utf-8", errors="replace")
+        if not debug.suppress_worker_log_line(decoded):
+            await debug._emit(state, debug.parse_worker_line(decoded))
+    state.return_code = await process.wait()
+    if state.return_code != 0:
+        raise RuntimeError(f"API Director worker exited with code {state.return_code}")
+
+
+async def _run_director_state(state: debug.RunState) -> None:
+    state.status = "RUNNING"
+    try:
+        await debug._emit(
+            state,
+            debug.DebugEvent(
+                "visual_planning",
+                "Gemini API Director avviato",
+                1.0,
+                {"provider": "gemini", "source_video_sent_to_ai": False},
+            ),
+        )
+        await _default_director_runner(state)
+        if state.status != "CANCELLED":
+            state.status = "SUCCEEDED"
+            state.return_code = 0
+            audit = _read_json(Path(state.output_dir) / "api-first" / "director-run.json", {})
+            await debug._emit(
+                state,
+                debug.DebugEvent(
+                    "visual_planning",
+                    "Gemini API Director completato",
+                    100.0,
+                    {
+                        "provider": audit.get("provider", "gemini"),
+                        "model": audit.get("model"),
+                        "requested_model": audit.get("requested_model"),
+                        "fallback_used": audit.get("fallback_used", False),
+                        "api_calls_this_run": audit.get("api_calls_this_run"),
+                        "source_video_sent_to_ai": False,
+                    },
+                ),
+            )
+    except Exception as exc:
+        if state.status != "CANCELLED":
+            state.status = "FAILED"
+            state.return_code = state.return_code if state.return_code is not None else 1
+            await debug._emit(
+                state,
+                debug.DebugEvent(
+                    "error",
+                    str(exc),
+                    data={"provider": "gemini", "source_video_sent_to_ai": False},
+                ),
+            )
+    finally:
+        if state.process is not None and state.process.returncode is None:
+            await debug._stop_worker(state.process)
+        state.process = None
+
+
 async def _default_social_runner(state: debug.RunState) -> None:
     command = [
         sys.executable, "-m", "backend.app.debug_social_cli",
@@ -301,6 +407,56 @@ def create_app(
     def run_root(project_id: str) -> Path:
         load_project(project_id)
         return root / project_id / "run"
+
+    @app.get("/api/curation/ai/status")
+    async def ai_status() -> dict[str, Any]:
+        from .gemini_interactions import DEFAULT_GEMINI_MODEL
+        return {
+            "providers": {
+                "gemini": {
+                    "configured": bool(os.environ.get("GEMINI_API_KEY", "").strip()),
+                    "model": os.environ.get("RAMBLA_DIRECTOR_MODEL", DEFAULT_GEMINI_MODEL).strip(),
+                    "thinking_level": os.environ.get("RAMBLA_DIRECTOR_THINKING", "high").strip(),
+                    "source_video_sent_to_ai": False,
+                }
+            },
+            "resolve_calls": 0,
+        }
+
+    @app.post("/api/curation/projects/{project_id}/director")
+    async def run_project_director(project_id: str, request: DirectorRequest) -> dict[str, Any]:
+        project = load_project(project_id)
+        run = run_root(project_id)
+        provider = str(request.provider or "").casefold().strip()
+        if provider != "gemini":
+            raise HTTPException(status_code=422, detail="unsupported AI director provider")
+        if not os.environ.get("GEMINI_API_KEY", "").strip():
+            raise HTTPException(status_code=422, detail="GEMINI_API_KEY is not configured")
+        for required in ("transcript-raw.json", "semantic-chunks.json", "analysis-signature.json"):
+            if not (run / required).is_file():
+                raise HTTPException(status_code=422, detail="analyze transcript before running the API Director")
+        if project.source_video is None:
+            raise HTTPException(status_code=422, detail="source video required for the project timeline")
+        if _active_run_for(run):
+            raise HTTPException(status_code=409, detail="project stage already running")
+        state = debug.RunState(
+            uuid.uuid4().hex[:12],
+            Path(project.source_video.path),
+            run,
+            guide_audio=Path(project.guide_audio.path) if project.guide_audio else None,
+            analysis_signature=project.analysis_signature,
+            stage_type="director_api",
+        )
+        debug.RUNS[state.run_id] = state
+        asyncio.create_task(_run_director_state(state))
+        return {
+            "status": "started",
+            "run_id": state.run_id,
+            "stage": "director_api",
+            "provider": "gemini",
+            "source_video_sent_to_ai": False,
+            "resolve_calls": 0,
+        }
 
     @app.get("/api/curation/social/status")
     async def social_status() -> dict[str, Any]:
