@@ -104,14 +104,15 @@ Input:
 Command:
 
 ```powershell
-python -m backend.app.api_first_director_cli --run-dir "<PROJECT>\run"
+python -m backend.app.api_first_director_cli --run-dir "<PROJECT>\run" --review
 ```
 
 Output by default:
 
 - candidate canonical plan at `run/api-first/visual-plan.json`;
 - `run/api-first/director-decisions.json`;
-- `run/api-first/director-run.json`.
+- `run/api-first/director-run.json`;
+- when `--review` is used and a V4 baseline exists: `run/api-first/ab-review.html` and `ab-review.json`.
 
 The V4 active `run/visual-plan.json` is left untouched. After A/B review, explicitly activate
 the V5 plan with:
