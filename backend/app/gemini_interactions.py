@@ -18,7 +18,7 @@ import httpx
 
 DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
 DEFAULT_INTERACTIONS_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions"
-DEFAULT_FALLBACK_MODELS = ("gemini-3.7-flash", "gemini-3.6-flash")
+DEFAULT_FALLBACK_MODELS = ("gemini-3.7-flash",)
 RETRYABLE_HTTP_STATUSES = {429, 500, 502, 503, 504}
 
 
