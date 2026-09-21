@@ -18,10 +18,16 @@ and what each sentence means in context. Only then group adjacent transcript chu
 into visual beats. The source video is deliberately unavailable. Base editorial meaning
 only on the spoken transcript.
 
-Cover every transcript chunk exactly once and in order. Prefer dense short-form visual
-coverage when concrete retrievable visuals exist. KEEP_TALKING_HEAD is deliberate for
-intro, CTA, delivery-critical punchline, or moments where B-roll would weaken the idea.
-CONTINUE_PREVIOUS_VISUAL means the previous visual stays useful and needs no new shots.
+Cover every transcript chunk exactly once and in order. This is a fast-cut reel: visual
+beats must stay short. Default to ONE transcript chunk per beat. Combine two adjacent
+chunks only when splitting them would damage meaning or grammar. Never combine three or
+more chunks. Aim for roughly 2.0-3.5 seconds per beat and keep a beat at or below 4.5
+seconds whenever that is possible from the supplied chunk boundaries. If one single
+transcript chunk is already longer than 4.5 seconds, keep it alone rather than grouping
+anything else with it. Prefer dense short-form visual coverage when concrete retrievable
+visuals exist. KEEP_TALKING_HEAD is deliberate for intro, CTA, delivery-critical punchline,
+or moments where B-roll would weaken the idea. CONTINUE_PREVIOUS_VISUAL means the previous
+visual stays useful and needs no new shots.
 
 Current spoken meaning is authoritative. Neighboring chunks may resolve references but
 must not add unrelated objects or claims. Prefer literal physical subjects and actions
@@ -100,6 +106,7 @@ def build_director_prompt(package: dict[str, Any]) -> str:
         + "Use first_chunk_id and last_chunk_id for each contiguous beat. "
         + "The first beat starts at the first chunk, the last beat ends at the last chunk, "
         + "and adjacent beats meet with no gaps or overlap. "
+        + "Keep beats short: normally 1 transcript chunk, never more than 2; multi-chunk beats must be <=4.5 seconds. "
         + "For BROLL: single means exactly 1 shot; sequence/juxtaposition means 2-3 shots. "
         + "For KEEP_TALKING_HEAD and CONTINUE_PREVIOUS_VISUAL: shots must be empty.\n"
         + "TRANSCRIPT_CHUNKS="
@@ -168,6 +175,11 @@ def compile_director_decisions(
         if last < first:
             raise ValueError(f"{path}: last_chunk_id precedes first_chunk_id")
         covered = chunks[first:last + 1]
+        if len(covered) > 2:
+            raise ValueError(f"{path}: reel beats may cover at most 2 transcript chunks")
+        beat_seconds = float(covered[-1]["end"]) - float(covered[0]["start"])
+        if len(covered) > 1 and beat_seconds > 4.5:
+            raise ValueError(f"{path}: multi-chunk beat exceeds 4.5 seconds")
 
         action = _clean_text(raw.get("action"))
         if action not in {"BROLL", "KEEP_TALKING_HEAD", "CONTINUE_PREVIOUS_VISUAL"}:
