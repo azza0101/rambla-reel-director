@@ -113,6 +113,8 @@ def run_api_first_director(
         attempts = 0
         interaction_id = cached_audit.get("interaction_id")
         validation_errors = []
+        api_usage = list(cached_audit.get("api_usage") or [])
+        api_calls_this_run = 0
         cache_status = "reused"
     else:
         if provider is None:
@@ -133,6 +135,8 @@ def run_api_first_director(
         attempts = result.attempts
         interaction_id = result.interaction_id
         validation_errors = list(result.validation_errors)
+        api_usage = [dict(row) for row in result.usage]
+        api_calls_this_run = result.attempts
         cache_status = "generated"
         write_json(decisions_path, result.decisions)
         write_json(candidate_plan_path, plan)
@@ -151,6 +155,8 @@ def run_api_first_director(
             "attempts": attempts,
             "interaction_id": interaction_id,
             "validation_errors": validation_errors,
+            "api_calls_this_run": api_calls_this_run,
+            "api_usage": api_usage,
             "transcript_signature": package["transcript_signature"],
             "request_signature": signature,
             "cache_status": cache_status,
@@ -167,6 +173,8 @@ def run_api_first_director(
         "model": result_model,
         "thinking_level": thinking_level,
         "attempts": attempts,
+        "api_calls_this_run": api_calls_this_run,
+        "api_usage": api_usage,
         "cache_status": cache_status,
         "beats": len(plan["visual_beats"]),
         "visual_plan": str(candidate_plan_path.resolve()),
