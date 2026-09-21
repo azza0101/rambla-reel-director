@@ -89,6 +89,13 @@ def _gemini_progress(event: str, data: dict[str, Any]) -> None:
             f"{float(data.get('delay_seconds') or 0):.1f}s{suffix}",
             flush=True,
         )
+    elif event == "quota_exhausted":
+        detail = str(data.get("detail") or "").strip()
+        suffix = f" · {detail}" if detail else ""
+        print(
+            f"[{stamp}] Gemini · quota/rate limit on {data.get('model')} · switching model{suffix}",
+            flush=True,
+        )
     elif event == "model_exhausted":
         print(
             f"[{stamp}] Gemini · {data.get('model')} still unavailable after retries.",
