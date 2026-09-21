@@ -5,6 +5,7 @@ thin and explicit so the product does not depend on a vendor SDK or local GPU.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 import json
 import time
@@ -119,7 +120,7 @@ class GeminiInteractionsClient:
         *,
         model: str = DEFAULT_GEMINI_MODEL,
         endpoint: str = DEFAULT_INTERACTIONS_ENDPOINT,
-        timeout_seconds: float = 90.0,
+        timeout_seconds: float = 180.0,
         thinking_level: str = "high",
         fallback_models: tuple[str, ...] | None = DEFAULT_FALLBACK_MODELS,
         max_retries_per_model: int = 2,
@@ -189,8 +190,38 @@ class GeminiInteractionsClient:
                 json=body,
                 timeout=self.timeout_seconds,
             )
-        with httpx.Client(timeout=self.timeout_seconds) as client:
+        timeout = httpx.Timeout(
+            connect=min(20.0, self.timeout_seconds),
+            read=self.timeout_seconds,
+            write=min(30.0, self.timeout_seconds),
+            pool=min(30.0, self.timeout_seconds),
+        )
+        with httpx.Client(timeout=timeout) as client:
             return client.post(self.endpoint, headers=headers, json=body)
+
+    def _post_with_heartbeat(
+        self,
+        body: dict[str, Any],
+        headers: dict[str, str],
+        *,
+        model: str,
+    ) -> Any:
+        if self._event_callback is None:
+            return self._post(body, headers)
+        started = time.monotonic()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(self._post, body, headers)
+            while True:
+                try:
+                    return future.result(timeout=15.0)
+                except FutureTimeoutError:
+                    elapsed = round(time.monotonic() - started, 1)
+                    self._emit(
+                        "waiting",
+                        model=model,
+                        elapsed_seconds=elapsed,
+                        timeout_seconds=self.timeout_seconds,
+                    )
 
     def generate_json(
         self,
@@ -228,6 +259,7 @@ class GeminiInteractionsClient:
                     attempt=retry_index + 1,
                     attempts_for_model=self.max_retries_per_model + 1,
                     transport_attempt=total_attempts,
+                    timeout_seconds=self.timeout_seconds,
                 )
                 body: dict[str, Any] = {
                     "model": active_model,
@@ -244,7 +276,48 @@ class GeminiInteractionsClient:
                 if previous_interaction_id:
                     body["previous_interaction_id"] = previous_interaction_id
 
-                response = self._post(body, headers)
+                try:
+                    response = self._post_with_heartbeat(body, headers, model=active_model)
+                except httpx.RequestError as exc:
+                    last_exception = exc
+                    last_response = None
+                    delay = self._retry_delay(None, retry_index)
+                    is_read_timeout = isinstance(exc, httpx.ReadTimeout)
+                    self._emit(
+                        "transport_error",
+                        model=active_model,
+                        error_type=type(exc).__name__,
+                        delay_seconds=0.0 if is_read_timeout else delay,
+                        detail=" ".join(str(exc).split())[:240],
+                    )
+                    # A long read timeout means the server accepted the request but
+                    # did not complete in time. Repeating the same expensive request
+                    # on the same model is wasteful; move to the stable fallback.
+                    if is_read_timeout and model_index < len(model_chain) - 1:
+                        self._emit(
+                            "model_exhausted",
+                            model=active_model,
+                            status="read_timeout",
+                            detail=f"no response within {self.timeout_seconds:.0f}s",
+                        )
+                        break
+                    if not is_read_timeout and retry_index < self.max_retries_per_model:
+                        if delay:
+                            self._sleeper(delay)
+                        continue
+                    if model_index < len(model_chain) - 1:
+                        self._emit(
+                            "model_exhausted",
+                            model=active_model,
+                            status="transport_error",
+                            detail=type(exc).__name__,
+                        )
+                        break
+                    raise GeminiAPIError(
+                        f"Gemini transport failed ({type(exc).__name__}) after "
+                        f"{self.timeout_seconds:.0f}s"
+                    ) from exc
+
                 last_response = response
                 try:
                     response.raise_for_status()
