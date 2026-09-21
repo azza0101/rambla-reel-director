@@ -205,3 +205,4 @@ Director.
 The API-first mode is opt-in while benchmarking. Free cloud tiers may have different
 data-use terms than paid tiers, so provider/tier choice must remain visible and
 configurable before this becomes the default for client material.
+
