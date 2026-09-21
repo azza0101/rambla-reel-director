@@ -312,3 +312,77 @@ def test_ab_review_compares_same_transcript_without_declaring_a_winner(tmp_path)
     assert "V5 API-FIRST" in html
     assert "No automatic winner" in html
     assert result["candidate"]["continue_beats"] == 1
+
+
+def test_gemini_retries_overload_then_falls_back_to_37_and_sticks_for_repair():
+    from backend.app.gemini_interactions import GeminiInteractionsClient
+
+    success_payload = {
+        "id": "int-fallback",
+        "status": "completed",
+        "steps": [
+            {
+                "type": "model_output",
+                "content": [{"type": "text", "text": '{"global_topic":"x","beats":[]}'}],
+            }
+        ],
+    }
+
+    class Response:
+        def __init__(self, status, payload):
+            self.status_code = status
+            self._payload = payload
+            self.headers = {}
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"http {self.status_code}")
+
+        def json(self):
+            return self._payload
+
+    class HTTP:
+        def __init__(self):
+            self.calls = []
+            self.responses = [
+                Response(503, {"error": {"message": "high demand"}}),
+                Response(503, {"error": {"message": "high demand"}}),
+                Response(503, {"error": {"message": "high demand"}}),
+                Response(200, success_payload),
+                Response(200, {**success_payload, "id": "int-repair"}),
+            ]
+
+        def post(self, url, **kwargs):
+            self.calls.append(kwargs["json"]["model"])
+            return self.responses.pop(0)
+
+    delays = []
+    http = HTTP()
+    client = GeminiInteractionsClient(
+        "placeholder",
+        http_client=http,
+        sleeper=delays.append,
+    )
+
+    reply = client.generate_json("hello", {"type": "object"})
+
+    assert http.calls[:4] == [
+        "gemini-3.8-flash",
+        "gemini-3.8-flash",
+        "gemini-3.8-flash",
+        "gemini-3.7-flash",
+    ]
+    assert delays == [1.5, 4.0]
+    assert reply.model == "gemini-3.7-flash"
+    assert reply.requested_model == "gemini-3.8-flash"
+    assert reply.fallback_used is True
+    assert reply.transport_attempts == 4
+
+    repair = client.generate_json(
+        "repair",
+        {"type": "object"},
+        previous_interaction_id=reply.interaction_id,
+    )
+    assert http.calls[-1] == "gemini-3.7-flash"
+    assert repair.model == "gemini-3.7-flash"
+    assert repair.transport_attempts == 1
