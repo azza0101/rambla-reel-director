@@ -108,8 +108,11 @@ def run_api_first_director(
             cache_hit = False
 
     if cache_hit:
-        result_provider = provider_name
-        result_model = model
+        result_provider = str(cached_audit.get("provider") or provider_name)
+        result_model = str(cached_audit.get("model") or model)
+        requested_model = str(cached_audit.get("requested_model") or model)
+        fallback_used = bool(cached_audit.get("fallback_used", result_model != requested_model))
+        transport_attempts = 0
         attempts = 0
         interaction_id = cached_audit.get("interaction_id")
         validation_errors = []
@@ -132,6 +135,9 @@ def run_api_first_director(
         plan = result.plan
         result_provider = result.provider
         result_model = result.model
+        requested_model = result.requested_model
+        fallback_used = result.fallback_used
+        transport_attempts = result.transport_attempts
         attempts = result.attempts
         interaction_id = result.interaction_id
         validation_errors = list(result.validation_errors)
@@ -151,6 +157,9 @@ def run_api_first_director(
             "schema_version": "rambla-api-first-director-run-1",
             "provider": result_provider,
             "model": result_model,
+            "requested_model": requested_model,
+            "fallback_used": fallback_used,
+            "transport_attempts": transport_attempts,
             "thinking_level": thinking_level,
             "attempts": attempts,
             "interaction_id": interaction_id,
@@ -171,6 +180,9 @@ def run_api_first_director(
     return {
         "provider": result_provider,
         "model": result_model,
+        "requested_model": requested_model,
+        "fallback_used": fallback_used,
+        "transport_attempts": transport_attempts,
         "thinking_level": thinking_level,
         "attempts": attempts,
         "api_calls_this_run": api_calls_this_run,
