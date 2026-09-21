@@ -73,3 +73,40 @@ def test_product_ui_has_global_social_only_search_next_to_broll():
     assert html.index('id="findVideos"') < html.index('id="findSocial"') < html.index('id="findImages"')
     assert "FIND SOCIAL" in html
     assert "startStage('source/social')" in html
+
+
+def test_management_ui_keeps_existing_layout_and_adds_api_director_controls():
+    from backend.app.curation_ui_v2 import render_curation_page_v2
+
+    html = render_curation_page_v2("api-director")
+    assert 'id="analyze"' in html
+    assert 'id="findVideos"' in html
+    assert 'id="findImages"' in html
+    assert 'id="directorProviderV5"' in html
+    assert 'id="generateDirectorV5"' in html
+    assert "MANUAL / IMPORT" in html
+    assert "GEMINI API" in html
+    assert "GENERATE PLAN" in html
+    assert "source video NOT sent" in html
+    assert "api('/ai/status')" in html
+    assert "/director" in html
+
+
+def test_product_server_ai_status_never_exposes_api_key(monkeypatch, tmp_path):
+    from backend.app.curation_server import create_app
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-do-not-expose")
+    monkeypatch.setenv("RAMBLA_DIRECTOR_MODEL", "gemini-3.8-flash")
+    client = TestClient(create_app(
+        project_root=tmp_path / "projects",
+        allowed_media_roots=[tmp_path],
+        probe_runner=lambda _: {"duration": 1, "fps": 25, "width": 1080, "height": 1920, "has_audio": False},
+    ))
+
+    response = client.get("/api/curation/ai/status")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["providers"]["gemini"]["configured"] is True
+    assert body["providers"]["gemini"]["model"] == "gemini-3.8-flash"
+    assert body["providers"]["gemini"]["source_video_sent_to_ai"] is False
+    assert "test-key-do-not-expose" not in repr(body)
