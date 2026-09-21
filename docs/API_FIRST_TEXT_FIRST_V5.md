@@ -222,3 +222,23 @@ The API-first mode is opt-in while benchmarking. Free cloud tiers may have diffe
 data-use terms than paid tiers, so provider/tier choice must remain visible and
 configurable before this becomes the default for client material.
 
+
+
+## Product UI integration
+
+The standalone `api-first/ab-review.html` is a diagnostic artifact only. It is not a
+replacement product UI.
+
+V5 runs inside the existing professional `/curation` interface. The layout, project
+flow, source player, transcript, beat rail, media shelves, selection tray, social controls
+and NO BROLL workflow remain unchanged.
+
+The Editorial Plan panel adds only:
+
+- a Director selector: `MANUAL / IMPORT` or `GEMINI API`;
+- `GENERATE PLAN`;
+- compact provider/model/reasoning status.
+
+When Gemini is selected, the same Analysis Details console streams request/retry/fallback
+progress. On success the validated API-first plan becomes the active canonical visual plan
+and the existing curation interface hydrates the resulting beats normally.
