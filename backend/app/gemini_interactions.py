@@ -8,6 +8,8 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 import json
+from pathlib import Path
+import re
 import time
 from typing import Any, Callable
 
@@ -16,7 +18,7 @@ import httpx
 
 DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
 DEFAULT_INTERACTIONS_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions"
-DEFAULT_FALLBACK_MODELS = ("gemini-3.7-flash",)
+DEFAULT_FALLBACK_MODELS = ("gemini-3.7-flash", "gemini-3.6-flash")
 RETRYABLE_HTTP_STATUSES = {429, 500, 502, 503, 504}
 
 
@@ -127,6 +129,7 @@ class GeminiInteractionsClient:
         retry_delays: tuple[float, ...] = (1.5, 4.0),
         sleeper: Callable[[float], None] = time.sleep,
         event_callback: Callable[[str, dict[str, Any]], None] | None = None,
+        cooldown_state_path: Path | str | None = None,
         http_client: Any | None = None,
     ) -> None:
         clean_key = str(api_key or "").strip()
@@ -150,6 +153,7 @@ class GeminiInteractionsClient:
         self.retry_delays = tuple(max(0.0, float(value)) for value in retry_delays)
         self._sleeper = sleeper
         self._event_callback = event_callback
+        self._cooldown_state_path = Path(cooldown_state_path) if cooldown_state_path else None
         self._http_client = http_client
         self._sticky_model: str | None = None
 
@@ -157,6 +161,66 @@ class GeminiInteractionsClient:
         callback = self._event_callback
         if callback is not None:
             callback(event, data)
+
+    def _load_cooldowns(self) -> dict[str, float]:
+        path = self._cooldown_state_path
+        if path is None:
+            return {}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError):
+            return {}
+        rows = payload.get("models") if isinstance(payload, dict) else None
+        if not isinstance(rows, dict):
+            return {}
+        now = time.time()
+        out: dict[str, float] = {}
+        for model, value in rows.items():
+            try:
+                until = float(value)
+            except (TypeError, ValueError):
+                continue
+            if until > now:
+                out[str(model)] = until
+        return out
+
+    def _save_cooldowns(self, rows: dict[str, float]) -> None:
+        path = self._cooldown_state_path
+        if path is None:
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {"schema_version": "rambla-gemini-health-1", "models": rows}
+            temporary = path.with_suffix(path.suffix + ".tmp")
+            temporary.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            temporary.replace(path)
+        except OSError:
+            pass
+
+    @staticmethod
+    def _quota_cooldown_seconds(response: Any, detail: str) -> float:
+        headers = getattr(response, "headers", None)
+        if headers is not None:
+            try:
+                value = headers.get("retry-after")
+                if value is not None:
+                    return max(5.0, min(float(value), 86400.0))
+            except (TypeError, ValueError):
+                pass
+        match = re.search(r"retry\s+in\s+(\d+(?:\.\d+)?)\s*s", detail, re.IGNORECASE)
+        if match:
+            return max(5.0, min(float(match.group(1)), 86400.0))
+        return 900.0
+
+    def _mark_quota_cooldown(self, model: str, response: Any, detail: str) -> float:
+        seconds = self._quota_cooldown_seconds(response, detail)
+        rows = self._load_cooldowns()
+        rows[model] = time.time() + seconds
+        self._save_cooldowns(rows)
+        return seconds
 
     @staticmethod
     def _error_detail(response: Any) -> str:
@@ -234,7 +298,28 @@ class GeminiInteractionsClient:
         if previous_interaction_id and self._sticky_model:
             model_chain = (self._sticky_model,)
         else:
-            model_chain = (self.model, *self.fallback_models)
+            raw_chain = (self.model, *self.fallback_models)
+            cooldowns = self._load_cooldowns()
+            now = time.time()
+            active_chain: list[str] = []
+            for candidate in raw_chain:
+                until = cooldowns.get(candidate, 0.0)
+                if until > now:
+                    self._emit(
+                        "model_skipped",
+                        model=candidate,
+                        reason="quota_cooldown",
+                        retry_in_seconds=round(until - now, 1),
+                    )
+                    continue
+                active_chain.append(candidate)
+            model_chain = tuple(active_chain)
+            if not model_chain:
+                waits = [max(0.0, until - now) for until in cooldowns.values()]
+                wait = min(waits) if waits else 0.0
+                raise GeminiAPIError(
+                    f"All Gemini Director models are temporarily quota-limited; retry in about {wait:.0f}s"
+                )
 
         headers = {
             "x-goog-api-key": self._api_key,
@@ -326,11 +411,14 @@ class GeminiInteractionsClient:
                     status = getattr(response, "status_code", None)
                     retryable = isinstance(status, int) and status in RETRYABLE_HTTP_STATUSES
                     if status == 429 and model_index < len(model_chain) - 1:
+                        detail = self._error_detail(response)
+                        cooldown_seconds = self._mark_quota_cooldown(active_model, response, detail)
                         self._emit(
                             "quota_exhausted",
                             model=active_model,
                             status=status,
-                            detail=self._error_detail(response),
+                            detail=detail,
+                            cooldown_seconds=cooldown_seconds,
                         )
                         break
                     if retryable and retry_index < self.max_retries_per_model:
