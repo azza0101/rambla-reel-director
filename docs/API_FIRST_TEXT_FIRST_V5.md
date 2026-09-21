@@ -83,6 +83,11 @@ Override without code changes:
 
 `RAMBLA_DIRECTOR_MODEL=<model>`
 
+The Director defaults to `thinking_level=high`. This is intentional: V5 saves cost by
+making one global editorial call, not by weakening that call. Override only for benchmarks:
+
+`RAMBLA_DIRECTOR_THINKING=low|medium|high`
+
 Credential:
 
 `GEMINI_API_KEY=...`
