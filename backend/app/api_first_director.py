@@ -287,6 +287,9 @@ class DirectorRunResult:
     interaction_id: str | None
     validation_errors: tuple[str, ...]
     usage: tuple[dict[str, int], ...]
+    requested_model: str
+    fallback_used: bool
+    transport_attempts: int
 
 
 def generate_director_plan(
@@ -302,6 +305,9 @@ def generate_director_plan(
     previous_id: str | None = None
     errors: list[str] = []
     usage: list[dict[str, int]] = []
+    requested_model = str(getattr(provider, "model", "unknown"))
+    fallback_used = False
+    transport_attempts = 0
     for attempt in range(1, max_attempts + 1):
         request = prompt if attempt == 1 else build_repair_prompt(ValueError(errors[-1]))
         reply = provider.generate_json(
@@ -312,6 +318,9 @@ def generate_director_plan(
         previous_id = reply.interaction_id or previous_id
         if reply.usage:
             usage.append(dict(reply.usage))
+        requested_model = str(reply.requested_model or requested_model)
+        fallback_used = fallback_used or bool(reply.fallback_used)
+        transport_attempts += int(reply.transport_attempts or 1)
         try:
             plan = compile_director_decisions(package, reply.data)
         except (ValueError, KeyError, TypeError) as exc:
@@ -330,5 +339,8 @@ def generate_director_plan(
             interaction_id=reply.interaction_id,
             validation_errors=tuple(errors),
             usage=tuple(usage),
+            requested_model=requested_model,
+            fallback_used=fallback_used,
+            transport_attempts=transport_attempts,
         )
     raise RuntimeError("unreachable director state")
