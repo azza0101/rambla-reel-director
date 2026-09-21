@@ -77,6 +77,11 @@ def render_curation_page_v2(build_token: str | None = None) -> str:
         1,
     )
     html = html.replace(
+        '<button id="importEditorial" disabled>IMPORT EDITORIAL PLAN</button><span id="editorialStatus" class="muted">Analyze a reel first.</span>',
+        '<button id="importEditorial" disabled>IMPORT EDITORIAL PLAN</button><span id="editorialStatus" class="muted">Analyze a reel first.</span><span class="directorV5"><select id="directorProviderV5" aria-label="Editorial Director"><option value="manual">MANUAL / IMPORT</option><option value="gemini">GEMINI API</option></select><button id="generateDirectorV5" class="ghost" disabled>GENERATE PLAN</button><span id="directorStateV5" class="directorStateV5">Checking API…</span></span>',
+        1,
+    )
+    html = html.replace(
         '<section class="stage"><div id="active" class="muted">No project artifacts loaded.</div>',
         '<section class="stage"><div id="active" class="muted">No project artifacts loaded.</div><div id="beatActionsV2" class="managementV2"></div>',
         1,
