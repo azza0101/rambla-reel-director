@@ -35,7 +35,8 @@ if (-not (Test-Path -LiteralPath $runtime -PathType Leaf)) { throw "Scoped Pytho
 
 $workRoot = $scriptRoot
 if (Test-Path -LiteralPath (Join-Path $scriptRoot '.git')) {
-    $actualBranch = (git -C $scriptRoot branch --show-current).Trim()
+    $actualBranch = [string](git -C $scriptRoot branch --show-current)
+    $actualBranch = $actualBranch.Trim()
     if ($actualBranch -and $actualBranch -ne $branch) { throw "Wrong branch: $actualBranch (expected $branch or detached V5 worktree)" }
     $dirty = @(git -C $scriptRoot status --porcelain)
     if ($dirty.Count) { throw "Dirty worktree; aborting. Changed files:`n$($dirty -join "`n")" }
