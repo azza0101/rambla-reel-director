@@ -90,5 +90,16 @@ jobs:
             $errors | ForEach-Object { Write-Error $_.Message }
             exit 1
           }
+      - name: Check V5 probe PowerShell syntax
+        if: github.ref_name == 'feat/api-first-text-first-v1' || github.event_name == 'pull_request'
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'tools/run_api_first_v5_probe.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
       - name: Compile backend
         run: python -m compileall backend
