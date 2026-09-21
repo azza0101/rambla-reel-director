@@ -479,3 +479,23 @@ def test_director_prompt_explicitly_targets_short_fast_cut_beats():
     assert "roughly 2.0-3.5 seconds per beat" in prompt
     assert "never more than 2" in prompt
     assert "<=4.5 seconds" in prompt
+
+
+def test_cli_configures_utf8_stdio_without_crashing_on_windows_style_streams(monkeypatch):
+    import backend.app.api_first_director_cli as cli
+
+    class Stream:
+        def __init__(self):
+            self.calls = []
+        def reconfigure(self, **kwargs):
+            self.calls.append(kwargs)
+
+    out = Stream()
+    err = Stream()
+    monkeypatch.setattr(cli.sys, "stdout", out)
+    monkeypatch.setattr(cli.sys, "stderr", err)
+
+    cli._configure_utf8_stdio()
+
+    assert out.calls == [{"encoding": "utf-8", "errors": "replace"}]
+    assert err.calls == [{"encoding": "utf-8", "errors": "replace"}]
