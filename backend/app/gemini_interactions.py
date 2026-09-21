@@ -125,6 +125,7 @@ class GeminiInteractionsClient:
         max_retries_per_model: int = 2,
         retry_delays: tuple[float, ...] = (1.5, 4.0),
         sleeper: Callable[[float], None] = time.sleep,
+        event_callback: Callable[[str, dict[str, Any]], None] | None = None,
         http_client: Any | None = None,
     ) -> None:
         clean_key = str(api_key or "").strip()
@@ -147,8 +148,14 @@ class GeminiInteractionsClient:
         self.max_retries_per_model = int(max_retries_per_model)
         self.retry_delays = tuple(max(0.0, float(value)) for value in retry_delays)
         self._sleeper = sleeper
+        self._event_callback = event_callback
         self._http_client = http_client
         self._sticky_model: str | None = None
+
+    def _emit(self, event: str, **data: Any) -> None:
+        callback = self._event_callback
+        if callback is not None:
+            callback(event, data)
 
     @staticmethod
     def _error_detail(response: Any) -> str:
@@ -207,8 +214,21 @@ class GeminiInteractionsClient:
         last_exception: Exception | None = None
 
         for model_index, active_model in enumerate(model_chain):
+            if model_index > 0:
+                self._emit(
+                    "fallback",
+                    from_model=model_chain[model_index - 1],
+                    to_model=active_model,
+                )
             for retry_index in range(self.max_retries_per_model + 1):
                 total_attempts += 1
+                self._emit(
+                    "request_start",
+                    model=active_model,
+                    attempt=retry_index + 1,
+                    attempts_for_model=self.max_retries_per_model + 1,
+                    transport_attempt=total_attempts,
+                )
                 body: dict[str, Any] = {
                     "model": active_model,
                     "input": prompt,
@@ -234,10 +254,23 @@ class GeminiInteractionsClient:
                     retryable = isinstance(status, int) and status in RETRYABLE_HTTP_STATUSES
                     if retryable and retry_index < self.max_retries_per_model:
                         delay = self._retry_delay(response, retry_index)
+                        self._emit(
+                            "retry",
+                            model=active_model,
+                            status=status,
+                            delay_seconds=delay,
+                            detail=self._error_detail(response),
+                        )
                         if delay:
                             self._sleeper(delay)
                         continue
                     if retryable and model_index < len(model_chain) - 1:
+                        self._emit(
+                            "model_exhausted",
+                            model=active_model,
+                            status=status,
+                            detail=self._error_detail(response),
+                        )
                         break
                     detail = self._error_detail(response)
                     suffix = f": {detail}" if detail else ""
@@ -269,6 +302,12 @@ class GeminiInteractionsClient:
                         if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
                             usage[key] = value
                 self._sticky_model = active_model
+                self._emit(
+                    "request_complete",
+                    model=active_model,
+                    transport_attempts=total_attempts,
+                    usage=usage or None,
+                )
                 return GeminiJSONReply(
                     data=data,
                     interaction_id=interaction_id,
