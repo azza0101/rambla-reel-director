@@ -13,7 +13,7 @@ import httpx
 
 
 DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
-DEFAULT_INTERACTIONS_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta2/interactions"
+DEFAULT_INTERACTIONS_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions"
 
 
 class GeminiAPIError(RuntimeError):
