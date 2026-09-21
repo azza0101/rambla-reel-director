@@ -182,7 +182,8 @@ def test_gemini_interactions_client_sends_structured_schema_and_parses_final_tex
     assert reply.interaction_id == "int-123"
     assert reply.data["global_topic"] == "x"
     assert reply.usage["total_tokens"] == 170
-    _, kwargs = http.call
+    url, kwargs = http.call
+    assert url == "https://generativelanguage.googleapis.com/v1beta/interactions"
     assert kwargs["headers"]["x-goog-api-key"] == "placeholder"
     assert "placeholder" not in json.dumps(kwargs["json"])
     assert kwargs["json"]["response_format"][0]["mime_type"] == "application/json"
