@@ -286,6 +286,7 @@ class DirectorRunResult:
     attempts: int
     interaction_id: str | None
     validation_errors: tuple[str, ...]
+    usage: tuple[dict[str, int], ...]
 
 
 def generate_director_plan(
@@ -300,6 +301,7 @@ def generate_director_plan(
     prompt = build_director_prompt(package)
     previous_id: str | None = None
     errors: list[str] = []
+    usage: list[dict[str, int]] = []
     for attempt in range(1, max_attempts + 1):
         request = prompt if attempt == 1 else build_repair_prompt(ValueError(errors[-1]))
         reply = provider.generate_json(
@@ -308,6 +310,8 @@ def generate_director_plan(
             previous_interaction_id=previous_id,
         )
         previous_id = reply.interaction_id or previous_id
+        if reply.usage:
+            usage.append(dict(reply.usage))
         try:
             plan = compile_director_decisions(package, reply.data)
         except (ValueError, KeyError, TypeError) as exc:
@@ -325,5 +329,6 @@ def generate_director_plan(
             attempts=attempt,
             interaction_id=reply.interaction_id,
             validation_errors=tuple(errors),
+            usage=tuple(usage),
         )
     raise RuntimeError("unreachable director state")
