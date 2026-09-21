@@ -51,7 +51,9 @@ $oldPythonPath = $env:PYTHONPATH
 $env:PYTHONPATH = $repoRoot
 try {
     Write-Output "Running focused V5 offline tests before any API call..."
-    & $runtime -m pytest -q (Join-Path $repoRoot 'tests\unit\test_api_first_director.py')
+    $pytestTemp = Join-Path $repoRoot '.pytest-tmp-v5'
+    New-Item -ItemType Directory -Force -Path $pytestTemp | Out-Null
+    & $runtime -m pytest -q --basetemp $pytestTemp (Join-Path $repoRoot 'tests\unit\test_api_first_director.py')
     if ($LASTEXITCODE -ne 0) {
         throw "V5 offline tests failed with code $LASTEXITCODE. Gemini was not called."
     }
