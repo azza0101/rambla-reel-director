@@ -60,13 +60,9 @@ def test_envato_current_item_and_multiword_search_urls():
     )
 
 
-def test_envato_source_uses_last_used_normal_chrome_profile(monkeypatch, tmp_path):
+def test_envato_source_background_search_is_profile_independent():
     import backend.app.envato_source as module
 
-    root = tmp_path / "User Data"
-    (root / "Profile 3").mkdir(parents=True)
-    monkeypatch.setattr(module, "normal_chrome_profile", lambda: (root, "Profile 3"))
-
     source = module.EnvatoSource(discover=lambda *_args: [])
-    assert source.profile_dir == root
-    assert source.profile_name == "Profile 3"
+    assert source.profile_dir is None
+    assert source._context is None
