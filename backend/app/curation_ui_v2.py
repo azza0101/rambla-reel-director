@@ -76,6 +76,11 @@ def render_curation_page_v2(build_token: str | None = None) -> str:
         1,
     )
     html = html.replace(
+        '<section class="panel"><h2>Editorial Plan</h2><p class="muted">Export the transcript, plan with any external tool or manually, then import the JSON.</p>',
+        '<section class="panel"><h2>Editorial Plan</h2><p class="muted">Choose the editorial engine. AUTO routes around provider limits; cloud Directors receive the full transcript only, never the source video.</p>',
+        1,
+    )
+    html = html.replace(
         '<button id="importEditorial" disabled>IMPORT EDITORIAL PLAN</button><span id="editorialStatus" class="muted">Analyze a reel first.</span>',
         '<button id="importEditorial" disabled>IMPORT EDITORIAL PLAN</button><span id="editorialStatus" class="muted">Analyze a reel first.</span><span class="directorV5"><select id="directorProviderV5" aria-label="Editorial Director"><option value="manual">MANUAL / IMPORT</option><option value="auto">AUTO</option><option value="gemini">GEMINI API</option><option value="groq">GROQ API</option></select><button id="generateDirectorV5" class="ghost" disabled>GENERATE PLAN</button><span id="directorStateV5" class="directorStateV5">Checking API…</span></span>',
         1,
