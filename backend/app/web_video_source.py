@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from typing import Any, Awaitable, Callable
 from urllib.parse import parse_qs, quote_plus, urlencode, urlparse, urlunparse
 
@@ -117,8 +118,71 @@ def extract_google_video_results(anchors: list[dict[str, Any]], *, limit: int) -
     return output
 
 
+class _GoogleVideoHTMLParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.stack: list[dict[str, Any]] = []
+        self.rows: list[dict[str, Any]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = {key: value for key, value in attrs}
+        if tag.casefold() == "a" and values.get("href"):
+            self.stack.append({
+                "href": values.get("href") or "",
+                "text": "",
+                "aria": values.get("aria-label") or "",
+                "img": "",
+                "img_width": 0,
+                "img_height": 0,
+            })
+        elif tag.casefold() == "img" and self.stack:
+            row = self.stack[-1]
+            row["img"] = values.get("src") or values.get("data-src") or row["img"]
+            try:
+                row["img_width"] = int(values.get("width") or 0)
+                row["img_height"] = int(values.get("height") or 0)
+            except (TypeError, ValueError):
+                pass
+
+    def handle_data(self, data: str) -> None:
+        if self.stack:
+            self.stack[-1]["text"] += " " + data
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.casefold() == "a" and self.stack:
+            row = self.stack.pop()
+            if row.get("href") and row.get("img"):
+                row["text"] = " ".join(str(row.get("text") or "").split())
+                self.rows.append(row)
+
+
+async def _http_google_discover(query: str, limit: int) -> list[dict[str, Any]]:
+    url = "https://www.google.com/search"
+    params = {"tbm": "vid", "hl": "en", "q": query}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/153 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers=headers) as client:
+        response = await client.get(url, params=params)
+        response.raise_for_status()
+    parser = _GoogleVideoHTMLParser()
+    parser.feed(response.text)
+    return extract_google_video_results(parser.rows, limit=limit)
+
+
 async def _default_google_discover(query: str, limit: int) -> list[dict[str, Any]]:
-    from playwright.async_api import async_playwright
+    try:
+        rows = await _http_google_discover(query, limit)
+        if rows:
+            return rows
+    except Exception:
+        pass
+
+    try:
+        from playwright.async_api import async_playwright
+    except (ImportError, ModuleNotFoundError):
+        return []
 
     url = f"https://www.google.com/search?tbm=vid&hl=en&q={quote_plus(query)}"
     async with async_playwright() as playwright:
