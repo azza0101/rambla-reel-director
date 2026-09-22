@@ -154,3 +154,13 @@ def test_copy_console_javascript_keeps_newlines_escaped_in_rendered_html():
     assert r"summary+'\n'+pre" in html
     assert r"rows.join('\n\n')" in html
     assert "summary+'\n'+pre" not in html
+
+
+def test_product_ui_exposes_clickable_envato_search_shelf():
+    from backend.app.curation_ui_v2 import render_curation_page_v2
+
+    html = render_curation_page_v2("envato")
+    assert "ENVATO ELEMENTS" in html
+    assert 'id="envatoVideosV2"' in html
+    assert "a?.provider==='envato'?window.open(a.source_page" in html
+    assert "download/licensing stays manual" in html
