@@ -30,6 +30,7 @@ from .taste_profile import TasteContext
 from .visual_routing import plan_visual_route
 from .visual_planner import merge_visual_diagnostics, persist_visual_plan
 from .youtube_source import YouTubeOnlineSourceAdapter, YouTubeSource
+from .web_video_source import WebVideoSource
 
 
 class AcquisitionPort(Protocol):
@@ -513,28 +514,33 @@ def _real_engine(
     provider_filter = {str(value).casefold().strip() for value in (providers or set()) if str(value).strip()}
     sources: list[Any] = []
     include_youtube = not provider_filter or "youtube" in provider_filter
-    vertical_names = {"youtube_shorts", "tiktok", "instagram", "web_video"}
-    requested_vertical = vertical_names if not provider_filter else (provider_filter & vertical_names)
+    social_names = {"youtube_shorts", "tiktok", "instagram"}
+    requested_social = social_names if not provider_filter else (provider_filter & social_names)
+    include_web_video = not provider_filter or "web_video" in provider_filter
 
-    if include_youtube or requested_vertical:
-        if provider_filter:
-            from .vertical_social import build_default_vertical_sources
-            vertical_sources = [
-                source for source in build_default_vertical_sources()
-                if str(getattr(source, "provider_name", "")).casefold() in requested_vertical
-            ]
-            sources.append(
-                YouTubeOnlineSourceAdapter(
-                    YouTubeSource(discover=_discover_youtube),
-                    vertical_sources=vertical_sources,
-                    include_base_youtube=include_youtube,
-                )
-            )
-        else:
-            sources.append(YouTubeOnlineSourceAdapter(YouTubeSource(discover=_discover_youtube)))
-
+    # Clean stock is an independent lane and must never suppress YouTube/news.
     if pexels_api_key and (not provider_filter or "pexels" in provider_filter):
         sources.append(PexelsSource(pexels_api_key))
+
+    if include_youtube or requested_social:
+        from .vertical_social import build_default_vertical_sources
+        vertical_sources = [
+            source for source in build_default_vertical_sources()
+            if str(getattr(source, "provider_name", "")).casefold() in requested_social
+        ]
+        sources.append(
+            YouTubeOnlineSourceAdapter(
+                YouTubeSource(discover=_discover_youtube),
+                vertical_sources=vertical_sources,
+                include_base_youtube=include_youtube,
+            )
+        )
+
+    # Google Videos/news is intentionally separate from social/YouTube so the
+    # curator can see current-event/repertory sources even when clip download
+    # is manual or unavailable.
+    if include_web_video and str(os.environ.get("RAMBLA_ENABLE_WEB_VIDEO", "1")).casefold() in {"1","true","yes","on"}:
+        sources.append(WebVideoSource())
     engine = OnlineSourcingEngine(
         sources=sources,
         cache=AssetCache(cache_root),
