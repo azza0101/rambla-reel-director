@@ -43,7 +43,7 @@ def _request_signature(
         "model": model,
         "thinking_level": thinking_level,
         "prompt": build_director_prompt(package),
-        "schema": director_schema(),
+        "schema": director_schema(len(package.get("chunks") or [])),
     }
     return hashlib.sha256(
         json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
