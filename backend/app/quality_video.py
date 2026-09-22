@@ -457,7 +457,7 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
             attempt={'provider':provider_label,'query':query,'hits':len(rows),'expanded':query not in clean_queries}
             source_attempt=details
             if isinstance(source_attempt,dict):
-                for key in ('engine','browser_state','error','http_error','http_status','parser','raw_items','parsed_items','valid_items','cards_surfaced','status','cache_hit','search_seconds','request_query'):
+                for key in ('engine','browser_state','error','http_error','http_status','parser','raw_items','parsed_items','valid_items','cards_surfaced','status','cache_hit','search_seconds','request_query','browser_error','browser_error_detail','fallback_used','fallback_attempt','authenticated_search_valid','current_url','page_title','search_wait_error','search_result_link_count'):
                     if source_attempt.get(key) is not None:attempt[key]=source_attempt.get(key)
             output['search_attempts'].append(attempt)
             if details.get('vertical_attempts'):

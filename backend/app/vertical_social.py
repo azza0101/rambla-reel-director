@@ -224,7 +224,14 @@ class VerticalSocialSource:
         domain = 'site:tiktok.com "/video/"' if self.provider_name == "tiktok" else 'site:instagram.com/reel'
         search = f"{domain} {phrase}"
         async with httpx.AsyncClient(timeout=12, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0 RAMBLA-Reel-Director/0.5"}) as client:
-            response = await client.get("https://html.duckduckgo.com/html/", params={"q": search}); response.raise_for_status(); return response.text
+            response = await client.get("https://html.duckduckgo.com/html/", params={"q": search})
+            response.raise_for_status()
+            body = response.text.casefold()
+            if response.status_code == 202 or "anomaly.js" in body or "challenge-form" in body:
+                raise RuntimeError("public_search_challenge")
+            if "result__a" not in body and "no-results" not in body and "no results found" not in body:
+                raise RuntimeError("public_search_parser_mismatch")
+            return response.text
 
     async def _probe(self, url: str) -> dict[str, Any]:
         if self.probe is not None: return await self.probe(url)
@@ -235,7 +242,7 @@ class VerticalSocialSource:
         if orientation not in {None, "portrait"}: return []
         candidates: list[VerticalRemoteCandidate] = []; errors: list[str] = []; seen_pages: set[str] = set(); used_phrases: list[str] = []
         try:
-            for phrase in (social_search_phrases(query.strip())[:1] if self.provider_name=='youtube_shorts' else social_search_phrases(query.strip())):
+            for phrase in social_search_phrases(query.strip())[:1]:
                 if len(candidates) >= limit: break
                 used_phrases.append(phrase)
                 if self.provider_name == "youtube_shorts":
@@ -265,7 +272,7 @@ class VerticalSocialSource:
             self.last_attempt = {"provider": self.provider_name,"query": query.strip(),"phrases": used_phrases,"hits": len(candidates),"errors": errors}
             return candidates
         except Exception as exc:
-            self.last_attempt = {"provider": self.provider_name,"query": query.strip(),"phrases": used_phrases,"hits": 0,"error": type(exc).__name__}
+            self.last_attempt = {"provider": self.provider_name,"query": query.strip(),"phrases": used_phrases,"hits": 0,"error": type(exc).__name__, "error_detail": str(exc)[:180]}
             return []
 
 

@@ -132,6 +132,7 @@ class BrowserSocialSource:
         self.fallback = fallback
         self.last_attempt: dict[str, Any] = {}
         self._browser_disabled_reason: str | None = None
+        self._browser_disabled_detail: str | None = None
 
     async def _browser_search(self, query: str, limit: int) -> dict[str, Any]:
         url = SOCIAL_SEARCH_URLS[self.provider_name].format(query=quote_plus(query))
@@ -148,6 +149,14 @@ class BrowserSocialSource:
                 if not (parsed.hostname or "").casefold().endswith("instagram.com"):
                     raise RuntimeError(f"Instagram search navigation left instagram.com: {current_url[:220]}")
 
+            content = getattr(page, "content", None)
+            html = (await content()).casefold() if callable(content) else ""
+            if any(mark in html for mark in ('type="password"', "type='password'")) or "/accounts/login" in parsed.path:
+                raise RuntimeError("login_required: open the RAMBLA provider login, sign in, close that window, then retry")
+            if any(mark in html for mark in ('id="captcha', 'id="challenge', 'verify to continue', 'verify you are human')):
+                raise RuntimeError("challenge_required: complete verification in the RAMBLA provider login window")
+            if callable(content) and not html.strip():
+                raise RuntimeError("empty_browser_document: browser did not render the search page")
             wait_error = ""
             waiter = getattr(page, "wait_for_selector", None)
             if callable(waiter):
@@ -180,7 +189,8 @@ class BrowserSocialSource:
                     await page.evaluate("window.scrollBy(0, Math.max(window.innerHeight * 1.8, 1400))")
                     await page.wait_for_timeout(900)
 
-            state = "search_results" if found else ("search_results_timeout" if wait_error else "zero_results")
+            explicit_zero = any(mark in html for mark in ("no results found", "no videos found", "nessun risultato", "no results for"))
+            state = "search_results" if found else ("zero_results" if explicit_zero else "search_results_unavailable")
             return {
                 "rows": found[:limit],
                 "diagnostics": {
@@ -213,6 +223,7 @@ class BrowserSocialSource:
         raw: list[dict[str, Any]] = []
         if self._browser_disabled_reason:
             browser_error = self._browser_disabled_reason
+            browser_error_detail = self._browser_disabled_detail
             browser_diagnostics = {"browser_state": "disabled_after_failure"}
         else:
             try:
@@ -224,6 +235,7 @@ class BrowserSocialSource:
                 browser_error_detail = " ".join(str(exc).split())[:240] or None
                 if browser_error in {"BrowserUnavailableError", "ModuleNotFoundError", "ImportError"}:
                     self._browser_disabled_reason = browser_error
+                    self._browser_disabled_detail = browser_error_detail
 
         if raw:
             # Browser search cards do not expose a trustworthy source duration.
@@ -269,25 +281,34 @@ class BrowserSocialSource:
             return rows
 
         fallback_rows: list[VerticalRemoteCandidate] = []
+        fallback_attempt: dict[str, Any] = {}
         if self.fallback is not None:
             try:
                 fallback_rows = await self.fallback.search(
                     clean, orientation=orientation, min_duration=min_duration,
                     max_duration=max_duration, limit=limit,
                 )
-            except Exception:
+                fallback_attempt = dict(getattr(self.fallback, "last_attempt", {}) or {})
+            except Exception as exc:
                 fallback_rows = []
+                fallback_attempt = {"error": type(exc).__name__}
         self.last_attempt = {
             "provider": self.provider_name,
             "query": clean,
             "hits": len(fallback_rows),
             "browser": True,
             "fallback_used": bool(self.fallback is not None),
+            "fallback_attempt": fallback_attempt,
             "authenticated_search_valid": False,
             **browser_diagnostics,
             **({"browser_error": browser_error} if browser_error else {}),
             **({"browser_error_detail": browser_error_detail} if browser_error_detail else {}),
         }
+        browser_completed = browser_diagnostics.get("browser_state") == "zero_results"
+        fallback_completed = "hits" in fallback_attempt and not fallback_attempt.get("error") and not fallback_attempt.get("errors")
+        if not fallback_rows and not browser_completed and not fallback_completed:
+            self.last_attempt["error"] = fallback_attempt.get("error") or browser_error or browser_diagnostics.get("browser_state") or "social_search_unavailable"
+            self.last_attempt.pop("hits", None)
         return fallback_rows
 
     def drain_vertical_attempts(self) -> list[dict[str, Any]]:

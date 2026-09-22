@@ -93,7 +93,7 @@ def run_social_research(*, video: Path, output: Path, client_id: str) -> dict:
     retrieval_root, _chunks, visual_plan, _ = retrieval_bundle(output)
     beat_ids = tuple(
         str(row.get("id"))
-        for row in visual_plan.get("visual_beats", [])
+        for row in visual_plan["chunks"].values()
         if isinstance(row, dict) and row.get("action") == "BROLL" and str(row.get("id") or "").strip()
     )
     if not beat_ids:
@@ -136,14 +136,18 @@ def run_social_research(*, video: Path, output: Path, client_id: str) -> dict:
         write_json(video_artifact, merged)
         persist_video_diagnostics(retrieval_root)
         count = sum(
-            len(row.get("candidates") or [])
+            sum(c.get("provider", c.get("source")) in SOCIAL_PROVIDERS for c in row.get("candidates") or [])
             for row in merged
             if str(row.get("parent_beat_id") or "") in set(beat_ids)
         )
+        attempts = [a for row in fresh_video for a in row.get("search_attempts", []) if a.get("provider") in SOCIAL_PROVIDERS]
+        failed = sum(bool(a.get("error")) for a in attempts)
         _event(
             "online_search",
             100,
-            "Social-only search completed",
+            "Social search finished with provider errors" if failed else "Social-only search completed",
+            search_attempts=len(attempts),
+            failed_attempts=failed,
             beats=len(beat_ids),
             providers=list(SOCIAL_PROVIDERS),
             video_candidates=count,

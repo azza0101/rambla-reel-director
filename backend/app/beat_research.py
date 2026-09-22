@@ -57,6 +57,10 @@ def _cap_video_beat(rows: list[dict[str, Any]], beat_id: str, limit: int = 12) -
         if not _target(row, beat_id): continue
         candidates = list(row.get("candidates") or [])
         row["candidates"] = candidates[:remaining]
+        if row.get("quality_version"):
+            from .quality_video import synchronize_proposals
+            synchronize_proposals(row)
+            row["eligible_candidate_count"] = sum(bool(c.get("clip_verified")) for c in row["candidates"])
         remaining -= len(row["candidates"])
         if remaining <= 0: remaining = 0
 
@@ -88,11 +92,12 @@ def merge_video_rows(existing: list[dict[str, Any]], fresh: list[dict[str, Any]]
             row["research_round"] = research_round; output.append(row); continue
         matched.add(key)
         merged = deepcopy(row)
+        merged["discovery_sources"] = _merge_candidates(list(row.get("discovery_sources") or []), list(incoming.get("discovery_sources") or []), 12)
         merged["candidates"] = _merge_candidates(list(row.get("candidates") or []), list(incoming.get("candidates") or []), 12)
         for field in ("search_attempts", "errors", "rejected_candidates"):
             merged[field] = list(row.get(field) or []) + list(incoming.get(field) or [])
         for field, value in incoming.items():
-            if field not in {"candidates", "search_attempts", "errors", "rejected_candidates"}:
+            if field not in {"candidates", "discovery_sources", "search_attempts", "errors", "rejected_candidates"}:
                 merged[field] = deepcopy(value)
         merged["research_round"] = research_round
         output.append(merged)

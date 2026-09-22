@@ -122,7 +122,7 @@ def run_research(
     retrieval_root, chunks, visual_plan, _ = retrieval_bundle(output)
     if beat_id not in {str(row.get("id")) for row in chunks}:
         raise ValueError("unknown visual beat")
-    visual_beat = next((row for row in visual_plan.get("visual_beats", []) if str(row.get("id")) == beat_id), None)
+    visual_beat = visual_plan["chunks"].get(beat_id)
     if isinstance(visual_beat, dict) and visual_beat.get("action") != "BROLL":
         raise ValueError("media research is only available for BROLL beats")
 

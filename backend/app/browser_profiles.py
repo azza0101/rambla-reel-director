@@ -140,6 +140,7 @@ class _DumpDomPage:
         parser = _DomAnchorParser(url)
         parser.feed(html or "")
         self._anchors = parser.rows
+        self._html = html or ""
         self.url = url
 
     @staticmethod
@@ -161,6 +162,9 @@ class _DumpDomPage:
         if provider not in {"tiktok", "instagram"}:
             raise ValueError("unsupported social provider")
         return [self._public_row(row) for row in self._anchors if row.get(key)]
+
+    async def content(self) -> str:
+        return self._html
 
     async def evaluate(self, _script: str) -> None:
         return None
@@ -216,9 +220,16 @@ async def _default_chromium_dom_runner(
     try:
         completed = await asyncio.to_thread(run_dump)
     except Exception as exc:
-        raise BrowserUnavailableError("Chromium DOM automation failed") from exc
+        raise BrowserUnavailableError(f"Chromium DOM automation failed: {type(exc).__name__}") from exc
     if int(getattr(completed, "returncode", 1)) != 0:
-        raise BrowserUnavailableError("Chromium DOM automation failed")
+        stderr = str(getattr(completed, "stderr", "") or "").casefold()
+        if "processsingleton" in stderr or "lock file can not be created" in stderr:
+            reason = "profile_in_use: close the RAMBLA social login browser window, then retry"
+        elif "access is denied" in stderr or "accesso negato" in stderr:
+            reason = "browser_access_denied: browser launch was denied by the current environment"
+        else:
+            reason = f"browser_exit_{completed.returncode}"
+        raise BrowserUnavailableError(reason)
     page = _DumpDomPage(str(getattr(completed, "stdout", "") or ""), start_url)
     result = callback(page, None)
     if inspect.isawaitable(result):
