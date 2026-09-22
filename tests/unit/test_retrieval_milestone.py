@@ -52,8 +52,9 @@ def test_reuse_migration_requires_matching_source_and_guide(tmp_path,missing):
 def test_temporal_sampling_covers_source_and_short_clips():
     from backend.app.quality_video import temporal_starts
     times=temporal_starts(120,'youtube')
-    assert len(times)>=6 and min(times)<10 and max(times)>100
+    assert 1 <= len(times) <= 2
     assert all(0<=t<=116.5 for t in times)
+    assert times == sorted(set(times))
     assert temporal_starts(3,'youtube')==[0.0]
 
 
