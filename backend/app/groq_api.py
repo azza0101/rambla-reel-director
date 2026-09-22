@@ -96,6 +96,15 @@ class GroqDirectorClient:
             return 0.0
         return self.retry_delays[min(retry_index, len(self.retry_delays) - 1)]
 
+    @staticmethod
+    def _max_completion_tokens(model: str) -> int:
+        # Groq model limits: Qwen 3.8 27B = 16,384; GPT-OSS = 65,536.
+        if str(model).startswith("openai/gpt-oss-"):
+            return 65536
+        if str(model) == "qwen/qwen3.8-27b":
+            return 16384
+        return 16384
+
     def _post(self, body: dict[str, Any], headers: dict[str, str]) -> Any:
         if self._http_client is not None:
             return self._http_client.post(
@@ -170,7 +179,7 @@ class GroqDirectorClient:
                     "reasoning_effort": self.thinking_level,
                     "reasoning_format": "hidden",
                     "temperature": 1.0,
-                    "max_completion_tokens": 16000,
+                    "max_completion_tokens": self._max_completion_tokens(active_model),
                     "stream": False,
                     "response_format": {
                         "type": "json_schema",
