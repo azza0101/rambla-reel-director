@@ -11,6 +11,7 @@ from .retrieval_quality import metadata_quality,expand_queries
 from .video_preview import materialize_clip,probe_preview
 from .media_quality import perceptual_hash,diverse_candidates
 from .social_acquisition import download_authenticated_section, fallback_acquisition_state, profile_root_from_env
+from .editorial_relevance import decode_retrieval_intent
 
 QUALITY_VERSION='clip-quality-13'
 VERTICAL_PROVIDERS={'youtube_shorts','tiktok','instagram'}
@@ -105,10 +106,16 @@ def _verified_portrait_clip(clip):
     return bool(facts.get('playable')) and width>0 and height>width
 
 
+def _visual_target(intent):
+    spec=decode_retrieval_intent(intent)
+    return spec.get('visual_target') or spec.get('positive') or str(intent or '')
+
+
 def _discovery_scores(candidate,intent):
     text=(candidate.title+' '+candidate.description).strip()
-    query_meta=metadata_quality(getattr(candidate,'query','') or intent,text)[0]
-    intent_meta=metadata_quality(intent,text)[0]
+    target=_visual_target(intent)
+    query_meta=metadata_quality(getattr(candidate,'query','') or target,text)[0]
+    intent_meta=metadata_quality(target,text)[0]
     return query_meta,intent_meta
 
 
@@ -192,10 +199,11 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
                 if key not in seen:pool.append(row);seen.add(key)
             if len(pool)>=8 and query_index>=1:break
         intent=retrieval_intent or next((engine.query_intents.get(q) for q in queries if engine.query_intents.get(q)),queries[0])
+        visual_target=_visual_target(intent)
         pool=_balanced_discovery_pool(pool,intent,limit=8)
         accepted=[];pending=[]
         for candidate in pool:
-            asset_id=f'{candidate.provider}:{candidate.provider_id}';meta,contradictions,missing,generic=metadata_quality(intent,candidate.title+' '+candidate.description)
+            asset_id=f'{candidate.provider}:{candidate.provider_id}';meta,contradictions,missing,generic=metadata_quality(visual_target,candidate.title+' '+candidate.description)
             discovery_relevant=_discovery_relevant(candidate,intent)
             if candidate.provider in VERTICAL_PROVIDERS and candidate.orientation!='portrait':
                 output['rejected_candidates'].append({'id':asset_id,'source':candidate.provider,'source_url':candidate.source_page,'matched_query':candidate.query,'score':0,'quality_reasons':['vertical-social candidate is not portrait']});continue
@@ -217,7 +225,7 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
                         output['rejected_candidates'].append({'id':asset_id,'source':candidate.provider,'source_url':candidate.source_page,'matched_query':candidate.query,'score':0,'source_start_seconds':clip.get('source_start_seconds'),'source_end_seconds':clip.get('source_end_seconds'),'quality_reasons':['materialized social clip is not portrait']})
                         shape_rejected=True;break
                     frames=await asyncio.to_thread(_frame_samples,clip);frame_rows=[{**base,**clip,'id':asset_id+f':frame:{i}','kind':'video','path':clip['preview_path'],'keyframe_path':frame} for i,frame in enumerate(frames)]
-                    emit('Ranking actual clip frames',provider=candidate.provider,query=candidate.query,frames=len(frames));scored=engine.ranker.rank(intent,frame_rows);semantic=sum(r['score'] for r in scored)/max(1,len(scored));verified=len(scored)==len(frames) and bool(scored) and all(r.get('quality_state') in {'accepted','needs_review'} for r in scored)
+                    emit('Ranking actual clip frames',provider=candidate.provider,query=candidate.query,frames=len(frames),visual_target=visual_target);scored=engine.ranker.rank(intent,frame_rows);semantic=sum(r['score'] for r in scored)/max(1,len(scored));verified=len(scored)==len(frames) and bool(scored) and all(r.get('quality_state') in {'accepted','needs_review'} for r in scored)
                     phone_bonus=.035 if verified and candidate.provider in VERTICAL_PROVIDERS else 0
                     score=min(1.0,semantic+phone_bonus)
                     row={**base,**clip,'kind':'video','score':round(score,4),'semantic_score':round(semantic,4),'phone_native_bonus':phone_bonus,'frame_scores':[r['score'] for r in scored],'embedding_score':sum(r['embedding_score'] for r in scored)/len(scored) if scored and all(r.get('embedding_score') is not None for r in scored) else None,'quality_state':('needs_review' if any(r.get('quality_state')=='needs_review' for r in scored) else 'accepted') if verified else 'metadata_only','clip_verified':verified,'rank_reason':'Sampled clip frames ranked against editorial context'+(' · verified vertical-social bonus' if phone_bonus else ''),'preview_status':'ready','localization_method':'sampled source window; frame relevance checked' if verified else 'sampled source window; relevance unverified','quality_reasons':[reason for r in scored for reason in r.get('quality_reasons',[])],'acquisition_state':'CLIP_READY' if verified else 'PREVIEW_ONLY','manual_reason':None}
