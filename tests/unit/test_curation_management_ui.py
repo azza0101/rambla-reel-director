@@ -89,7 +89,7 @@ def test_management_ui_keeps_existing_layout_and_adds_api_director_controls():
     assert "GEMINI API" in html
     assert "GROQ API" in html
     assert "GENERATE PLAN" in html
-    assert "source video NOT sent" in html
+    assert "transcript only" in html
     assert "api('/ai/status')" in html
     assert "/director" in html
 
@@ -151,6 +151,6 @@ def test_copy_console_javascript_keeps_newlines_escaped_in_rendered_html():
     from backend.app.curation_ui_v2 import render_curation_page_v2
 
     html = render_curation_page_v2("copy-console-js")
-    assert "summary+'\\\\n'+pre" in html
-    assert "rows.join('\\\\n\\\\n')" in html
-    assert "summary+'\\n'+pre" not in html
+    assert r"summary+'\n'+pre" in html
+    assert r"rows.join('\n\n')" in html
+    assert "summary+'\n'+pre" not in html
