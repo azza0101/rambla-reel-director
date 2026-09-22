@@ -10,6 +10,7 @@ def test_profile_dirs_are_provider_scoped_and_reject_unknown(tmp_path):
     manager = BrowserProfileManager(tmp_path)
     assert manager.profile_dir("tiktok") == tmp_path / "tiktok"
     assert manager.profile_dir("instagram") == tmp_path / "instagram"
+    assert manager.profile_dir("envato") == tmp_path / "envato"
     with pytest.raises(ValueError, match="unsupported social provider"):
         manager.profile_dir("facebook")
 
@@ -156,3 +157,19 @@ def test_status_reports_usable_social_search_backend_without_exposing_profile_pa
     assert status["tiktok"]["search_ready"] is True
     assert status["tiktok"]["search_backend"] == "chromium_dom"
     assert "profile_dir" not in repr(status).casefold()
+
+
+def test_envato_login_uses_its_own_persistent_profile(tmp_path):
+    from backend.app.browser_profiles import BrowserProfileManager
+
+    calls = []
+
+    def launcher(provider, profile_dir, start_url):
+        calls.append((provider, profile_dir, start_url))
+        return 654
+
+    manager = BrowserProfileManager(tmp_path, login_launcher=launcher)
+    result = manager.open_login("envato")
+
+    assert result["provider"] == "envato"
+    assert calls == [("envato", tmp_path / "envato", "https://elements.envato.com/")]
