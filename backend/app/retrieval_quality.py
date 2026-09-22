@@ -92,7 +92,8 @@ class QualityRanker:
 
     def rank(self,intent,assets):
         spec=decode_retrieval_intent(intent)
-        positive_intent=spec['positive'] or str(intent or '')
+        editorial_intent=spec['positive'] or str(intent or '')
+        positive_intent=spec.get('visual_target') or editorial_intent
         negatives=list(spec.get('negatives') or [])[:3]
         measured={};counter={};query_measured={};talking_head={};graphic_frame={};action_counter={};participant_counter={};negative_counter={}
         def visual_rank(query,rows):
@@ -156,5 +157,5 @@ class QualityRanker:
             if reject:score=min(score,.29)
             state='rejected' if reject else ('accepted' if float(visual)>=.60 else 'needs_review') if visual is not None else 'metadata_only'
             if state=='needs_review':reasons.append('borderline visual relevance; inspect candidate')
-            output.append({**a,'score':round(max(0,score),4),'embedding_score':visual,'metadata_score':round(meta,4),'shot_embedding_score':positive_visual,'query_embedding_score':query_visual,'negative_embedding_score':negative_score,'editorial_positive':positive_intent,'editorial_negatives':negatives,'quality_state':state,'condition_counter_score':opposite,'action_counter_score':opposite_action,'quality_reasons':reasons,'rank_reason':'Qwen editorial context + query + hard negatives' if visual is not None else 'Metadata only; visual relevance needs review','ranking_warning':self.warning,'matched_query':a.get('query') or a.get('matched_query')})
+            output.append({**a,'score':round(max(0,score),4),'embedding_score':visual,'metadata_score':round(meta,4),'shot_embedding_score':positive_visual,'query_embedding_score':query_visual,'negative_embedding_score':negative_score,'visual_target':positive_intent,'editorial_positive':editorial_intent,'editorial_negatives':negatives,'quality_state':state,'condition_counter_score':opposite,'action_counter_score':opposite_action,'quality_reasons':reasons,'rank_reason':'Qwen concrete shot target + query + hard negatives' if visual is not None else 'Metadata only; visual relevance needs review','ranking_warning':self.warning,'matched_query':a.get('query') or a.get('matched_query')})
         return sorted(output,key=lambda r:-r['score'])
