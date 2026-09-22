@@ -105,11 +105,59 @@ def _verified_portrait_clip(clip):
     return bool(facts.get('playable')) and width>0 and height>width
 
 
+def _discovery_scores(candidate,intent):
+    text=(candidate.title+' '+candidate.description).strip()
+    query_meta=metadata_quality(getattr(candidate,'query','') or intent,text)[0]
+    intent_meta=metadata_quality(intent,text)[0]
+    return query_meta,intent_meta
+
+
+def _discovery_relevant(candidate,intent):
+    """Cheap metadata gate for discovery-only cards.
+
+    A source link/thumbnail is useful only if its title/description matches the
+    actual Director query, not merely one generic noun. This prevents results
+    such as a storm-damaged ferry from surfacing for "passenger ferry luggage".
+    """
+    query_meta,intent_meta=_discovery_scores(candidate,intent)
+    return query_meta>=.40 or (query_meta>=.25 and intent_meta>=.35)
+
+
 def _discovery_priority(candidate,intent):
-    meta=metadata_quality(intent,candidate.title+' '+candidate.description)[0]
+    query_meta,intent_meta=_discovery_scores(candidate,intent)
     vertical=1 if candidate.provider in VERTICAL_PROVIDERS and candidate.orientation=='portrait' else 0
     authenticity=float(getattr(candidate,'source_authenticity',0) or 0)
-    return (vertical,authenticity,meta,-int(getattr(candidate,'provider_rank',0) or 0))
+    # Relevance must beat format preference. Vertical is only a tie-breaker.
+    return (max(query_meta,intent_meta),query_meta,intent_meta,vertical,authenticity,-int(getattr(candidate,'provider_rank',0) or 0))
+
+
+def _balanced_discovery_pool(pool,intent,limit=8):
+    """Round-robin actual providers after relevance ordering.
+
+    YouTube long-form and vertical providers share one adapter. Without this
+    balancing, several vertical hits can consume the materialization budget
+    before a better normal-YouTube result is even checked.
+    """
+    groups={}
+    for candidate in sorted(pool,key=lambda c:_discovery_priority(c,intent),reverse=True):
+        groups.setdefault(candidate.provider,[]).append(candidate)
+    provider_order=sorted(
+        groups,
+        key=lambda provider:_discovery_priority(groups[provider][0],intent),
+        reverse=True,
+    )
+    output=[]
+    index=0
+    while len(output)<limit:
+        added=False
+        for provider in provider_order:
+            rows=groups[provider]
+            if index<len(rows):
+                output.append(rows[index]);added=True
+                if len(output)>=limit:return output
+        if not added:break
+        index+=1
+    return output
 
 
 def _manual_discovery_base(candidate,asset_id,client_id,meta,*,reason,preview_path=None):
@@ -144,17 +192,18 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
                 if key not in seen:pool.append(row);seen.add(key)
             if len(pool)>=8 and query_index>=1:break
         intent=retrieval_intent or next((engine.query_intents.get(q) for q in queries if engine.query_intents.get(q)),queries[0])
-        pool.sort(key=lambda c:_discovery_priority(c,intent),reverse=True)
+        pool=_balanced_discovery_pool(pool,intent,limit=8)
         accepted=[];pending=[]
-        for candidate in pool[:6]:
+        for candidate in pool:
             asset_id=f'{candidate.provider}:{candidate.provider_id}';meta,contradictions,missing,generic=metadata_quality(intent,candidate.title+' '+candidate.description)
+            discovery_relevant=_discovery_relevant(candidate,intent)
             if candidate.provider in VERTICAL_PROVIDERS and candidate.orientation!='portrait':
                 output['rejected_candidates'].append({'id':asset_id,'source':candidate.provider,'source_url':candidate.source_page,'matched_query':candidate.query,'score':0,'quality_reasons':['vertical-social candidate is not portrait']});continue
             try:
                 preview=await engine.cache.materialize_preview(candidate)
             except Exception as exc:
                 output['errors'].append({'provider':candidate.provider,'code':'poster_failed','error_type':type(exc).__name__})
-                if candidate.provider in VERTICAL_PROVIDERS or candidate.provider=='web_video':
+                if discovery_relevant:
                     pending.append(_manual_discovery_base(candidate,asset_id,client_id,meta,reason=f'preview unavailable ({type(exc).__name__})'))
                 continue
             output['preview_cache_hits']+=int(preview.cache_hit)
@@ -184,8 +233,9 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
                 if best['semantic_score']>=.50 and best['clip_verified']:accepted.append(best)
                 else:
                     output['rejected_candidates'].append({k:best.get(k) for k in ('id','source','source_url','matched_query','score','semantic_score','frame_scores','source_start_seconds','source_end_seconds','quality_reasons')})
-                    if candidate.provider in VERTICAL_PROVIDERS:pending.append({**base,**fallback_acquisition_state(has_preview=True,reason='automatic clip did not pass relevance verification')})
-            else:pending.append({**base,**fallback_acquisition_state(has_preview=True,reason='automatic clip download unavailable')})
+                    if discovery_relevant:pending.append({**base,**fallback_acquisition_state(has_preview=True,reason='automatic clip did not pass relevance verification')})
+            elif discovery_relevant:
+                pending.append({**base,**fallback_acquisition_state(has_preview=True,reason='automatic clip download unavailable')})
             if len(accepted)>=3:break
         accepted,_=diverse_candidates(sorted(accepted,key=lambda r:(r.get('source') in VERTICAL_PROVIDERS,r['score']),reverse=True),[],limit=3);output['candidates'].extend(accepted[:3]);output.setdefault('discovery_sources',[]).extend(pending[:3])
     output['eligible_candidate_count']=sum(c.get('clip_verified',False) for c in output['candidates']);output['raw_result_count']=sum(r['hits'] for r in output['search_attempts']);output['ranking_warning']=getattr(engine.ranker,'warning',None);return output
