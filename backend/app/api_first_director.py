@@ -39,7 +39,7 @@ in avoid. Output only the structured object requested by the schema.
 """
 
 
-def director_schema() -> dict[str, Any]:
+def director_schema(expected_chunk_count: int | None = None) -> dict[str, Any]:
     string = {"type": "string", "minLength": 1}
     query_list = {"type": "array", "items": string, "minItems": 1, "maxItems": 3}
     shot = {
@@ -75,7 +75,12 @@ def director_schema() -> dict[str, Any]:
         "additionalProperties": False,
         "properties": {
             "global_topic": string,
-            "beats": {"type": "array", "items": beat, "minItems": 1},
+            "beats": {
+                "type": "array",
+                "items": beat,
+                "minItems": expected_chunk_count if expected_chunk_count is not None else 1,
+                **({"maxItems": expected_chunk_count} if expected_chunk_count is not None else {}),
+            },
         },
         "required": ["global_topic", "beats"],
     }
@@ -306,7 +311,7 @@ def generate_director_plan(
         request = prompt if attempt == 1 else build_repair_prompt(ValueError(errors[-1]))
         reply = provider.generate_json(
             request,
-            director_schema(),
+            director_schema(len(package.get("chunks") or [])),
             previous_interaction_id=previous_id,
         )
         previous_id = reply.interaction_id or previous_id
