@@ -27,3 +27,24 @@ def test_shelf_dedupes_same_source_and_never_invents_fillers():
     ])
     assert [x.asset_id for x in shelf.video] == ["a", "c"]
     assert shelf.images == ()
+
+
+def test_envato_discovery_candidate_survives_aggregate_video_shelf():
+    row = CurationCandidate(
+        asset_id="envato:abc",
+        chunk_id="chunk-1",
+        kind="video",
+        provider="envato",
+        source_page="https://elements.envato.com/example-ABCDEFG",
+        title="Example Envato clip",
+        description="Example Envato clip",
+        score=.7,
+        rights_state="subscription_license_required",
+        orientation="landscape",
+        preview_status="preview_pending",
+        preview_url="https://assets.example/thumb.jpg",
+        clip_verified=False,
+    )
+    shelf = build_candidate_shelf([row])
+    assert [item.provider for item in shelf.video] == ["envato"]
+    assert shelf.video[0].source_page == "https://elements.envato.com/example-ABCDEFG"
