@@ -77,7 +77,7 @@ def build_candidate_shelf(
     tiktok=balanced([r for r in videos if r.provider=='tiktok' and r.orientation=='portrait'],video_limit)
     instagram=balanced([r for r in videos if r.provider=='instagram' and r.orientation=='portrait'],video_limit)
     web=balanced([r for r in videos if r.provider=='web_video'],video_limit)
-    general=balanced([r for r in videos if r.provider!='pexels' and r.provider not in VERTICAL_SOCIAL_PROVIDERS and r.provider!='web_video'],video_limit)
+    general=balanced([r for r in videos if r.provider not in {'pexels','envato','web_video'} and r.provider not in VERTICAL_SOCIAL_PROVIDERS],video_limit)
     stock=balanced([r for r in videos if r.provider=='pexels'],video_limit)
     images=balanced([r for r in ordered if r.kind=='image'],image_limit)
     vertical=tuple(sorted((*shorts,*tiktok,*instagram),key=lambda row:(-row.score,row.asset_id)))
