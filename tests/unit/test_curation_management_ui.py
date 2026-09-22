@@ -145,3 +145,12 @@ def test_curation_ui_has_clean_console_copy_button():
     assert "COPY CONSOLE" in html
     assert "function cleanConsoleText()" in html
     assert "$('copyConsole').onclick=copyConsole" in html
+
+
+def test_copy_console_javascript_keeps_newlines_escaped_in_rendered_html():
+    from backend.app.curation_ui_v2 import render_curation_page_v2
+
+    html = render_curation_page_v2("copy-console-js")
+    assert "summary+'\\\\n'+pre" in html
+    assert "rows.join('\\\\n\\\\n')" in html
+    assert "summary+'\\n'+pre" not in html
