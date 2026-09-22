@@ -127,7 +127,10 @@ def _discovery_relevant(candidate,intent):
     such as a storm-damaged ferry from surfacing for "passenger ferry luggage".
     """
     query_meta,intent_meta=_discovery_scores(candidate,intent)
-    return query_meta>=.40 or (query_meta>=.25 and intent_meta>=.35)
+    # Strong agreement with the physical shot target can rescue a provider whose
+    # stored search query is noisy/aliased. Conversely, one generic query noun
+    # alone is not enough.
+    return intent_meta>=.60 or query_meta>=.40 or (query_meta>=.20 and intent_meta>=.35)
 
 
 def _discovery_priority(candidate,intent):
