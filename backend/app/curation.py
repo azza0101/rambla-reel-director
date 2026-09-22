@@ -77,6 +77,7 @@ def build_candidate_shelf(
     tiktok=balanced([r for r in videos if r.provider=='tiktok' and r.orientation=='portrait'],video_limit)
     instagram=balanced([r for r in videos if r.provider=='instagram' and r.orientation=='portrait'],video_limit)
     web=balanced([r for r in videos if r.provider=='web_video'],video_limit)
+    envato=balanced([r for r in videos if r.provider=='envato'],video_limit)
     general=balanced([r for r in videos if r.provider not in {'pexels','envato','web_video'} and r.provider not in VERTICAL_SOCIAL_PROVIDERS],video_limit)
     stock=balanced([r for r in videos if r.provider=='pexels'],video_limit)
     images=balanced([r for r in ordered if r.kind=='image'],image_limit)
@@ -85,4 +86,4 @@ def build_candidate_shelf(
     # Each UI shelf gets its own bounded candidate budget. TikTok, Instagram and
     # Shorts must not evict one another before the curator can compare them; the
     # legacy aggregate vertical_social still remains globally score-ordered.
-    return CandidateShelf(video=vertical+web+general+stock,images=images,social=social,stock=stock,vertical_social=vertical,general_social=web+general)
+    return CandidateShelf(video=vertical+web+general+envato+stock,images=images,social=social,stock=stock,vertical_social=vertical,general_social=web+general)
