@@ -263,3 +263,56 @@ def test_video_discovery_pool_reserves_normal_youtube_among_vertical_results():
     providers = [item.provider for item in selected]
     assert "youtube" in providers
     assert len(set(providers)) >= 3
+
+
+def test_imported_queries_do_not_append_broad_contextual_topic_fallbacks():
+    from backend.app.editorial_relevance import build_retrieval_spec
+
+    beat = {
+        "core_meaning": "Accept compromises and reduce harm",
+        "subtext": "Sustainable travel is imperfect",
+        "original_text": "Significa capire su quali cose è possibile accettare il compromesso.",
+        "avoid": [],
+    }
+    shot = {
+        "shot_id": "s1",
+        "description": "Traveler boarding a local bus with a backpack",
+        "image_queries": ["traveler boarding local bus"],
+        "video_queries": ["traveler boarding local bus"],
+    }
+
+    spec = build_retrieval_spec(beat, shot, "video")
+    assert spec["queries"] == ["traveler boarding local bus"]
+    assert "greenwashing tourism" not in spec["queries"]
+    assert spec["visual_target"] == "Traveler boarding a local bus with a backpack"
+
+
+def test_quality_ranker_uses_concrete_visual_target_not_full_editorial_argument():
+    from backend.app.editorial_relevance import INTENT_PREFIX
+    from backend.app.retrieval_quality import QualityRanker
+
+    seen = []
+
+    class Visual:
+        def rank(self, query, rows):
+            seen.append(query)
+            return [dict(row, embedding_score=.75) for row in rows]
+
+    intent = INTENT_PREFIX + json.dumps({
+        "positive": "Abstract argument about sustainability and compromise",
+        "visual_target": "traveler boarding local bus with backpack",
+        "context": "long abstract spoken context",
+        "negatives": [],
+        "generic_shot_demoted": False,
+        "shot_id": "s1",
+    })
+    rows = QualityRanker(Visual()).rank(intent, [{
+        "id": "x",
+        "description": "traveler boarding local bus with backpack",
+        "query": "traveler boarding local bus",
+        "kind": "video",
+    }])
+
+    assert seen[0] == "traveler boarding local bus with backpack"
+    assert rows[0]["visual_target"] == "traveler boarding local bus with backpack"
+    assert rows[0]["editorial_positive"] == "Abstract argument about sustainability and compromise"
