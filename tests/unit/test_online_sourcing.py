@@ -350,7 +350,7 @@ def test_youtube_discovery_normalizes_flat_search_metadata():
 
 
 @pytest.mark.asyncio
-async def test_imported_editorial_plan_keeps_director_queries_authoritative():
+async def test_imported_editorial_plan_keeps_director_queries_authoritative(tmp_path):
     from backend.app.online_sourcing_cli import _source_outline
     from backend.app.taste_profile import TasteProfile, build_taste_context
 
@@ -361,7 +361,7 @@ async def test_imported_editorial_plan_keeps_director_queries_authoritative():
         max_queries = 6
         max_preview_candidates = 12
         quality_mode = True
-        retrieval_output = None
+        retrieval_output = tmp_path
         event_callback = None
 
         async def source_beat(self, **kwargs):
