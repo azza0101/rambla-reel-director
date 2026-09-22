@@ -451,9 +451,11 @@ def test_director_prompt_explicitly_targets_short_fast_cut_beats():
     from backend.app.api_first_director import build_director_prompt
 
     prompt = build_director_prompt(package_fixture())
-    assert "one transcript chunk equals one visual beat" in prompt
-    assert "Never merge chunks" in prompt
-    assert "Return exactly one decision per transcript chunk" in prompt
+    normalized = " ".join(prompt.split())
+    assert "one transcript chunk equals one visual beat" in normalized
+    assert "Never merge chunks" in normalized
+    assert "Return exactly one decision per transcript chunk" in normalized
+    assert "BROLL is NOT a topical explainer search" in normalized
 
 
 def test_cli_configures_utf8_stdio_without_crashing_on_windows_style_streams(monkeypatch):
