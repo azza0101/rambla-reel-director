@@ -75,7 +75,7 @@ def test_real_engine_reaches_web_video_lane_when_enabled(monkeypatch, tmp_path):
         embedding_code_root=None, cache_root=tmp_path / "cache", max_candidates=4,
     )
     assert [getattr(source, "provider_name", None) for source in engine.sources] == [
-        "youtube", "web_video"
+        "youtube", "envato", "web_video"
     ]
 
 
