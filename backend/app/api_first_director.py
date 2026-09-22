@@ -14,20 +14,16 @@ DIRECTOR_SCHEMA_VERSION = "rambla-api-first-director-1"
 DIRECTOR_INSTRUCTIONS = """You are the editorial B-roll director for a fast-paced short-form reel.
 
 Understand the ENTIRE spoken reel first: topic, tone, jokes, references, setup/payoff
-and what each sentence means in context. Only then group adjacent transcript chunks
-into visual beats. The source video is deliberately unavailable. Base editorial meaning
-only on the spoken transcript.
+and what each sentence means in context. Then make exactly ONE editorial decision for
+EACH transcript chunk, in the same order. Do not merge chunks. The source video is
+deliberately unavailable. Base editorial meaning only on the spoken transcript.
 
-Cover every transcript chunk exactly once and in order. This is a fast-cut reel: visual
-beats must stay short. Default to ONE transcript chunk per beat. Combine two adjacent
-chunks only when splitting them would damage meaning or grammar. Never combine three or
-more chunks. Aim for roughly 2.0-3.5 seconds per beat and keep a beat at or below 4.5
-seconds whenever that is possible from the supplied chunk boundaries. If one single
-transcript chunk is already longer than 4.5 seconds, keep it alone rather than grouping
-anything else with it. Prefer dense short-form visual coverage when concrete retrievable
-visuals exist. KEEP_TALKING_HEAD is deliberate for intro, CTA, delivery-critical punchline,
-or moments where B-roll would weaken the idea. CONTINUE_PREVIOUS_VISUAL means the previous
-visual stays useful and needs no new shots.
+Cover every transcript chunk exactly once and in order. This is a fast-cut reel: one
+transcript chunk equals one visual beat. Never merge chunks. Prefer dense short-form visual
+coverage when concrete retrievable visuals exist. KEEP_TALKING_HEAD is deliberate for intro,
+CTA, delivery-critical punchline, or moments where B-roll would weaken the idea.
+CONTINUE_PREVIOUS_VISUAL means the previous visual stays useful across this chunk and needs
+no new shots.
 
 Current spoken meaning is authoritative. Neighboring chunks may resolve references but
 must not add unrelated objects or claims. Prefer literal physical subjects and actions
@@ -60,8 +56,7 @@ def director_schema() -> dict[str, Any]:
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "first_chunk_id": string,
-            "last_chunk_id": string,
+            "chunk_id": string,
             "action": {"type": "string", "enum": ["BROLL", "KEEP_TALKING_HEAD", "CONTINUE_PREVIOUS_VISUAL"]},
             "editorial_function": string,
             "core_meaning": string,
@@ -71,7 +66,7 @@ def director_schema() -> dict[str, Any]:
             "avoid": {"type": "array", "items": string, "maxItems": 8},
         },
         "required": [
-            "first_chunk_id", "last_chunk_id", "action", "editorial_function",
+            "chunk_id", "action", "editorial_function",
             "core_meaning", "subtext", "visual_mode", "shots", "avoid",
         ],
     }
@@ -102,11 +97,9 @@ def _compact_chunk_ledger(package: dict[str, Any]) -> str:
 def build_director_prompt(package: dict[str, Any]) -> str:
     return (
         DIRECTOR_INSTRUCTIONS
-        + "\nRead all chronological chunks before deciding beats. "
-        + "Use first_chunk_id and last_chunk_id for each contiguous beat. "
-        + "The first beat starts at the first chunk, the last beat ends at the last chunk, "
-        + "and adjacent beats meet with no gaps or overlap. "
-        + "Keep beats short: normally 1 transcript chunk, never more than 2; multi-chunk beats must be <=4.5 seconds. "
+        + "\nRead all chronological chunks before deciding. "
+        + "Return exactly one decision per transcript chunk, in identical order. "
+        + "Use chunk_id to identify that chunk. Never merge chunks. "
         + "For BROLL: single means exactly 1 shot; sequence/juxtaposition means 2-3 shots. "
         + "For KEEP_TALKING_HEAD and CONTINUE_PREVIOUS_VISUAL: shots must be empty.\n"
         + "TRANSCRIPT_CHUNKS="
@@ -157,29 +150,21 @@ def compile_director_decisions(
     if not isinstance(raw_beats, list) or not raw_beats:
         raise ValueError("$.beats: expected at least one beat")
 
+    if len(raw_beats) != len(chunks):
+        raise ValueError(
+            f"$.beats: expected exactly {len(chunks)} chunk decisions, got {len(raw_beats)}"
+        )
+
     canonical: list[dict[str, Any]] = []
-    cursor = 0
-    for index, raw in enumerate(raw_beats, start=1):
+    for index, (raw, chunk) in enumerate(zip(raw_beats, chunks), start=1):
         path = f"$.beats[{index - 1}]"
         if not isinstance(raw, dict):
             raise ValueError(f"{path}: expected object")
-        first_id = _clean_text(raw.get("first_chunk_id"))
-        last_id = _clean_text(raw.get("last_chunk_id"))
-        if first_id not in positions or last_id not in positions:
-            raise ValueError(f"{path}: unknown transcript chunk id")
-        first = positions[first_id]
-        last = positions[last_id]
-        if first != cursor:
-            expected = chunk_ids[cursor] if cursor < len(chunk_ids) else "<end>"
-            raise ValueError(f"{path}: first_chunk_id must be {expected}")
-        if last < first:
-            raise ValueError(f"{path}: last_chunk_id precedes first_chunk_id")
-        covered = chunks[first:last + 1]
-        if len(covered) > 2:
-            raise ValueError(f"{path}: reel beats may cover at most 2 transcript chunks")
-        beat_seconds = float(covered[-1]["end"]) - float(covered[0]["start"])
-        if len(covered) > 1 and beat_seconds > 4.5:
-            raise ValueError(f"{path}: multi-chunk beat exceeds 4.5 seconds")
+        chunk_id = _clean_text(raw.get("chunk_id"))
+        expected_id = str(chunk["id"])
+        if chunk_id != expected_id:
+            raise ValueError(f"{path}: chunk_id must be {expected_id}")
+        covered = [chunk]
 
         action = _clean_text(raw.get("action"))
         if action not in {"BROLL", "KEEP_TALKING_HEAD", "CONTINUE_PREVIOUS_VISUAL"}:
@@ -250,10 +235,6 @@ def compile_director_decisions(
             beat["continuation_from"] = canonical[-1]["id"]
 
         canonical.append(beat)
-        cursor = last + 1
-
-    if cursor != len(chunks):
-        raise ValueError(f"$.beats: transcript coverage stops before {chunk_ids[cursor]}")
 
     plan = {
         "schema_version": VERSION,
@@ -271,7 +252,8 @@ def build_repair_prompt(error: Exception) -> str:
     return (
         "Your previous structured editorial decision failed deterministic validation. "
         "Keep the same whole-reel editorial reasoning, but return a corrected complete object. "
-        "Do not omit or reorder transcript chunks. Validation error: " + message
+        "Return exactly one decision per transcript chunk, in the original order, and never merge chunks. "
+        "Validation error: " + message
     )
 
 
