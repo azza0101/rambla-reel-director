@@ -88,7 +88,7 @@ def _social_clip(url,directory,identity,start,provider):
 
 def _frame_samples(clip):
     path=Path(clip['preview_path']);frames=[]
-    for second in (.5,2.5):
+    for second in (.4,1.7,3.0):
         frame=path.with_name(path.stem+f'-{second}.jpg')
         if not frame.exists():subprocess.run(['ffmpeg','-v','error','-y','-ss',str(second),'-i',str(path),'-frames:v','1',str(frame)],check=True,capture_output=True,timeout=15)
         frames.append(str(frame))
@@ -228,7 +228,12 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
                         output['rejected_candidates'].append({'id':asset_id,'source':candidate.provider,'source_url':candidate.source_page,'matched_query':candidate.query,'score':0,'source_start_seconds':clip.get('source_start_seconds'),'source_end_seconds':clip.get('source_end_seconds'),'quality_reasons':['materialized social clip is not portrait']})
                         shape_rejected=True;break
                     frames=await asyncio.to_thread(_frame_samples,clip);frame_rows=[{**base,**clip,'id':asset_id+f':frame:{i}','kind':'video','path':clip['preview_path'],'keyframe_path':frame} for i,frame in enumerate(frames)]
-                    emit('Ranking actual clip frames',provider=candidate.provider,query=candidate.query,frames=len(frames),visual_target=visual_target);scored=engine.ranker.rank(intent,frame_rows);semantic=sum(r['score'] for r in scored)/max(1,len(scored));verified=len(scored)==len(frames) and bool(scored) and all(r.get('quality_state') in {'accepted','needs_review'} for r in scored)
+                    emit('Ranking actual clip frames',provider=candidate.provider,query=candidate.query,frames=len(frames),visual_target=visual_target);scored=engine.ranker.rank(intent,frame_rows)
+                    frame_values=sorted((float(r.get('score',0)) for r in scored),reverse=True)
+                    best_values=frame_values[:2] if len(frame_values)>=2 else frame_values
+                    semantic=sum(best_values)/max(1,len(best_values))
+                    coherent=sum(r.get('quality_state') in {'accepted','needs_review'} for r in scored)
+                    verified=len(scored)==len(frames) and len(scored)>=2 and coherent>=2 and semantic>=.46
                     phone_bonus=.035 if verified and candidate.provider in VERTICAL_PROVIDERS else 0
                     score=min(1.0,semantic+phone_bonus)
                     row={**base,**clip,'kind':'video','score':round(score,4),'semantic_score':round(semantic,4),'phone_native_bonus':phone_bonus,'frame_scores':[r['score'] for r in scored],'embedding_score':sum(r['embedding_score'] for r in scored)/len(scored) if scored and all(r.get('embedding_score') is not None for r in scored) else None,'quality_state':('needs_review' if any(r.get('quality_state')=='needs_review' for r in scored) else 'accepted') if verified else 'metadata_only','clip_verified':verified,'rank_reason':'Sampled clip frames ranked against editorial context'+(' · verified vertical-social bonus' if phone_bonus else ''),'preview_status':'ready','localization_method':'sampled source window; frame relevance checked' if verified else 'sampled source window; relevance unverified','quality_reasons':[reason for r in scored for reason in r.get('quality_reasons',[])],'acquisition_state':'CLIP_READY' if verified else 'PREVIEW_ONLY','manual_reason':None}
@@ -241,7 +246,7 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
                 continue
             if measured:
                 best=max(measured,key=lambda r:(r['clip_verified'],r['score']))
-                if best['semantic_score']>=.50 and best['clip_verified']:accepted.append(best)
+                if best['semantic_score']>=.46 and best['clip_verified']:accepted.append(best)
                 else:
                     output['rejected_candidates'].append({k:best.get(k) for k in ('id','source','source_url','matched_query','score','semantic_score','frame_scores','source_start_seconds','source_end_seconds','quality_reasons')})
                     if discovery_relevant:pending.append({**base,**fallback_acquisition_state(has_preview=True,reason='automatic clip did not pass relevance verification')})
