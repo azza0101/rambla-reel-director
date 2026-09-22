@@ -386,9 +386,13 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
     if list(clean_queries)!=list(queries):
         emit('Dropped stale/mismatched search queries',original_queries=list(queries),active_queries=list(clean_queries),visual_target=visual_target)
     priority={'pexels':0,'envato':1,'youtube_shorts':2,'tiktok':3,'instagram':4,'web_video':5,'youtube':6}
+    query_budget={'envato':1,'web_video':1,'youtube':2,'pexels':2,'youtube_shorts':1,'tiktok':1,'instagram':1}
+    expanded_all=expand_queries(clean_queries,'video')
     for source in sorted(engine.sources,key=lambda s:priority.get(_provider_name(s).casefold(),6)):
         provider_label=_provider_name(source);pool=[];seen=set()
-        for query_index,query in enumerate(expand_queries(clean_queries,'video')):
+        provider_key=provider_label.casefold()
+        provider_queries=expanded_all[:query_budget.get(provider_key,2)]
+        for query_index,query in enumerate(provider_queries):
             emit('Searching video source',provider=provider_label,query=query)
             rows,error=await engine._search_one(source,query,orientation=orientation,min_duration=min_duration,max_duration=max_duration)
             attempt={'provider':provider_label,'query':query,'hits':len(rows),'expanded':query not in clean_queries};output['search_attempts'].append(attempt)
