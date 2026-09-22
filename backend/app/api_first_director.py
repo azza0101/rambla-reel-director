@@ -32,10 +32,24 @@ presenter, infographic, or symbolic filler unless the speech is really about it.
 candid phone-native real-world actions suitable for Shorts/Reels/TikTok. Avoid repeating
 the same visual idea across the reel.
 
+BROLL is NOT a topical explainer search. Never answer an abstract sentence with a video
+that merely discusses the same topic. Do not search for essays, explainers, certifications,
+criteria, educational slides, talking-head experts, "how to", or generic concept videos.
+If the current chunk is abstract and has no truthful camera-visible physical scene, use
+CONTINUE_PREVIOUS_VISUAL when the previous visual still works; otherwise KEEP_TALKING_HEAD.
+A good B-roll description should sound like something a person could film on a phone:
+a visible subject doing a visible action in a real place.
+
 Prefer one strong retrievable shot. Use 2-3 only for a real sequence or juxtaposition.
-Queries must be simple concrete English search phrases of 2-10 words. Produce 1-3 image
-queries and 1-3 video queries per shot. Put likely false positives and unwanted shortcuts
-in avoid. Output only the structured object requested by the schema.
+Queries must be simple concrete English search phrases of 2-10 words describing visible
+subjects/actions, not themes or arguments. Prefer "airport shuttle bus departing" over
+"sustainable travel choices"; prefer "passengers boarding ferry with luggage" over
+"ethical tourism"; prefer "wilted basil plant balcony" over "urban regeneration joke".
+Do not use abstract search phrases such as "greenwashing tourism", "sustainable tourism",
+"ethical tourism", "responsible tourism", "sustainability explained", "criteria", "how to",
+or "tips" unless those exact words/signs are themselves the physical subject being shown.
+Produce 1-3 image queries and 1-3 video queries per shot. Put likely false positives and
+unwanted shortcuts in avoid. Output only the structured object requested by the schema.
 """
 
 
