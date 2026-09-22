@@ -44,6 +44,7 @@ jobs:
               tests/unit/test_social_login_api.py \
               tests/unit/test_social_curation_ui.py \
               tests/unit/test_web_video_source.py \
+              tests/unit/test_envato_source.py \
               tests/unit/test_youtube_source.py \
               tests/unit/test_retrieval_quality.py \
               tests/unit/test_retrieval_diagnostics_states.py \
