@@ -123,7 +123,13 @@ async def _source_outline(
     for slot in slots:
         duration = slot.duration_seconds
         editorial: dict[str, Any] = {}
-        if taste_context is not None:
+        # Imported/API-first plans already contain shot-level visual intent and
+        # concrete provider queries. Do not replace those with a second strategy
+        # inferred from broad raw-ASR segments, which can leak nouns from adjacent
+        # speech into the wrong beat (for example an "eco label" query on a
+        # transport beat).
+        imported_editorial = slot.evidence_class == "imported_editorial_shot"
+        if taste_context is not None and not imported_editorial:
             context = " ".join(
                 str(segment.get("text") or "").strip()
                 for segment in (transcript or {}).get("segments", [])
