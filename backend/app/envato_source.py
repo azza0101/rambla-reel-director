@@ -5,11 +5,14 @@ The curator opens the official item page in their own logged-in browser.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import inspect
+import os
 import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 from urllib.parse import quote_plus, urljoin, urlparse
 
@@ -154,58 +157,6 @@ async def _http_discover(query: str, limit: int) -> list[dict[str, Any]]:
     return parse_envato_search_html(response.text, limit=limit)
 
 
-async def _browser_discover(query: str, limit: int) -> list[dict[str, Any]]:
-    try:
-        from playwright.async_api import async_playwright
-    except (ImportError, ModuleNotFoundError):
-        return []
-    async with async_playwright() as playwright:
-        browser = None
-        for channel in ("msedge", "chrome", None):
-            try:
-                kwargs: dict[str, Any] = {"headless": True}
-                if channel:
-                    kwargs["channel"] = channel
-                browser = await playwright.chromium.launch(**kwargs)
-                break
-            except Exception:
-                browser = None
-        if browser is None:
-            return []
-        try:
-            page = await browser.new_page(viewport={"width": 1440, "height": 1300})
-            await page.goto(_search_url(query), wait_until="domcontentloaded", timeout=20_000)
-            await page.wait_for_timeout(900)
-            raw = await page.eval_on_selector_all(
-                'a[href*="elements.envato.com/"], a[href^="/"]',
-                """els => els.map(a => {
-                    const img=a.querySelector('img');
-                    return {
-                        href:a.href||a.getAttribute('href')||'',
-                        title:(img?.alt||a.innerText||a.textContent||'').trim(),
-                        preview_url:(img?.currentSrc||img?.src||'')
-                    };
-                })""",
-            )
-        finally:
-            await browser.close()
-    output: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for row in list(raw or []):
-        if not isinstance(row, dict):
-            continue
-        source = _clean_item_url(str(row.get("href") or ""))
-        preview = str(row.get("preview_url") or "").strip()
-        title = " ".join(str(row.get("title") or "").split())
-        if not source or source in seen or not preview.startswith(("http://", "https://")) or not title:
-            continue
-        seen.add(source)
-        output.append({"source_page": source, "title": title, "preview_url": preview})
-        if len(output) >= limit:
-            break
-    return output
-
-
 async def _default_discover(query: str, limit: int) -> list[dict[str, Any]]:
     try:
         return await _http_discover(query, limit)
@@ -219,11 +170,88 @@ class EnvatoSource:
     provider_name = "envato"
     supported_source_classes = ("GENERIC_STOCK", "CLOSE_SEMANTIC_EDITORIAL")
 
-    def __init__(self, *, discover: DiscoverFn | None = None) -> None:
+    def __init__(self, *, discover: DiscoverFn | None = None, profile_dir: Path | None = None) -> None:
         self.discover = discover or _default_discover
         self._custom_discover = discover is not None
-        self._browser_fallback_remaining = 1
+        root = Path(os.environ.get("RAMBLA_BROWSER_PROFILE_ROOT", "") or (Path.home() / ".rambla-reel-director" / "browser-profiles"))
+        self.profile_dir = Path(profile_dir) if profile_dir else root / "envato"
+        self._browser_lock = asyncio.Lock()
+        self._playwright = None
+        self._context = None
+        self._browser_disabled_reason: str | None = None
         self.last_attempt: dict[str, Any] = {}
+
+    async def _ensure_browser(self):
+        if self._context is not None:
+            return self._context
+        if self._browser_disabled_reason:
+            return None
+        try:
+            from playwright.async_api import async_playwright
+            self.profile_dir.mkdir(parents=True, exist_ok=True)
+            self._playwright = await async_playwright().start()
+            failures = []
+            for channel in ("msedge", "chrome", None):
+                try:
+                    kwargs = {
+                        "user_data_dir": str(self.profile_dir),
+                        "headless": True,
+                        "accept_downloads": False,
+                    }
+                    if channel:
+                        kwargs["channel"] = channel
+                    self._context = await self._playwright.chromium.launch_persistent_context(**kwargs)
+                    break
+                except Exception as exc:
+                    failures.append(type(exc).__name__)
+            if self._context is None:
+                self._browser_disabled_reason = "browser launch failed: " + ",".join(failures)
+        except Exception as exc:
+            self._browser_disabled_reason = type(exc).__name__
+        return self._context
+
+    async def _authenticated_discover(self, query: str, limit: int) -> list[dict[str, Any]]:
+        async with self._browser_lock:
+            context = await self._ensure_browser()
+            if context is None:
+                return []
+            page = context.pages[0] if context.pages else await context.new_page()
+            await page.goto(_search_url(query), wait_until="domcontentloaded", timeout=20_000)
+            await page.wait_for_timeout(900)
+            try:
+                await page.evaluate("window.scrollTo(0, Math.min(document.body.scrollHeight, 1800))")
+                await page.wait_for_timeout(500)
+            except Exception:
+                pass
+            raw = await page.eval_on_selector_all(
+                "a[href]",
+                """els => els.map(a => {
+                    const card = a.closest('article,li,[data-testid*="item"],[class*="card"],[class*="Card"]') || a.parentElement || a;
+                    const img = a.querySelector('img') || card.querySelector('img');
+                    return {
+                        href: a.href || a.getAttribute('href') || '',
+                        title: (img?.alt || a.innerText || card.innerText || a.textContent || '').trim(),
+                        preview_url: (img?.currentSrc || img?.src || '')
+                    };
+                })""",
+            )
+            output = []
+            seen = set()
+            for row in list(raw or []):
+                if not isinstance(row, dict):
+                    continue
+                source = _clean_item_url(str(row.get("href") or ""))
+                preview = str(row.get("preview_url") or "").strip()
+                title = " ".join(str(row.get("title") or "").split())
+                if not source or source in seen or not title:
+                    continue
+                if not preview.startswith(("http://", "https://")):
+                    continue
+                seen.add(source)
+                output.append({"source_page": source, "title": title, "preview_url": preview})
+                if len(output) >= limit:
+                    break
+            return output
 
     async def search(
         self,
@@ -240,9 +268,8 @@ class EnvatoSource:
         try:
             raw = self.discover(clean, max(limit * 2, limit))
             rows = await raw if inspect.isawaitable(raw) else raw
-            if not rows and not self._custom_discover and self._browser_fallback_remaining > 0:
-                self._browser_fallback_remaining -= 1
-                rows = await _browser_discover(clean, max(limit * 2, limit))
+            if not rows and not self._custom_discover:
+                rows = await self._authenticated_discover(clean, max(limit * 2, limit))
         except Exception as exc:
             self.last_attempt = {
                 "provider": self.provider_name,
@@ -295,6 +322,7 @@ class EnvatoSource:
             "provider": self.provider_name,
             "query": clean,
             "hits": len(output),
-            "engine": "envato_public_search",
+            "engine": "envato_http_or_authenticated_browser",
+            "browser_state": "ready" if self._context is not None else (self._browser_disabled_reason or "not_used"),
         }
         return output
