@@ -347,3 +347,91 @@ def test_youtube_discovery_normalizes_flat_search_metadata():
         "duration": 42.0, "thumbnail": "https://img.example/thumb.jpg",
         "width": 1280, "height": 720,
     }]
+
+
+@pytest.mark.asyncio
+async def test_imported_editorial_plan_keeps_director_queries_authoritative():
+    from backend.app.online_sourcing_cli import _source_outline
+    from backend.app.taste_profile import TasteProfile, build_taste_context
+
+    seen = []
+
+    class Engine:
+        sources = []
+        max_queries = 6
+        max_preview_candidates = 12
+        quality_mode = True
+        retrieval_output = None
+        event_callback = None
+
+        async def source_beat(self, **kwargs):
+            seen.append(kwargs)
+            return {
+                "candidates": [],
+                "rejected_candidates": [],
+                "errors": [],
+                "preview_cache_hits": 0,
+                "proposals": {
+                    "proposal_A": None,
+                    "proposal_B": None,
+                    "proposal_C": None,
+                    "review_state": "NO_VISUAL_FOUND",
+                },
+            }
+
+    outline = {
+        "beats": [{
+            "id": "beat_002",
+            "start_seconds": 2.2,
+            "end_seconds": 5.56,
+            "intent": "the trip involves three flights, a bus, and two boats",
+            "broll_queries": [
+                "airport shuttle bus departing",
+                "airplane window takeoff wing",
+                "small passenger ferry with luggage",
+            ],
+            "external_plan": True,
+            "visual_plan": {
+                "id": "beat_002",
+                "start": 2.2,
+                "end": 5.56,
+                "covered_chunk_ids": ["chunk-2"],
+                "original_text": "però se per arrivarci prendiamo tre voli, un autobus e due barche,",
+                "action": "BROLL",
+                "editorial_function": "show accumulating transfers",
+                "core_meaning": "three flights, a bus, and two boats",
+                "subtext": "",
+                "visual_mode": "sequence",
+                "avoid": ["animated transit map"],
+                "shots": [{
+                    "shot_id": "beat_002_shot_01",
+                    "description": "Airport shuttle bus pulling away with travel bags visible",
+                    "image_queries": ["airport shuttle bus luggage"],
+                    "video_queries": ["airport shuttle bus departing"],
+                }],
+            },
+        }]
+    }
+    transcript = {
+        "segments": [{
+            "start": 0.0,
+            "end": 8.0,
+            "text": "green eco label travel document etichetta verde",
+        }]
+    }
+    taste = build_taste_context(TasteProfile(client_id="rambla", version=1, approved=True))
+
+    await _source_outline(
+        outline,
+        Engine(),
+        client_id="rambla",
+        transcript=transcript,
+        taste_context=taste,
+    )
+
+    assert len(seen) == 1
+    call = seen[0]
+    assert call["queries"] == ["airport shuttle bus departing"]
+    assert call["retrieval_intent"].startswith("RAMBLA_INTENT::")
+    assert "source_strategy" not in call
+    assert "evidence_intent" not in call
