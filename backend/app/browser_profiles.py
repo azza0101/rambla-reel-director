@@ -17,10 +17,11 @@ from typing import Any, Awaitable, Callable
 from urllib.parse import urljoin
 
 
-SUPPORTED_SOCIAL_PROVIDERS = ("tiktok", "instagram")
+SUPPORTED_SOCIAL_PROVIDERS = ("tiktok", "instagram", "envato")
 DEFAULT_START_URLS = {
     "tiktok": "https://www.tiktok.com/",
     "instagram": "https://www.instagram.com/",
+    "envato": "https://elements.envato.com/",
 }
 
 PlaywrightRunner = Callable[[Path, str | None, Callable[[Any, Any], Any]], Awaitable[Any]]
