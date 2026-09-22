@@ -22,6 +22,7 @@ from .retrieval_ranker import create_retrieval_ranker
 from .director_engine import FasterWhisperArtifact, build_edit_plan
 from .director_preview import render_report
 from .evidence_intent import plan_evidence_intent
+from .envato_source import EnvatoSource
 from .online_assets import PexelsSource
 from .online_sourcing import OnlineSourcingEngine
 from .qwen_stack import LocalQwenEmbedder, QwenConfig, QwenMultimodalRanker
@@ -517,6 +518,7 @@ def _real_engine(
     social_names = {"youtube_shorts", "tiktok", "instagram"}
     requested_social = social_names if not provider_filter else (provider_filter & social_names)
     include_web_video = not provider_filter or "web_video" in provider_filter
+    include_envato = not provider_filter or "envato" in provider_filter
 
     # Clean stock is an independent lane and must never suppress YouTube/news.
     if pexels_api_key and (not provider_filter or "pexels" in provider_filter):
@@ -535,6 +537,11 @@ def _real_engine(
                 include_base_youtube=include_youtube,
             )
         )
+
+    # Envato is discovery-only: expose searchable covers/links, never automate
+    # subscription downloads or project licensing.
+    if include_envato and str(os.environ.get("RAMBLA_ENABLE_ENVATO", "1")).casefold() in {"1","true","yes","on"}:
+        sources.append(EnvatoSource())
 
     # Google Videos/news is intentionally separate from social/YouTube so the
     # curator can see current-event/repertory sources even when clip download
@@ -570,7 +577,7 @@ def main() -> None:
     parser.add_argument(
         "--providers",
         nargs="+",
-        choices=("youtube", "youtube_shorts", "tiktok", "instagram", "web_video", "pexels"),
+        choices=("youtube", "youtube_shorts", "tiktok", "instagram", "web_video", "pexels", "envato"),
     )
     parser.add_argument("--pexels-key-env", default="PEXELS_API_KEY")
     parser.add_argument("--max-candidates", type=int, default=12)
