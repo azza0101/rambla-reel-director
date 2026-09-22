@@ -48,8 +48,11 @@ subjects/actions, not themes or arguments. Prefer "airport shuttle bus departing
 Do not use abstract search phrases such as "greenwashing tourism", "sustainable tourism",
 "ethical tourism", "responsible tourism", "sustainability explained", "criteria", "how to",
 or "tips" unless those exact words/signs are themselves the physical subject being shown.
-Produce 1-3 image queries and 1-3 video queries per shot. Put likely false positives and
-unwanted shortcuts in avoid. Output only the structured object requested by the schema.
+Produce 1-3 image queries and 1-3 video queries per shot. When using multiple queries,
+make them a retrieval ladder for the SAME visible scene: (1) precise subject+action,
+(2) shorter/broader subject+action, (3) a natural synonym or phone-native phrasing.
+Do not introduce a new concept in query 2 or 3. Put likely false positives and unwanted
+shortcuts in avoid. Output only the structured object requested by the schema.
 """
 
 
