@@ -351,7 +351,7 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
     def emit(message,**data):
         callback=getattr(engine,'event_callback',None)
         if callback:callback('online_search',None,message,slot_id=beat_id,**data)
-    priority={'pexels':0,'youtube_shorts':1,'tiktok':2,'instagram':3,'web_video':4,'youtube':5}
+    priority={'pexels':0,'envato':1,'youtube_shorts':2,'tiktok':3,'instagram':4,'web_video':5,'youtube':6}
     for source in sorted(engine.sources,key=lambda s:priority.get(_provider_name(s).casefold(),6)):
         provider_label=_provider_name(source);pool=[];seen=set()
         for query_index,query in enumerate(expand_queries(queries,'video')):
@@ -388,6 +388,13 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
                 continue
             output['preview_cache_hits']+=int(preview.cache_hit)
             base={'id':asset_id,'client_id':client_id,'source':candidate.provider,'provider':candidate.provider,'provider_id':candidate.provider_id,'source_page':candidate.source_page,'source_url':candidate.source_page,'title':candidate.title,'description':candidate.description or candidate.title,'query':candidate.query,'matched_query':candidate.query,'width':candidate.width,'height':candidate.height,'orientation':candidate.orientation,'rights_state':candidate.rights_state,'license_name':'Pexels License' if candidate.provider=='pexels' else None,'license_url':'https://www.pexels.com/license/' if candidate.provider=='pexels' else None,'attribution':candidate.creator_name,'path':str(preview.path),'preview_path':str(preview.path),'poster_path':str(preview.path),'keyframe_path':str(preview.path),'preview_url':getattr(candidate,'preview_url',None),'kind':'video','preview_status':'preview_pending','quality_state':'source_found','score':round(meta*.6,4),'source_start_seconds':None,'source_end_seconds':None,'clip_verified':False,'selected_full_download':False,'source_authenticity':getattr(candidate,'source_authenticity',None),'acquisition_state':'PREVIEW_ONLY','manual_reason':None}
+            if candidate.provider=='envato':
+                pending.append(_manual_discovery_base(
+                    candidate,asset_id,client_id,meta,
+                    reason='Envato search result; open the official item page to license/download',
+                    preview_path=preview.path,
+                ))
+                continue
             duration=float(candidate.duration)
             folder=Path(preview.path).parent/'quality-clips'
             starts=await _storyboard_starts(engine,candidate,intent,folder,asset_id,client_id,emit)
