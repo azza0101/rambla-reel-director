@@ -8,6 +8,8 @@ from html.parser import HTMLParser
 from typing import Any, Awaitable, Callable
 from urllib.parse import parse_qs, quote_plus, urlencode, urlparse, urlunparse
 
+import httpx
+
 
 DiscoverFn = Callable[[str, int], Awaitable[list[dict[str, Any]]] | list[dict[str, Any]]]
 
