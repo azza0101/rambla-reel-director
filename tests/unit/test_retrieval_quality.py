@@ -316,3 +316,33 @@ def test_quality_ranker_uses_concrete_visual_target_not_full_editorial_argument(
     assert seen[0] == "traveler boarding local bus with backpack"
     assert rows[0]["visual_target"] == "traveler boarding local bus with backpack"
     assert rows[0]["editorial_positive"] == "Abstract argument about sustainability and compromise"
+
+
+def test_storyboard_sampling_is_bounded_and_spans_video():
+    from backend.app.quality_video import _storyboard_sample_indices
+
+    rows = _storyboard_sample_indices(500, 10)
+    assert len(rows) == 10
+    assert rows == sorted(set(rows))
+    assert rows[0] > 0
+    assert rows[-1] < 499
+    assert rows[-1] - rows[0] > 350
+
+
+def test_storyboard_locator_rejects_talking_head_and_prefers_clean_visual_match():
+    from backend.app.quality_video import _choose_storyboard_starts
+
+    samples = [
+        {"index": 10, "timestamp": 20.0},
+        {"index": 20, "timestamp": 40.0},
+        {"index": 30, "timestamp": 60.0},
+    ]
+    positive = {"10": .72, "20": .66, "30": .62}
+    talking = {"10": .30, "20": .70, "30": .28}
+    text = {"10": .25, "20": .22, "30": .68}
+
+    starts = _choose_storyboard_starts(
+        samples, positive, talking, text, duration=90.0, limit=2
+    )
+
+    assert starts == [18.8]
