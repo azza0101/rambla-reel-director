@@ -18,6 +18,8 @@ from urllib.parse import quote_plus, urljoin, urlparse
 
 import httpx
 
+from .browser_profiles import normal_chrome_profile
+
 
 DiscoverFn = Callable[[str, int], Awaitable[list[dict[str, Any]]] | list[dict[str, Any]]]
 _ITEM_PATH = re.compile(r"/[^?#]+-[A-Z0-9]{6,12}/?$", re.I)
@@ -173,8 +175,9 @@ class EnvatoSource:
     def __init__(self, *, discover: DiscoverFn | None = None, profile_dir: Path | None = None) -> None:
         self.discover = discover or _default_discover
         self._custom_discover = discover is not None
-        root = Path(os.environ.get("RAMBLA_BROWSER_PROFILE_ROOT", "") or (Path.home() / ".rambla-reel-director" / "browser-profiles"))
-        self.profile_dir = Path(profile_dir) if profile_dir else root / "envato"
+        resolved = normal_chrome_profile()
+        self.profile_dir = Path(profile_dir) if profile_dir else (resolved[0] if resolved else Path())
+        self.profile_name = resolved[1] if resolved else "Default"
         self._browser_lock = asyncio.Lock()
         self._playwright = None
         self._context = None
@@ -188,24 +191,20 @@ class EnvatoSource:
             return None
         try:
             from playwright.async_api import async_playwright
-            self.profile_dir.mkdir(parents=True, exist_ok=True)
+            if not self.profile_dir or not self.profile_dir.is_dir():
+                self._browser_disabled_reason = "normal Chrome profile not found"
+                return None
             self._playwright = await async_playwright().start()
-            failures = []
-            for channel in ("msedge", "chrome", None):
-                try:
-                    kwargs = {
-                        "user_data_dir": str(self.profile_dir),
-                        "headless": True,
-                        "accept_downloads": False,
-                    }
-                    if channel:
-                        kwargs["channel"] = channel
-                    self._context = await self._playwright.chromium.launch_persistent_context(**kwargs)
-                    break
-                except Exception as exc:
-                    failures.append(type(exc).__name__)
-            if self._context is None:
-                self._browser_disabled_reason = "browser launch failed: " + ",".join(failures)
+            try:
+                self._context = await self._playwright.chromium.launch_persistent_context(
+                    user_data_dir=str(self.profile_dir),
+                    channel="chrome",
+                    headless=True,
+                    accept_downloads=False,
+                    args=[f"--profile-directory={self.profile_name}"],
+                )
+            except Exception:
+                self._browser_disabled_reason = "normal Chrome profile is in use; close Chrome and retry"
         except Exception as exc:
             self._browser_disabled_reason = type(exc).__name__
         return self._context
