@@ -455,3 +455,20 @@ def test_real_engine_keeps_pexels_youtube_and_google_video_as_independent_lanes(
 
     providers = [getattr(source, "provider_name", None) for source in engine.sources]
     assert providers == ["pexels", "youtube", "envato", "web_video"]
+
+
+def test_default_broll_engine_only_fans_out_to_youtube_shorts_not_tiktok_instagram(monkeypatch, tmp_path):
+    import backend.app.online_sourcing_cli as cli
+
+    monkeypatch.setattr(cli, "create_retrieval_ranker", lambda *_args, **_kwargs: object())
+    monkeypatch.setenv("RAMBLA_ENABLE_VERTICAL_SOCIAL", "1")
+    engine = cli._real_engine(
+        client_id="test",
+        pexels_api_key=None,
+        model_root=tmp_path,
+        embedding_code_root=None,
+        cache_root=tmp_path / "cache",
+        max_candidates=4,
+    )
+    youtube = next(source for source in engine.sources if getattr(source, "provider_name", None) == "youtube")
+    assert [source.provider_name for source in youtube.vertical_sources] == ["youtube_shorts"]
