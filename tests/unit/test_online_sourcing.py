@@ -454,4 +454,4 @@ def test_real_engine_keeps_pexels_youtube_and_google_video_as_independent_lanes(
     )
 
     providers = [getattr(source, "provider_name", None) for source in engine.sources]
-    assert providers == ["pexels", "youtube", "web_video"]
+    assert providers == ["pexels", "youtube", "envato", "web_video"]
