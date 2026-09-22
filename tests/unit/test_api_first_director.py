@@ -26,27 +26,35 @@ def valid_decisions():
         "global_topic": "Crowded ferry boarding",
         "beats": [
             {
-                "first_chunk_id": "c0",
-                "last_chunk_id": "c1",
+                "chunk_id": "c0",
                 "action": "BROLL",
-                "editorial_function": "Show the concrete travel action",
-                "core_meaning": "Passengers arrive and board a ferry",
+                "editorial_function": "Show arrival at the ferry",
+                "core_meaning": "Passengers arrive at the ferry",
                 "subtext": "",
                 "visual_mode": "single",
                 "shots": [
                     {
-                        "description": "Passengers walking up a ferry boarding ramp",
-                        "image_queries": ["passengers boarding ferry"],
-                        "video_queries": ["passengers boarding ferry", "crowd entering ferry"],
+                        "description": "Passengers walking toward a ferry boarding ramp",
+                        "image_queries": ["passengers approaching ferry"],
+                        "video_queries": ["passengers approaching ferry"],
                     }
                 ],
                 "avoid": ["empty ferry", "cruise ship interior"],
             },
             {
-                "first_chunk_id": "c2",
-                "last_chunk_id": "c2",
+                "chunk_id": "c1",
                 "action": "CONTINUE_PREVIOUS_VISUAL",
-                "editorial_function": "Let the same action finish",
+                "editorial_function": "Continue the same boarding action",
+                "core_meaning": "Passengers board the ferry",
+                "subtext": "",
+                "visual_mode": "single",
+                "shots": [],
+                "avoid": [],
+            },
+            {
+                "chunk_id": "c2",
+                "action": "CONTINUE_PREVIOUS_VISUAL",
+                "editorial_function": "Let the action finish quickly",
                 "core_meaning": "The boarding happens quickly",
                 "subtext": "",
                 "visual_mode": "single",
@@ -78,23 +86,24 @@ def test_compile_director_decisions_reconstructs_canonical_timeline_and_ids():
     assert plan["schema_version"] == "rambla-visual-plan-1"
     assert plan["project_id"] == "abc123def456"
     assert plan["transcript_signature"] == "sig-123"
-    assert [b["id"] for b in plan["visual_beats"]] == ["beat_001", "beat_002"]
-    first, second = plan["visual_beats"]
+    assert [b["id"] for b in plan["visual_beats"]] == ["beat_001", "beat_002", "beat_003"]
+    first, second, third = plan["visual_beats"]
     assert first["start"] == 0.0
-    assert first["end"] == 4.0
-    assert first["covered_chunk_ids"] == ["c0", "c1"]
-    assert first["original_text"] == "Arriviamo al porto e salgono tutti sul traghetto"
+    assert first["end"] == 2.0
+    assert first["covered_chunk_ids"] == ["c0"]
+    assert first["original_text"] == "Arriviamo al porto"
     assert first["shots"][0]["shot_id"] == "beat_001_shot_01"
     assert second["continuation_from"] == "beat_001"
+    assert third["continuation_from"] == "beat_002"
 
 
-def test_compile_rejects_gap_in_model_chunk_grouping():
+def test_compile_rejects_wrong_chunk_order():
     from backend.app.api_first_director import compile_director_decisions
 
     decisions = valid_decisions()
-    decisions["beats"][0]["first_chunk_id"] = "c1"
+    decisions["beats"][0]["chunk_id"] = "c1"
 
-    with pytest.raises(ValueError, match="first_chunk_id must be c0"):
+    with pytest.raises(ValueError, match="chunk_id must be c0"):
         compile_director_decisions(package_fixture(), decisions)
 
 
@@ -103,7 +112,7 @@ def test_director_uses_stateful_second_call_only_for_validation_repair():
     from backend.app.gemini_interactions import GeminiJSONReply
 
     invalid = valid_decisions()
-    invalid["beats"][0]["first_chunk_id"] = "c1"
+    invalid["beats"][0]["chunk_id"] = "c1"
 
     class Provider:
         provider_name = "gemini"
@@ -128,7 +137,7 @@ def test_director_uses_stateful_second_call_only_for_validation_repair():
     assert provider.calls[1][2] == "int-first"
     assert "TRANSCRIPT_CHUNKS=" in provider.calls[0][0]
     assert "TRANSCRIPT_CHUNKS=" not in provider.calls[1][0]
-    assert "first_chunk_id must be c0" in provider.calls[1][0]
+    assert "chunk_id must be c0" in provider.calls[1][0]
 
 
 def test_gemini_interactions_client_sends_structured_schema_and_parses_final_text():
@@ -245,7 +254,7 @@ def test_api_first_cli_writes_visual_plan_without_source_video_input(tmp_path):
 
     candidate = run / "api-first" / "visual-plan.json"
     plan = json.loads(candidate.read_text(encoding="utf-8"))
-    assert len(plan["visual_beats"]) == 2
+    assert len(plan["visual_beats"]) == 3
 
     reused = run_api_first_director(run_dir=run, provider=provider)
     assert reused["cache_status"] == "reused"
@@ -438,47 +447,13 @@ def test_gemini_read_timeout_moves_directly_to_fallback():
     assert reply.transport_attempts == 2
 
 
-def test_director_rejects_overlong_multi_chunk_beats():
-    from backend.app.api_first_director import compile_director_decisions
-
-    package = package_fixture()
-    package["chunks"] = [
-        {"id": "c0", "start": 0.0, "end": 2.0, "text": "uno"},
-        {"id": "c1", "start": 2.0, "end": 4.0, "text": "due"},
-        {"id": "c2", "start": 4.0, "end": 6.0, "text": "tre"},
-    ]
-    decisions = {
-        "global_topic": "x",
-        "beats": [
-            {
-                "first_chunk_id": "c0",
-                "last_chunk_id": "c2",
-                "action": "BROLL",
-                "editorial_function": "x",
-                "core_meaning": "x",
-                "subtext": "",
-                "visual_mode": "single",
-                "shots": [{
-                    "description": "x",
-                    "image_queries": ["real world action"],
-                    "video_queries": ["real world action"],
-                }],
-                "avoid": [],
-            }
-        ],
-    }
-
-    with pytest.raises(ValueError, match="at most 2 transcript chunks"):
-        compile_director_decisions(package, decisions)
-
-
 def test_director_prompt_explicitly_targets_short_fast_cut_beats():
     from backend.app.api_first_director import build_director_prompt
 
     prompt = build_director_prompt(package_fixture())
-    assert "roughly 2.0-3.5 seconds per beat" in prompt
-    assert "never more than 2" in prompt
-    assert "<=4.5 seconds" in prompt
+    assert "one transcript chunk equals one visual beat" in prompt
+    assert "Never merge chunks" in prompt
+    assert "Return exactly one decision per transcript chunk" in prompt
 
 
 def test_cli_configures_utf8_stdio_without_crashing_on_windows_style_streams(monkeypatch):
@@ -768,3 +743,23 @@ def test_auto_provider_falls_from_gemini_to_groq():
     assert reply.model == "qwen/qwen3.8-27b"
     assert auto.provider_name == "groq"
     assert any(event == "provider_fallback" for event, _data in events)
+
+
+def test_director_schema_can_lock_exact_chunk_count():
+    from backend.app.api_first_director import director_schema
+
+    schema = director_schema(3)
+    beats = schema["properties"]["beats"]
+    assert beats["minItems"] == 3
+    assert beats["maxItems"] == 3
+    assert "chunk_id" in beats["items"]["required"]
+
+
+def test_compile_requires_exactly_one_decision_per_chunk():
+    from backend.app.api_first_director import compile_director_decisions
+
+    decisions = valid_decisions()
+    decisions["beats"] = decisions["beats"][:2]
+
+    with pytest.raises(ValueError, match="expected exactly 3 chunk decisions, got 2"):
+        compile_director_decisions(package_fixture(), decisions)
