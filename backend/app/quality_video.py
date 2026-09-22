@@ -430,4 +430,8 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
                 pending.append({**base,**fallback_acquisition_state(has_preview=True,reason='automatic clip download unavailable')})
             if len(accepted)>=2:break
         accepted,_=diverse_candidates(sorted(accepted,key=lambda r:(r.get('source') in VERTICAL_PROVIDERS,r['score']),reverse=True),[],limit=3);output['candidates'].extend(accepted[:3]);output.setdefault('discovery_sources',[]).extend(pending[:3])
+        strong_verified=[row for row in output['candidates'] if row.get('clip_verified') and float(row.get('score',0))>=.58]
+        if len(strong_verified)>=2:
+            emit('Enough strong clips found; skipping slower fallback providers',provider=provider_label,strong_clips=len(strong_verified))
+            break
     output['eligible_candidate_count']=sum(c.get('clip_verified',False) for c in output['candidates']);output['raw_result_count']=sum(r['hits'] for r in output['search_attempts']);output['ranking_warning']=getattr(engine.ranker,'warning',None);return output
