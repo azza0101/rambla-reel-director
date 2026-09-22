@@ -389,3 +389,68 @@ async def test_valid_storyboard_with_no_matching_scene_returns_empty_not_fallbac
         tmp_path, "youtube:x", "client", lambda *_args, **_kwargs: None,
     )
     assert result == []
+
+
+@pytest.mark.asyncio
+async def test_envato_search_card_survives_even_when_clip_relevance_gate_is_strict(tmp_path):
+    from types import SimpleNamespace as NS
+    from backend.app import quality_video as module
+
+    candidate = NS(
+        provider="envato",
+        provider_id="env1",
+        query="small ferry crossing water",
+        source_page="https://elements.envato.com/passenger-boat-river-ABCDEFG",
+        title="Passenger boat on river",
+        description="Passenger boat on river",
+        width=640,
+        height=360,
+        orientation="landscape",
+        rights_state="subscription_license_required",
+        creator_name=None,
+        duration=20,
+        preview_url="https://assets.example/thumb.jpg",
+        preview_rendition_url=None,
+        selected_rendition_url="https://elements.envato.com/passenger-boat-river-ABCDEFG",
+        source_authenticity=.97,
+        provider_rank=0,
+    )
+
+    class Source:
+        provider_name = "envato"
+        last_attempt = {"provider": "envato", "hits": 1, "engine": "envato_public_search"}
+
+    async def search(*_args, **_kwargs):
+        return [candidate], None
+
+    async def poster(*_args):
+        path = tmp_path / "envato.jpg"
+        path.write_bytes(b"image")
+        return NS(path=path, cache_hit=False)
+
+    engine = NS(
+        sources=[Source()],
+        _search_one=search,
+        query_intents={},
+        cache=NS(materialize_preview=poster),
+        ranker=NS(warning=None),
+        event_callback=None,
+    )
+
+    result = await module.source_video_beat(
+        engine,
+        beat_id="b",
+        client_id="p",
+        queries=["small ferry crossing water"],
+        min_duration=1,
+        max_duration=60,
+        orientation=None,
+        retrieval_intent="A small passenger ferry cutting through water with luggage on deck",
+    )
+
+    assert result["candidates"] == []
+    assert result["discovery_sources"]
+    assert result["discovery_sources"][0]["source"] == "envato"
+    assert result["discovery_sources"][0]["source_page"].startswith("https://elements.envato.com/")
+    assert result["search_attempts"][0]["hits"] == 1
+    assert result["search_attempts"][0]["engine"] == "envato_public_search"
