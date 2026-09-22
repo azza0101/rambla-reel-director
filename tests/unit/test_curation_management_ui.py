@@ -164,3 +164,6 @@ def test_product_ui_exposes_clickable_envato_search_shelf():
     assert 'id="envatoVideosV2"' in html
     assert "a?.provider==='envato'?window.open(a.source_page" in html
     assert "download/licensing stays manual" in html
+    assert 'id="envatoLoginV2"' in html
+    assert "ENVATO LOGIN" in html
+    assert "socialLoginV2(\'envato\')" in html
