@@ -10,7 +10,7 @@ import sys
 import httpx
 from functools import lru_cache
 from .range_media import range_media
-from .retrieval_quality import metadata_quality,expand_queries
+from .retrieval_quality import metadata_quality,expand_queries,terms
 from .video_preview import materialize_clip,probe_preview
 from .media_quality import perceptual_hash,diverse_candidates
 from .social_acquisition import download_authenticated_section, fallback_acquisition_state, profile_root_from_env
@@ -21,22 +21,13 @@ VERTICAL_PROVIDERS={'youtube_shorts','tiktok','instagram'}
 
 
 def temporal_starts(duration,provider):
-    """Small adaptive localization budget for fast B-roll verification.
-
-    Search metadata already picked the candidate; bounded clip probing should
-    verify/localize it, not exhaustively scan the whole source. Two windows are
-    enough for normal YouTube, while very short clips need only one.
-    """
+    """Single cheap fallback window when no better localization signal exists."""
     duration=float(duration)
     if duration<=3.5:return [0.0]
     usable=max(0.0,duration-3.5)
-    if provider=='youtube':
-        fractions=(.12,.58) if duration<=180 else (.22,.68)
-    elif provider in VERTICAL_PROVIDERS:
-        fractions=(.08,.55) if duration>12 else (.05,)
-    else:
-        fractions=(.08,.58)
-    return sorted(set(round(usable*f,3) for f in fractions))
+    if provider in VERTICAL_PROVIDERS:return [round(usable*.12,3)]
+    if provider=='pexels':return [round(usable*.22,3)]
+    return [round(usable*.35,3)]
 
 
 
@@ -64,7 +55,7 @@ def _best_storyboard_format(payload):
     return max(formats,key=lambda row:(int(row.get('width') or 0)*int(row.get('height') or 0),float(row.get('fps') or 0)))
 
 
-def _storyboard_sample_indices(total,limit=10):
+def _storyboard_sample_indices(total,limit=6):
     total=max(0,int(total));limit=max(1,int(limit))
     if total<=limit:return list(range(total))
     # Skip the very first/last frames: intros/outros are disproportionately
@@ -89,7 +80,7 @@ def _download_storyboard_grid(url,path,headers):
     return path
 
 
-def _youtube_storyboard_frames(url,directory,identity,max_samples=10):
+def _youtube_storyboard_frames(url,directory,identity,max_samples=6):
     """Materialize a tiny, evenly sampled set of YouTube storyboard cells."""
     payload=_youtube_metadata(url)
     fmt=_best_storyboard_format(payload)
@@ -156,18 +147,23 @@ def _choose_storyboard_starts(samples,positive_scores,talking_scores,text_scores
 
 
 async def _storyboard_starts(engine,candidate,intent,folder,asset_id,client_id,emit):
-    if candidate.provider!='youtube' or float(candidate.duration)<18:return []
+    """Return None when storyboard is unavailable, [] when it disproves the candidate.
+
+    A valid-but-empty storyboard is a strong negative signal: do not pay for
+    random clip downloads after Qwen already failed to see the requested scene.
+    """
+    if candidate.provider!='youtube' or float(candidate.duration)<18:return None
     visual=getattr(engine.ranker,'visual',None)
-    if visual is None:return []
+    if visual is None:return None
     emit('Scanning YouTube storyboard',provider='youtube',query=candidate.query,duration=float(candidate.duration))
     try:
         samples=await asyncio.to_thread(
-            _youtube_storyboard_frames,candidate.source_page,folder,asset_id,10
+            _youtube_storyboard_frames,candidate.source_page,folder,asset_id,6
         )
     except Exception as exc:
         emit('YouTube storyboard unavailable',provider='youtube',query=candidate.query,error_type=type(exc).__name__)
-        return []
-    if len(samples)<2:return []
+        return None
+    if len(samples)<2:return None
     rows=[
         {
             'id':str(sample['index']),'client_id':client_id,
@@ -176,20 +172,22 @@ async def _storyboard_starts(engine,candidate,intent,folder,asset_id,client_id,e
         }
         for sample in samples
     ]
-    # Qwen's low-resolution embeddings are cheap here: no video bytes have been
-    # downloaded yet. Three batched passes give us target relevance plus strong
-    # anti-talking-head and anti-text-overlay penalties.
     target=_visual_target(intent)
     try:
-        positive={r['id']:r.get('embedding_score',r.get('score',0)) for r in visual.rank(target,rows)}
-        talking={r['id']:r.get('embedding_score',r.get('score',0)) for r in visual.rank(
-            'person speaking directly to camera interview podcast talking head',rows)}
-        text={r['id']:r.get('embedding_score',r.get('score',0)) for r in visual.rank(
-            'large subtitles text overlay presentation slide infographic',rows)}
+        positive={r['id']:float(r.get('embedding_score',r.get('score',0)) or 0) for r in visual.rank(target,rows)}
     except Exception as exc:
         emit('YouTube storyboard ranking unavailable',provider='youtube',error_type=type(exc).__name__)
-        return []
-    starts=_choose_storyboard_starts(samples,positive,talking,text,float(candidate.duration),2)
+        return None
+    ranked=sorted(
+        ((score,next(sample for sample in samples if str(sample['index'])==sid)) for sid,score in positive.items()),
+        key=lambda item:item[0],reverse=True,
+    )
+    starts=[]
+    for score,sample in ranked:
+        if score<.39:continue
+        start=max(0.0,min(max(0.0,float(candidate.duration)-3.5),float(sample['timestamp'])-1.2))
+        if all(abs(start-existing)>=5 for existing in starts):starts.append(round(start,3))
+        if len(starts)>=1:break
     emit('YouTube storyboard localized',provider='youtube',query=candidate.query,windows=starts,samples=len(samples))
     return starts
 
@@ -346,22 +344,58 @@ def _manual_discovery_base(candidate,asset_id,client_id,meta,*,reason,preview_pa
     return {'id':asset_id,'client_id':client_id,'source':candidate.provider,'provider':candidate.provider,'provider_id':candidate.provider_id,'source_page':candidate.source_page,'source_url':candidate.source_page,'title':candidate.title,'description':candidate.description or candidate.title,'query':candidate.query,'matched_query':candidate.query,'width':candidate.width,'height':candidate.height,'orientation':candidate.orientation,'rights_state':candidate.rights_state,'license_name':None,'license_url':None,'attribution':candidate.creator_name,'path':str(preview_path) if preview_path else None,'preview_path':str(preview_path) if preview_path else None,'poster_path':str(preview_path) if preview_path else None,'keyframe_path':str(preview_path) if preview_path else None,'preview_url':remote_preview or None,'kind':'video','preview_status':'preview_pending' if has_preview else 'manual','quality_state':'source_found','score':round(meta*.6,4),'source_start_seconds':None,'source_end_seconds':None,'selected_full_download':False,'source_authenticity':getattr(candidate,'source_authenticity',None),**state}
 
 
+def _canonical_term_set(text):
+    aliases={
+        'airplane':'plane','aircraft':'plane',
+        'ferry':'boat','ship':'boat',
+        'travelers':'people','traveler':'people','tourists':'people','tourist':'people','passengers':'people','passenger':'people',
+        'signage':'sign','signboard':'sign','signs':'sign',
+        'brochures':'brochure','cards':'card',
+    }
+    return {aliases.get(value,value) for value in terms(str(text or ''))}
+
+
+def _query_matches_target(query,target):
+    q=_canonical_term_set(query);t=_canonical_term_set(target)
+    if not q or not t:return True
+    return bool(q & t)
+
+
+def _query_from_target(target,max_words=8):
+    stop={'a','an','the','of','or','and','with','in','on','at','to','from','while','only','without','small','slightly','visible'}
+    words=[w.lower() for w in __import__('re').findall(r"[A-Za-z]+",str(target or ''))]
+    out=[]
+    for word in words:
+        if word in stop or word in out:continue
+        out.append(word)
+        if len(out)>=max_words:break
+    return ' '.join(out)
+
+
 async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_duration,orientation,retrieval_intent=None,**ignored):
-    output={'beat_id':beat_id,'queries':queries,'candidates':[],'rejected_candidates':[],'errors':[],'search_attempts':[],'preview_cache_hits':0,'selected_cache_hit':False,'proposals':{'proposal_A':None,'proposal_B':None,'proposal_C':None},'quality_version':QUALITY_VERSION}
+    intent=retrieval_intent or next((engine.query_intents.get(q) for q in queries if engine.query_intents.get(q)),queries[0])
+    visual_target=_visual_target(intent)
+    clean_queries=[q for q in queries if _query_matches_target(q,visual_target)]
+    if not clean_queries:
+        derived=_query_from_target(visual_target)
+        clean_queries=[derived] if derived else list(queries[:1])
+    output={'beat_id':beat_id,'queries':clean_queries,'candidates':[],'rejected_candidates':[],'errors':[],'search_attempts':[],'preview_cache_hits':0,'selected_cache_hit':False,'proposals':{'proposal_A':None,'proposal_B':None,'proposal_C':None},'quality_version':QUALITY_VERSION}
     def emit(message,**data):
         callback=getattr(engine,'event_callback',None)
         if callback:callback('online_search',None,message,slot_id=beat_id,**data)
+    if list(clean_queries)!=list(queries):
+        emit('Dropped stale/mismatched search queries',original_queries=list(queries),active_queries=list(clean_queries),visual_target=visual_target)
     priority={'pexels':0,'envato':1,'youtube_shorts':2,'tiktok':3,'instagram':4,'web_video':5,'youtube':6}
     for source in sorted(engine.sources,key=lambda s:priority.get(_provider_name(s).casefold(),6)):
         provider_label=_provider_name(source);pool=[];seen=set()
-        for query_index,query in enumerate(expand_queries(queries,'video')):
+        for query_index,query in enumerate(expand_queries(clean_queries,'video')):
             emit('Searching video source',provider=provider_label,query=query)
             rows,error=await engine._search_one(source,query,orientation=orientation,min_duration=min_duration,max_duration=max_duration)
-            attempt={'provider':provider_label,'query':query,'hits':len(rows),'expanded':query not in queries};output['search_attempts'].append(attempt)
+            attempt={'provider':provider_label,'query':query,'hits':len(rows),'expanded':query not in clean_queries};output['search_attempts'].append(attempt)
             drain=getattr(source,'drain_vertical_attempts',None)
             if callable(drain):
                 for extra in drain():
-                    extra=dict(extra);extra.setdefault('query',query);extra.setdefault('hits',0);extra['expanded']=query not in queries;output['search_attempts'].append(extra)
+                    extra=dict(extra);extra.setdefault('query',query);extra.setdefault('hits',0);extra['expanded']=query not in clean_queries;output['search_attempts'].append(extra)
                     failure=extra.get('error') or extra.get('browser_error')
                     if failure:output['errors'].append({'provider':extra.get('provider'),'code':'provider_request_failed','error_type':failure})
             if error:
@@ -370,13 +404,14 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
                 key=(row.provider,row.provider_id)
                 if key not in seen:pool.append(row);seen.add(key)
             if len(pool)>=6 and query_index>=1:break
-        intent=retrieval_intent or next((engine.query_intents.get(q) for q in queries if engine.query_intents.get(q)),queries[0])
-        visual_target=_visual_target(intent)
         pool=_balanced_discovery_pool(pool,intent,limit=4)
         accepted=[];pending=[]
         for candidate in pool:
             asset_id=f'{candidate.provider}:{candidate.provider_id}';meta,contradictions,missing,generic=metadata_quality(visual_target,candidate.title+' '+candidate.description)
             discovery_relevant=_discovery_relevant(candidate,intent)
+            if not discovery_relevant:
+                output['rejected_candidates'].append({'id':asset_id,'source':candidate.provider,'source_url':candidate.source_page,'matched_query':candidate.query,'score':0,'quality_reasons':['metadata/title does not match concrete visual target']})
+                continue
             if candidate.provider in VERTICAL_PROVIDERS and candidate.orientation!='portrait':
                 output['rejected_candidates'].append({'id':asset_id,'source':candidate.provider,'source_url':candidate.source_page,'matched_query':candidate.query,'score':0,'quality_reasons':['vertical-social candidate is not portrait']});continue
             try:
@@ -388,17 +423,19 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
                 continue
             output['preview_cache_hits']+=int(preview.cache_hit)
             base={'id':asset_id,'client_id':client_id,'source':candidate.provider,'provider':candidate.provider,'provider_id':candidate.provider_id,'source_page':candidate.source_page,'source_url':candidate.source_page,'title':candidate.title,'description':candidate.description or candidate.title,'query':candidate.query,'matched_query':candidate.query,'width':candidate.width,'height':candidate.height,'orientation':candidate.orientation,'rights_state':candidate.rights_state,'license_name':'Pexels License' if candidate.provider=='pexels' else None,'license_url':'https://www.pexels.com/license/' if candidate.provider=='pexels' else None,'attribution':candidate.creator_name,'path':str(preview.path),'preview_path':str(preview.path),'poster_path':str(preview.path),'keyframe_path':str(preview.path),'preview_url':getattr(candidate,'preview_url',None),'kind':'video','preview_status':'preview_pending','quality_state':'source_found','score':round(meta*.6,4),'source_start_seconds':None,'source_end_seconds':None,'clip_verified':False,'selected_full_download':False,'source_authenticity':getattr(candidate,'source_authenticity',None),'acquisition_state':'PREVIEW_ONLY','manual_reason':None}
-            if candidate.provider=='envato':
-                pending.append(_manual_discovery_base(
-                    candidate,asset_id,client_id,meta,
-                    reason='Envato search result; open the official item page to license/download',
-                    preview_path=preview.path,
-                ))
+            if candidate.provider in {'envato','web_video'}:
+                reason=('Envato search result; open the official item page to license/download'
+                        if candidate.provider=='envato'
+                        else 'Google Video/News result; open source page for the original report/clip')
+                pending.append(_manual_discovery_base(candidate,asset_id,client_id,meta,reason=reason,preview_path=preview.path))
                 continue
             duration=float(candidate.duration)
             folder=Path(preview.path).parent/'quality-clips'
-            starts=await _storyboard_starts(engine,candidate,intent,folder,asset_id,client_id,emit)
-            if not starts:starts=temporal_starts(duration,candidate.provider)
+            storyboard_starts=await _storyboard_starts(engine,candidate,intent,folder,asset_id,client_id,emit)
+            if storyboard_starts==[] and candidate.provider=='youtube':
+                output['rejected_candidates'].append({'id':asset_id,'source':candidate.provider,'source_url':candidate.source_page,'matched_query':candidate.query,'score':0,'quality_reasons':['storyboard scan did not find the requested visible scene']})
+                continue
+            starts=storyboard_starts if storyboard_starts is not None else temporal_starts(duration,candidate.provider)
             measured=[];shape_rejected=False
             for start in starts:
                 emit('Materializing bounded clip',provider=candidate.provider,query=candidate.query,source_start_seconds=start,source_end_seconds=start+3.5)
