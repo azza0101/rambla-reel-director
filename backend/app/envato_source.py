@@ -208,12 +208,9 @@ async def _browser_discover(query: str, limit: int) -> list[dict[str, Any]]:
 
 async def _default_discover(query: str, limit: int) -> list[dict[str, Any]]:
     try:
-        rows = await _http_discover(query, limit)
-        if rows:
-            return rows
+        return await _http_discover(query, limit)
     except Exception:
-        pass
-    return await _browser_discover(query, limit)
+        return []
 
 
 class EnvatoSource:
@@ -224,6 +221,8 @@ class EnvatoSource:
 
     def __init__(self, *, discover: DiscoverFn | None = None) -> None:
         self.discover = discover or _default_discover
+        self._custom_discover = discover is not None
+        self._browser_fallback_remaining = 1
         self.last_attempt: dict[str, Any] = {}
 
     async def search(
@@ -241,6 +240,9 @@ class EnvatoSource:
         try:
             raw = self.discover(clean, max(limit * 2, limit))
             rows = await raw if inspect.isawaitable(raw) else raw
+            if not rows and not self._custom_discover and self._browser_fallback_remaining > 0:
+                self._browser_fallback_remaining -= 1
+                rows = await _browser_discover(clean, max(limit * 2, limit))
         except Exception as exc:
             self.last_attempt = {
                 "provider": self.provider_name,
