@@ -2,9 +2,12 @@
 import asyncio
 import hashlib
 import json
+import math
 from pathlib import Path
 import subprocess
 import sys
+
+import httpx
 from functools import lru_cache
 from .range_media import range_media
 from .retrieval_quality import metadata_quality,expand_queries
@@ -13,7 +16,7 @@ from .media_quality import perceptual_hash,diverse_candidates
 from .social_acquisition import download_authenticated_section, fallback_acquisition_state, profile_root_from_env
 from .editorial_relevance import decode_retrieval_intent
 
-QUALITY_VERSION='clip-quality-13'
+QUALITY_VERSION='clip-quality-14'
 VERTICAL_PROVIDERS={'youtube_shorts','tiktok','instagram'}
 
 
@@ -34,6 +37,161 @@ def temporal_starts(duration,provider):
     else:
         fractions=(.08,.58)
     return sorted(set(round(usable*f,3) for f in fractions))
+
+
+
+@lru_cache(maxsize=64)
+def _youtube_metadata(url):
+    """Fetch metadata/storyboard descriptors without downloading the video."""
+    result=subprocess.run([
+        sys.executable,'-m','yt_dlp','--no-playlist','--no-warnings',
+        '--socket-timeout','10','--retries','0','--skip-download','--dump-single-json',
+        url,
+    ],check=True,capture_output=True,text=True,encoding='utf-8',timeout=25)
+    payload=json.loads(result.stdout)
+    if not isinstance(payload,dict):raise ValueError('yt-dlp returned invalid YouTube metadata')
+    return payload
+
+
+def _best_storyboard_format(payload):
+    formats=[
+        row for row in (payload.get('formats') or [])
+        if isinstance(row,dict)
+        and (str(row.get('format_note') or '').casefold()=='storyboard' or str(row.get('format_id') or '').startswith('sb'))
+        and isinstance(row.get('fragments'),list) and row.get('fragments')
+    ]
+    if not formats:return None
+    return max(formats,key=lambda row:(int(row.get('width') or 0)*int(row.get('height') or 0),float(row.get('fps') or 0)))
+
+
+def _storyboard_sample_indices(total,limit=10):
+    total=max(0,int(total));limit=max(1,int(limit))
+    if total<=limit:return list(range(total))
+    # Skip the very first/last frames: intros/outros are disproportionately
+    # thumbnails, logos or talking-head setup rather than usable B-roll.
+    low=max(0,int(total*.04));high=min(total-1,int(total*.96))
+    if high<=low:return [total//2]
+    values=[]
+    for i in range(limit):
+        pos=low+(high-low)*(i+.5)/limit
+        idx=max(0,min(total-1,int(round(pos))))
+        if idx not in values:values.append(idx)
+    return values
+
+
+def _download_storyboard_grid(url,path,headers):
+    if path.is_file() and path.stat().st_size>0:return path
+    response=httpx.get(url,headers=headers or None,timeout=12,follow_redirects=True)
+    response.raise_for_status()
+    path.parent.mkdir(parents=True,exist_ok=True)
+    temporary=path.with_suffix(path.suffix+'.tmp')
+    temporary.write_bytes(response.content);temporary.replace(path)
+    return path
+
+
+def _youtube_storyboard_frames(url,directory,identity,max_samples=10):
+    """Materialize a tiny, evenly sampled set of YouTube storyboard cells."""
+    payload=_youtube_metadata(url)
+    fmt=_best_storyboard_format(payload)
+    if not fmt:return []
+    fps=float(fmt.get('fps') or 0)
+    rows=max(1,int(fmt.get('rows') or 1));cols=max(1,int(fmt.get('columns') or 1))
+    cell_w=max(1,int(fmt.get('width') or 0));cell_h=max(1,int(fmt.get('height') or 0))
+    fragments=[row for row in fmt.get('fragments') or [] if isinstance(row,dict) and str(row.get('url') or '').startswith(('http://','https://'))]
+    if fps<=0 or not fragments or cell_w<=0 or cell_h<=0:return []
+    capacity=rows*cols
+    duration=float(payload.get('duration') or 0)
+    estimated=int(math.ceil(duration*fps)) if duration>0 else len(fragments)*capacity
+    total=min(max(1,estimated),len(fragments)*capacity)
+    indices=_storyboard_sample_indices(total,max_samples)
+    root=Path(directory)/'storyboard';root.mkdir(parents=True,exist_ok=True)
+    headers=fmt.get('http_headers') if isinstance(fmt.get('http_headers'),dict) else {}
+    grids={}
+    output=[]
+    key=hashlib.sha256((identity+'|storyboard-v1').encode()).hexdigest()[:18]
+    for index in indices:
+        frag_index=index//capacity;cell_index=index%capacity
+        if frag_index>=len(fragments):continue
+        grid=grids.get(frag_index)
+        if grid is None:
+            grid=root/f'{key}-grid-{frag_index:03d}.jpg'
+            try:_download_storyboard_grid(fragments[frag_index]['url'],grid,headers)
+            except Exception:continue
+            grids[frag_index]=grid
+        row_index=cell_index//cols;col_index=cell_index%cols
+        cell=root/f'{key}-cell-{index:05d}.jpg'
+        if not cell.is_file():
+            x=col_index*cell_w;y=row_index*cell_h
+            try:
+                subprocess.run([
+                    'ffmpeg','-v','error','-y','-i',str(grid),
+                    '-vf',f'crop={cell_w}:{cell_h}:{x}:{y}',
+                    '-frames:v','1',str(cell),
+                ],check=True,capture_output=True,timeout=8)
+            except Exception:
+                cell.unlink(missing_ok=True);continue
+        output.append({'path':str(cell),'timestamp':round(index/fps,3),'index':index})
+    return output
+
+
+def _choose_storyboard_starts(samples,positive_scores,talking_scores,text_scores,duration,limit=2):
+    rows=[]
+    for sample in samples:
+        sid=str(sample['index'])
+        positive=float(positive_scores.get(sid,0) or 0)
+        talking=float(talking_scores.get(sid,0) or 0)
+        text=float(text_scores.get(sid,0) or 0)
+        negative=max(talking,text)
+        if positive<.34 or negative>positive+.015:continue
+        quality=positive-.45*negative
+        rows.append((quality,positive,-negative,float(sample['timestamp'])))
+    rows.sort(reverse=True)
+    starts=[]
+    for _quality,_positive,_negative,timestamp in rows:
+        start=max(0.0,min(max(0.0,float(duration)-3.5),timestamp-1.2))
+        if all(abs(start-existing)>=5.0 for existing in starts):
+            starts.append(round(start,3))
+        if len(starts)>=limit:break
+    return starts
+
+
+async def _storyboard_starts(engine,candidate,intent,folder,asset_id,client_id,emit):
+    if candidate.provider!='youtube' or float(candidate.duration)<18:return []
+    visual=getattr(engine.ranker,'visual',None)
+    if visual is None:return []
+    emit('Scanning YouTube storyboard',provider='youtube',query=candidate.query,duration=float(candidate.duration))
+    try:
+        samples=await asyncio.to_thread(
+            _youtube_storyboard_frames,candidate.source_page,folder,asset_id,10
+        )
+    except Exception as exc:
+        emit('YouTube storyboard unavailable',provider='youtube',query=candidate.query,error_type=type(exc).__name__)
+        return []
+    if len(samples)<2:return []
+    rows=[
+        {
+            'id':str(sample['index']),'client_id':client_id,
+            'path':sample['path'],'keyframe_path':sample['path'],'kind':'video',
+            'description':'YouTube storyboard frame',
+        }
+        for sample in samples
+    ]
+    # Qwen's low-resolution embeddings are cheap here: no video bytes have been
+    # downloaded yet. Three batched passes give us target relevance plus strong
+    # anti-talking-head and anti-text-overlay penalties.
+    target=_visual_target(intent)
+    try:
+        positive={r['id']:r.get('embedding_score',r.get('score',0)) for r in visual.rank(target,rows)}
+        talking={r['id']:r.get('embedding_score',r.get('score',0)) for r in visual.rank(
+            'person speaking directly to camera interview podcast talking head',rows)}
+        text={r['id']:r.get('embedding_score',r.get('score',0)) for r in visual.rank(
+            'large subtitles text overlay presentation slide infographic',rows)}
+    except Exception as exc:
+        emit('YouTube storyboard ranking unavailable',provider='youtube',error_type=type(exc).__name__)
+        return []
+    starts=_choose_storyboard_starts(samples,positive,talking,text,float(candidate.duration),2)
+    emit('YouTube storyboard localized',provider='youtube',query=candidate.query,windows=starts,samples=len(samples))
+    return starts
 
 
 @lru_cache(maxsize=128)
@@ -230,11 +388,15 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
                 continue
             output['preview_cache_hits']+=int(preview.cache_hit)
             base={'id':asset_id,'client_id':client_id,'source':candidate.provider,'provider':candidate.provider,'provider_id':candidate.provider_id,'source_page':candidate.source_page,'source_url':candidate.source_page,'title':candidate.title,'description':candidate.description or candidate.title,'query':candidate.query,'matched_query':candidate.query,'width':candidate.width,'height':candidate.height,'orientation':candidate.orientation,'rights_state':candidate.rights_state,'license_name':'Pexels License' if candidate.provider=='pexels' else None,'license_url':'https://www.pexels.com/license/' if candidate.provider=='pexels' else None,'attribution':candidate.creator_name,'path':str(preview.path),'preview_path':str(preview.path),'poster_path':str(preview.path),'keyframe_path':str(preview.path),'preview_url':getattr(candidate,'preview_url',None),'kind':'video','preview_status':'preview_pending','quality_state':'source_found','score':round(meta*.6,4),'source_start_seconds':None,'source_end_seconds':None,'clip_verified':False,'selected_full_download':False,'source_authenticity':getattr(candidate,'source_authenticity',None),'acquisition_state':'PREVIEW_ONLY','manual_reason':None}
-            duration=float(candidate.duration);starts=temporal_starts(duration,candidate.provider);measured=[];shape_rejected=False
+            duration=float(candidate.duration)
+            folder=Path(preview.path).parent/'quality-clips'
+            starts=await _storyboard_starts(engine,candidate,intent,folder,asset_id,client_id,emit)
+            if not starts:starts=temporal_starts(duration,candidate.provider)
+            measured=[];shape_rejected=False
             for start in starts:
                 emit('Materializing bounded clip',provider=candidate.provider,query=candidate.query,source_start_seconds=start,source_end_seconds=start+3.5)
                 try:
-                    folder=Path(preview.path).parent/'quality-clips';clip=await asyncio.to_thread(materialize_clip,candidate.preview_rendition_url or candidate.selected_rendition_url,folder,asset_id,start_seconds=start) if candidate.provider=='pexels' else await asyncio.to_thread(_social_clip,candidate.source_page,folder,asset_id,start,candidate.provider)
+                    clip=await asyncio.to_thread(materialize_clip,candidate.preview_rendition_url or candidate.selected_rendition_url,folder,asset_id,start_seconds=start) if candidate.provider=='pexels' else await asyncio.to_thread(_social_clip,candidate.source_page,folder,asset_id,start,candidate.provider)
                     if candidate.provider in VERTICAL_PROVIDERS and not _verified_portrait_clip(clip):
                         output['rejected_candidates'].append({'id':asset_id,'source':candidate.provider,'source_url':candidate.source_page,'matched_query':candidate.query,'score':0,'source_start_seconds':clip.get('source_start_seconds'),'source_end_seconds':clip.get('source_end_seconds'),'quality_reasons':['materialized social clip is not portrait']})
                         shape_rejected=True;break
