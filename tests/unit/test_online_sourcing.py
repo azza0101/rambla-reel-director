@@ -435,3 +435,23 @@ async def test_imported_editorial_plan_keeps_director_queries_authoritative(tmp_
     assert call["retrieval_intent"].startswith("RAMBLA_INTENT::")
     assert "source_strategy" not in call
     assert "evidence_intent" not in call
+
+
+def test_real_engine_keeps_pexels_youtube_and_google_video_as_independent_lanes(monkeypatch, tmp_path):
+    import backend.app.online_sourcing_cli as cli
+
+    monkeypatch.setattr(cli, "create_retrieval_ranker", lambda *_args, **_kwargs: object())
+    monkeypatch.setenv("RAMBLA_ENABLE_VERTICAL_SOCIAL", "1")
+    monkeypatch.setenv("RAMBLA_ENABLE_WEB_VIDEO", "1")
+
+    engine = cli._real_engine(
+        client_id="test",
+        pexels_api_key="pexels-key",
+        model_root=tmp_path,
+        embedding_code_root=None,
+        cache_root=tmp_path / "cache",
+        max_candidates=4,
+    )
+
+    providers = [getattr(source, "provider_name", None) for source in engine.sources]
+    assert providers == ["pexels", "youtube", "web_video"]
