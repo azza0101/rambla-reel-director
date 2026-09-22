@@ -395,7 +395,12 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
         for query_index,query in enumerate(provider_queries):
             emit('Searching video source',provider=provider_label,query=query)
             rows,error=await engine._search_one(source,query,orientation=orientation,min_duration=min_duration,max_duration=max_duration)
-            attempt={'provider':provider_label,'query':query,'hits':len(rows),'expanded':query not in clean_queries};output['search_attempts'].append(attempt)
+            attempt={'provider':provider_label,'query':query,'hits':len(rows),'expanded':query not in clean_queries}
+            source_attempt=getattr(source,'last_attempt',None)
+            if isinstance(source_attempt,dict):
+                for key in ('engine','browser_state','error'):
+                    if source_attempt.get(key) is not None:attempt[key]=source_attempt.get(key)
+            output['search_attempts'].append(attempt)
             drain=getattr(source,'drain_vertical_attempts',None)
             if callable(drain):
                 for extra in drain():
@@ -413,6 +418,15 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
         for candidate in pool:
             asset_id=f'{candidate.provider}:{candidate.provider_id}';meta,contradictions,missing,generic=metadata_quality(visual_target,candidate.title+' '+candidate.description)
             discovery_relevant=_discovery_relevant(candidate,intent)
+            if candidate.provider=='envato':
+                try:
+                    preview=await engine.cache.materialize_preview(candidate)
+                    output['preview_cache_hits']+=int(preview.cache_hit)
+                    pending.append(_manual_discovery_base(candidate,asset_id,client_id,meta,reason='Envato search result; open the official item page to license/download',preview_path=preview.path))
+                except Exception as exc:
+                    output['errors'].append({'provider':'envato','code':'poster_failed','error_type':type(exc).__name__})
+                    pending.append(_manual_discovery_base(candidate,asset_id,client_id,meta,reason='Envato search result; remote cover/source retained'))
+                continue
             if not discovery_relevant:
                 output['rejected_candidates'].append({'id':asset_id,'source':candidate.provider,'source_url':candidate.source_page,'matched_query':candidate.query,'score':0,'quality_reasons':['metadata/title does not match concrete visual target']})
                 continue
@@ -427,11 +441,8 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
                 continue
             output['preview_cache_hits']+=int(preview.cache_hit)
             base={'id':asset_id,'client_id':client_id,'source':candidate.provider,'provider':candidate.provider,'provider_id':candidate.provider_id,'source_page':candidate.source_page,'source_url':candidate.source_page,'title':candidate.title,'description':candidate.description or candidate.title,'query':candidate.query,'matched_query':candidate.query,'width':candidate.width,'height':candidate.height,'orientation':candidate.orientation,'rights_state':candidate.rights_state,'license_name':'Pexels License' if candidate.provider=='pexels' else None,'license_url':'https://www.pexels.com/license/' if candidate.provider=='pexels' else None,'attribution':candidate.creator_name,'path':str(preview.path),'preview_path':str(preview.path),'poster_path':str(preview.path),'keyframe_path':str(preview.path),'preview_url':getattr(candidate,'preview_url',None),'kind':'video','preview_status':'preview_pending','quality_state':'source_found','score':round(meta*.6,4),'source_start_seconds':None,'source_end_seconds':None,'clip_verified':False,'selected_full_download':False,'source_authenticity':getattr(candidate,'source_authenticity',None),'acquisition_state':'PREVIEW_ONLY','manual_reason':None}
-            if candidate.provider in {'envato','web_video'}:
-                reason=('Envato search result; open the official item page to license/download'
-                        if candidate.provider=='envato'
-                        else 'Google Video/News result; open source page for the original report/clip')
-                pending.append(_manual_discovery_base(candidate,asset_id,client_id,meta,reason=reason,preview_path=preview.path))
+            if candidate.provider=='web_video':
+                pending.append(_manual_discovery_base(candidate,asset_id,client_id,meta,reason='Google Video/News result; open source page for the original report/clip',preview_path=preview.path))
                 continue
             duration=float(candidate.duration)
             folder=Path(preview.path).parent/'quality-clips'
