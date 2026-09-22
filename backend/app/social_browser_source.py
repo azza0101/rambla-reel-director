@@ -195,6 +195,7 @@ class BrowserSocialSource:
                 "rows": found[:limit],
                 "diagnostics": {
                     "browser_state": state,
+                    "login_state": "verified" if any(mark in html for mark in ('href="/accounts/edit/', 'data-e2e="profile-icon"')) else "unknown",
                     "current_url": current_url[:300],
                     "page_title": await _page_title(page),
                     "all_video_link_count": all_video_links,

@@ -76,6 +76,9 @@ def test_default_login_opens_real_browser_profile_without_playwright(monkeypatch
 
     class FakeProcess:
         pid = 987
+        def wait(self, timeout):
+            import subprocess
+            raise subprocess.TimeoutExpired("browser", timeout)
 
     def fake_which(name):
         return r"C:\Program Files\Microsoft\Edge\Application\msedge.exe" if name in {"msedge", "msedge.exe"} else None

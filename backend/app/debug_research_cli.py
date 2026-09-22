@@ -174,6 +174,9 @@ def run_research(
     except Exception:
         _restore(snapshot)
         raise
+    if provider_scope and set(provider_scope) <= {"tiktok", "instagram"}:
+        from .debug_social_cli import require_completed_social_search
+        require_completed_social_search(fresh_video)
     return {"beat_id": beat_id, "mode": mode, "providers": list(provider_scope), "resolve_calls": 0}
 
 

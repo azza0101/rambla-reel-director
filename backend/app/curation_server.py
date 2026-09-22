@@ -509,10 +509,17 @@ def create_app(
         if clean not in SUPPORTED_SOCIAL_PROVIDERS:
             raise HTTPException(status_code=404, detail="social provider non supportato")
         try:
-            result = social_profiles.open_login(clean)
+            result = await asyncio.to_thread(social_profiles.open_login, clean)
         except (OSError, RuntimeError, ValueError) as exc:
-            raise HTTPException(status_code=503, detail=f"browser social non disponibile: {type(exc).__name__}") from exc
+            raise HTTPException(status_code=503, detail=f"browser social non disponibile: {exc}") from exc
         return {**result, "resolve_calls": 0}
+
+    @app.post("/api/curation/social/{provider}/check")
+    async def social_check(provider: str) -> dict[str, Any]:
+        clean = provider.casefold().strip()
+        if clean not in {"tiktok", "instagram"}:
+            raise HTTPException(status_code=404, detail="unsupported social provider")
+        return {**await social_profiles.check_search(clean), "resolve_calls": 0}
 
     @app.get("/api/curation/projects")
     async def list_projects() -> dict[str, Any]:

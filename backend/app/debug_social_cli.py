@@ -80,6 +80,14 @@ def _restore(snapshot: dict[Path, bytes | None]) -> None:
             temporary.replace(path)
 
 
+def require_completed_social_search(rows: list[dict]) -> None:
+    attempts = [a for row in rows for a in row.get("search_attempts", [])
+                if a.get("provider") in SOCIAL_PROVIDERS]
+    if not attempts or all(a.get("error") for a in attempts):
+        reasons = list(dict.fromkeys(str(a.get("browser_error_detail") or a.get("error")) for a in attempts))
+        raise RuntimeError("Social search blocked; no completed provider request. " + " | ".join(reasons[:3]))
+
+
 def run_social_research(*, video: Path, output: Path, client_id: str) -> dict:
     if not video.is_file():
         raise FileNotFoundError(video)
@@ -155,6 +163,7 @@ def run_social_research(*, video: Path, output: Path, client_id: str) -> dict:
     except Exception:
         _restore(snapshot)
         raise
+    require_completed_social_search(fresh_video)
     return {
         "beats": len(beat_ids),
         "providers": list(SOCIAL_PROVIDERS),

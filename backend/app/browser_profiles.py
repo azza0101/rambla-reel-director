@@ -336,6 +336,19 @@ def _default_login_launcher(provider: str, profile_dir: Path, start_url: str) ->
     else:
         kwargs["start_new_session"] = True
     process = subprocess.Popen(command, **kwargs)
+    # Popen success only means process creation. Chrome can immediately fail
+    # with a locked profile or denied IPC; do not present that as a login window.
+    if provider in {"tiktok", "instagram"}:
+        try:
+            code = process.wait(timeout=6)
+        except subprocess.TimeoutExpired:
+            code = None
+        if code not in {None, 0}:
+            raise BrowserUnavailableError(
+                f"{provider}: browser exited with code {code}. "
+                "Close the RAMBLA login window if already open. If no window opens, "
+                "start RAMBLA from its local launcher outside the restricted agent runtime."
+            )
     return int(process.pid)
 
 
@@ -382,6 +395,23 @@ class BrowserProfileManager:
         url = start_url or DEFAULT_START_URLS[clean]
         pid = self._login_launcher(clean, directory, url)
         return {"provider": clean, "status": "started", "pid": int(pid)}
+
+    async def check_search(self, provider: str) -> dict[str, Any]:
+        """Check the actual search surface, never profile-folder existence."""
+        from .social_browser_source import BrowserSocialSource
+        if provider not in {"tiktok", "instagram"}:
+            raise ValueError("unsupported social provider")
+        try:
+            payload = await BrowserSocialSource(provider, self)._browser_search("nature", 1)
+            diagnostics = payload.get("diagnostics") or {}
+            ready = bool(payload.get("rows")) or diagnostics.get("browser_state") == "zero_results"
+            return {"provider": provider, "ready": ready,
+                    "login_state": diagnostics.get("login_state", "unknown"),
+                    "detail": "Search page accessible" if ready else "Search grid unavailable; login or provider verification may be required.",
+                    "browser_state": diagnostics.get("browser_state", "unknown")}
+        except Exception as exc:
+            return {"provider": provider, "ready": False, "login_state": "unknown",
+                    "detail": str(exc)[:400], "error": type(exc).__name__}
 
     def status(self) -> dict[str, dict[str, Any]]:
         if importlib.util.find_spec("playwright") is not None:

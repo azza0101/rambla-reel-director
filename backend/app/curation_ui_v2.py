@@ -20,6 +20,14 @@ _MANAGEMENT_CSS = r"""
 """
 
 _PROJECT_DIALOG = r"""
+<dialog id="socialConnectDialogV5" class="libraryV2">
+<h2>TikTok + Instagram · connection check</h2>
+<p>1. Sign in in the two RAMBLA browser windows. 2. Close both windows. 3. Verify the connection and start the search.</p>
+<p class="muted">The saved profile alone does not prove you are logged in. RAMBLA checks the actual search page before proceeding.</p>
+<div class="row"><button id="openTikTokCheckV5">OPEN TIKTOK</button><button id="openInstagramCheckV5">OPEN INSTAGRAM</button></div>
+<p id="tiktokCheckStateV5" role="status"></p><p id="instagramCheckStateV5" role="status"></p>
+<div class="row"><button id="verifySocialV5" class="primary">VERIFY &amp; SEARCH</button><button id="cancelSocialV5">CANCEL</button></div>
+</dialog>
 <dialog id="projectLibraryV2" class="libraryV2">
   <div class="top"><div><h2 style="margin:0">Project Library</h2><div class="muted">Open, rename or remove local RAMBLA projects. Disk usage is calculated from the actual project folder.</div></div><button id="closeProjectsV2">CLOSE</button></div>
   <div class="row" style="margin-top:10px"><b>Disk usage</b><span id="libraryTotalV2" class="muted storageV2"></span><button id="refreshProjectsV2" class="ghost">REFRESH</button></div>
@@ -28,6 +36,39 @@ _PROJECT_DIALOG = r"""
 """
 
 _MANAGEMENT_JS = r"""
+let socialSearchScopeV5=null;
+let socialOpeningV5=0;
+async function openSocialCheckV5(provider){
+ const node=$(provider+'CheckStateV5');socialOpeningV5++;$('verifySocialV5').disabled=true;
+ node.textContent=provider+': opening browser…';
+ try{await api(`/social/${provider}/login`,{method:'POST'});node.textContent=provider+': browser launch requested. Check the window, sign in, then close it.'}
+ catch(e){node.textContent=provider+': '+(e.message||String(e))}
+ finally{socialOpeningV5--;$('verifySocialV5').disabled=socialOpeningV5>0}
+}
+async function prepareSocialV5(beatId=null){
+ if(state.run)return;socialSearchScopeV5=beatId;
+ $('socialConnectDialogV5').showModal();
+ await Promise.all(['tiktok','instagram'].map(openSocialCheckV5));
+}
+async function checkSocialAndRunV5(){
+ const button=$('verifySocialV5');button.disabled=true;
+ try{
+  const checks=await Promise.all(['tiktok','instagram'].map(async provider=>{
+   const node=$(provider+'CheckStateV5');node.textContent=provider+': checking actual search page…';
+   try{const result=await api(`/social/${provider}/check`,{method:'POST'});node.textContent=provider+': '+(result.ready?'SEARCH READY':'BLOCKED')+' · '+result.detail+' · login '+(result.login_state==='verified'?'verified':'not verified');return result.ready}
+   catch(e){node.textContent=provider+': '+(e.message||String(e));return false}
+  }));
+  if(!checks.every(Boolean))return;
+  $('socialConnectDialogV5').close();
+  if(socialSearchScopeV5){if(state.active!==socialSearchScopeV5)throw Error('Active beat changed; reopen its social search.');await researchBeatV2('append',['tiktok','instagram'])}
+  else await startStage('source/social');
+ }catch(e){reportError(e)}finally{button.disabled=false}
+}
+$('openTikTokCheckV5').onclick=()=>openSocialCheckV5('tiktok');
+$('openInstagramCheckV5').onclick=()=>openSocialCheckV5('instagram');
+$('verifySocialV5').onclick=checkSocialAndRunV5;
+$('cancelSocialV5').onclick=()=>$('socialConnectDialogV5').close();
+
 const expandedShelvesV2=new Set();
 let directorStatusV5={providers:{},loaded:false};
 const shelfLimitsV2={verticalVideos:3,tiktokVideosV2:3,instagramVideosV2:3,webNewsVideosV2:3,envatoVideosV2:3,videos:3,stockVideos:3,images:4};
@@ -55,10 +96,10 @@ function socialStateV2(a){if(a.preview_status==='manual'||(!a.preview_url&&a.sel
 function decorateSocialCardsV2(chunk){for(const id of ['verticalVideos','tiktokVideosV2','instagramVideosV2','webNewsVideosV2','envatoVideosV2']){const container=$(id);if(!container)continue;container.querySelectorAll('.card').forEach(node=>{const a=(chunk.assets||[]).find(x=>x.asset_id===node.dataset.a);if(!a)return;const stateLabel=socialStateV2(a),copy=node.querySelector('.copy'),badge=document.createElement('span');badge.className=`socialStateV2 ${stateLabel==='CLIP READY'?'ready':stateLabel==='MANUAL'?'manual':'preview'}`;badge.textContent=stateLabel;const head=copy?.querySelector('div');if(head&&!head.querySelector('.socialStateV2'))head.appendChild(badge);const link=copy?.querySelector('a');if(link)link.textContent='OPEN SOURCE';if(stateLabel==='MANUAL'){const img=node.querySelector('img');if(img)img.src='data:image/svg+xml;charset=utf-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22640%22 height=%22360%22%3E%3Crect width=%22100%25%22 height=%22100%25%22 fill=%22%23202b37%22/%3E%3Ctext x=%2250%25%22 y=%2250%25%22 fill=%22%2394a3b8%22 font-size=%2226%22 text-anchor=%22middle%22 dominant-baseline=%22middle%22%3EOPEN SOURCE%3C/text%3E%3C/svg%3E'}})}}
 function installSocialShelvesV2(){const chunk=activeChunkV2();if(!chunk)return;const providers={verticalVideos:'youtube_shorts',tiktokVideosV2:'tiktok',instagramVideosV2:'instagram',webNewsVideosV2:'web_video'};for(const [id,provider] of Object.entries(providers)){const box=$(id),assets=(chunk.assets||[]).filter(a=>a.kind==='video'&&a.provider===provider),limit=shelfLimitsV2[id]||3,key=`${chunk.id}:${id}`,shown=expandedShelvesV2.has(key)?assets:assets.slice(0,limit);if(box)box.innerHTML=shown.length?shown.map(card).join(''):`<p class="muted">${esc(socialEmptyMessageV2(chunk,provider))}</p>`;installShelfExpansionV2(chunk,id)}bindCardsV2(chunk);decorateSocialCardsV2(chunk)}
 function envatoEmptyV5(chunk){const attempts=(chunk.retrieval_diagnostics?.video_attempts||[]).filter(a=>a.provider==='envato');if(!attempts.length)return 'Not searched yet for this beat.';return attempts.map(a=>`Envato ${a.error?'request failed':'searched'} · ${a.hits??'unknown'} results · query: ${a.query} · engine: ${a.engine||'unrecorded'} · parser: ${a.parser||'unrecorded'}${a.error?' · '+a.error:''}${a.cache_hit?' · cached':''}`).join(' | ')}
-function installManagementV2(){const chunk=activeChunkV2();for(const id of ['findVideos','findImages'])$(id).disabled=!state.data.editorial_plan_ready||!!state.run;$('cleanMediaV2').disabled=!state.pid||!state.data.editorial_plan_ready||!!state.run;$('findSocial').disabled=!state.data.editorial_plan_ready||!!state.run;syncDirectorControlsV5();const actions=$('beatActionsV2');if(chunk?.action==='BROLL'){actions.innerHTML=`<small>THIS BEAT</small><button id="newSearchV2" ${state.run?'disabled':''}>NEW SEARCH</button><button id="addResultsV2" ${state.run?'disabled':''}>ADD TIKTOK + IG</button><span id="beatResearchStateV2" class="beatResearchStateV2"></span>`;$('newSearchV2').onclick=()=>researchBeatV2('replace');$('addResultsV2').onclick=()=>researchBeatV2('append',['tiktok','instagram']);for(const id of ['videos','stockVideos','envatoVideosV2','images'])installShelfExpansionV2(chunk,id);const envato=$('envatoVideosV2'),rows=shelfAssetsV2(chunk,'envatoVideosV2'),limit=shelfLimitsV2.envatoVideosV2;if(envato&&!expandedShelvesV2.has(`${chunk.id}:envatoVideosV2`))envato.innerHTML=rows.slice(0,limit).map(card).join('')||`<p class="muted">${esc(envatoEmptyV5(chunk))}</p>`}else{actions.innerHTML='';for(const id of Object.keys(shelfLimitsV2)){const b=document.getElementById(`moreV2-${id}`);if(b)b.remove()}}installSocialShelvesV2();if(chunk)bindCardsV2(chunk)}
+function installManagementV2(){const chunk=activeChunkV2();for(const id of ['findVideos','findImages'])$(id).disabled=!state.data.editorial_plan_ready||!!state.run;$('cleanMediaV2').disabled=!state.pid||!state.data.editorial_plan_ready||!!state.run;$('findSocial').disabled=!state.data.editorial_plan_ready||!!state.run;syncDirectorControlsV5();const actions=$('beatActionsV2');if(chunk?.action==='BROLL'){actions.innerHTML=`<small>THIS BEAT</small><button id="newSearchV2" ${state.run?'disabled':''}>NEW SEARCH</button><button id="addResultsV2" ${state.run?'disabled':''}>ADD TIKTOK + IG</button><span id="beatResearchStateV2" class="beatResearchStateV2"></span>`;$('newSearchV2').onclick=()=>researchBeatV2('replace');$('addResultsV2').onclick=()=>prepareSocialV5(chunk.id);for(const id of ['videos','stockVideos','envatoVideosV2','images'])installShelfExpansionV2(chunk,id);const envato=$('envatoVideosV2'),rows=shelfAssetsV2(chunk,'envatoVideosV2'),limit=shelfLimitsV2.envatoVideosV2;if(envato&&!expandedShelvesV2.has(`${chunk.id}:envatoVideosV2`))envato.innerHTML=rows.slice(0,limit).map(card).join('')||`<p class="muted">${esc(envatoEmptyV5(chunk))}</p>`}else{actions.innerHTML='';for(const id of Object.keys(shelfLimitsV2)){const b=document.getElementById(`moreV2-${id}`);if(b)b.remove()}}installSocialShelvesV2();if(chunk)bindCardsV2(chunk)}
 const watchBaseV5=watch;watch=async(id)=>{await watchBaseV5(id);installManagementV2()};
 const drawBaseV2=draw;draw=()=>{drawBaseV2();installManagementV2()};
-window.ramblaRunTerminal=(r)=>{installManagementV2();syncDirectorControlsV5();if(r?.stage_type==='director_api'&&r.status!=='SUCCEEDED'){const s=$('directorStateV5');if(s){s.className='directorStateV5';s.textContent=`Director ${String(r.status||'FAILED').toLowerCase()} · ${r.last_message||'see Analysis Details'}`}}};$('findSocial').onclick=()=>startStage('source/social');$('generateDirectorV5').onclick=runDirectorV5;$('directorProviderV5').onchange=()=>{localStorage.setItem('rambla-director-provider',$('directorProviderV5').value);syncDirectorControlsV5()};$('projectsV2').onclick=async()=>{$('projectLibraryV2').showModal();await refreshProjectsV2()};$('closeProjectsV2').onclick=()=>$('projectLibraryV2').close();$('refreshProjectsV2').onclick=refreshProjectsV2;$('cleanMediaV2').onclick=cleanMediaV2;$('tiktokLoginV2').onclick=()=>socialLoginV2('tiktok');$('instagramLoginV2').onclick=()=>socialLoginV2('instagram');$('envatoLoginV2').onclick=()=>socialLoginV2('envato');socialStatusV2();aiDirectorStatusV5();
+window.ramblaRunTerminal=(r)=>{installManagementV2();syncDirectorControlsV5();if(r?.stage_type==='director_api'&&r.status!=='SUCCEEDED'){const s=$('directorStateV5');if(s){s.className='directorStateV5';s.textContent=`Director ${String(r.status||'FAILED').toLowerCase()} · ${r.last_message||'see Analysis Details'}`}}};$('findSocial').onclick=()=>prepareSocialV5();$('generateDirectorV5').onclick=runDirectorV5;$('directorProviderV5').onchange=()=>{localStorage.setItem('rambla-director-provider',$('directorProviderV5').value);syncDirectorControlsV5()};$('projectsV2').onclick=async()=>{$('projectLibraryV2').showModal();await refreshProjectsV2()};$('closeProjectsV2').onclick=()=>$('projectLibraryV2').close();$('refreshProjectsV2').onclick=refreshProjectsV2;$('cleanMediaV2').onclick=cleanMediaV2;$('tiktokLoginV2').onclick=()=>socialLoginV2('tiktok');$('instagramLoginV2').onclick=()=>socialLoginV2('instagram');$('envatoLoginV2').onclick=()=>socialLoginV2('envato');socialStatusV2();aiDirectorStatusV5();
 """
 
 

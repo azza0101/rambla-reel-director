@@ -11,7 +11,7 @@ def test_global_social_routes_imported_broll_beats(monkeypatch,tmp_path):
  monkeypatch.setattr(worker,'_probe',lambda p:(25,200))
  monkeypatch.setattr(worker,'persist_video_diagnostics',lambda p:None)
  def execute(cmd,**kwargs):
-  calls.append(cmd);(root/'online-candidates.json').write_text('[]')
+  calls.append(cmd);(root/'online-candidates.json').write_text(json.dumps([{'parent_beat_id':'vb-1','search_attempts':[{'provider':'tiktok','hits':0},{'provider':'instagram','hits':0}]}]))
  monkeypatch.setattr(worker.subprocess,'run',execute)
  result=worker.run_social_research(video=video,output=tmp_path,client_id='test')
  assert result['beats']==1
