@@ -18,11 +18,22 @@ VERTICAL_PROVIDERS={'youtube_shorts','tiktok','instagram'}
 
 
 def temporal_starts(duration,provider):
+    """Small adaptive localization budget for fast B-roll verification.
+
+    Search metadata already picked the candidate; bounded clip probing should
+    verify/localize it, not exhaustively scan the whole source. Two windows are
+    enough for normal YouTube, while very short clips need only one.
+    """
+    duration=float(duration)
     if duration<=3.5:return [0.0]
-    if provider=='youtube': fractions=(.03,.18,.36,.54,.72,.93)
-    elif provider in VERTICAL_PROVIDERS: fractions=(.05,.34,.63,.9)
-    else: fractions=(.05,.35,.65,.9)
-    return sorted(set(round((duration-3.5)*f,3) for f in fractions))
+    usable=max(0.0,duration-3.5)
+    if provider=='youtube':
+        fractions=(.12,.58) if duration<=180 else (.22,.68)
+    elif provider in VERTICAL_PROVIDERS:
+        fractions=(.08,.55) if duration>12 else (.05,)
+    else:
+        fractions=(.08,.58)
+    return sorted(set(round(usable*f,3) for f in fractions))
 
 
 @lru_cache(maxsize=128)
@@ -200,10 +211,10 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
             for row in rows:
                 key=(row.provider,row.provider_id)
                 if key not in seen:pool.append(row);seen.add(key)
-            if len(pool)>=8 and query_index>=1:break
+            if len(pool)>=6 and query_index>=1:break
         intent=retrieval_intent or next((engine.query_intents.get(q) for q in queries if engine.query_intents.get(q)),queries[0])
         visual_target=_visual_target(intent)
-        pool=_balanced_discovery_pool(pool,intent,limit=8)
+        pool=_balanced_discovery_pool(pool,intent,limit=4)
         accepted=[];pending=[]
         for candidate in pool:
             asset_id=f'{candidate.provider}:{candidate.provider_id}';meta,contradictions,missing,generic=metadata_quality(visual_target,candidate.title+' '+candidate.description)
@@ -238,6 +249,9 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
                     score=min(1.0,semantic+phone_bonus)
                     row={**base,**clip,'kind':'video','score':round(score,4),'semantic_score':round(semantic,4),'phone_native_bonus':phone_bonus,'frame_scores':[r['score'] for r in scored],'embedding_score':sum(r['embedding_score'] for r in scored)/len(scored) if scored and all(r.get('embedding_score') is not None for r in scored) else None,'quality_state':('needs_review' if any(r.get('quality_state')=='needs_review' for r in scored) else 'accepted') if verified else 'metadata_only','clip_verified':verified,'rank_reason':'Sampled clip frames ranked against editorial context'+(' · verified vertical-social bonus' if phone_bonus else ''),'preview_status':'ready','localization_method':'sampled source window; frame relevance checked' if verified else 'sampled source window; relevance unverified','quality_reasons':[reason for r in scored for reason in r.get('quality_reasons',[])],'acquisition_state':'CLIP_READY' if verified else 'PREVIEW_ONLY','manual_reason':None}
                     row['perceptual_hash']=perceptual_hash(Path(frames[0]));measured.append(row);emit('Clip quality measured',provider=candidate.provider,score=row['score'],clip_verified=verified)
+                    if verified and row['score']>=.62:
+                        emit('Strong clip found; skipping remaining windows',provider=candidate.provider,score=row['score'])
+                        break
                 except Exception as exc:
                     output['errors'].append({'provider':candidate.provider,'code':'clip_preview_failed','error_type':type(exc).__name__})
                     if not measured:break
@@ -252,6 +266,6 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
                     if discovery_relevant:pending.append({**base,**fallback_acquisition_state(has_preview=True,reason='automatic clip did not pass relevance verification')})
             elif discovery_relevant:
                 pending.append({**base,**fallback_acquisition_state(has_preview=True,reason='automatic clip download unavailable')})
-            if len(accepted)>=3:break
+            if len(accepted)>=2:break
         accepted,_=diverse_candidates(sorted(accepted,key=lambda r:(r.get('source') in VERTICAL_PROVIDERS,r['score']),reverse=True),[],limit=3);output['candidates'].extend(accepted[:3]);output.setdefault('discovery_sources',[]).extend(pending[:3])
     output['eligible_candidate_count']=sum(c.get('clip_verified',False) for c in output['candidates']);output['raw_result_count']=sum(r['hits'] for r in output['search_attempts']);output['ranking_warning']=getattr(engine.ranker,'warning',None);return output
