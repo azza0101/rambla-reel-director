@@ -190,3 +190,19 @@ def test_curation_artifacts_expose_discovery_source_when_clip_download_failed(tm
     assert candidate.preview_status == "preview_pending"
     assert candidate.clip_verified is False
     assert candidate.source_page == "https://news.example/video/42"
+
+
+def test_http_google_parser_extracts_nested_anchor_thumbnail():
+    from backend.app.web_video_source import _GoogleVideoHTMLParser, extract_google_video_results
+
+    parser = _GoogleVideoHTMLParser()
+    parser.feed("""
+    <a href="https://www.google.com/url?q=https%3A%2F%2Fnews.example%2Fvideo%2Fabc">
+      <img src="https://img.example/thumb.jpg" width="320" height="180">
+      Eyewitness street video
+    </a>
+    """)
+    rows = extract_google_video_results(parser.rows, limit=3)
+    assert len(rows) == 1
+    assert rows[0]["source_page"] == "https://news.example/video/abc"
+    assert rows[0]["title"] == "Eyewitness street video"
