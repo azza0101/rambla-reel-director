@@ -48,3 +48,11 @@ Real follow-up probe: TikTok visible launch exited 21 and check reported profile
 VERIFY CONNECTIONS now only checks connections. A separate START SEARCH button becomes available as soon as one selected provider is ready. Ready providers are selected automatically; blocked providers are disabled and skipped. Both whole-project and beat-specific searches carry the selected provider list to the worker; an Instagram login failure no longer prevents a TikTok-only search. Search-start errors remain in the dialog and a successfully accepted job switches to the normal progress view.
 
 Validation: 539 tests pass, Python compilation and rendered JS syntax pass. Executable JS tests cover TikTok-ready/Instagram-blocked, no automatic search during verification, explicit start, provider deselection, and correct whole-project/per-beat payloads. API and command tests verify TikTok-only routing and reject empty/unsupported provider selections. No new real media acceptance is claimed by these UI/routing tests.
+
+## DOM capture timeout
+
+The installed-browser fallback previously used virtual time but no real Chrome capture deadline. It now uses the documented `--timeout=15000` capture bound, retaining a separate 25-second process deadline. If the process deadline fires after a complete HTML document was emitted, that document is inspected normally; incomplete/empty output remains a search_timeout with login state unknown. This does not treat timeout as login failure or successful search.
+
+542 tests pass, including complete/partial/empty output on TimeoutExpired. Python compilation passes. This addresses a confirmed command/diagnostics deficiency; resolution of the user's live TikTok hang is pending a user-runtime retry. Process inspection in the agent environment was denied. No browser processes were indiscriminately killed and no profile locks or credentials were modified.
+
+Chrome flag reference: https://developer.chrome.com/docs/automation-and-testing/headless-cli

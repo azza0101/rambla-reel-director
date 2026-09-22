@@ -199,7 +199,7 @@ async def _default_chromium_dom_runner(
         "--no-default-browser-check",
         f"--user-data-dir={profile_dir}",
         "--profile-directory=Default",
-        "--virtual-time-budget=8000",
+        "--timeout=15000",
         "--dump-dom",
         start_url,
     ]
@@ -219,6 +219,19 @@ async def _default_chromium_dom_runner(
 
     try:
         completed = await asyncio.to_thread(run_dump)
+    except subprocess.TimeoutExpired as exc:
+        # Chrome can finish the DOM dump while a child retains the pipe. A
+        # complete document can still be inspected; a partial one cannot.
+        output = exc.stdout or ""
+        if isinstance(output, bytes):
+            output = output.decode("utf-8", errors="replace")
+        if "<html" in output.casefold() and "</html>" in output.casefold():
+            completed = subprocess.CompletedProcess(command, 0, output, "")
+        else:
+            raise BrowserUnavailableError(
+                "search_timeout: Chrome did not return a complete search page within 25 seconds; "
+                "login state unknown. Close only the RAMBLA social login windows, then retry verification."
+            ) from exc
     except Exception as exc:
         raise BrowserUnavailableError(f"Chromium DOM automation failed: {type(exc).__name__}") from exc
     if int(getattr(completed, "returncode", 1)) != 0:
