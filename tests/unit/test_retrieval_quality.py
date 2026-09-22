@@ -205,3 +205,61 @@ def test_proxy_has_wall_time_bound_and_removes_partial_file(tmp_path,monkeypatch
     monkeypatch.setattr(module,'time',NS(monotonic=lambda:next(ticks)),raising=False)
     with pytest.raises(TimeoutError):module.download_preview_proxy('https://example.com/video',tmp_path,'id',max_seconds=30)
     assert not list(tmp_path.iterdir())
+
+
+def test_video_discovery_rejects_single_generic_noun_match():
+    from types import SimpleNamespace as NS
+    from backend.app.quality_video import _discovery_relevant
+
+    good = NS(
+        provider="youtube_shorts",
+        query="small passenger ferry with luggage",
+        title="Passengers board island ferry carrying luggage",
+        description="Travelers boarding a ferry with bags",
+        orientation="portrait",
+        source_authenticity=.94,
+        provider_rank=0,
+    )
+    bad = NS(
+        provider="youtube_shorts",
+        query="small passenger ferry with luggage",
+        title="Huge wave shatters ferry window during storm",
+        description="Storm damages ferry window in Germany",
+        orientation="portrait",
+        source_authenticity=.94,
+        provider_rank=1,
+    )
+
+    intent = "Small passenger ferry crossing water with travelers holding luggage"
+    assert _discovery_relevant(good, intent) is True
+    assert _discovery_relevant(bad, intent) is False
+
+
+def test_video_discovery_pool_reserves_normal_youtube_among_vertical_results():
+    from types import SimpleNamespace as NS
+    from backend.app.quality_video import _balanced_discovery_pool
+
+    def row(provider, pid, title, rank=0):
+        return NS(
+            provider=provider,
+            provider_id=pid,
+            query="airport shuttle bus departing",
+            title=title,
+            description=title,
+            orientation="portrait" if provider != "youtube" else "landscape",
+            source_authenticity=.94,
+            provider_rank=rank,
+        )
+
+    pool = [
+        row("youtube_shorts", "s1", "Airport shuttle bus departing terminal"),
+        row("youtube_shorts", "s2", "Airport shuttle bus at terminal", 1),
+        row("tiktok", "t1", "Airport shuttle bus departing", 0),
+        row("instagram", "i1", "Airport shuttle bus departure", 0),
+        row("youtube", "y1", "Airport shuttle bus departing with luggage", 0),
+    ]
+
+    selected = _balanced_discovery_pool(pool, "Airport shuttle bus departing with luggage", limit=4)
+    providers = [item.provider for item in selected]
+    assert "youtube" in providers
+    assert len(set(providers)) >= 3
