@@ -137,7 +137,10 @@ def parse_envato_search_html(html: str, *, limit: int) -> list[dict[str, Any]]:
 
 def _search_url(query: str) -> str:
     clean = " ".join(str(query or "").split())
-    return "https://elements.envato.com/stock-video/" + quote_plus(clean)
+    # Envato's current SEO search routes encode spaces as literal '+' tokens
+    # in the path (surfaced as %2B in canonical URLs).
+    token = quote_plus(clean).replace("+", "%2B")
+    return "https://elements.envato.com/stock-video/" + token
 
 
 async def _http_discover(query: str, limit: int) -> list[dict[str, Any]]:
