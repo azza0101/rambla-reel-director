@@ -10,7 +10,7 @@ def test_profile_dirs_are_provider_scoped_and_reject_unknown(tmp_path):
     manager = BrowserProfileManager(tmp_path)
     assert manager.profile_dir("tiktok") == tmp_path / "tiktok"
     assert manager.profile_dir("instagram") == tmp_path / "instagram"
-    assert manager.profile_dir("envato") == tmp_path / "envato"
+    # Envato is special-cased to the user's normal Chrome profile when present.
     with pytest.raises(ValueError, match="unsupported social provider"):
         manager.profile_dir("facebook")
 
@@ -159,8 +159,15 @@ def test_status_reports_usable_social_search_backend_without_exposing_profile_pa
     assert "profile_dir" not in repr(status).casefold()
 
 
-def test_envato_login_uses_its_own_persistent_profile(tmp_path):
-    from backend.app.browser_profiles import BrowserProfileManager
+def test_envato_login_uses_normal_chrome_profile_when_available(monkeypatch, tmp_path):
+    import backend.app.browser_profiles as profiles
+
+    chrome_root = tmp_path / "Chrome" / "User Data"
+    (chrome_root / "Profile 7").mkdir(parents=True)
+    (chrome_root / "Local State").write_text(
+        '{"profile":{"last_used":"Profile 7"}}', encoding="utf-8"
+    )
+    monkeypatch.setenv("RAMBLA_CHROME_USER_DATA_DIR", str(chrome_root))
 
     calls = []
 
@@ -168,8 +175,41 @@ def test_envato_login_uses_its_own_persistent_profile(tmp_path):
         calls.append((provider, profile_dir, start_url))
         return 654
 
-    manager = BrowserProfileManager(tmp_path, login_launcher=launcher)
+    manager = profiles.BrowserProfileManager(tmp_path / "rambla", login_launcher=launcher)
     result = manager.open_login("envato")
 
     assert result["provider"] == "envato"
-    assert calls == [("envato", tmp_path / "envato", "https://elements.envato.com/")]
+    assert calls == [("envato", chrome_root, "https://elements.envato.com/")]
+    assert profiles.normal_chrome_profile() == (chrome_root, "Profile 7")
+
+
+def test_default_envato_login_opens_normal_chrome_without_custom_user_data(monkeypatch, tmp_path):
+    import backend.app.browser_profiles as profiles
+
+    launched = []
+
+    class FakeProcess:
+        pid = 4321
+
+    monkeypatch.setattr(
+        profiles,
+        "_installed_chrome",
+        lambda: r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    )
+    monkeypatch.setattr(
+        profiles.subprocess,
+        "Popen",
+        lambda command, **kwargs: launched.append((command, kwargs)) or FakeProcess(),
+    )
+
+    pid = profiles._default_login_launcher(
+        "envato", tmp_path / "ignored", "https://elements.envato.com/"
+    )
+
+    assert pid == 4321
+    command = launched[0][0]
+    assert command == [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        "https://elements.envato.com/",
+    ]
+    assert not any(str(part).startswith("--user-data-dir=") for part in command)
