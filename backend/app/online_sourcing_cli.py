@@ -118,6 +118,12 @@ async def _source_outline(
         event_callback("coverage", 100.0, "Coverage slots planned", slots=len(slots), providers=providers)
 
     engine.event_callback=event_callback
+    try:
+        source_concurrency=int(os.environ.get("RAMBLA_SOURCE_CONCURRENCY","4"))
+    except ValueError:
+        source_concurrency=4
+    source_concurrency=max(1,min(8,source_concurrency))
+    source_gate=asyncio.Semaphore(source_concurrency)
     tasks = []
     completed_count = 0
     route_by_slot: dict[str, Any] = {}
@@ -150,20 +156,24 @@ async def _source_outline(
             }
         if getattr(engine,'quality_mode',False):
             editorial['retrieval_intent']=slot.visual_intent
-        task = engine.source_beat(
-                beat_id=slot.id,
-                client_id=client_id,
-                queries=list(slot.queries)[: engine.max_queries],
-                min_duration=max(1.0, min(duration, 3.0)),
-                # Long-video evidence (interviews, social/repertory) must remain
-                # eligible even though the editorial insert itself is only 3–4 s.
-                max_duration=4 * 60 * 60,
-                orientation=None,
-                **editorial,
-            )
-        async def source_with_progress(slot_value: Any = slot, task_value: Any = task) -> Any:
+        async def source_with_progress(
+            slot_value: Any = slot,
+            duration_value: float = duration,
+            editorial_value: dict[str, Any] = dict(editorial),
+        ) -> Any:
             nonlocal completed_count
-            result = await task_value
+            async with source_gate:
+                result = await engine.source_beat(
+                    beat_id=slot_value.id,
+                    client_id=client_id,
+                    queries=list(slot_value.queries)[: engine.max_queries],
+                    min_duration=max(1.0, min(duration_value, 3.0)),
+                    # Long videos stay eligible, but only a bounded number of
+                    # slots may perform network/local-Qwen work concurrently.
+                    max_duration=4 * 60 * 60,
+                    orientation=None,
+                    **editorial_value,
+                )
             completed_count += 1
             completed = completed_count
             progress = 100.0 * completed / len(slots)
