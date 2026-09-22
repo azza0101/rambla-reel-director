@@ -763,3 +763,10 @@ def test_compile_requires_exactly_one_decision_per_chunk():
 
     with pytest.raises(ValueError, match="expected exactly 3 chunk decisions, got 2"):
         compile_director_decisions(package_fixture(), decisions)
+
+
+def test_groq_uses_model_specific_completion_limits():
+    from backend.app.groq_api import GroqDirectorClient
+
+    assert GroqDirectorClient._max_completion_tokens("qwen/qwen3.8-27b") == 16384
+    assert GroqDirectorClient._max_completion_tokens("openai/gpt-oss-120b") == 65536
