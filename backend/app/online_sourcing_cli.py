@@ -27,7 +27,6 @@ from .online_assets import PexelsSource
 from .online_sourcing import OnlineSourcingEngine
 from .qwen_stack import LocalQwenEmbedder, QwenConfig, QwenMultimodalRanker
 from .source_strategy import plan_source_strategy
-from .social_acquisition import profile_root_from_env
 from .taste_profile import TasteContext
 from .visual_routing import plan_visual_route
 from .visual_planner import merge_visual_diagnostics, persist_visual_plan
@@ -555,7 +554,7 @@ def _real_engine(
     # Envato is discovery-only: expose searchable covers/links, never automate
     # subscription downloads or project licensing.
     if include_envato and str(os.environ.get("RAMBLA_ENABLE_ENVATO", "1")).casefold() in {"1","true","yes","on"}:
-        sources.append(EnvatoSource(profile_dir=profile_root_from_env() / "envato"))
+        sources.append(EnvatoSource())
 
     # Google Videos/news is intentionally separate from social/YouTube so the
     # curator can see current-event/repertory sources even when clip download
