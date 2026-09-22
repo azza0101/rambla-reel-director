@@ -346,3 +346,46 @@ def test_storyboard_locator_rejects_talking_head_and_prefers_clean_visual_match(
     )
 
     assert starts == [18.8]
+
+
+def test_stale_query_is_rejected_against_concrete_visual_target():
+    from backend.app.quality_video import _query_matches_target, _query_from_target
+
+    target = "A local language map pin or hand pointing at a small-town sign in a market alley."
+    assert _query_matches_target("free range chickens garden", target) is False
+    assert _query_matches_target("hand pointing at town sign", target) is True
+    repaired = _query_from_target(target)
+    assert "map" in repaired and "sign" in repaired
+
+
+@pytest.mark.asyncio
+async def test_valid_storyboard_with_no_matching_scene_returns_empty_not_fallback(tmp_path, monkeypatch):
+    from types import SimpleNamespace as NS
+    from backend.app import quality_video as module
+
+    monkeypatch.setattr(
+        module,
+        "_youtube_storyboard_frames",
+        lambda *_args, **_kwargs: [
+            {"path": str(tmp_path / "a.jpg"), "timestamp": 10.0, "index": 1},
+            {"path": str(tmp_path / "b.jpg"), "timestamp": 20.0, "index": 2},
+        ],
+    )
+
+    class Visual:
+        def rank(self, _query, rows):
+            return [{**row, "embedding_score": .20} for row in rows]
+
+    engine = NS(ranker=NS(visual=Visual()))
+    candidate = NS(
+        provider="youtube",
+        duration=120,
+        query="elephant sanctuary entrance",
+        source_page="https://youtube.com/watch?v=x",
+    )
+
+    result = await module._storyboard_starts(
+        engine, candidate, "elephant sanctuary entrance",
+        tmp_path, "youtube:x", "client", lambda *_args, **_kwargs: None,
+    )
+    assert result == []
