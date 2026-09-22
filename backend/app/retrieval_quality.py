@@ -75,7 +75,7 @@ def metadata_quality(intent,text):
     overlap=len(wanted & found)/max(1,len(wanted))
     contradictions=[c for c,opposites in CONTRASTS.items() if c in wanted and found & opposites and c not in found]
     missing_conditions=[c for c in CONTRASTS if c in wanted and c not in found]
-    generic=bool(re.search(r'\b(vlog|youtuber|subscribe|my trip|travel diary|selfie|reaction)\b',text,re.I)) and not bool(re.search(r'\b(vlog|youtuber|selfie|reaction)\b',intent,re.I))
+    generic=bool(re.search(r'\b(vlog|youtuber|subscribe|my trip|travel diary|selfie|reaction|podcast|interview|talking head|news anchor|tutorial|infographic|screenshot|text overlay|subtitles)\b',text,re.I)) and not bool(re.search(r'\b(vlog|youtuber|selfie|reaction|interview|podcast|tutorial|infographic|screenshot)\b',intent,re.I))
     return overlap,contradictions,missing_conditions,generic
 
 

@@ -210,6 +210,8 @@ async def _source_outline(
             result.setdefault('raw_result_count',len(candidates) + len(result.get('rejected_candidates') or []))
             if getattr(engine,'quality_mode',False):
                 result['eligible_candidate_count']=sum(c.get('clip_verified',False) for c in retained)
+                from .quality_video import synchronize_proposals
+                synchronize_proposals(result)
             valid = {c['id'] for c in retained}
             for key in ('proposal_A','proposal_B','proposal_C'):
                 proposal = (result.get('proposals') or {}).get(key)
@@ -222,6 +224,11 @@ async def _source_outline(
     annotated_results: list[dict[str, Any]] = []
 
     for slot, result in zip(slots, results):
+        shot_id=slot.id.split(':shot:')[-1] if ':shot:' in slot.id else None
+        for candidate in result.get('candidates',[])+result.get('discovery_sources',[]):
+            candidate['shot_id']=shot_id
+        for attempt in result.get('search_attempts',[]):
+            attempt['shot_id']=shot_id
         proposals = result.get("proposals") or {}
         row = asdict(slot)
         if slot.id in route_by_slot:
@@ -279,6 +286,29 @@ async def _source_outline(
         beat_id: sorted(rows.values(), key=lambda item: (-float(item.get("score", 0.0)), str(item.get("id", ""))))
         for beat_id, rows in candidate_by_beat_and_id.items()
     }
+    if getattr(engine,'quality_mode',False):
+        # Match curation's bounded, shot-balanced discovery shelf. Retained rows
+        # and actually surfaced cards are separate diagnostics.
+        groups={}
+        for row in annotated_results:
+            for card in row.get('discovery_sources',[]):
+                groups.setdefault((row['parent_beat_id'],card['source']),[]).append(card)
+        surfaced=set()
+        for (beat,provider),cards in groups.items():
+            primary=[];alternatives=[];shots=set();pages=set()
+            for card in sorted(cards,key=lambda c:(-c.get('score',0),c['id'])):
+                page=card.get('source_page')
+                if page in pages:continue
+                pages.add(page)
+                if card.get('shot_id') not in shots:
+                    primary.append(card);shots.add(card.get('shot_id'))
+                else:alternatives.append(card)
+            surfaced.update((beat,card['id']) for card in (primary+alternatives)[:3])
+        for row in annotated_results:
+            for attempt in row.get('search_attempts',[]):
+                cards=[c for c in row.get('discovery_sources',[]) if c.get('source')==attempt['provider'] and c.get('query')==attempt['query']]
+                attempt['cards_retained']=len(cards)
+                attempt['cards_surfaced']=sum((row['parent_beat_id'],c['id']) in surfaced for c in cards)
     return candidate_map, annotated_results, coverage_by_beat
 
 
@@ -505,6 +535,9 @@ def run_online_from_artifacts(
         "plan_seconds": round(plan_seconds, 4),
         "total_seconds": round(time.perf_counter() - started, 4),
         "resolve_calls": 0,
+        "shot_timings": {r['coverage_slot_id']:r.get('timings',{}) for r in sourcing_results},
+        "model_load_seconds": round(getattr(getattr(getattr(sourcing_engine.ranker,'visual',None),'embed',None),'model_load_seconds',0.0),4),
+        "provider_counters": {r['coverage_slot_id']:r.get('provider_counts',{}) for r in sourcing_results},
     }
     _write_json(output_dir / "online-sourcing-benchmark.json", benchmark)
     return plan
@@ -522,6 +555,10 @@ def _real_engine(
     providers: set[str] | None = None,
 ) -> OnlineSourcingEngine:
     ranker = create_retrieval_ranker(client_id, model_root, embedding_code_root)
+    visual=getattr(ranker,'visual',None)
+    if visual is not None and hasattr(visual,'embed'):
+        from .funnel_cache import JsonCache
+        visual.embed.disk_cache=JsonCache(cache_root/'embedding','qwen-vl-2b-embedding-v1')
     provider_filter = {str(value).casefold().strip() for value in (providers or set()) if str(value).strip()}
     sources: list[Any] = []
     include_youtube = not provider_filter or "youtube" in provider_filter
@@ -543,13 +580,14 @@ def _real_engine(
             source for source in build_default_vertical_sources()
             if str(getattr(source, "provider_name", "")).casefold() in requested_social
         ]
-        sources.append(
+        if include_youtube:sources.append(
             YouTubeOnlineSourceAdapter(
                 YouTubeSource(discover=_discover_youtube),
-                vertical_sources=vertical_sources,
+                vertical_sources=[],
                 include_base_youtube=include_youtube,
             )
         )
+        sources.extend(vertical_sources)
 
     # Envato is discovery-only: expose searchable covers/links, never automate
     # subscription downloads or project licensing.
@@ -565,8 +603,8 @@ def _real_engine(
         sources=sources,
         cache=AssetCache(cache_root),
         ranker=ranker,
-        max_results_per_query=max_candidates,
-        max_preview_candidates=max_candidates,
+        max_results_per_query=min(max_candidates,5),
+        max_preview_candidates=min(max_candidates,5),
         download_selected=False,
     )
     engine.quality_mode = True
@@ -669,6 +707,9 @@ def main() -> None:
                 "candidate_count": benchmark["candidate_count"],
                 "downloaded_selected": benchmark["downloaded_selected"],
                 "total_seconds": benchmark["total_seconds"],
+                "model_load_seconds": benchmark["model_load_seconds"],
+                "shot_timings": benchmark["shot_timings"],
+                "provider_counters": benchmark["provider_counters"],
                 "review": str(args.output_dir / "review.html"),
             }
         )

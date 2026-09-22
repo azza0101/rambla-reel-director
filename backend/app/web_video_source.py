@@ -170,21 +170,25 @@ async def _http_google_discover(query: str, limit: int) -> list[dict[str, Any]]:
         response.raise_for_status()
     parser = _GoogleVideoHTMLParser()
     parser.feed(response.text)
+    if not parser.rows:
+        if 'consent.google' in response.text or 'Before you continue' in response.text:
+            raise ValueError('google_consent_required')
+        if 'captcha' in response.text.casefold():
+            raise ValueError('google_captcha_required')
+        if 'did not match any' not in response.text.casefold():
+            raise ValueError('google_parser_mismatch')
     return extract_google_video_results(parser.rows, limit=limit)
 
 
 async def _default_google_discover(query: str, limit: int) -> list[dict[str, Any]]:
-    try:
-        return await _http_google_discover(query, limit)
-    except Exception:
-        return []
+    return await _http_google_discover(query, limit)
 
 
 async def _browser_google_discover(query: str, limit: int) -> list[dict[str, Any]]:
     try:
         from playwright.async_api import async_playwright
     except (ImportError, ModuleNotFoundError):
-        return []
+        raise RuntimeError('google_browser_unavailable')
     url = f"https://www.google.com/search?tbm=vid&hl=en&q={quote_plus(query)}"
     async with async_playwright() as playwright:
         browser = None
@@ -198,7 +202,7 @@ async def _browser_google_discover(query: str, limit: int) -> list[dict[str, Any
             except Exception:
                 browser = None
         if browser is None:
-            return []
+            raise RuntimeError('google_browser_unavailable')
         try:
             page = await browser.new_page(viewport={"width": 1440, "height": 1200})
             await page.goto(url, wait_until="domcontentloaded", timeout=20_000)
@@ -210,7 +214,12 @@ async def _browser_google_discover(query: str, limit: int) -> list[dict[str, Any
                   return {href:a.href||'',text:(a.innerText||a.textContent||'').trim(),aria:a.getAttribute('aria-label')||'',img:img?(img.currentSrc||img.src||''):'',img_width:img?(img.naturalWidth||0):0,img_height:img?(img.naturalHeight||0):0};
                 })""",
             )
-            return extract_google_video_results(list(anchors or []), limit=limit)
+            rows=extract_google_video_results(list(anchors or []), limit=limit)
+            if not rows:
+                html=await page.content()
+                if 'consent.google' in html:raise ValueError('google_consent_required')
+                if 'did not match any' not in html.casefold():raise ValueError('google_browser_parser_mismatch')
+            return rows
         finally:
             await browser.close()
 
@@ -243,16 +252,26 @@ class WebVideoSource:
         if not clean or limit <= 0:
             return []
         try:
-            raw = self.discover(clean, max(limit * 2, limit))
-            rows = await raw if inspect.isawaitable(raw) else raw
+            method='injected' if self._custom_discover else 'google_videos_http'
+            http_error=None
+            try:
+                raw = self.discover(clean, max(limit * 2, limit))
+                rows = await raw if inspect.isawaitable(raw) else raw
+            except Exception as exc:
+                if self._custom_discover:raise
+                http_error=exc
+                rows=[]
             if not rows and not self._custom_discover and self._browser_fallback_remaining > 0:
                 self._browser_fallback_remaining -= 1
-                try:
-                    rows = await _browser_google_discover(clean, max(limit * 2, limit))
-                except Exception:
-                    rows = []
+                method='google_videos_browser'
+                rows = await _browser_google_discover(clean, max(limit * 2, limit))
+            if not rows and http_error:raise http_error
         except Exception as exc:
-            self.last_attempt = {"provider": self.provider_name, "query": clean, "hits": 0, "error": type(exc).__name__}
+            self.last_attempt = {"provider": self.provider_name, "query": clean, "error": str(exc) if isinstance(exc,(ValueError,RuntimeError)) else type(exc).__name__,
+                "status":"failed", "engine":method, "parser":"google-video-anchors-v1",
+                "http_status":exc.response.status_code if isinstance(exc,httpx.HTTPStatusError) else (200 if isinstance(http_error,ValueError) else None),
+                "http_error":str(http_error) if isinstance(http_error,ValueError) else None,
+                "raw_items":None,"parsed_items":0,"valid_items":0,"cards_surfaced":0}
             return []
         if not isinstance(rows, list):
             rows = []
@@ -297,5 +316,7 @@ class WebVideoSource:
             ))
             if len(output) >= limit:
                 break
-        self.last_attempt = {"provider": self.provider_name, "query": clean, "hits": len(output), "engine": "google_videos"}
+        self.last_attempt = {"provider": self.provider_name, "query": clean, "hits": len(output), "engine": method,
+            "parser":"google-video-anchors-v1", "http_status":None if self._custom_discover else 200,
+            "status":"completed", "raw_items":len(rows),"parsed_items":len(rows),"valid_items":len(output),"cards_surfaced":0}
         return output

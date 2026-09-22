@@ -214,10 +214,7 @@ def test_real_engine_provider_filter_builds_social_only_adapter(monkeypatch, tmp
         providers={"tiktok", "instagram"},
     )
 
-    assert len(engine.sources) == 1
-    adapter = engine.sources[0]
-    assert adapter.include_base_youtube is False
-    assert [source.provider_name for source in adapter.vertical_sources] == ["tiktok", "instagram"]
+    assert [source.provider_name for source in engine.sources] == ["tiktok", "instagram"]
 
 
 def test_browser_unavailable_is_circuit_broken_after_first_failure():

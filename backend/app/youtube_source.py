@@ -165,7 +165,8 @@ class YouTubeSource:
             raise ValueError("invalid duration bounds")
         if limit <= 0:
             raise ValueError("limit must be positive")
-        result = self.discover(query.strip(), limit)
+        result = (self.discover(query.strip(), limit) if inspect.iscoroutinefunction(self.discover)
+                  else await __import__('asyncio').to_thread(self.discover, query.strip(), limit))
         raw = await result if inspect.isawaitable(result) else result
         if not isinstance(raw, list):
             raise ValueError("YouTube discovery must return a list")

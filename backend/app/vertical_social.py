@@ -235,7 +235,7 @@ class VerticalSocialSource:
         if orientation not in {None, "portrait"}: return []
         candidates: list[VerticalRemoteCandidate] = []; errors: list[str] = []; seen_pages: set[str] = set(); used_phrases: list[str] = []
         try:
-            for phrase in social_search_phrases(query.strip()):
+            for phrase in (social_search_phrases(query.strip())[:1] if self.provider_name=='youtube_shorts' else social_search_phrases(query.strip())):
                 if len(candidates) >= limit: break
                 used_phrases.append(phrase)
                 if self.provider_name == "youtube_shorts":

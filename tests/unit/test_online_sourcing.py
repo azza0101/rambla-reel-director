@@ -454,7 +454,7 @@ def test_real_engine_keeps_pexels_youtube_and_google_video_as_independent_lanes(
     )
 
     providers = [getattr(source, "provider_name", None) for source in engine.sources]
-    assert providers == ["pexels", "youtube", "envato", "web_video"]
+    assert providers == ["pexels", "youtube", "youtube_shorts", "envato", "web_video"]
 
 
 def test_default_broll_engine_only_fans_out_to_youtube_shorts_not_tiktok_instagram(monkeypatch, tmp_path):
@@ -471,4 +471,5 @@ def test_default_broll_engine_only_fans_out_to_youtube_shorts_not_tiktok_instagr
         max_candidates=4,
     )
     youtube = next(source for source in engine.sources if getattr(source, "provider_name", None) == "youtube")
-    assert [source.provider_name for source in youtube.vertical_sources] == ["youtube_shorts"]
+    assert youtube.vertical_sources == []
+    assert [s.provider_name for s in engine.sources if s.provider_name in {"youtube_shorts", "tiktok", "instagram"}] == ["youtube_shorts"]

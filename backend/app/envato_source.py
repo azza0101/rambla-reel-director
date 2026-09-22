@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import inspect
+import json
 import os
 import re
 from dataclasses import dataclass
@@ -21,6 +22,39 @@ import httpx
 
 
 DiscoverFn = Callable[[str, int], Awaitable[list[dict[str, Any]]] | list[dict[str, Any]]]
+
+
+def parse_mcp_result(body: str) -> list[dict[str, Any]]:
+    """Parse the official Streamable HTTP JSON/SSE tool response, not its UI."""
+    messages = [json.loads(line[5:].strip()) for line in body.splitlines() if line.startswith('data:')]
+    if not messages:
+        messages = [json.loads(body)]
+    envelope = messages[-1]
+    if envelope.get('error'):
+        raise ValueError('Envato MCP protocol error')
+    result = envelope.get('result', {})
+    if result.get('isError'):
+        raise ValueError('Envato MCP search failed')
+    for block in result.get('content', []):
+        if block.get('type') == 'text':
+            payload = json.loads(block['text'])
+            if isinstance(payload.get('items'), list):
+                return [{'source_page': r.get('item_url'), 'preview_url': r.get('cover_image'),
+                         'title': r.get('title'), 'author': r.get('author')} for r in payload['items']]
+    raise ValueError('Envato MCP parser mismatch: items missing')
+
+
+async def _mcp_discover(query: str, limit: int) -> list[dict[str, Any]]:
+    # Official endpoint and search_stock_video schema verified against tools/list.
+    async with httpx.AsyncClient(timeout=12) as client:
+        response = await client.post('https://mcp.envato.com/mcp',
+            headers={'Accept': 'application/json, text/event-stream'},
+            json={'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call', 'params': {
+                'name': 'search_stock_video', 'arguments': {'searchTerms': query[:60],
+                'perPage': min(20, limit), 'sortBy': 'relevance',
+                'filters': {'categories': 'Stock Footage'}}}})
+        response.raise_for_status()
+    return parse_mcp_result(response.text)
 _ITEM_PATH = re.compile(r"/[^?#]+-[A-Z0-9]{6,12}/?$", re.I)
 
 
@@ -172,7 +206,7 @@ class EnvatoSource:
     supported_source_classes = ("GENERIC_STOCK", "CLOSE_SEMANTIC_EDITORIAL")
 
     def __init__(self, *, discover: DiscoverFn | None = None, profile_dir: Path | None = None) -> None:
-        self.discover = discover or _default_discover
+        self.discover = discover or _mcp_discover
         self._custom_discover = discover is not None
         self.profile_dir = Path(profile_dir) if profile_dir else None
         self._browser_lock = asyncio.Lock()
@@ -266,14 +300,15 @@ class EnvatoSource:
         try:
             raw = self.discover(clean, max(limit * 2, limit))
             rows = await raw if inspect.isawaitable(raw) else raw
-            if not rows and not self._custom_discover:
-                rows = await self._authenticated_discover(clean, max(limit * 2, limit))
         except Exception as exc:
             self.last_attempt = {
                 "provider": self.provider_name,
                 "query": clean,
                 "hits": 0,
                 "error": type(exc).__name__,
+                "status": "failed", "engine": "envato_mcp", "parser": "mcp-items-v1",
+                "http_status": exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None,
+                "raw_items": None, "parsed_items": 0, "valid_items": 0, "cards_surfaced": 0,
             }
             return []
         if not isinstance(rows, list):
@@ -320,7 +355,11 @@ class EnvatoSource:
             "provider": self.provider_name,
             "query": clean,
             "hits": len(output),
-            "engine": "envato_http_or_authenticated_browser",
+            "engine": "injected" if self._custom_discover else "envato_mcp",
+            "request_query":clean if self._custom_discover else clean[:60],
+            "http_status": None if self._custom_discover else 200,
+            "parser": "mcp-items-v1", "status": "completed",
+            "raw_items": len(rows), "parsed_items": len(rows), "valid_items": len(output), "cards_surfaced": 0,
             "browser_state": "ready" if self._context is not None else (self._browser_disabled_reason or "not_used"),
         }
         return output

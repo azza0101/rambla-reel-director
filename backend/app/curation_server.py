@@ -582,7 +582,7 @@ def create_app(
         if request.mode not in {"replace", "append"}:
             raise HTTPException(status_code=422, detail="mode must be replace or append")
         provider_scope = tuple(dict.fromkeys(str(value).casefold().strip() for value in request.providers if str(value).strip()))
-        allowed_providers = {"youtube", "youtube_shorts", "tiktok", "instagram", "web_video", "pexels"}
+        allowed_providers = {"youtube", "youtube_shorts", "tiktok", "instagram", "web_video", "pexels", "envato"}
         if any(value not in allowed_providers for value in provider_scope):
             raise HTTPException(status_code=422, detail="unsupported research provider")
         _validate_broll_beat(run, beat_id)

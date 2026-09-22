@@ -6,6 +6,8 @@ import math
 from pathlib import Path
 import subprocess
 import sys
+import time
+import re
 
 import httpx
 from functools import lru_cache
@@ -17,7 +19,31 @@ from .social_acquisition import download_authenticated_section, fallback_acquisi
 from .editorial_relevance import decode_retrieval_intent
 
 QUALITY_VERSION='clip-quality-14'
+PRIMARY_CLIPS_PER_SHOT = 1
 VERTICAL_PROVIDERS={'youtube_shorts','tiktok','instagram'}
+
+
+def synchronize_proposals(output):
+    clips = [r for r in output.get('candidates', []) if r.get('clip_verified')]
+    output['proposals'] = {key: clips[i] if i < len(clips) else None
+        for i, key in enumerate(('proposal_A', 'proposal_B', 'proposal_C'))}
+    output['proposals']['review_state'] = 'NEEDS_REVIEW' if clips else 'NO_VISUAL_FOUND'
+
+
+async def _bounded_call(engine, lane, function, *args, _timings=None, **kwargs):
+    name = '_funnel_' + lane
+    gate = getattr(engine, name, None)
+    if gate is None:
+        gate = asyncio.Semaphore(1 if lane == 'qwen' else 2)
+        setattr(engine, name, gate)
+    async with gate:
+        started=time.perf_counter()
+        try:
+            return await asyncio.to_thread(function, *args, **kwargs)
+        finally:
+            if _timings is not None:
+                key='qwen_seconds' if lane=='qwen' else 'clip_download_seconds'
+                _timings[key]+=time.perf_counter()-started
 
 
 def temporal_starts(duration,provider):
@@ -82,7 +108,12 @@ def _download_storyboard_grid(url,path,headers):
 
 def _youtube_storyboard_frames(url,directory,identity,max_samples=6):
     """Materialize a tiny, evenly sampled set of YouTube storyboard cells."""
-    payload=_youtube_metadata(url)
+    from .funnel_cache import JsonCache
+    metadata_cache=JsonCache(Path(directory)/'metadata','youtube-metadata-v1')
+    payload=metadata_cache.get(url,3600)
+    if payload is None:
+        payload=_youtube_metadata(url)
+        metadata_cache.put(url,payload)
     fmt=_best_storyboard_format(payload)
     if not fmt:return []
     fps=float(fmt.get('fps') or 0)
@@ -146,7 +177,7 @@ def _choose_storyboard_starts(samples,positive_scores,talking_scores,text_scores
     return starts
 
 
-async def _storyboard_starts(engine,candidate,intent,folder,asset_id,client_id,emit):
+async def _storyboard_starts(engine,candidate,intent,folder,asset_id,client_id,emit,timings=None):
     """Return None when storyboard is unavailable, [] when it disproves the candidate.
 
     A valid-but-empty storyboard is a strong negative signal: do not pay for
@@ -154,8 +185,9 @@ async def _storyboard_starts(engine,candidate,intent,folder,asset_id,client_id,e
     """
     if candidate.provider!='youtube' or float(candidate.duration)<18:return None
     visual=getattr(engine.ranker,'visual',None)
-    if visual is None:return None
+    if visual is None:return []
     emit('Scanning YouTube storyboard',provider='youtube',query=candidate.query,duration=float(candidate.duration))
+    stage_started=time.perf_counter()
     try:
         samples=await asyncio.to_thread(
             _youtube_storyboard_frames,candidate.source_page,folder,asset_id,6
@@ -163,7 +195,9 @@ async def _storyboard_starts(engine,candidate,intent,folder,asset_id,client_id,e
     except Exception as exc:
         emit('YouTube storyboard unavailable',provider='youtube',query=candidate.query,error_type=type(exc).__name__)
         return None
-    if len(samples)<2:return None
+    finally:
+        if timings is not None:timings['storyboard_seconds']+=time.perf_counter()-stage_started
+    if not samples:return None
     rows=[
         {
             'id':str(sample['index']),'client_id':client_id,
@@ -174,10 +208,11 @@ async def _storyboard_starts(engine,candidate,intent,folder,asset_id,client_id,e
     ]
     target=_visual_target(intent)
     try:
-        positive={r['id']:float(r.get('embedding_score',r.get('score',0)) or 0) for r in visual.rank(target,rows)}
+        ranked_rows=await _bounded_call(engine,'qwen',visual.rank,target,rows,_timings=timings)
+        positive={r['id']:float(r.get('embedding_score',r.get('score',0)) or 0) for r in ranked_rows}
     except Exception as exc:
         emit('YouTube storyboard ranking unavailable',provider='youtube',error_type=type(exc).__name__)
-        return None
+        return []
     ranked=sorted(
         ((score,next(sample for sample in samples if str(sample['index'])==sid)) for sid,score in positive.items()),
         key=lambda item:item[0],reverse=True,
@@ -192,8 +227,11 @@ async def _storyboard_starts(engine,candidate,intent,folder,asset_id,client_id,e
     return starts
 
 
-@lru_cache(maxsize=128)
-def _direct_media_url(url,provider):
+def _direct_media_url(url,provider,cache_root=None):
+    from .funnel_cache import JsonCache
+    cache=JsonCache(cache_root,'direct-media-v1') if cache_root else None
+    cached=cache.get([url,provider],900) if cache else None
+    if cached:return cached
     selector=('bv*[height<=480][ext=mp4][protocol=https]'
               if provider in {'youtube','youtube_shorts'}
               else 'b[height<=720][ext=mp4]/best[height<=720]/best')
@@ -203,6 +241,7 @@ def _direct_media_url(url,provider):
     payload=json.loads(result.stdout)
     media=payload.get('url')
     if not media:raise ValueError('yt-dlp did not expose a direct media URL')
+    if cache:cache.put([url,provider],media)
     return media
 
 
@@ -213,19 +252,22 @@ def _youtube_url(url):
 
 def _youtube_clip(url,directory,identity,start):
     directory.mkdir(parents=True,exist_ok=True)
-    with range_media(_youtube_url(url)) as local_source:
+    key=hashlib.sha256((identity+'|preview-v2|'+str(start)).encode()).hexdigest()[:24]
+    if probe_preview(str(directory/(key+'.mp4')))['playable']:
+        return {**materialize_clip(url,directory,identity,start_seconds=start,streaming=True),'cache_hit':True}
+    with range_media(_direct_media_url(url,'youtube',directory/'direct-media')) as local_source:
         return materialize_clip(local_source,directory,identity,start_seconds=start,streaming=True)
 
 
 def _range_clip(url,directory,identity,start,provider):
     directory.mkdir(parents=True,exist_ok=True)
-    key=hashlib.sha256((identity+'|range-preview-v3|'+str(start)).encode()).hexdigest()[:24]
+    key=hashlib.sha256((identity+'|preview-v2|'+str(start)).encode()).hexdigest()[:24]
     cached=directory/(key+'.mp4')
     if probe_preview(str(cached))['playable']:
         facts=probe_preview(str(cached));poster=directory/(key+'.jpg')
         if not poster.is_file():subprocess.run(['ffmpeg','-v','error','-y','-ss','1','-i',str(cached),'-frames:v','1',str(poster)],check=True,capture_output=True,timeout=20)
         return {'preview_path':str(cached),'poster_path':str(poster),'keyframe_path':str(poster),'preview_status':'ready','preview_duration':facts['duration'],'preview_mime':facts['mime'],'preview_width':facts.get('width',0),'preview_height':facts.get('height',0),'source_start_seconds':start,'source_end_seconds':start+facts['duration']}
-    with range_media(_direct_media_url(url,provider)) as local_source:return materialize_clip(local_source,directory,identity,start_seconds=start,streaming=True)
+    with range_media(_direct_media_url(url,provider,directory/'direct-media')) as local_source:return materialize_clip(local_source,directory,identity,start_seconds=start,streaming=True)
 
 
 def _section_clip(url,directory,identity,start,provider):
@@ -294,6 +336,17 @@ def _discovery_relevant(candidate,intent):
     such as a storm-damaged ferry from surfacing for "passenger ferry luggage".
     """
     query_meta,intent_meta=_discovery_scores(candidate,intent)
+    target=_visual_target(intent)
+    text=candidate.title+' '+candidate.description
+    moving=re.search(r'\b(crossing|departing|pulling away|cutting through|taxiing|driving|sailing)\b',target,re.I)
+    stationary=re.search(r'\b(docked|moored|parked|stationary)\b',text,re.I)
+    if moving and stationary and not re.search(r'\b(leaving|departing|moving|driving|sailing)\b',text,re.I):return False
+    if re.search(r'\b(departure board|screen|infographic|screenshot|slide)\b',text,re.I) and not re.search(r'\b(board|sign|brochure|screen|infographic|screenshot|slide)\b',target,re.I):return False
+    _,contradictions,_,generic=metadata_quality(_visual_target(intent),candidate.title+' '+candidate.description)
+    if contradictions or (generic and max(query_meta,intent_meta)<.65):return False
+    if candidate.provider in {'envato','web_video'}:
+        shared=_canonical_term_set(_visual_target(intent)) & _canonical_term_set(candidate.title+' '+candidate.description)
+        if len(shared)>=2:return True
     # Strong agreement with the physical shot target can rescue a provider whose
     # stored search query is noisy/aliased. Conversely, one generic query noun
     # alone is not enough.
@@ -373,6 +426,8 @@ def _query_from_target(target,max_words=8):
 
 
 async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_duration,orientation,retrieval_intent=None,**ignored):
+    started=time.perf_counter()
+    timings={k:0.0 for k in ('search_seconds','metadata_filter_seconds','storyboard_seconds','qwen_seconds','clip_download_seconds','final_verify_seconds','total_seconds')}
     intent=retrieval_intent or next((engine.query_intents.get(q) for q in queries if engine.query_intents.get(q)),queries[0])
     visual_target=_visual_target(intent)
     clean_queries=[q for q in queries if _query_matches_target(q,visual_target)]
@@ -388,50 +443,61 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
     priority={'pexels':0,'envato':1,'youtube_shorts':2,'tiktok':3,'instagram':4,'web_video':5,'youtube':6}
     query_budget={'envato':1,'web_video':1,'youtube':2,'pexels':2,'youtube_shorts':1,'tiktok':1,'instagram':1}
     expanded_all=expand_queries(clean_queries,'video')
+    from .funnel_runtime import discover_shot
+    discovered=await discover_shot(engine,clean_queries,expanded_all,query_budget,min_duration,max_duration,orientation)
+    timings['search_seconds']=time.perf_counter()-started
+    provider_counts={}
     for source in sorted(engine.sources,key=lambda s:priority.get(_provider_name(s).casefold(),6)):
         provider_label=_provider_name(source);pool=[];seen=set()
         provider_key=provider_label.casefold()
         provider_queries=expanded_all[:query_budget.get(provider_key,2)]
         for query_index,query in enumerate(provider_queries):
             emit('Searching video source',provider=provider_label,query=query)
-            rows,error=await engine._search_one(source,query,orientation=orientation,min_duration=min_duration,max_duration=max_duration)
+            rows,error,details=discovered[(id(source),query)]
             attempt={'provider':provider_label,'query':query,'hits':len(rows),'expanded':query not in clean_queries}
-            source_attempt=getattr(source,'last_attempt',None)
+            source_attempt=details
             if isinstance(source_attempt,dict):
-                for key in ('engine','browser_state','error'):
+                for key in ('engine','browser_state','error','http_error','http_status','parser','raw_items','parsed_items','valid_items','cards_surfaced','status','cache_hit','search_seconds','request_query'):
                     if source_attempt.get(key) is not None:attempt[key]=source_attempt.get(key)
             output['search_attempts'].append(attempt)
-            drain=getattr(source,'drain_vertical_attempts',None)
-            if callable(drain):
-                for extra in drain():
+            if details.get('vertical_attempts'):
+                for extra in details['vertical_attempts']:
                     extra=dict(extra);extra.setdefault('query',query);extra.setdefault('hits',0);extra['expanded']=query not in clean_queries;output['search_attempts'].append(extra)
                     failure=extra.get('error') or extra.get('browser_error')
                     if failure:output['errors'].append({'provider':extra.get('provider'),'code':'provider_request_failed','error_type':failure})
             if error:
                 output['errors'].append(error);attempt['error']=error.get('code') if isinstance(error,dict) else type(error).__name__
+            elif details.get('error'):
+                output['errors'].append({'provider':provider_label,'code':'provider_request_failed','error_type':details['error']})
+            if attempt.get('error'):
+                attempt.pop('hits',None)
             for row in rows:
                 key=(row.provider,row.provider_id)
                 if key not in seen:pool.append(row);seen.add(key)
             if len(pool)>=6 and query_index>=1:break
         pool=_balanced_discovery_pool(pool,intent,limit=4)
         accepted=[];pending=[]
+        counters=provider_counts.setdefault(provider_key,{'requests':sum(not a.get('cache_hit',False) for a in output['search_attempts'] if a['provider']==provider_label),'raw_hits':sum(a.get('hits',0) for a in output['search_attempts'] if a['provider']==provider_label),'filtered_hits':0,'previews_downloaded':0,'clips_downloaded':0})
+        acquisition_attempts=0
         for candidate in pool:
+            filter_started=time.perf_counter()
             asset_id=f'{candidate.provider}:{candidate.provider_id}';meta,contradictions,missing,generic=metadata_quality(visual_target,candidate.title+' '+candidate.description)
             discovery_relevant=_discovery_relevant(candidate,intent)
-            if candidate.provider=='envato':
-                try:
-                    preview=await engine.cache.materialize_preview(candidate)
-                    output['preview_cache_hits']+=int(preview.cache_hit)
-                    pending.append(_manual_discovery_base(candidate,asset_id,client_id,meta,reason='Envato search result; open the official item page to license/download',preview_path=preview.path))
-                except Exception as exc:
-                    output['errors'].append({'provider':'envato','code':'poster_failed','error_type':type(exc).__name__})
-                    pending.append(_manual_discovery_base(candidate,asset_id,client_id,meta,reason='Envato search result; remote cover/source retained'))
-                continue
+            timings['metadata_filter_seconds']+=time.perf_counter()-filter_started
             if not discovery_relevant:
                 output['rejected_candidates'].append({'id':asset_id,'source':candidate.provider,'source_url':candidate.source_page,'matched_query':candidate.query,'score':0,'quality_reasons':['metadata/title does not match concrete visual target']})
                 continue
+            counters['filtered_hits']+=1
+            if candidate.provider in {'envato','web_video'}:
+                pending.append(_manual_discovery_base(candidate,asset_id,client_id,meta,reason='Discovery only; open official source to review/license/download'))
+                continue
+            if sum(c.get('clip_verified',False) for c in output['candidates'])+len(accepted)>=PRIMARY_CLIPS_PER_SHOT:
+                continue
+            if acquisition_attempts>=2:
+                continue
             if candidate.provider in VERTICAL_PROVIDERS and candidate.orientation!='portrait':
                 output['rejected_candidates'].append({'id':asset_id,'source':candidate.provider,'source_url':candidate.source_page,'matched_query':candidate.query,'score':0,'quality_reasons':['vertical-social candidate is not portrait']});continue
+            acquisition_attempts+=1
             try:
                 preview=await engine.cache.materialize_preview(candidate)
             except Exception as exc:
@@ -440,13 +506,14 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
                     pending.append(_manual_discovery_base(candidate,asset_id,client_id,meta,reason=f'preview unavailable ({type(exc).__name__})'))
                 continue
             output['preview_cache_hits']+=int(preview.cache_hit)
+            counters['previews_downloaded']+=int(not preview.cache_hit)
             base={'id':asset_id,'client_id':client_id,'source':candidate.provider,'provider':candidate.provider,'provider_id':candidate.provider_id,'source_page':candidate.source_page,'source_url':candidate.source_page,'title':candidate.title,'description':candidate.description or candidate.title,'query':candidate.query,'matched_query':candidate.query,'width':candidate.width,'height':candidate.height,'orientation':candidate.orientation,'rights_state':candidate.rights_state,'license_name':'Pexels License' if candidate.provider=='pexels' else None,'license_url':'https://www.pexels.com/license/' if candidate.provider=='pexels' else None,'attribution':candidate.creator_name,'path':str(preview.path),'preview_path':str(preview.path),'poster_path':str(preview.path),'keyframe_path':str(preview.path),'preview_url':getattr(candidate,'preview_url',None),'kind':'video','preview_status':'preview_pending','quality_state':'source_found','score':round(meta*.6,4),'source_start_seconds':None,'source_end_seconds':None,'clip_verified':False,'selected_full_download':False,'source_authenticity':getattr(candidate,'source_authenticity',None),'acquisition_state':'PREVIEW_ONLY','manual_reason':None}
             if candidate.provider=='web_video':
                 pending.append(_manual_discovery_base(candidate,asset_id,client_id,meta,reason='Google Video/News result; open source page for the original report/clip',preview_path=preview.path))
                 continue
             duration=float(candidate.duration)
             folder=Path(preview.path).parent/'quality-clips'
-            storyboard_starts=await _storyboard_starts(engine,candidate,intent,folder,asset_id,client_id,emit)
+            storyboard_starts=await _storyboard_starts(engine,candidate,intent,folder,asset_id,client_id,emit,timings)
             if storyboard_starts==[] and candidate.provider=='youtube':
                 output['rejected_candidates'].append({'id':asset_id,'source':candidate.provider,'source_url':candidate.source_page,'matched_query':candidate.query,'score':0,'quality_reasons':['storyboard scan did not find the requested visible scene']})
                 continue
@@ -455,12 +522,17 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
             for start in starts:
                 emit('Materializing bounded clip',provider=candidate.provider,query=candidate.query,source_start_seconds=start,source_end_seconds=start+3.5)
                 try:
-                    clip=await asyncio.to_thread(materialize_clip,candidate.preview_rendition_url or candidate.selected_rendition_url,folder,asset_id,start_seconds=start) if candidate.provider=='pexels' else await asyncio.to_thread(_social_clip,candidate.source_page,folder,asset_id,start,candidate.provider)
+                    stage_started=time.perf_counter()
+                    clip=await _bounded_call(engine,'download',materialize_clip,candidate.preview_rendition_url or candidate.selected_rendition_url,folder,asset_id,start_seconds=start,_timings=timings) if candidate.provider=='pexels' else await _bounded_call(engine,'download',_social_clip,candidate.source_page,folder,asset_id,start,candidate.provider,_timings=timings)
+                    counters['clips_downloaded']+=int(not clip.get('cache_hit',False))
                     if candidate.provider in VERTICAL_PROVIDERS and not _verified_portrait_clip(clip):
                         output['rejected_candidates'].append({'id':asset_id,'source':candidate.provider,'source_url':candidate.source_page,'matched_query':candidate.query,'score':0,'source_start_seconds':clip.get('source_start_seconds'),'source_end_seconds':clip.get('source_end_seconds'),'quality_reasons':['materialized social clip is not portrait']})
                         shape_rejected=True;break
+                    stage_started=time.perf_counter()
                     frames=await asyncio.to_thread(_frame_samples,clip);frame_rows=[{**base,**clip,'id':asset_id+f':frame:{i}','kind':'video','path':clip['preview_path'],'keyframe_path':frame} for i,frame in enumerate(frames)]
-                    emit('Ranking actual clip frames',provider=candidate.provider,query=candidate.query,frames=len(frames),visual_target=visual_target);scored=engine.ranker.rank(intent,frame_rows)
+                    emit('Ranking actual clip frames',provider=candidate.provider,query=candidate.query,frames=len(frames),visual_target=visual_target)
+                    timings['final_verify_seconds']+=time.perf_counter()-stage_started
+                    scored=await _bounded_call(engine,'qwen',engine.ranker.rank,intent,frame_rows,_timings=timings)
                     frame_values=sorted((float(r.get('score',0)) for r in scored),reverse=True)
                     best_values=frame_values[:2] if len(frame_values)>=2 else frame_values
                     semantic=sum(best_values)/max(1,len(best_values))
@@ -487,6 +559,13 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
                     if discovery_relevant:pending.append({**base,**fallback_acquisition_state(has_preview=True,reason='automatic clip did not pass relevance verification')})
             elif discovery_relevant:
                 pending.append({**base,**fallback_acquisition_state(has_preview=True,reason='automatic clip download unavailable')})
-            if len(accepted)>=2:break
+            if len(accepted)>=PRIMARY_CLIPS_PER_SHOT:break
         accepted,_=diverse_candidates(sorted(accepted,key=lambda r:(r.get('source') in VERTICAL_PROVIDERS,r['score']),reverse=True),[],limit=3);output['candidates'].extend(accepted[:3]);output.setdefault('discovery_sources',[]).extend(pending[:3])
-    output['eligible_candidate_count']=sum(c.get('clip_verified',False) for c in output['candidates']);output['raw_result_count']=sum(r['hits'] for r in output['search_attempts']);output['ranking_warning']=getattr(engine.ranker,'warning',None);return output
+        for attempt in output['search_attempts']:
+            if attempt['provider']==provider_label:
+                attempt['cards_surfaced']=sum(r.get('query')==attempt['query'] for r in pending[:3])
+    synchronize_proposals(output)
+    timings['total_seconds']=time.perf_counter()-started
+    output['timings']={k:round(v,4) for k,v in timings.items()}
+    output['provider_counts']=provider_counts
+    output['eligible_candidate_count']=sum(c.get('clip_verified',False) for c in output['candidates']);output['raw_result_count']=sum(r.get('hits',0) for r in output['search_attempts']);output['ranking_warning']=getattr(engine.ranker,'warning',None);return output
