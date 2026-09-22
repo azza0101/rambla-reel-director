@@ -131,6 +131,7 @@ class BrowserSocialSource:
         self.profile_manager = profile_manager
         self.fallback = fallback
         self.last_attempt: dict[str, Any] = {}
+        self._browser_disabled_reason: str | None = None
 
     async def _browser_search(self, query: str, limit: int) -> dict[str, Any]:
         url = SOCIAL_SEARCH_URLS[self.provider_name].format(query=quote_plus(query))
@@ -210,13 +211,19 @@ class BrowserSocialSource:
         browser_error_detail: str | None = None
         browser_diagnostics: dict[str, Any] = {}
         raw: list[dict[str, Any]] = []
-        try:
-            payload = await self._browser_search(clean, limit)
-            raw = list(payload.get("rows") or [])
-            browser_diagnostics = dict(payload.get("diagnostics") or {})
-        except Exception as exc:
-            browser_error = type(exc).__name__
-            browser_error_detail = " ".join(str(exc).split())[:240] or None
+        if self._browser_disabled_reason:
+            browser_error = self._browser_disabled_reason
+            browser_diagnostics = {"browser_state": "disabled_after_failure"}
+        else:
+            try:
+                payload = await self._browser_search(clean, limit)
+                raw = list(payload.get("rows") or [])
+                browser_diagnostics = dict(payload.get("diagnostics") or {})
+            except Exception as exc:
+                browser_error = type(exc).__name__
+                browser_error_detail = " ".join(str(exc).split())[:240] or None
+                if browser_error in {"BrowserUnavailableError", "ModuleNotFoundError", "ImportError"}:
+                    self._browser_disabled_reason = browser_error
 
         if raw:
             # Browser search cards do not expose a trustworthy source duration.
