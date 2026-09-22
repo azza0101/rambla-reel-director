@@ -135,3 +135,13 @@ def test_product_ui_clears_stale_director_running_state_on_terminal_failure():
     assert "window.ramblaRunTerminal" in html
     assert "stage_type==='director_api'" in html
     assert "Director ${String(r.status||'FAILED').toLowerCase()}" in html
+
+
+def test_curation_ui_has_clean_console_copy_button():
+    from backend.app.curation_ui_v2 import render_curation_page_v2
+
+    html = render_curation_page_v2("copy-console")
+    assert 'id="copyConsole"' in html
+    assert "COPY CONSOLE" in html
+    assert "function cleanConsoleText()" in html
+    assert "$('copyConsole').onclick=copyConsole" in html
