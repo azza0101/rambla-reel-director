@@ -526,7 +526,10 @@ def _real_engine(
     sources: list[Any] = []
     include_youtube = not provider_filter or "youtube" in provider_filter
     social_names = {"youtube_shorts", "tiktok", "instagram"}
-    requested_social = social_names if not provider_filter else (provider_filter & social_names)
+    # Normal FIND B-ROLL includes Shorts, but TikTok/Instagram stay in their
+    # dedicated FIND SOCIAL / ADD TIKTOK + IG stage. Otherwise every ordinary
+    # YouTube query fans out into authenticated/public social searches too.
+    requested_social = {"youtube_shorts"} if not provider_filter else (provider_filter & social_names)
     include_web_video = not provider_filter or "web_video" in provider_filter
     include_envato = not provider_filter or "envato" in provider_filter
 
