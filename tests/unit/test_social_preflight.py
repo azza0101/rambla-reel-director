@@ -64,3 +64,29 @@ def test_social_dialog_behavior_without_browser(tmp_path):
  script=tmp_path/'ui.js'
  script.write_text('\n'.join(re.findall(r'<script[^>]*>(.*?)</script>',render_curation_page_v2('test'),re.S)),encoding='utf-8')
  subprocess.run([node,str(Path('tests/social_preflight_controller.cjs')),str(script)],check=True,capture_output=True)
+
+def test_single_provider_global_command(tmp_path):
+ from backend.app.debug_social_cli import social_sourcing_command
+ cmd=social_sourcing_command(tmp_path,tmp_path/'t',tmp_path/'o','c',10,beat_ids=('b',),providers=('tiktok',))
+ assert cmd[cmd.index('--providers')+1:]==['tiktok']
+
+def test_global_social_route_forwards_selected_provider(tmp_path,monkeypatch):
+ import json
+ from tests.unit.test_project_maintenance_api import _client
+ import backend.app.curation_server as server
+ calls=[]
+ async def run(state,providers):
+  calls.append(providers);state.status='SUCCEEDED'
+ monkeypatch.setattr(server,'_run_social_state',run)
+ client,root,source=_client(tmp_path)
+ pid=client.post('/api/curation/projects',json={'name':'Social scope'}).json()['project_id']
+ client.post(f'/api/curation/projects/{pid}/source/local',json={'path':str(source)})
+ folder=root/pid/'run';folder.mkdir(parents=True,exist_ok=True)
+ for filename in ('transcript-raw.json','semantic-chunks.json','semantic-beats.json'):(folder/filename).write_text('{}')
+ (folder/'visual-plan.json').write_text(json.dumps({'visual_beats':[{'action':'BROLL'}]}))
+ endpoint=f'/api/curation/projects/{pid}/source/social'
+ response=client.post(endpoint,json={'providers':['tiktok']})
+ assert response.status_code==200 and response.json()['providers']==['tiktok']
+ assert calls==[('tiktok',)]
+ assert client.post(endpoint,json={'providers':[]}).status_code==422
+ assert client.post(endpoint,json={'providers':['youtube']}).status_code==422

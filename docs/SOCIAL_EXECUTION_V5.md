@@ -42,3 +42,9 @@ The previous fix repaired routing but did not establish working browser access. 
 Real follow-up probe: TikTok visible launch exited 21 and check reported profile_in_use. Instagram visible launch exited 4294930433 and check reported browser_access_denied. Both checks returned ready=false, login_state=unknown. Successful social media retrieval remains blocked and is not claimed.
 
 537 tests pass, including executable JavaScript checks that opening the dialog does not start sourcing, a failed provider check prevents sourcing, and successful checks dispatch the correct whole-project or single-beat action. Python compile and rendered JS syntax pass. The local launcher requires user execution; it was not used to circumvent the restricted runtime.
+
+## Explicit start and independent providers
+
+VERIFY CONNECTIONS now only checks connections. A separate START SEARCH button becomes available as soon as one selected provider is ready. Ready providers are selected automatically; blocked providers are disabled and skipped. Both whole-project and beat-specific searches carry the selected provider list to the worker; an Instagram login failure no longer prevents a TikTok-only search. Search-start errors remain in the dialog and a successfully accepted job switches to the normal progress view.
+
+Validation: 539 tests pass, Python compilation and rendered JS syntax pass. Executable JS tests cover TikTok-ready/Instagram-blocked, no automatic search during verification, explicit start, provider deselection, and correct whole-project/per-beat payloads. API and command tests verify TikTok-only routing and reject empty/unsupported provider selections. No new real media acceptance is claimed by these UI/routing tests.

@@ -34,6 +34,11 @@ class RenameProjectRequest(BaseModel):
     name: str
 
 
+class SocialSearchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    providers: tuple[str, ...] = ("tiktok", "instagram")
+
+
 class BeatResearchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     mode: str
@@ -288,9 +293,10 @@ async def _run_director_state(state: debug.RunState, provider: str) -> None:
         state.process = None
 
 
-async def _default_social_runner(state: debug.RunState) -> None:
+async def _default_social_runner(state: debug.RunState, providers: tuple[str, ...] = ("tiktok", "instagram")) -> None:
     command = [
         sys.executable, "-m", "backend.app.debug_social_cli",
+        "--providers", *providers,
         "--video", str(state.video_path),
         "--output-dir", str(state.output_dir),
         "--client-id", f"project-{state.output_dir.parent.name}",
@@ -322,19 +328,19 @@ async def _default_social_runner(state: debug.RunState) -> None:
         raise RuntimeError(f"social sourcing worker exited with code {state.return_code}")
 
 
-async def _run_social_state(state: debug.RunState) -> None:
+async def _run_social_state(state: debug.RunState, providers: tuple[str, ...] = ("tiktok", "instagram")) -> None:
     state.status = "RUNNING"
     try:
         await debug._emit(
             state,
             debug.DebugEvent(
                 "online_search",
-                "TikTok + Instagram search avviata",
+                " + ".join(providers) + " search avviata",
                 1.0,
-                {"providers": ["tiktok", "instagram"]},
+                {"providers": list(providers)},
             ),
         )
-        await _default_social_runner(state)
+        await _default_social_runner(state, providers)
         if state.status != "CANCELLED":
             state.status = "SUCCEEDED"
             state.return_code = 0
@@ -342,9 +348,9 @@ async def _run_social_state(state: debug.RunState) -> None:
                 state,
                 debug.DebugEvent(
                     "online_search",
-                    "TikTok + Instagram search completata",
+                    " + ".join(providers) + " search completata",
                     100.0,
-                    {"providers": ["tiktok", "instagram"]},
+                    {"providers": list(providers)},
                 ),
             )
     except Exception as exc:
@@ -356,7 +362,7 @@ async def _run_social_state(state: debug.RunState) -> None:
                 debug.DebugEvent(
                     "error",
                     str(exc),
-                    data={"providers": ["tiktok", "instagram"]},
+                    data={"providers": list(providers)},
                 ),
             )
     finally:
@@ -550,7 +556,10 @@ def create_app(
         return {"project_id": project_id, "cleanup": cleanup, "resolve_calls": 0}
 
     @app.post("/api/curation/projects/{project_id}/source/social")
-    async def source_project_social(project_id: str) -> dict[str, Any]:
+    async def source_project_social(project_id: str, request: SocialSearchRequest | None = None) -> dict[str, Any]:
+        providers = tuple(dict.fromkeys((request or SocialSearchRequest()).providers))
+        if not providers or any(p not in {"tiktok", "instagram"} for p in providers):
+            raise HTTPException(status_code=422, detail="Select TikTok and/or Instagram")
         project = load_project(project_id)
         run = run_root(project_id)
         for required in ("transcript-raw.json", "semantic-chunks.json", "semantic-beats.json"):
@@ -573,12 +582,12 @@ def create_app(
             stage_type="social",
         )
         debug.RUNS[state.run_id] = state
-        asyncio.create_task(_run_social_state(state))
+        asyncio.create_task(_run_social_state(state, providers))
         return {
             "status": "started",
             "run_id": state.run_id,
             "stage": "social",
-            "providers": ["tiktok", "instagram"],
+            "providers": list(providers),
             "resolve_calls": 0,
         }
 

@@ -40,6 +40,7 @@ def social_sourcing_command(
     source_frames: int,
     *,
     beat_ids: tuple[str, ...],
+    providers: tuple[str, ...] = SOCIAL_PROVIDERS,
 ) -> list[str]:
     command = [
         _pipeline_python(), "-m", "backend.app.online_sourcing_cli",
@@ -53,7 +54,7 @@ def social_sourcing_command(
         "--embedding-code-root", str(DEFAULT_EMBEDDING_CODE),
         "--max-candidates", "24",
         "--beat-ids", *beat_ids,
-        "--providers", *SOCIAL_PROVIDERS,
+        "--providers", *providers,
     ]
     return command
 
@@ -88,7 +89,10 @@ def require_completed_social_search(rows: list[dict]) -> None:
         raise RuntimeError("Social search blocked; no completed provider request. " + " | ".join(reasons[:3]))
 
 
-def run_social_research(*, video: Path, output: Path, client_id: str) -> dict:
+def run_social_research(*, video: Path, output: Path, client_id: str, providers: tuple[str, ...] = SOCIAL_PROVIDERS) -> dict:
+    providers = tuple(dict.fromkeys(providers))
+    if not providers or any(p not in SOCIAL_PROVIDERS for p in providers):
+        raise ValueError("Select TikTok and/or Instagram")
     if not video.is_file():
         raise FileNotFoundError(video)
     transcript = output / "transcript-raw.json"
@@ -105,8 +109,8 @@ def run_social_research(*, video: Path, output: Path, client_id: str) -> dict:
         if isinstance(row, dict) and row.get("action") == "BROLL" and str(row.get("id") or "").strip()
     )
     if not beat_ids:
-        _event("online_search", 100, "No B-roll beats require social search", providers=list(SOCIAL_PROVIDERS))
-        return {"beats": 0, "providers": list(SOCIAL_PROVIDERS), "resolve_calls": 0}
+        _event("online_search", 100, "No B-roll beats require social search", providers=list(providers))
+        return {"beats": 0, "providers": list(providers), "resolve_calls": 0}
 
     video_artifact = retrieval_root / "online-candidates.json"
     tracked = [
@@ -123,7 +127,7 @@ def run_social_research(*, video: Path, output: Path, client_id: str) -> dict:
         1,
         "Social-only search started",
         beats=len(beat_ids),
-        providers=list(SOCIAL_PROVIDERS),
+        providers=list(providers),
     )
     try:
         subprocess.run(
@@ -134,6 +138,7 @@ def run_social_research(*, video: Path, output: Path, client_id: str) -> dict:
                 client_id,
                 source_frames,
                 beat_ids=beat_ids,
+                providers=providers,
             ),
             check=True,
         )
@@ -157,7 +162,7 @@ def run_social_research(*, video: Path, output: Path, client_id: str) -> dict:
             search_attempts=len(attempts),
             failed_attempts=failed,
             beats=len(beat_ids),
-            providers=list(SOCIAL_PROVIDERS),
+            providers=list(providers),
             video_candidates=count,
         )
     except Exception:
@@ -166,7 +171,7 @@ def run_social_research(*, video: Path, output: Path, client_id: str) -> dict:
     require_completed_social_search(fresh_video)
     return {
         "beats": len(beat_ids),
-        "providers": list(SOCIAL_PROVIDERS),
+        "providers": list(providers),
         "resolve_calls": 0,
     }
 
@@ -176,11 +181,13 @@ def main() -> None:
     parser.add_argument("--video", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--client-id", default="debug-reel")
+    parser.add_argument("--providers", nargs="+", choices=SOCIAL_PROVIDERS, default=SOCIAL_PROVIDERS)
     args = parser.parse_args()
     run_social_research(
         video=args.video.resolve(),
         output=args.output_dir.resolve(),
         client_id=args.client_id,
+        providers=tuple(args.providers),
     )
 
 

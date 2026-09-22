@@ -22,11 +22,13 @@ _MANAGEMENT_CSS = r"""
 _PROJECT_DIALOG = r"""
 <dialog id="socialConnectDialogV5" class="libraryV2">
 <h2>TikTok + Instagram · connection check</h2>
-<p>1. Sign in in the two RAMBLA browser windows. 2. Close both windows. 3. Verify the connection and start the search.</p>
+<p>1. Sign in in the two RAMBLA browser windows. 2. Close both windows. 3. Verify connections. 4. Choose available providers and press START SEARCH.</p>
 <p class="muted">The saved profile alone does not prove you are logged in. RAMBLA checks the actual search page before proceeding.</p>
 <div class="row"><button id="openTikTokCheckV5">OPEN TIKTOK</button><button id="openInstagramCheckV5">OPEN INSTAGRAM</button></div>
 <p id="tiktokCheckStateV5" role="status"></p><p id="instagramCheckStateV5" role="status"></p>
-<div class="row"><button id="verifySocialV5" class="primary">VERIFY &amp; SEARCH</button><button id="cancelSocialV5">CANCEL</button></div>
+<div class="row"><label><input type="checkbox" id="useTiktokV5" disabled> TikTok</label><label><input type="checkbox" id="useInstagramV5" disabled> Instagram</label></div>
+<p id="socialNextStepV5" role="status">Verify connections to enable available providers.</p>
+<div class="row"><button id="verifySocialV5">VERIFY CONNECTIONS</button><button id="startSocialV5" class="primary" disabled>START SEARCH</button><button id="cancelSocialV5">CLOSE</button></div>
 </dialog>
 <dialog id="projectLibraryV2" class="libraryV2">
   <div class="top"><div><h2 style="margin:0">Project Library</h2><div class="muted">Open, rename or remove local RAMBLA projects. Disk usage is calculated from the actual project folder.</div></div><button id="closeProjectsV2">CLOSE</button></div>
@@ -37,13 +39,23 @@ _PROJECT_DIALOG = r"""
 
 _MANAGEMENT_JS = r"""
 let socialSearchScopeV5=null;
-let socialOpeningV5=0;
+let socialOpeningV5=0,socialCheckingV5=false,socialStartingV5=false;
+const socialReadyV5={tiktok:false,instagram:false};
+const socialCheckboxV5=p=>$(p==='tiktok'?'useTiktokV5':'useInstagramV5');
+function selectedSocialV5(){return ['tiktok','instagram'].filter(p=>socialReadyV5[p]&&socialCheckboxV5(p).checked)}
+function syncSocialStartV5(){
+ const providers=selectedSocialV5(),busy=!!socialOpeningV5||socialCheckingV5||socialStartingV5;
+ $('startSocialV5').disabled=busy||!providers.length;
+ $('verifySocialV5').disabled=busy;
+ $('socialNextStepV5').textContent=busy?'Connection check / request in progress…':providers.length?'Ready: '+providers.join(' + ')+'. Press START SEARCH. Blocked providers will be skipped.':'Verify connections, then select at least one ready provider.';
+}
 async function openSocialCheckV5(provider){
- const node=$(provider+'CheckStateV5');socialOpeningV5++;$('verifySocialV5').disabled=true;
+ const node=$(provider+'CheckStateV5');socialOpeningV5++;socialReadyV5[provider]=false;
+ socialCheckboxV5(provider).checked=false;socialCheckboxV5(provider).disabled=true;syncSocialStartV5();
  node.textContent=provider+': opening browser…';
- try{await api(`/social/${provider}/login`,{method:'POST'});node.textContent=provider+': browser launch requested. Check the window, sign in, then close it.'}
+ try{await api(`/social/${provider}/login`,{method:'POST'});node.textContent=provider+': sign in, close that browser window, then VERIFY CONNECTIONS.'}
  catch(e){node.textContent=provider+': '+(e.message||String(e))}
- finally{socialOpeningV5--;$('verifySocialV5').disabled=socialOpeningV5>0}
+ finally{socialOpeningV5--;syncSocialStartV5()}
 }
 async function prepareSocialV5(beatId=null){
  if(state.run)return;socialSearchScopeV5=beatId;
@@ -51,22 +63,29 @@ async function prepareSocialV5(beatId=null){
  await Promise.all(['tiktok','instagram'].map(openSocialCheckV5));
 }
 async function checkSocialAndRunV5(){
- const button=$('verifySocialV5');button.disabled=true;
+ socialCheckingV5=true;syncSocialStartV5();
+ try{await Promise.all(['tiktok','instagram'].map(async provider=>{
+  const node=$(provider+'CheckStateV5');node.textContent=provider+': checking actual search page…';
+  socialReadyV5[provider]=false;
+  try{const result=await api(`/social/${provider}/check`,{method:'POST'});socialReadyV5[provider]=!!result.ready;node.textContent=provider+': '+(result.ready?'SEARCH READY':'BLOCKED')+' · '+result.detail+' · login '+(result.login_state==='verified'?'verified':'not verified')}
+  catch(e){node.textContent=provider+': '+(e.message||String(e))}
+  socialCheckboxV5(provider).disabled=!socialReadyV5[provider];socialCheckboxV5(provider).checked=socialReadyV5[provider];
+ }))}finally{socialCheckingV5=false;syncSocialStartV5()}
+}
+async function startSelectedSocialV5(){
+ const providers=selectedSocialV5();if(!providers.length||socialOpeningV5||socialCheckingV5||socialStartingV5||state.run)return;
+ socialStartingV5=true;syncSocialStartV5();
  try{
-  const checks=await Promise.all(['tiktok','instagram'].map(async provider=>{
-   const node=$(provider+'CheckStateV5');node.textContent=provider+': checking actual search page…';
-   try{const result=await api(`/social/${provider}/check`,{method:'POST'});node.textContent=provider+': '+(result.ready?'SEARCH READY':'BLOCKED')+' · '+result.detail+' · login '+(result.login_state==='verified'?'verified':'not verified');return result.ready}
-   catch(e){node.textContent=provider+': '+(e.message||String(e));return false}
-  }));
-  if(!checks.every(Boolean))return;
-  $('socialConnectDialogV5').close();
-  if(socialSearchScopeV5){if(state.active!==socialSearchScopeV5)throw Error('Active beat changed; reopen its social search.');await researchBeatV2('append',['tiktok','instagram'])}
-  else await startStage('source/social');
- }catch(e){reportError(e)}finally{button.disabled=false}
+  if(socialSearchScopeV5){if(state.active!==socialSearchScopeV5)throw Error('Active beat changed; reopen its social search.');await researchBeatV2('append',providers)}
+  else{const result=await api(`/projects/${state.pid}/source/social`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({providers})});if(result.status!=='started')throw Error('Search did not start.');await watch(result.run_id)}
+  $('socialConnectDialogV5').close();$('runStatus').textContent='Searching '+providers.join(' + ')+'…';
+ }catch(e){$('socialNextStepV5').textContent=e.message||String(e)}finally{socialStartingV5=false;$('startSocialV5').disabled=!selectedSocialV5().length||!!state.run;$('verifySocialV5').disabled=false}
 }
 $('openTikTokCheckV5').onclick=()=>openSocialCheckV5('tiktok');
 $('openInstagramCheckV5').onclick=()=>openSocialCheckV5('instagram');
 $('verifySocialV5').onclick=checkSocialAndRunV5;
+$('startSocialV5').onclick=startSelectedSocialV5;
+$('useTiktokV5').onchange=syncSocialStartV5;$('useInstagramV5').onchange=syncSocialStartV5;
 $('cancelSocialV5').onclick=()=>$('socialConnectDialogV5').close();
 
 const expandedShelvesV2=new Set();

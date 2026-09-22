@@ -18,7 +18,7 @@ def test_management_ui_exposes_project_library_clean_media_and_per_beat_research
     assert "/media/clean" in html
     assert "/research`" in html or "/research" in html
     assert "researchBeatV2('replace')" in html
-    assert "researchBeatV2('append',['tiktok','instagram'])" in html
+    assert "researchBeatV2('append',providers)" in html
     assert "startStage('analyze')" not in html[html.index("async function researchBeatV2"):html.index("function installManagementV2")]
 
 
@@ -72,7 +72,7 @@ def test_product_ui_has_global_social_only_search_next_to_broll():
     assert 'id="findSocial"' in html
     assert html.index('id="findVideos"') < html.index('id="findSocial"') < html.index('id="findImages"')
     assert "FIND SOCIAL" in html
-    assert "startStage('source/social')" in html
+    assert "startSelectedSocialV5" in html
 
 
 def test_management_ui_keeps_existing_layout_and_adds_api_director_controls():
