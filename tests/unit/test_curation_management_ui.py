@@ -167,4 +167,4 @@ def test_product_ui_exposes_clickable_envato_search_shelf():
     assert 'id="envatoLoginV2"' in html
     assert "ENVATO LOGIN" in html
     assert "socialLoginV2(\'envato\')" in html
-    assert "normal Chrome profile" in html
+    assert "Automatic public Envato catalog search" in html
