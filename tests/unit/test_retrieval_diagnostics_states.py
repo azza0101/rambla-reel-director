@@ -68,7 +68,7 @@ def test_search_relaxes_nonessential_travel_modifiers():
 
 def test_video_retrieval_version_changes_when_localization_contract_changes():
     from backend.app.quality_video import QUALITY_VERSION
-    assert QUALITY_VERSION == "clip-quality-13"
+    assert QUALITY_VERSION == "clip-quality-14"
 
 
 def test_contextual_image_retrieval_version_is_current():
