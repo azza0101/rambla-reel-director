@@ -151,9 +151,11 @@ class BrowserSocialSource:
 
             content = getattr(page, "content", None)
             html = (await content()).casefold() if callable(content) else ""
-            if any(mark in html for mark in ('type="password"', "type='password'")) or "/accounts/login" in parsed.path:
+            from .social_page_evidence import inspect_search_html
+            evidence = inspect_search_html(html)
+            if evidence.login_required or "/accounts/login" in parsed.path:
                 raise RuntimeError("login_required: open the RAMBLA provider login, sign in, close that window, then retry")
-            if any(mark in html for mark in ('id="captcha', 'id="challenge', 'verify to continue', 'verify you are human')):
+            if any(mark in evidence.visible_text for mark in ('verify to continue', 'verify you are human')):
                 raise RuntimeError("challenge_required: complete verification in the RAMBLA provider login window")
             if callable(content) and not html.strip():
                 raise RuntimeError("empty_browser_document: browser did not render the search page")
@@ -189,15 +191,17 @@ class BrowserSocialSource:
                     await page.evaluate("window.scrollBy(0, Math.max(window.innerHeight * 1.8, 1400))")
                     await page.wait_for_timeout(900)
 
-            explicit_zero = any(mark in html for mark in ("no results found", "no videos found", "nessun risultato", "no results for"))
+            explicit_zero = any(mark in evidence.visible_text for mark in ("no results found", "no videos found", "nessun risultato", "no results for"))
             state = "search_results" if found else ("zero_results" if explicit_zero else "search_results_unavailable")
             return {
                 "rows": found[:limit],
                 "diagnostics": {
                     "browser_state": state,
-                    "login_state": "verified" if any(mark in html for mark in ('href="/accounts/edit/', 'data-e2e="profile-icon"')) else "unknown",
+                    "login_state": "verified" if evidence.signed_in else "unknown",
                     "current_url": current_url[:300],
-                    "page_title": await _page_title(page),
+                    "page_title": await _page_title(page) or " ".join(evidence.title)[:180],
+                    "visible_text_length": len(evidence.visible_text),
+                    "zero_result_evidence": explicit_zero,
                     "all_video_link_count": all_video_links,
                     "search_result_link_count": len(found),
                     **({"search_wait_error": wait_error} if wait_error else {}),

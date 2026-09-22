@@ -56,3 +56,11 @@ The installed-browser fallback previously used virtual time but no real Chrome c
 542 tests pass, including complete/partial/empty output on TimeoutExpired. Python compilation passes. This addresses a confirmed command/diagnostics deficiency; resolution of the user's live TikTok hang is pending a user-runtime retry. Process inspection in the agent environment was denied. No browser processes were indiscriminately killed and no profile locks or credentials were modified.
 
 Chrome flag reference: https://developer.chrome.com/docs/automation-and-testing/headless-cli
+
+## User diagnostic review and bounded console
+
+The supplied beat_002 diagnostics contain 21 historical TikTok attempts and 18 Instagram attempts. Latest TikTok rows for airplane, bus and ferry contain zero extracted search cards; public fallback errors are ReadError/ConnectTimeout. Historical provider errors remain in the appended artifact. No verified new TikTok clips are established.
+
+Search diagnostics now have a 320px internally scrolling console and COPY CONSOLE copies the complete JSON, with explicit clipboard failure feedback. Search/login evidence now excludes script/style/template and inline-hidden contents instead of matching strings in raw HTML. This prevents translation strings such as `no results found` from being accepted as a real empty search page. Unrecognized result pages remain search_results_unavailable; title, visible text length and zero-result evidence are retained for investigation without storing private HTML.
+
+546 tests pass; compile and rendered JavaScript syntax pass. A browser fixture containing `no results found` only inside a script is rejected as unavailable, with no fabricated hit count. Actual TikTok acquisition remains unresolved; these changes do not claim provider success.
