@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import importlib.util
+import json
 import os
 from html.parser import HTMLParser
 from pathlib import Path
@@ -30,6 +31,45 @@ LoginLauncher = Callable[[str, Path, str], int]
 
 class BrowserUnavailableError(RuntimeError):
     pass
+
+
+def normal_chrome_profile() -> tuple[Path, str] | None:
+    """Return the current user's real Chrome user-data root and last-used profile."""
+    override = os.environ.get("RAMBLA_CHROME_USER_DATA_DIR", "").strip()
+    if override:
+        root = Path(override)
+    elif os.name == "nt" and os.environ.get("LOCALAPPDATA"):
+        root = Path(os.environ["LOCALAPPDATA"]) / "Google" / "Chrome" / "User Data"
+    else:
+        root = Path.home() / ".config" / "google-chrome"
+    if not root.is_dir():
+        return None
+    profile = os.environ.get("RAMBLA_CHROME_PROFILE", "").strip()
+    if not profile:
+        try:
+            payload = json.loads((root / "Local State").read_text(encoding="utf-8"))
+            profile = str(((payload.get("profile") or {}).get("last_used") or "")).strip()
+        except Exception:
+            profile = ""
+    profile = profile or "Default"
+    if not (root / profile).is_dir():
+        profile = "Default" if (root / "Default").is_dir() else profile
+    return root, profile
+
+
+def _installed_chrome() -> str | None:
+    for name in ("chrome", "chrome.exe", "google-chrome"):
+        found = shutil.which(name)
+        if found:
+            return found
+    if os.name == "nt":
+        for root in (os.environ.get("PROGRAMFILES"), os.environ.get("PROGRAMFILES(X86)"), os.environ.get("LOCALAPPDATA")):
+            if not root:
+                continue
+            candidate = Path(root) / "Google" / "Chrome" / "Application" / "chrome.exe"
+            if candidate.is_file():
+                return str(candidate)
+    return None
 
 
 class _DomAnchorParser(HTMLParser):
@@ -261,23 +301,24 @@ def _installed_browser() -> str | None:
 
 
 def _default_login_launcher(provider: str, profile_dir: Path, start_url: str) -> int:
-    """Open the login page in a RAMBLA-owned persistent browser profile.
-
-    Login itself does not need Playwright. This keeps credentials in the real
-    browser and lets the curation UI work even when the server venv has no pip.
-    """
-    del provider  # provider is already encoded by start_url/profile_dir
-    profile_dir.mkdir(parents=True, exist_ok=True)
-    browser = _installed_browser()
-    if not browser:
-        raise BrowserUnavailableError("No supported Edge/Chrome browser found")
-    command = [
-        browser,
-        f"--user-data-dir={profile_dir}",
-        "--no-first-run",
-        "--no-default-browser-check",
-        start_url,
-    ]
+    """Open provider login. Envato deliberately uses the user's normal Chrome."""
+    if provider == "envato":
+        browser = _installed_chrome()
+        if not browser:
+            raise BrowserUnavailableError("Google Chrome not found")
+        command = [browser, start_url]
+    else:
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        browser = _installed_browser()
+        if not browser:
+            raise BrowserUnavailableError("No supported Edge/Chrome browser found")
+        command = [
+            browser,
+            f"--user-data-dir={profile_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            start_url,
+        ]
     kwargs: dict[str, Any] = {"stdin": subprocess.DEVNULL}
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
@@ -304,6 +345,10 @@ class BrowserProfileManager:
         clean = str(provider or "").casefold().strip()
         if clean not in SUPPORTED_SOCIAL_PROVIDERS:
             raise ValueError("unsupported social provider")
+        if clean == "envato":
+            resolved = normal_chrome_profile()
+            if resolved is not None:
+                return resolved[0]
         return self.root / clean
 
     async def run_in_profile(
@@ -339,7 +384,11 @@ class BrowserProfileManager:
             search_ready = False
         return {
             provider: {
-                "profile_ready": self.profile_dir(provider).is_dir(),
+                "profile_ready": (
+                    bool(normal_chrome_profile())
+                    if provider == "envato"
+                    else self.profile_dir(provider).is_dir()
+                ),
                 "search_ready": search_ready,
                 "search_backend": search_backend,
             }
