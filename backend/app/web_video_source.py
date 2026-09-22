@@ -175,21 +175,19 @@ async def _http_google_discover(query: str, limit: int) -> list[dict[str, Any]]:
 
 async def _default_google_discover(query: str, limit: int) -> list[dict[str, Any]]:
     try:
-        rows = await _http_google_discover(query, limit)
-        if rows:
-            return rows
+        return await _http_google_discover(query, limit)
     except Exception:
-        pass
+        return []
 
+
+async def _browser_google_discover(query: str, limit: int) -> list[dict[str, Any]]:
     try:
         from playwright.async_api import async_playwright
     except (ImportError, ModuleNotFoundError):
         return []
-
     url = f"https://www.google.com/search?tbm=vid&hl=en&q={quote_plus(query)}"
     async with async_playwright() as playwright:
         browser = None
-        failures: list[str] = []
         for channel in ("msedge", "chrome", None):
             try:
                 kwargs: dict[str, Any] = {"headless": True}
@@ -197,10 +195,10 @@ async def _default_google_discover(query: str, limit: int) -> list[dict[str, Any
                     kwargs["channel"] = channel
                 browser = await playwright.chromium.launch(**kwargs)
                 break
-            except Exception as exc:
-                failures.append(f"{channel or 'chromium'}:{type(exc).__name__}")
+            except Exception:
+                browser = None
         if browser is None:
-            raise RuntimeError("Google video browser unavailable (" + ", ".join(failures) + ")")
+            return []
         try:
             page = await browser.new_page(viewport={"width": 1440, "height": 1200})
             await page.goto(url, wait_until="domcontentloaded", timeout=20_000)
@@ -228,6 +226,8 @@ class WebVideoSource:
 
     def __init__(self, *, discover: DiscoverFn | None = None) -> None:
         self.discover = discover or _default_google_discover
+        self._custom_discover = discover is not None
+        self._browser_fallback_remaining = 1
         self.last_attempt: dict[str, Any] = {}
 
     async def search(
@@ -245,6 +245,12 @@ class WebVideoSource:
         try:
             raw = self.discover(clean, max(limit * 2, limit))
             rows = await raw if inspect.isawaitable(raw) else raw
+            if not rows and not self._custom_discover and self._browser_fallback_remaining > 0:
+                self._browser_fallback_remaining -= 1
+                try:
+                    rows = await _browser_google_discover(clean, max(limit * 2, limit))
+                except Exception:
+                    rows = []
         except Exception as exc:
             self.last_attempt = {"provider": self.provider_name, "query": clean, "hits": 0, "error": type(exc).__name__}
             return []
