@@ -21,9 +21,7 @@ RUN pip install --upgrade pip \
  && pip install . \
  && pip install "yt-dlp" "Pillow>=10,<12"
 
-RUN mkdir -p /data/projects /data/browser-profiles \\
- && useradd --create-home --uid 10001 rambla \\
- && chown -R rambla:rambla /data
+RUN mkdir -p /data/projects /data/browser-profiles && useradd --create-home --uid 10001 rambla && chown -R rambla:rambla /data
 
 USER rambla
 ENV HOME=/home/rambla
