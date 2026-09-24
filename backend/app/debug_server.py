@@ -260,6 +260,8 @@ def _command(state: RunState) -> list[str]:
             command.extend(["--guide-audio", str(state.guide_audio)])
         if state.analysis_signature:
             command.extend(["--analysis-signature", state.analysis_signature])
+        if module == "backend.app.debug_run_cli":
+            command.extend(["--model-cache", str(state.output_dir / ".cloud-model-cache")])
         return command
     raw = os.environ.get("RAMBLA_DEBUG_COMMAND_JSON", "").strip()
     if raw:
