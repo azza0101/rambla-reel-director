@@ -19,9 +19,14 @@ COPY docs ./docs
 
 RUN pip install --upgrade pip \
  && pip install . \
- && pip install "yt-dlp>=2026.8.22" "Pillow>=10,<12"
+ && pip install "yt-dlp" "Pillow>=10,<12"
 
-RUN mkdir -p /data/projects /data/browser-profiles
+RUN mkdir -p /data/projects /data/browser-profiles \\
+ && useradd --create-home --uid 10001 rambla \\
+ && chown -R rambla:rambla /data
+
+USER rambla
+ENV HOME=/home/rambla
 
 VOLUME ["/data"]
 EXPOSE 8080
