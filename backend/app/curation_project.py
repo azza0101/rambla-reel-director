@@ -237,7 +237,7 @@ class ProjectStore:
 
     @staticmethod
     def _timeline_duration_for_text(text: str) -> float:
-        words = re.findall(r"\\S+", str(text or ""))
+        words = re.findall(r"\S+", str(text or ""))
         if not words:
             raise ValueError("transcript text is empty")
         return max(2.0, len(words) / 2.5)
