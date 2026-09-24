@@ -105,3 +105,6 @@ jobs:
           }
       - name: Compile backend
         run: python -m compileall backend
+      - name: Build GPU-free cloud image
+        if: github.ref_name == 'feat/api-first-text-first-v1' || github.event_name == 'pull_request'
+        run: docker build --tag rambla-cloud-ci .
