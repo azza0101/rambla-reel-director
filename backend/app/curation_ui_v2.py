@@ -66,7 +66,7 @@ async function openSocialCheckV5(provider){
 }
 async function prepareSocialV5(beatId=null){
  if(state.run)return;socialSearchScopeV5=beatId;
- if(window.RAMBLA_CLOUD_MODE){
+ if(globalThis.RAMBLA_CLOUD_MODE){
   const providers=['tiktok','instagram'];
   if(beatId){
    if(state.active!==beatId)throw Error('Active beat changed; reopen its social search.');
