@@ -715,7 +715,12 @@ def create_app(
             analysis_signature=project.analysis_signature, stage_type=stage,
         )
         debug.RUNS[state.run_id] = state
-        state.research_options={'visual_verify':request.visual_verify,'variation_round':request.variation_round,'query_overrides':request.query_overrides}
+        cloud_mode = os.environ.get("RAMBLA_RUNTIME_MODE", "").casefold().strip() == "cloud"
+        state.research_options={
+            'visual_verify': False if cloud_mode else request.visual_verify,
+            'variation_round': request.variation_round,
+            'query_overrides': request.query_overrides,
+        }
         asyncio.create_task(_run_research_state(state, beat_id, request.mode, provider_scope, research_runner))
         return {
             "status": "started",
