@@ -66,6 +66,18 @@ async function openSocialCheckV5(provider){
 }
 async function prepareSocialV5(beatId=null){
  if(state.run)return;socialSearchScopeV5=beatId;
+ if(window.RAMBLA_CLOUD_MODE){
+  const providers=['tiktok','instagram'];
+  if(beatId){
+   if(state.active!==beatId)throw Error('Active beat changed; reopen its social search.');
+   await researchBeatV2('append',providers);
+  }else{
+   const result=await api(`/projects/${state.pid}/source/social`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({providers})});
+   if(result.status!=='started')throw Error('Search did not start.');
+   await watch(result.run_id);
+  }
+  return;
+ }
  $('socialConnectDialogV5').showModal();
  try{const status=await api('/social/status');for(const provider of ['tiktok','instagram']){const ready=!!status.providers?.[provider]?.connection_ready;socialReadyV5[provider]=ready;socialCheckboxV5(provider).disabled=!ready;socialCheckboxV5(provider).checked=ready;if(ready)$(provider+'CheckStateV5').textContent=provider+': CONNECTED · existing session ready, no verification needed.'}}catch(e){}
  syncSocialStartV5();
@@ -241,7 +253,9 @@ def render_curation_page_v2(build_token: str | None = None) -> str:
         raise RuntimeError('curation V1 bootstrap marker changed; management UI injection aborted')
     html = html.replace(needle, GALLERY_JS + _MANAGEMENT_JS + ANIMATION_JS + TRANSCRIPT_EDITOR_JS + needle, 1)
     if os.environ.get("RAMBLA_RUNTIME_MODE", "").casefold().strip() == "cloud":
+        html = html.replace("let socialSearchScopeV5=null;", "window.RAMBLA_CLOUD_MODE=true;let socialSearchScopeV5=null;", 1)
         html = html.replace('<button id="path">Open Local Path</button>', '<button id="path" hidden>Open Local Path</button>', 1)
+        html = html.replace('id="socialConnectionsV5"', 'id="socialConnectionsV5" hidden', 1)
         html = html.replace('id="socialQwenV2"', 'id="socialQwenV2" disabled', 1)
         html = html.replace('Verifica social con Qwen (GPU)', 'Cloud mode · local GPU disabled', 1)
         html = html.replace(
