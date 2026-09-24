@@ -105,6 +105,24 @@ jobs:
           }
       - name: Compile backend
         run: python -m compileall backend
-      - name: Build GPU-free cloud image
+      - name: Build and smoke GPU-free cloud image
         if: github.ref_name == 'feat/api-first-text-first-v1' || github.event_name == 'pull_request'
-        run: docker build --tag rambla-cloud-ci .
+        shell: bash
+        run: |
+          docker build --tag rambla-cloud-ci .
+          docker run -d --name rambla-cloud-smoke -p 18080:8080 rambla-cloud-ci
+          trap 'docker rm -f rambla-cloud-smoke >/dev/null 2>&1 || true' EXIT
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:18080/health > /tmp/rambla-health.json; then
+              break
+            fi
+            sleep 1
+          done
+          python - <<'PY'
+          import json
+          payload=json.load(open('/tmp/rambla-health.json',encoding='utf-8'))
+          assert payload['status']=='ok'
+          assert payload['runtime_mode']=='cloud'
+          assert payload['local_gpu_required'] is False
+          assert payload['resolve_calls']==0
+          PY
