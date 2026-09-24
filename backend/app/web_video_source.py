@@ -192,15 +192,26 @@ async def _browser_google_discover(query: str, limit: int) -> list[dict[str, Any
     url = f"https://www.google.com/search?tbm=vid&hl=en&q={quote_plus(query)}"
     async with async_playwright() as playwright:
         browser = None
-        for channel in ("msedge", "chrome", None):
+        try:
+            from .browser_profiles import _installed_browser
+            executable = _installed_browser()
+        except Exception:
+            executable = None
+        if executable:
             try:
-                kwargs: dict[str, Any] = {"headless": True}
-                if channel:
-                    kwargs["channel"] = channel
-                browser = await playwright.chromium.launch(**kwargs)
-                break
+                browser = await playwright.chromium.launch(headless=True, executable_path=executable)
             except Exception:
                 browser = None
+        if browser is None:
+            for channel in ("msedge", "chrome", None):
+                try:
+                    kwargs: dict[str, Any] = {"headless": True}
+                    if channel:
+                        kwargs["channel"] = channel
+                    browser = await playwright.chromium.launch(**kwargs)
+                    break
+                except Exception:
+                    browser = None
         if browser is None:
             raise RuntimeError('google_browser_unavailable')
         try:
