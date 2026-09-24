@@ -307,7 +307,7 @@ async def _default_playwright_runner(
 
 def _installed_browser() -> str | None:
     """Return an installed Chromium browser without reading a user's main profile."""
-    for name in ("msedge", "msedge.exe", "chrome", "chrome.exe", "google-chrome"):
+    for name in ("msedge", "msedge.exe", "chrome", "chrome.exe", "google-chrome", "chromium", "chromium-browser"):
         found = shutil.which(name)
         if found:
             return found
