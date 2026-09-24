@@ -1,0 +1,18 @@
+services:
+  rambla:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file:
+      - cloud.env
+    environment:
+      RAMBLA_RUNTIME_MODE: cloud
+      RAMBLA_RETRIEVAL_RANKING: provider
+      RAMBLA_PROJECT_ROOT: /data/projects
+      RAMBLA_BROWSER_PROFILE_ROOT: /data/browser-profiles
+    volumes:
+      - rambla-data:/data
+    restart: unless-stopped
+
+volumes:
+  rambla-data:
