@@ -772,3 +772,36 @@ def test_groq_uses_model_specific_completion_limits():
 
     assert GroqDirectorClient._max_completion_tokens("qwen/qwen3.8-27b") == 16384
     assert GroqDirectorClient._max_completion_tokens("openai/gpt-oss-120b") == 65536
+
+def test_groq_repair_truncation_uses_configured_larger_fallback():
+    from backend.app.groq_api import GroqDirectorClient
+    class Response:
+        headers={}
+        def __init__(self,failed):self.failed=failed;self.status_code=400 if failed else 200
+        def raise_for_status(self):
+            if self.failed:raise RuntimeError('HTTP400')
+        def json(self):
+            if self.failed:return {'error':{'message':'max completion tokens reached before generating a valid document: output was truncated'}}
+            return {'id':'x','choices':[{'message':{'content':'{"ok":true}'}}]}
+    class HTTP:
+        def __init__(self):self.calls=[]
+        def post(self,url,**kwargs):
+            self.calls.append(kwargs['json']);return Response(len(self.calls)==2)
+    http=HTTP();client=GroqDirectorClient('placeholder',http_client=http)
+    first=client.generate_json('FULL CORRECTED TRANSCRIPT',{'type':'object'})
+    reply=client.generate_json('repair',{'type':'object'},previous_interaction_id=first.interaction_id)
+    assert reply.data=={'ok':True}
+    assert len(http.calls)==3
+    assert http.calls[-1]['model']=='openai/gpt-oss-120b'
+    assert 'FULL CORRECTED TRANSCRIPT' in http.calls[-1]['messages'][0]['content']
+
+def test_groq_rejects_length_finish_even_when_partial_json_parses():
+    from backend.app.groq_api import GroqDirectorClient,GroqAPIError
+    class Response:
+        status_code=200;headers={}
+        def raise_for_status(self):pass
+        def json(self):return {'choices':[{'finish_reason':'length','message':{'content':'{"partial":true}'}}]}
+    class HTTP:
+        def post(self,*args,**kwargs):return Response()
+    client=GroqDirectorClient('placeholder',http_client=HTTP(),fallback_models=())
+    with pytest.raises(GroqAPIError,match='truncated'):client.generate_json('prompt',{'type':'object'})

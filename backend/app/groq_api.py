@@ -140,7 +140,7 @@ class GroqDirectorClient:
                 + "\n\nREPAIR_REQUEST:\n"
                 + prompt
             )
-            model_chain = (self._successful_model or self.model,)
+            model_chain = tuple(dict.fromkeys((self._successful_model or self.model, *self.fallback_models)))
         else:
             effective_prompt = prompt
             self._first_prompt = prompt
@@ -226,6 +226,10 @@ class GroqDirectorClient:
                     last_exception = exc
                     status = getattr(response, "status_code", None)
                     detail = self._error_detail(response)
+                    truncated = status == 400 and any(t in detail.lower() for t in ('max completion tokens reached', 'max_completion_tokens', 'output was truncated'))
+                    if truncated and model_index < len(model_chain) - 1:
+                        self._emit('output_truncated', model=active_model, status=status, detail='Structured JSON exceeded output budget; switching to configured fallback')
+                        break
                     retryable = isinstance(status, int) and status in RETRYABLE_HTTP_STATUSES
                     if status == 429 and model_index < len(model_chain) - 1:
                         self._emit(
@@ -270,6 +274,11 @@ class GroqDirectorClient:
                 if not isinstance(choices, list) or not choices:
                     raise GroqAPIError("Groq response has no choices")
                 first = choices[0] if isinstance(choices[0], dict) else {}
+                if first.get('finish_reason') == 'length':
+                    if model_index < len(model_chain) - 1:
+                        self._emit('output_truncated', model=active_model, detail='Completion reached output limit')
+                        break
+                    raise GroqAPIError('Groq output truncated: completion token limit reached; no complete plan was saved')
                 message = first.get("message") if isinstance(first, dict) else None
                 content = message.get("content") if isinstance(message, dict) else None
                 if not isinstance(content, str) or not content.strip():

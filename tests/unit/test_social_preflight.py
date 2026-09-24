@@ -21,15 +21,21 @@ def test_search_check_never_equates_profile_with_login(monkeypatch,tmp_path):
  (tmp_path/'tiktok').mkdir()
  result=asyncio.run(manager.check_search('tiktok'))
  assert result['ready'] is False and result['login_state']!='verified'
- assert 'login_required' in result['detail']
+ assert result['browser_state']=='browser_closed'
 
-def test_check_uses_search_page_evidence(monkeypatch,tmp_path):
+def test_check_uses_open_page_evidence(tmp_path):
  from backend.app.browser_profiles import BrowserProfileManager
- from backend.app.social_browser_source import BrowserSocialSource
- async def accessible(self,*a):return {'rows':[{'source_page':'example'}],'diagnostics':{'browser_state':'search_results','login_state':'unknown'}}
- monkeypatch.setattr(BrowserSocialSource,'_browser_search',accessible)
- result=asyncio.run(BrowserProfileManager(tmp_path).check_search('instagram'))
- assert result['ready'] is True and result['login_state']=='unknown'
+ class Page:
+  url='https://www.instagram.com/'
+  async def content(self):return '<a href="/accounts/edit/">Profile</a>'
+ class Runner:
+  def is_connected(self,path):return True
+  async def __call__(self,directory,url,callback):
+   assert url is None
+   return await callback(Page(),None)
+ result=asyncio.run(BrowserProfileManager(tmp_path,playwright_runner=Runner()).check_search('instagram'))
+ assert result['ready'] is True and result['login_state']=='verified'
+
 
 def test_social_ui_requires_check_before_start():
  from backend.app.curation_ui_v2 import render_curation_page_v2
@@ -90,3 +96,8 @@ def test_global_social_route_forwards_selected_provider(tmp_path,monkeypatch):
  assert calls==[('tiktok',)]
  assert client.post(endpoint,json={'providers':[]}).status_code==422
  assert client.post(endpoint,json={'providers':['youtube']}).status_code==422
+
+def test_captcha_after_partial_results_is_not_reported_success():
+ from backend.app.debug_social_cli import require_completed_social_search
+ with pytest.raises(RuntimeError,match='challenge_required'):
+  require_completed_social_search([{'search_attempts':[{'provider':'tiktok','hits':12},{'provider':'tiktok','browser_error':'challenge_required'}]}])

@@ -73,6 +73,41 @@ def download_authenticated_section(
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    endpoint=os.environ.get('RAMBLA_SOCIAL_SESSION_URL','')
+    if endpoint:
+        # The UI server owns the live profile. Reading its SQLite cookie file
+        # while Chrome is open fails; use the authenticated loopback bridge.
+        from urllib.parse import urlsplit
+        import httpx
+        import tempfile
+        parsed=urlsplit(endpoint)
+        if parsed.scheme!='http' or parsed.hostname!='127.0.0.1':
+            raise SocialAcquisitionError('invalid local session endpoint')
+        cookie_path=None
+        try:
+            with httpx.Client(timeout=10,trust_env=False) as client:
+                response=client.post(endpoint.rstrip('/')+f'/api/curation/social/{clean}/session-cookies',
+                                     headers={'X-Rambla-Session':os.environ.get('RAMBLA_SOCIAL_SESSION_TOKEN','')})
+                response.raise_for_status()
+                cookies=response.json()['cookies']
+            with tempfile.NamedTemporaryFile(mode='w',encoding='utf-8',suffix='.cookies',dir=output_path.parent,delete=False) as handle:
+                cookie_path=Path(handle.name);handle.write('# Netscape HTTP Cookie File\n')
+                for c in cookies:
+                    domain=str(c.get('domain',''))
+                    if domain.lstrip('.').removeprefix('www.')!=clean+'.com':continue
+                    fields=[domain,'TRUE' if domain.startswith('.') else 'FALSE',str(c.get('path') or '/'),
+                            'TRUE' if c.get('secure') else 'FALSE',str(max(0,int(c.get('expires') or 0))),str(c.get('name','')),str(c.get('value',''))]
+                    if not any('\n' in v or '\r' in v or '\t' in v for v in fields):handle.write('\t'.join(fields)+'\n')
+            runner([sys.executable,'-m','yt_dlp','--no-playlist','--no-warnings','--socket-timeout','12','--retries','0',
+                    '--cookies',str(cookie_path),'--download-sections',f'*{start:.3f}-{start+duration:.3f}',
+                    '--force-keyframes-at-cuts','-f','b[height<=1080]/best[height<=1080]/best','--merge-output-format','mp4',
+                    '-o',str(output_path),source_page],check=True,capture_output=True,text=True,encoding='utf-8',timeout=55)
+            if output_path.is_file() and output_path.stat().st_size:return output_path
+            raise SocialAcquisitionError('provider did not supply a clip')
+        except Exception:
+            raise SocialAcquisitionError('live-session clip acquisition failed') from None
+        finally:
+            if cookie_path:cookie_path.unlink(missing_ok=True)
     profile_dir = Path(profile_root or profile_root_from_env()) / clean
     end = start + duration
     failures = 0

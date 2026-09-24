@@ -140,6 +140,11 @@ def _dimensions(info: dict[str, Any]) -> tuple[int, int]:
 
 
 def _thumbnail(info: dict[str, Any]) -> str:
+    portraits = [r for r in info.get('thumbnails') or [] if isinstance(r, dict)
+                 and str(r.get('url') or '').startswith(('https://', 'http://'))
+                 and float(r.get('height') or 0) > float(r.get('width') or 0) > 0]
+    if portraits:
+        return str(max(portraits, key=lambda r: float(r['height']) * float(r['width']))['url'])
     direct = str(info.get("thumbnail") or "").strip()
     if direct.startswith(("http://", "https://")): return direct
     rows = [row for row in info.get("thumbnails") or [] if isinstance(row, dict) and str(row.get("url") or "").startswith(("http://", "https://"))]

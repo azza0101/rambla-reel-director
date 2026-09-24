@@ -1,0 +1,5 @@
+# Director truncation recovery — 2026-09-24
+Original live failure 5c87f75a962d: Groq HTTP400 max completion tokens reached while repairing structured JSON. Corrected transcript preserved. Repair model_chain previously contained only the successful model, preventing configured model fallback. HTTP400 truncation did not trigger fallback either.
+Local patch: use configured fallback chain for repair; switch on explicit output truncation; reject finish_reason=length even if content parses; expose sanitized concrete worker failure in UI.
+Verification: 607 full-suite tests passed before adding one additional length regression; 21 Director tests passed afterwards. Compile passed.
+Real retry e268cfd171d2 SUCCEEDED. Provider Groq, qwen/qwen3.8-27b, one API call; fallback not needed on this retry, so fallback behavior is regression-tested but not exercised by the real success. Corrected plan activated and validated against corrected transcript; no ASR or media sourcing. Server restart required only for improved parent-process error display. Local changes only, not published.

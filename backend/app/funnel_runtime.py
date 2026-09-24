@@ -35,6 +35,11 @@ async def discover_shot(engine, queries, expanded, budgets, minimum, maximum, or
             if callable(drain):
                 detail['vertical_attempts']=[a for a in drain() if a.get('provider') != provider]
             detail.update(cache_hit=False,search_seconds=round(time.perf_counter()-started,4))
+            issue=' '.join(str(detail.get(k) or '') for k in ('error','browser_error','browser_error_detail'))
+            reason=next((r for r in ('challenge_required','login_required') if r in issue),None)
+            callback=getattr(engine,'event_callback',None)
+            if callback and (reason or error or detail.get('error') or detail.get('browser_error')):
+                callback('provider_attention',None,'Provider requires attention',provider=provider,query=query,reason=reason or 'provider_request_failed')
         if cache and not social and not error and not detail.get('error') and not any(r.get('error') for r in detail.get('vertical_attempts',[])):
             cache.put(key,{'rows':[asdict(r) if is_dataclass(r) else vars(r) for r in rows],'attempt':detail})
         return (id(source),query),(rows,error,detail)
@@ -50,8 +55,8 @@ async def discover_shot(engine, queries, expanded, budgets, minimum, maximum, or
 async def cached_source_video_beat(engine, **kwargs):
     from .quality_video import source_video_beat
     root=getattr(engine.cache,'root',None)
-    cache=JsonCache(Path(root)/'verified-shots','verified-shot-v5') if root else None
-    key=[kwargs,os.environ.get('RAMBLA_RETRIEVAL_RANKING','auto'),[(getattr(s,'provider_name',type(s).__name__),
+    cache=JsonCache(Path(root)/'verified-shots','verified-shot-v6') if root else None
+    key=[kwargs,os.environ.get('RAMBLA_SOCIAL_EXCLUDED_KEYS','[]'),os.environ.get('RAMBLA_SOCIAL_SEARCH_OPTIONS','{}'),os.environ.get('RAMBLA_RETRIEVAL_RANKING','auto'),[(getattr(s,'provider_name',type(s).__name__),
                   [getattr(v,'provider_name','') for v in (getattr(s,'vertical_sources',None) or [])]) for s in engine.sources]]
     started=time.perf_counter()
     social = any(getattr(s,'provider_name','') in {'tiktok','instagram'} for s in engine.sources)

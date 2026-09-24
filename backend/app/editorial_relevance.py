@@ -17,7 +17,7 @@ INTENT_PREFIX = "RAMBLA_INTENT::"
 _GENERIC_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (r"\b(laptop|computer|typing|notebook|taking notes?|working remotely)\b", ("laptop", "computer", "notebook", "typing", "appunti", "computer")),
     (r"\b(map|route planning|travel planning|itinerary planning|comparing routes?)\b", ("map", "mappa", "route", "tratta", "itinerary", "itinerario", "planning", "pianific")),
-    (r"\b(hotel room|accommodation options?|booking|hotel comparison)\b", ("hotel", "albergo", "camera", "accommodation", "struttura ricettiva", "booking")),
+    (r"\b(hotel room|accommodation options?|booking|hotel comparison)\b", ("hotel", "albergo", "camera", "accommodation", "struttura ricettiva", "booking", "guesthouse", "guest house", "lodging", "strutture locali", "local structures")),
 )
 
 _BASE_NEGATIVES = (
@@ -134,7 +134,7 @@ def build_retrieval_spec(beat: dict[str, Any], shot: dict[str, Any], kind: str) 
         negatives += ["person using laptop", "typing on computer"]
     if not any(term in target_and_context for term in ("map", "mappa", "route planning", "itinerary planning")):
         negatives += ["generic travel planning map"]
-    if not any(term in target_and_context for term in ("hotel room", "camera hotel", "albergo", "accommodation")):
+    if not any(term in target_and_context for term in ("hotel room", "camera hotel", "albergo", "accommodation", "guesthouse", "guest house", "lodging")):
         negatives += ["generic hotel room"]
     negatives += list(_BASE_NEGATIVES)
     if generic_demoted and description:

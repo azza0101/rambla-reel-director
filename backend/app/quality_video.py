@@ -18,7 +18,7 @@ from .media_quality import perceptual_hash,diverse_candidates
 from .social_acquisition import download_authenticated_section, fallback_acquisition_state, profile_root_from_env
 from .editorial_relevance import decode_retrieval_intent
 
-QUALITY_VERSION='clip-quality-14'
+QUALITY_VERSION='clip-quality-15-social'
 PRIMARY_CLIPS_PER_SHOT = 1
 VERTICAL_PROVIDERS={'youtube_shorts','tiktok','instagram'}
 
@@ -338,6 +338,9 @@ def _discovery_relevant(candidate,intent):
     query_meta,intent_meta=_discovery_scores(candidate,intent)
     target=_visual_target(intent)
     text=candidate.title+' '+candidate.description
+    if candidate.provider in VERTICAL_PROVIDERS:
+        if re.search(r'\b(how to|tutorial|guide to|tips|trick|explaining|explained|have you ever wondered)\b',text,re.I) and not re.search(r'\b(tutorial|explain|guide|tips)\b',target,re.I):return False
+        if re.search(r'\b(passenger|people|travelers|tourists)\b',target,re.I) and re.search(r'\b(vehicle ferry|car ferry|cars? boarding|vehicles? boarding)\b',text,re.I) and not re.search(r'\b(passengers?|travelers?|tourists?)\b',text,re.I):return False
     moving=re.search(r'\b(crossing|departing|pulling away|cutting through|taxiing|driving|sailing)\b',target,re.I)
     stationary=re.search(r'\b(docked|moored|parked|stationary)\b',text,re.I)
     if moving and stationary and not re.search(r'\b(leaving|departing|moving|driving|sailing)\b',text,re.I):return False
@@ -358,7 +361,7 @@ def _discovery_priority(candidate,intent):
     vertical=1 if candidate.provider in VERTICAL_PROVIDERS and candidate.orientation=='portrait' else 0
     authenticity=float(getattr(candidate,'source_authenticity',0) or 0)
     # Relevance must beat format preference. Vertical is only a tie-breaker.
-    return (max(query_meta,intent_meta),query_meta,intent_meta,vertical,authenticity,-int(getattr(candidate,'provider_rank',0) or 0))
+    return (.8*intent_meta+.2*query_meta,intent_meta,query_meta,vertical,authenticity,-int(getattr(candidate,'provider_rank',0) or 0))
 
 
 def _balanced_discovery_pool(pool,intent,limit=8):
@@ -425,11 +428,80 @@ def _query_from_target(target,max_words=8):
     return ' '.join(out)
 
 
+async def _rank_social_discovery(engine,pool,intent,output,timings,*,client_id):
+    """Thumbnail evidence filters discovery, never grants clip verification."""
+    rows=[];by_id={};fingerprints={}
+    callback=getattr(engine,'event_callback',None)
+    def phase(message,**data):
+        if callback:callback('online_search',None,message,slot_id=output.get('beat_id'),providers=list({c.provider for c in pool}),**data)
+    phase('Downloading social thumbnails',count=len(pool))
+    gate=getattr(engine,'_social_thumbnail_gate',None)
+    if gate is None:
+        gate=asyncio.Semaphore(4);engine._social_thumbnail_gate=gate
+    async def fetch(candidate):
+        async with gate:
+            try:return await asyncio.wait_for(engine.cache.materialize_preview(candidate),timeout=12)
+            except Exception as exc:return exc
+    previews=await asyncio.gather(*(fetch(c) for c in pool))
+    for candidate,preview in zip(pool,previews):
+        identity=f'{candidate.provider}:{candidate.provider_id}'
+        by_id[identity]=candidate
+        try:
+            if isinstance(preview,Exception):raise preview
+            output['preview_cache_hits']=output.get('preview_cache_hits',0)+int(preview.cache_hit)
+            counts=output.setdefault('social_thumbnail_events',{}).setdefault(candidate.provider,{'downloads':0,'cache_hits':0})
+            counts['cache_hits' if preview.cache_hit else 'downloads']+=1
+            rows.append({'id':identity,'client_id':client_id,'kind':'video','provider':candidate.provider,'title':candidate.title,
+                         'description':candidate.description,'query':candidate.query,'path':str(preview.path),
+                         'keyframe_path':str(preview.path)})
+            try: fingerprints[identity]=perceptual_hash(Path(preview.path))
+            except Exception: pass
+        except Exception as exc:
+            output['errors'].append({'provider':candidate.provider,'code':'social_thumbnail_failed','id':identity,'error_type':type(exc).__name__})
+    if not rows:return pool
+    try:
+        timings.setdefault('qwen_seconds',0)
+        phase('Ranking social thumbnails',count=len(rows))
+        ranked=await _bounded_call(engine,'qwen',engine.ranker.rank,intent,rows,_timings=timings)
+    except Exception as exc:
+        output['errors'].append({'code':'social_thumbnail_rank_failed','error_type':type(exc).__name__})
+        return pool
+    selected=[];seen=[];authors=set();alternatives=[];processed=set();review=[]
+    output['social_thumbnail_ranking']=[{k:r.get(k) for k in ('id','score','embedding_score','shot_embedding_score','query_embedding_score','quality_state','quality_reasons')} for r in ranked]
+    for row in sorted(ranked,key=lambda r:-r.get('score',0)):
+        identity=row['id'];candidate=by_id[identity];processed.add(identity)
+        overlay=any('superimposed' in reason for reason in row.get('quality_reasons',[]))
+        irrelevant=row.get('embedding_score') is not None and row.get('quality_state')=='rejected'
+        fingerprint=fingerprints.get(identity)
+        duplicate=fingerprint is not None and any((int(fingerprint,16)^int(f,16)).bit_count()<=6 for f in seen)
+        weak_only=irrelevant and bool(row.get('quality_reasons')) and set(row['quality_reasons']) <= {'visual evidence below relevance floor','below relevance floor'}
+        if weak_only and not overlay and not duplicate and len(review)<2:
+            review.append(candidate)
+            output.setdefault('thumbnail_review_candidates',[]).append(identity)
+            if fingerprint:seen.append(fingerprint)
+            continue
+        if overlay or duplicate or irrelevant:
+            output['rejected_candidates'].append({'id':identity,'source':candidate.provider,'quality_reasons':['thumbnail shows superimposed text' if overlay else 'visually duplicate social thumbnail' if duplicate else 'thumbnail does not match physical shot',*row.get('quality_reasons',[])]})
+            continue
+        if fingerprint:seen.append(fingerprint)
+        author=str(getattr(candidate,'creator_name','') or '').casefold()
+        if author and author in authors:alternatives.append(candidate)
+        else:selected.append(candidate)
+        if author:authors.add(author)
+    return selected+alternatives+review+[c for i,c in by_id.items() if i not in processed]
+
+
 async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_duration,orientation,retrieval_intent=None,**ignored):
     started=time.perf_counter()
     timings={k:0.0 for k in ('search_seconds','metadata_filter_seconds','storyboard_seconds','qwen_seconds','clip_download_seconds','final_verify_seconds','total_seconds')}
     intent=retrieval_intent or next((engine.query_intents.get(q) for q in queries if engine.query_intents.get(q)),queries[0])
     visual_target=_visual_target(intent)
+    import os
+    options=json.loads(os.environ.get('RAMBLA_SOCIAL_SEARCH_OPTIONS','{}'))
+    if options and all(_provider_name(s) in VERTICAL_PROVIDERS for s in engine.sources):
+        from .social_variations import search_variants
+        shot_id=beat_id.split(':shot:')[-1]
+        queries=search_variants(queries,visual_target,options.get('variation_round',0),options.get('query_overrides',{}).get(shot_id,''))
     clean_queries=[q for q in queries if _query_matches_target(q,visual_target)]
     if not clean_queries:
         derived=_query_from_target(visual_target)
@@ -441,7 +513,7 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
     if list(clean_queries)!=list(queries):
         emit('Dropped stale/mismatched search queries',original_queries=list(queries),active_queries=list(clean_queries),visual_target=visual_target)
     priority={'pexels':0,'envato':1,'youtube_shorts':2,'tiktok':3,'instagram':4,'web_video':5,'youtube':6}
-    query_budget={'envato':1,'web_video':1,'youtube':2,'pexels':2,'youtube_shorts':1,'tiktok':1,'instagram':1}
+    query_budget={'envato':1,'web_video':1,'youtube':2,'pexels':2,'youtube_shorts':1,'tiktok':2,'instagram':1}
     expanded_all=expand_queries(clean_queries,'video')
     from .funnel_runtime import discover_shot
     discovered=await discover_shot(engine,clean_queries,expanded_all,query_budget,min_duration,max_duration,orientation)
@@ -471,11 +543,23 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
                 output['errors'].append({'provider':provider_label,'code':'provider_request_failed','error_type':details['error']})
             if attempt.get('error'):
                 attempt.pop('hits',None)
+            emit('Provider search completed',provider=provider_label,query=query,search_attempts=[dict(a) for a in output['search_attempts']])
             for row in rows:
                 key=(row.provider,row.provider_id)
                 if key not in seen:pool.append(row);seen.add(key)
             if len(pool)>=6 and query_index>=1:break
-        pool=_balanced_discovery_pool(pool,intent,limit=4)
+        social_shelf = provider_key in {"tiktok", "instagram", "youtube_shorts"}
+        card_limit = 6 if social_shelf else 3
+        if social_shelf:
+            import os
+            from .beat_research import unseen_video_candidates
+            known=json.loads(os.environ.get('RAMBLA_SOCIAL_EXCLUDED_KEYS','[]'))
+            previous_count=len(pool)
+            pool=unseen_video_candidates(pool,known)
+            output['previously_seen_skipped']=output.get('previously_seen_skipped',0)+previous_count-len(pool)
+        pool=_balanced_discovery_pool(pool,intent,limit=12 if social_shelf else 4)
+        if social_shelf and options.get("visual_verify", False):
+            pool=await _rank_social_discovery(engine,[c for c in pool if _discovery_relevant(c,intent)],intent,output,timings,client_id=client_id)
         accepted=[];pending=[]
         counters=provider_counts.setdefault(provider_key,{'requests':sum(not a.get('cache_hit',False) for a in output['search_attempts'] if a['provider']==provider_label),'raw_hits':sum(a.get('hits',0) for a in output['search_attempts'] if a['provider']==provider_label),'filtered_hits':0,'previews_downloaded':0,'clips_downloaded':0})
         acquisition_attempts=0
@@ -488,12 +572,16 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
                 output['rejected_candidates'].append({'id':asset_id,'source':candidate.provider,'source_url':candidate.source_page,'matched_query':candidate.query,'score':0,'quality_reasons':['metadata/title does not match concrete visual target']})
                 continue
             counters['filtered_hits']+=1
+            if social_shelf and not options.get('visual_verify', False):
+                if len(pending)<card_limit:
+                    pending.append(_manual_discovery_base(candidate,asset_id,client_id,meta,reason='Keyword match; visual verification disabled; review manually'))
+                continue
             if candidate.provider in {'envato','web_video'}:
                 pending.append(_manual_discovery_base(candidate,asset_id,client_id,meta,reason='Discovery only; open official source to review/license/download'))
                 continue
-            if sum(c.get('clip_verified',False) for c in output['candidates'])+len(accepted)>=PRIMARY_CLIPS_PER_SHOT:
-                continue
-            if acquisition_attempts>=2:
+            if sum(c.get('clip_verified',False) for c in output['candidates'])+len(accepted)>=PRIMARY_CLIPS_PER_SHOT or acquisition_attempts>=2:
+                if social_shelf and len(pending)+len(accepted)<card_limit:
+                    pending.append(_manual_discovery_base(candidate,asset_id,client_id,meta,reason='Source found; automatic preview pending'))
                 continue
             if candidate.provider in VERTICAL_PROVIDERS and candidate.orientation!='portrait':
                 output['rejected_candidates'].append({'id':asset_id,'source':candidate.provider,'source_url':candidate.source_page,'matched_query':candidate.query,'score':0,'quality_reasons':['vertical-social candidate is not portrait']});continue
@@ -556,14 +644,15 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
                 if best['semantic_score']>=.46 and best['clip_verified']:accepted.append(best)
                 else:
                     output['rejected_candidates'].append({k:best.get(k) for k in ('id','source','source_url','matched_query','score','semantic_score','frame_scores','source_start_seconds','source_end_seconds','quality_reasons')})
-                    if discovery_relevant:pending.append({**base,**fallback_acquisition_state(has_preview=True,reason='automatic clip did not pass relevance verification')})
+                    if discovery_relevant and not any('superimposed' in reason for reason in best.get('quality_reasons',[])):
+                        pending.append({**base,**fallback_acquisition_state(has_preview=True,reason='automatic clip did not pass relevance verification')})
             elif discovery_relevant:
                 pending.append({**base,**fallback_acquisition_state(has_preview=True,reason='automatic clip download unavailable')})
-            if len(accepted)>=PRIMARY_CLIPS_PER_SHOT:break
-        accepted,_=diverse_candidates(sorted(accepted,key=lambda r:(r.get('source') in VERTICAL_PROVIDERS,r['score']),reverse=True),[],limit=3);output['candidates'].extend(accepted[:3]);output.setdefault('discovery_sources',[]).extend(pending[:3])
+            if len(accepted)>=PRIMARY_CLIPS_PER_SHOT and not social_shelf:break
+        accepted,_=diverse_candidates(sorted(accepted,key=lambda r:(r.get('source') in VERTICAL_PROVIDERS,r['score']),reverse=True),[],limit=3);output['candidates'].extend(accepted[:3]);output.setdefault('discovery_sources',[]).extend(pending[:max(0,card_limit-len(accepted))])
         for attempt in output['search_attempts']:
             if attempt['provider']==provider_label:
-                attempt['cards_surfaced']=sum(r.get('query')==attempt['query'] for r in pending[:3])
+                attempt['cards_surfaced']=sum(r.get('query')==attempt['query'] for r in pending[:max(0,card_limit-len(accepted))])
     synchronize_proposals(output)
     timings['total_seconds']=time.perf_counter()-started
     output['timings']={k:round(v,4) for k,v in timings.items()}

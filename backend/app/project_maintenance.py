@@ -173,3 +173,40 @@ def clean_project_media(run_root: Path, retrieval_root: Path) -> dict[str, Any]:
         "cleared_selections": cleared, "preserved_decisions": preserved,
         "partial_failures": failures, "resolve_calls": 0,
     }
+
+def clean_beat_media(run_root: Path, retrieval_root: Path, beat_id: str) -> dict[str, Any]:
+    """Clear a beat's retrieval references, retaining shared downloads and analysis."""
+    from .atomic_io import write_json
+    from .beat_research import _target
+    from .debug_run_cli import persist_video_diagnostics
+    run = Path(run_root).resolve(); root = Path(retrieval_root).resolve()
+    if root != run and not root.is_relative_to(run):
+        raise ValueError('retrieval root escapes project run')
+    def read(name, default):
+        path = root / name
+        if not path.resolve().is_relative_to(run):
+            raise ValueError('artifact escapes project run')
+        return json.loads(path.read_text(encoding='utf-8')) if path.is_file() else default
+    rows = read('online-candidates.json', [])
+    retained = [r for r in rows if not _target(r, beat_id)]
+    write_json(root / 'online-candidates.json', retained)
+    for name in ('image-candidates.json', 'video-retrieval-plan.json', 'image-retrieval-plan.json'):
+        payload = read(name, None)
+        if not isinstance(payload, dict): continue
+        chunks = payload.get('chunks')
+        if isinstance(chunks, dict): chunks.pop(beat_id, None)
+        elif isinstance(chunks, list): payload['chunks'] = [r for r in chunks if r.get('id') != beat_id and not _target(r, beat_id)]
+        write_json(root / name, payload)
+    selection = read('selection-plan.json', None)
+    if isinstance(selection, dict):
+        row = selection.get('chunks', {}).get(beat_id)
+        if isinstance(row, dict): row['selected_assets'] = []
+        write_json(root / 'selection-plan.json', selection)
+    # Invalidate only this beat's shot-result cache. Shared provider/media caches stay.
+    for path in root.rglob('verified-shots/*.json'):
+        if not path.resolve().is_relative_to(run): continue
+        try: cached = json.loads(path.read_text(encoding='utf-8')).get('value', {})
+        except (ValueError, OSError): continue
+        if isinstance(cached, dict) and _target(cached, beat_id): path.unlink()
+    persist_video_diagnostics(root)
+    return {'beat_id': beat_id, 'removed_video_rows': len(rows)-len(retained), 'shared_media_preserved': True}

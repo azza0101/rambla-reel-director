@@ -84,7 +84,10 @@ def _restore(snapshot: dict[Path, bytes | None]) -> None:
 def require_completed_social_search(rows: list[dict]) -> None:
     attempts = [a for row in rows for a in row.get("search_attempts", [])
                 if a.get("provider") in SOCIAL_PROVIDERS]
-    if not attempts or all(a.get("error") for a in attempts):
+    interrupted=[a for a in attempts if any(reason in str(a.get('browser_error',''))+' '+str(a.get('browser_error_detail','')) for reason in ('challenge_required','login_required'))]
+    if interrupted:
+        raise RuntimeError('Social search incomplete: '+str(interrupted[0].get('browser_error_detail') or interrupted[0].get('browser_error')))
+    if not attempts or all(a.get("error") or a.get('browser_error') for a in attempts):
         reasons = list(dict.fromkeys(str(a.get("browser_error_detail") or a.get("error")) for a in attempts))
         raise RuntimeError("Social search blocked; no completed provider request. " + " | ".join(reasons[:3]))
 

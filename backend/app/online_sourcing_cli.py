@@ -181,6 +181,7 @@ async def _source_outline(
             rejected = list(result.get("rejected_candidates") or [])
             queries = list(slot_value.queries)[: engine.max_queries]
             if event_callback:
+                event_callback('retrieval_evidence', progress, 'Shot retrieval completed', slot_id=slot_value.id, providers=providers, search_attempts=result.get('search_attempts',[]), rejected_candidates=rejected)
                 event_callback("online_search", progress, f"Slot {completed}/{len(slots)} searched", slot_id=slot_value.id, query=queries, providers=providers, raw=result.get('raw_result_count',len(candidates)+len(rejected)), accepted=sum(c.get('clip_verified',False) for c in candidates) if getattr(engine,'quality_mode',False) else len(candidates), preview_pending=sum(c.get('quality_state')=='source_found' for c in candidates), rejected=len(rejected), errors=result.get("errors", []))
                 event_callback("qwen_final", progress, f"Slot {completed}/{len(slots)} retrieval ranked", slot_id=slot_value.id, ranked=[{"id": row.get("id"), "score": row.get("qwen_score", row.get("score"))} for row in candidates[:3]])
                 event_callback("bounded_acquisition", progress, f"Slot {completed}/{len(slots)} previews materialized", slot_id=slot_value.id, previews=sum(bool(row.get("preview_path")) for row in candidates), cache_hits=result.get("preview_cache_hits", 0))
@@ -303,7 +304,7 @@ async def _source_outline(
                 if card.get('shot_id') not in shots:
                     primary.append(card);shots.add(card.get('shot_id'))
                 else:alternatives.append(card)
-            surfaced.update((beat,card['id']) for card in (primary+alternatives)[:3])
+            surfaced.update((beat,card['id']) for card in (primary+alternatives)[:6 if provider in {'tiktok','instagram','youtube_shorts'} else 3])
         for row in annotated_results:
             for attempt in row.get('search_attempts',[]):
                 cards=[c for c in row.get('discovery_sources',[]) if c.get('source')==attempt['provider'] and c.get('query')==attempt['query']]
@@ -603,7 +604,7 @@ def _real_engine(
         sources=sources,
         cache=AssetCache(cache_root),
         ranker=ranker,
-        max_results_per_query=min(max_candidates,5),
+        max_results_per_query=min(max_candidates,12 if any(getattr(s, 'provider_name', '') in {'tiktok','instagram','youtube_shorts'} for s in sources) else 5),
         max_preview_candidates=min(max_candidates,5),
         download_selected=False,
     )

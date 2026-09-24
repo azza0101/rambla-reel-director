@@ -151,6 +151,7 @@ class RunState:
     guide_audio: Path | None = None
     analysis_signature: str = ""
     stage_type: str = "all"
+    research_options: dict[str, Any] = field(default_factory=dict)
 
     def total(self) -> float:
         scopes = {
@@ -632,7 +633,9 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
             editorial_plan = approved_plan(project_id)
         except HTTPException as exc:
             editorial_error = exc.detail
-        flags = {'provider_status':provider_status(),'analysis_ready':analysis_ready,'editorial_plan_ready':editorial_plan is not None,'editorial_error':editorial_error}
+        from .animation_context import build_animation_context
+        from .transcript_corrections import needs_editorial_refresh
+        flags = {'transcript_needs_plan':needs_editorial_refresh(project_run_root(project_id)), 'animation_context':build_animation_context({**editorial_plan,'global_topic':''} if editorial_plan and needs_editorial_refresh(project_run_root(project_id)) else editorial_plan), 'provider_status':provider_status(),'analysis_ready':analysis_ready,'editorial_plan_ready':editorial_plan is not None,'editorial_error':editorial_error}
         existing = _read_json(project_run_root(project_id)/'visual-plan.json',{})
         if not editorial_plan and existing.get('schema_version')=='rambla-visual-plan-1':
             return {**flags,'project_id':project_id,'chunks':[],'selection_plan':{'chunks':{}},'resolve_calls':0}
@@ -654,6 +657,10 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
         image_diagnostics = image_artifact.get("chunks", {}) if isinstance(image_artifact, dict) else {}
         from .retrieval_diagnostics import image_diagnostic,video_diagnostic
         video_rows=_read_json(retrieval_root/'online-candidates.json',[])
+        from .live_retrieval_diagnostics import overlay_live_rows
+        active_runs=[s for s in RUNS.values() if s.status in {'QUEUED','RUNNING'} and Path(s.output_dir).resolve()==project_run_root(project_id).resolve()]
+        if active_runs:
+            video_rows=overlay_live_rows(video_rows,[e.as_dict() for e in active_runs[-1].events])
         def media_diagnostics(cid):
             rows=[r for r in video_rows if r.get('parent_beat_id')==cid]
             image_row=image_diagnostics.get(cid,{})
@@ -701,6 +708,7 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
                  "source_start_seconds":item.source_start_seconds,"source_end_seconds":item.source_end_seconds,
                  "quality_state":item.quality_state,"quality_reasons":list(item.quality_reasons),
                  "selectable":item.kind!="video" or (item.preview_status=="ready" and item.clip_verified),
+                 "download_url": f"/api/curation/projects/{project_id}/media/{item.asset_id}/download" if item.kind=="video" and item.preview_status=="ready" and item.clip_verified and item.preview_path and Path(item.preview_path).is_file() else None,
                  "preview_url": item.preview_url or f"/api/curation/projects/{project_id}/media/{item.asset_id}/preview",
                  "poster_url": f"/api/curation/projects/{project_id}/media/{item.asset_id}/poster"}
                 for item in (*row.video_candidates, *row.image_candidates)
@@ -763,6 +771,47 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
         projects.write_external_guide_audio(project_id, filename, [await request.body()], command_runner=guide_command_runner)
         return _project_payload(projects.load(project_id))
 
+    social_media_slots = asyncio.Semaphore(2)
+    social_media_locks = {}
+
+    @app.post("/api/curation/projects/{project_id}/social-media/{asset_id}/{mode}")
+    async def prepare_social_media(project_id: str, asset_id: str, mode: str):
+        from .social_media import prepare_media, media_path
+        candidate = project_run(project_id).candidate_index.get(asset_id)
+        if candidate is None or candidate.provider not in {'tiktok','instagram','youtube_shorts'} or mode not in {'preview','full','hover'}:
+            raise HTTPException(status_code=404, detail='Social video not found')
+        root = project_run_root(project_id)
+        key=(project_id,asset_id,mode)
+        lock=social_media_locks.setdefault(key,asyncio.Lock())
+        try:
+            async with lock, social_media_slots:
+                cookies=[]
+                profiles=getattr(app.state,'social_profiles',None)
+                if profiles and candidate.provider in {'tiktok','instagram'} and profiles.status()[candidate.provider].get('connection_ready'):
+                    async def read_session(page,context):
+                        return await context.cookies([candidate.source_page])
+                    cookies=await profiles.run_in_profile(candidate.provider,read_session)
+                path=await asyncio.to_thread(prepare_media,candidate.source_page,candidate.provider,root,mode,cookies=cookies)
+            return {'url':f'/api/curation/projects/{project_id}/social-media/{asset_id}/{mode}', 'verified':False}
+        except (ValueError,RuntimeError) as exc:
+            raise HTTPException(status_code=502,detail=str(exc)) from None
+
+    @app.get("/api/curation/projects/{project_id}/social-media/{asset_id}/{mode}")
+    async def get_social_media(project_id: str, asset_id: str, mode: str):
+        from .social_media import media_path
+        candidate=project_run(project_id).candidate_index.get(asset_id)
+        if candidate is None:
+            raise HTTPException(status_code=404,detail='Social video not found')
+        try:
+            root=project_run_root(project_id)
+            path=media_path(candidate.source_page,candidate.provider,root,mode)
+            path.resolve().relative_to(root.resolve())
+        except ValueError:
+            raise HTTPException(status_code=404,detail='Invalid media') from None
+        if not path.is_file():
+            raise HTTPException(status_code=404,detail='Media not prepared')
+        return FileResponse(path, filename=f'{candidate.provider}-video.mp4') if mode=='full' else FileResponse(path)
+
     @app.get("/api/curation/projects/{project_id}/media/{asset_id}/{variant}")
     async def get_project_media(project_id: str, asset_id: str, variant: str) -> FileResponse:
         project = load_project(project_id)
@@ -773,9 +822,11 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
             return FileResponse(source)
         run_root = project_run_root(project_id)
         candidate = project_run(project_id).candidate_index.get(asset_id)
-        if candidate is None or variant not in {"preview", "poster"}:
+        if candidate is None or variant not in {"preview", "poster", "download"}:
             raise HTTPException(status_code=404, detail="asset non trovato")
-        path = candidate.preview_path if variant == "preview" else candidate.poster_path
+        if variant == "download" and not (candidate.kind == "video" and candidate.preview_status == "ready" and candidate.clip_verified):
+            raise HTTPException(status_code=404, detail="clip scaricabile non disponibile")
+        path = candidate.preview_path if variant in {"preview", "download"} else candidate.poster_path
         if variant == "preview" and candidate.preview_url:
             return RedirectResponse(candidate.preview_url)
         if not path or not Path(path).is_file():
@@ -784,7 +835,7 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
             Path(path).resolve().relative_to(run_root.resolve())
         except ValueError:
             raise HTTPException(status_code=403, detail="media fuori dalla run") from None
-        return FileResponse(path)
+        return FileResponse(path, filename=Path(path).name) if variant == "download" else FileResponse(path)
 
     @app.get("/api/curation/projects/{project_id}/curation")
     async def get_project_curation(project_id: str) -> dict[str, Any]:
@@ -815,6 +866,9 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
         if not (run_root / "semantic-chunks.json").is_file():
             raise HTTPException(status_code=422, detail="analysis required before sourcing")
         approved_plan(project_id)
+        from .transcript_corrections import require_current_editorial
+        try: require_current_editorial(run_root)
+        except ValueError as exc: raise HTTPException(status_code=409,detail=str(exc)) from exc
         active = RUNS.get(project_runs.get(project_id, ""))
         if active and active.status in {"QUEUED", "RUNNING"}:
             raise HTTPException(status_code=409, detail="project stage already running")
@@ -836,6 +890,9 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
     @app.get("/api/curation/projects/{project_id}/transcript")
     async def get_project_transcript(project_id: str) -> dict[str, Any]:
         path = project_run_root(project_id) / "transcript-raw.json"
+        if (path.parent/'transcript-corrections.json').is_file():
+            from .editorial_import import normalized_chunks
+            return {"segments":normalized_chunks(path.parent),"manually_corrected":True}
         return _read_json(path, {"segments": [], "status": "pending"})
 
     @app.put("/api/curation/projects/{project_id}/curation/chunks/{chunk_id}/selection")

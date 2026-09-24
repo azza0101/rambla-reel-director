@@ -16,17 +16,23 @@ import sys
 import uuid
 from typing import Any, Awaitable, Callable
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from . import debug_server as debug
 from .browser_profiles import BrowserProfileManager, SUPPORTED_SOCIAL_PROVIDERS
 from .curation_project import ProjectStore
 from .curation_ui_v2 import render_curation_page_v2
 from .editorial_import import active_retrieval_root
-from .project_maintenance import clean_project_media, delete_project_tree, project_library_rows, rename_project
+from .project_maintenance import clean_beat_media, clean_project_media, delete_project_tree, project_library_rows, rename_project
 from .debug_research_cli import research_stage_type
+
+
+class PhraseCorrectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    chunks: dict[str, str] = Field(min_length=1, max_length=100)
+    expected_text: str
 
 
 class RenameProjectRequest(BaseModel):
@@ -39,10 +45,19 @@ class SocialSearchRequest(BaseModel):
     providers: tuple[str, ...] = ("tiktok", "instagram")
 
 
+class SocialSessionQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    query: str = Field(min_length=1, max_length=300)
+    limit: int = Field(default=6, ge=1, le=30)
+
+
 class BeatResearchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     mode: str
     providers: tuple[str, ...] = ()
+    visual_verify: bool = False
+    variation_round: int = Field(default=0,ge=0,le=3)
+    query_overrides: dict[str,str] = Field(default_factory=dict,max_length=30)
 
 
 class DirectorRequest(BaseModel):
@@ -116,6 +131,8 @@ async def _default_research_runner(
     ]
     if providers:
         command += ["--providers", *providers]
+    if state.research_options:
+        command += ['--search-options-json',json.dumps(state.research_options)]
     cwd = Path.cwd()
     preflight = debug._preflight_worker(state, command, cwd)
     await debug._emit(state, debug.DebugEvent("preflight", "Research worker preflight completato", 100.0, preflight))
@@ -239,7 +256,10 @@ async def _default_director_runner(state: debug.RunState, provider: str) -> None
             await debug._emit(state, debug.parse_worker_line(decoded))
     state.return_code = await process.wait()
     if state.return_code != 0:
-        raise RuntimeError(f"API Director worker exited with code {state.return_code}")
+        detail = next((e.message for e in reversed(state.events) if e.stage == 'log' and any(token in e.message for token in ('GroqAPIError:', 'GeminiAPIError:', 'ValueError:', 'RuntimeError:'))), '')
+        if 'max completion tokens' in detail or 'output truncated' in detail or 'max_completion_tokens' in detail:
+            detail = 'Risposta Director troncata al limite di token. Nessun nuovo piano attivato; testo corretto conservato.'
+        raise RuntimeError(detail[:500] or f"API Director worker exited with code {state.return_code}; consulta la console")
 
 
 async def _run_director_state(state: debug.RunState, provider: str) -> None:
@@ -404,7 +424,53 @@ def create_app(
         })
 
     store = ProjectStore(root, probe_runner=probe_runner or debug._probe_source_video, audio_probe_runner=audio_probe_runner)
-    social_profiles = browser_profile_manager or BrowserProfileManager(_default_browser_profile_root(root))
+    social_profiles = browser_profile_manager or BrowserProfileManager(_default_browser_profile_root(root), owns_live_session=True)
+    app.state.social_profiles = social_profiles
+
+    from contextlib import asynccontextmanager
+    previous_lifespan = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def social_lifespan(application):
+        async with previous_lifespan(application) as state:
+            try:
+                yield state
+            finally:
+                closer = getattr(social_profiles, "close", None)
+                if closer:
+                    await closer()
+
+    app.router.lifespan_context = social_lifespan
+
+    @app.post("/api/curation/social/{provider}/session-search")
+    async def session_search(provider: str, query: SocialSessionQuery, request: Request):
+        import secrets
+        expected = os.environ.get("RAMBLA_SOCIAL_SESSION_TOKEN", "")
+        supplied = request.headers.get("X-Rambla-Session", "")
+        if not expected or not secrets.compare_digest(expected, supplied):
+            raise HTTPException(status_code=403, detail="Internal session authentication required")
+        if provider not in {"tiktok", "instagram"}:
+            raise HTTPException(status_code=404, detail="unsupported social provider")
+        from .social_browser_source import BrowserSocialSource
+        try:
+            result=await BrowserSocialSource(provider, social_profiles)._browser_search(query.query, query.limit)
+            social_profiles.connection_ready[provider]=bool(result.get('rows')) or result.get('diagnostics',{}).get('browser_state')=='zero_results'
+            return result
+        except Exception as exc:
+            social_profiles.connection_ready[provider]=False
+            raise HTTPException(status_code=503, detail=str(exc)[:400]) from exc
+
+    @app.post("/api/curation/social/{provider}/session-cookies")
+    async def session_cookies(provider: str, request: Request):
+        import secrets
+        expected=os.environ.get('RAMBLA_SOCIAL_SESSION_TOKEN','')
+        if not expected or not secrets.compare_digest(expected,request.headers.get('X-Rambla-Session','')):
+            raise HTTPException(status_code=403,detail='Internal session authentication required')
+        if provider not in {'tiktok','instagram'} or not social_profiles.status().get(provider,{}).get('connection_ready'):
+            raise HTTPException(status_code=409,detail='Verify the existing provider session first')
+        async def read_cookie_scope(page,context):
+            return await context.cookies(['https://www.'+provider+'.com/'])
+        return {'cookies':await social_profiles.run_in_profile(provider,read_cookie_scope)}
 
     def load_project(project_id: str):
         try:
@@ -515,7 +581,8 @@ def create_app(
         if clean not in SUPPORTED_SOCIAL_PROVIDERS:
             raise HTTPException(status_code=404, detail="social provider non supportato")
         try:
-            result = await asyncio.to_thread(social_profiles.open_login, clean)
+            opener = getattr(social_profiles, "open_login_async", None)
+            result = await opener(clean) if opener else await asyncio.to_thread(social_profiles.open_login, clean)
         except (OSError, RuntimeError, ValueError) as exc:
             raise HTTPException(status_code=503, detail=f"browser social non disponibile: {exc}") from exc
         return {**result, "resolve_calls": 0}
@@ -547,6 +614,23 @@ def create_app(
             raise HTTPException(status_code=409, detail="project stage already running")
         return delete_project_tree(store, project_id)
 
+    @app.get("/api/curation/projects/{project_id}/beats/{beat_id}/transcript")
+    async def phrase_transcript(project_id: str, beat_id: str):
+        from .editorial_import import normalized_chunks
+        run=run_root(project_id)
+        plan=_read_json(run/'visual-plan.json',{})
+        beat=next((b for b in plan.get('visual_beats',[]) if b['id']==beat_id),None)
+        if not beat: raise HTTPException(status_code=404,detail='Frase non trovata')
+        return {'text':beat['original_text'],'chunks':[c for c in normalized_chunks(run) if c['id'] in beat['covered_chunk_ids']]}
+
+    @app.put("/api/curation/projects/{project_id}/beats/{beat_id}/transcript")
+    async def save_phrase_transcript(project_id: str, beat_id: str, request: PhraseCorrectionRequest):
+        from .transcript_corrections import correct_phrase
+        run=run_root(project_id)
+        if _active_run_for(run):raise HTTPException(status_code=409,detail='Attendi la fine della ricerca in corso')
+        try:return correct_phrase(run,beat_id,request.chunks,request.expected_text)
+        except ValueError as exc:raise HTTPException(status_code=409,detail=str(exc)) from exc
+
     @app.post("/api/curation/projects/{project_id}/media/clean")
     async def clean_media_route(project_id: str) -> dict[str, Any]:
         run = run_root(project_id)
@@ -555,8 +639,21 @@ def create_app(
         cleanup = clean_project_media(run, active_retrieval_root(run))
         return {"project_id": project_id, "cleanup": cleanup, "resolve_calls": 0}
 
+    @app.post("/api/curation/projects/{project_id}/beats/{beat_id}/media/clean")
+    async def clean_beat_media_route(project_id: str, beat_id: str) -> dict[str, Any]:
+        run = run_root(project_id)
+        if _active_run_for(run):
+            raise HTTPException(status_code=409, detail="project stage already running")
+        beats = _read_json(run / "visual-plan.json", {}).get("visual_beats", [])
+        if not any(b.get("id")==beat_id and b.get("action")=="BROLL" for b in beats):
+            raise HTTPException(status_code=404, detail="BROLL beat not found")
+        return {"project_id": project_id, "cleanup": clean_beat_media(run, active_retrieval_root(run), beat_id)}
+
     @app.post("/api/curation/projects/{project_id}/source/social")
     async def source_project_social(project_id: str, request: SocialSearchRequest | None = None) -> dict[str, Any]:
+        from .transcript_corrections import require_current_editorial
+        try: require_current_editorial(run_root(project_id))
+        except ValueError as exc: raise HTTPException(status_code=409,detail=str(exc)) from exc
         providers = tuple(dict.fromkeys((request or SocialSearchRequest()).providers))
         if not providers or any(p not in {"tiktok", "instagram"} for p in providers):
             raise HTTPException(status_code=422, detail="Select TikTok and/or Instagram")
@@ -602,17 +699,23 @@ def create_app(
         if any(value not in allowed_providers for value in provider_scope):
             raise HTTPException(status_code=422, detail="unsupported research provider")
         _validate_broll_beat(run, beat_id)
+        from .transcript_corrections import require_current_editorial
+        try: require_current_editorial(run)
+        except ValueError as exc: raise HTTPException(status_code=409,detail=str(exc)) from exc
         if project.source_video is None:
             raise HTTPException(status_code=422, detail="source video required")
         if _active_run_for(run):
             raise HTTPException(status_code=409, detail="project stage already running")
         stage = research_stage_type(beat_id, request.mode)
+        if any(len(k)>150 or len(v)>180 or '\n' in v for k,v in request.query_overrides.items()):
+            raise HTTPException(status_code=422,detail='Keywords must be short single-line queries')
         state = debug.RunState(
             uuid.uuid4().hex[:12], Path(project.source_video.path), run,
             guide_audio=Path(project.guide_audio.path) if project.guide_audio else None,
             analysis_signature=project.analysis_signature, stage_type=stage,
         )
         debug.RUNS[state.run_id] = state
+        state.research_options={'visual_verify':request.visual_verify,'variation_round':request.variation_round,'query_overrides':request.query_overrides}
         asyncio.create_task(_run_research_state(state, beat_id, request.mode, provider_scope, research_runner))
         return {
             "status": "started",

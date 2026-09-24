@@ -51,10 +51,12 @@ class CandidateShelf:
 
 
 def build_candidate_shelf(
-    rows: list[CurationCandidate], *, video_limit: int = 3, image_limit: int = 4
+    rows: list[CurationCandidate], *, video_limit: int = 3, image_limit: int = 4, social_limit: int | None = None
 ) -> CandidateShelf:
     if video_limit < 0 or image_limit < 0:
         raise ValueError("curation shelf limits must be non-negative")
+    social_limit = video_limit if social_limit is None else social_limit
+    if social_limit < 0: raise ValueError("social_limit must be non-negative")
     seen: set[tuple[str, str]] = set()
     ordered: list[CurationCandidate] = []
     for row in sorted(rows, key=lambda item: (-item.score, item.asset_id)):
@@ -73,9 +75,9 @@ def build_candidate_shelf(
         return tuple((primary+remaining)[:limit])
 
     videos=[r for r in ordered if r.kind=='video']
-    shorts=balanced([r for r in videos if r.provider=='youtube_shorts' and r.orientation=='portrait'],video_limit)
-    tiktok=balanced([r for r in videos if r.provider=='tiktok' and r.orientation=='portrait'],video_limit)
-    instagram=balanced([r for r in videos if r.provider=='instagram' and r.orientation=='portrait'],video_limit)
+    shorts=balanced([r for r in videos if r.provider=='youtube_shorts' and r.orientation=='portrait'],social_limit)
+    tiktok=balanced([r for r in videos if r.provider=='tiktok' and r.orientation=='portrait'],social_limit)
+    instagram=balanced([r for r in videos if r.provider=='instagram' and r.orientation=='portrait'],social_limit)
     web=balanced([r for r in videos if r.provider=='web_video'],video_limit)
     envato=balanced([r for r in videos if r.provider=='envato'],video_limit)
     general=balanced([r for r in videos if r.provider not in {'pexels','envato','web_video'} and r.provider not in VERTICAL_SOCIAL_PROVIDERS],video_limit)

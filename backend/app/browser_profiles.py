@@ -85,7 +85,7 @@ class _DomAnchorParser(HTMLParser):
     def _scope_flags(self, tag: str, values: dict[str, str | None]) -> tuple[bool, bool]:
         frames = [*self._stack, (tag, values)]
         tiktok = any(
-            attrs.get("data-e2e") in {"search-card-video", "search-card-video-link"}
+            attrs.get("data-e2e") in {"search-card-video", "search-card-video-link", "search_video-item"}
             or "DivItemContainerForSearch" in str(attrs.get("class") or "")
             for _name, attrs in frames
         )
@@ -268,26 +268,28 @@ async def _default_playwright_runner(
 
     profile_dir.mkdir(parents=True, exist_ok=True)
     async with async_playwright() as playwright:
-        context = None
-        failures: list[str] = []
-        for channel in ("msedge", "chrome", None):
-            try:
-                kwargs = {
-                    "user_data_dir": str(profile_dir),
-                    "headless": True,
-                    "accept_downloads": True,
-                }
-                if channel:
-                    kwargs["channel"] = channel
-                context = await playwright.chromium.launch_persistent_context(**kwargs)
-                break
-            except Exception as exc:  # provider/browser specific, surfaced compactly
-                failures.append(f"{channel or 'chromium'}:{type(exc).__name__}")
-        if context is None:
-            try:
-                return await _default_chromium_dom_runner(profile_dir, start_url, callback)
-            except BrowserUnavailableError as exc:
-                raise BrowserUnavailableError("No supported Chromium browser available (" + ", ".join(failures) + ")") from exc
+        browser = _installed_browser()
+        if not browser:
+            raise BrowserUnavailableError("No supported Edge/Chrome browser found")
+        try:
+            context = await playwright.chromium.launch_persistent_context(
+                user_data_dir=str(profile_dir), executable_path=browser,
+                headless=True, accept_downloads=True, chromium_sandbox=True,
+            )
+        except Exception as exc:
+            # Use the same executable as OPEN. Never switch browsers against
+            # one profile or replace a failed dynamic search with a DOM dump.
+            detail = str(exc)
+            import logging
+            logging.getLogger(__name__).error("Social browser launch failed: %s", detail)
+            lowered = detail.casefold()
+            if any(marker in lowered for marker in ("processsingleton", "profile already in use", "user data directory is already in use")):
+                reason = "profile_in_use: close the RAMBLA login window before verification"
+            elif "access is denied" in lowered or "accesso negato" in lowered:
+                reason = "browser_access_denied: browser launch or IPC was denied"
+            else:
+                reason = "browser_launch_failed: " + " ".join(detail.split())[:280]
+            raise BrowserUnavailableError(reason) from exc
         try:
             page = context.pages[0] if context.pages else await context.new_page()
             if start_url:
@@ -372,11 +374,34 @@ class BrowserProfileManager:
         *,
         playwright_runner: PlaywrightRunner | None = None,
         login_launcher: LoginLauncher | None = None,
+        owns_live_session: bool = False,
     ) -> None:
         self.root = Path(root)
-        self._runner = playwright_runner or _default_playwright_runner
+        self.owns_live_session = owns_live_session
+        self.connection_ready = {}
+        from .live_social_sessions import LiveSocialSessions
+        self._runner = playwright_runner or LiveSocialSessions()
         self._login_launcher = login_launcher or _default_login_launcher
         self._locks = {provider: asyncio.Lock() for provider in SUPPORTED_SOCIAL_PROVIDERS}
+
+    async def open_login_async(self, provider: str) -> dict[str, Any]:
+        if provider == "envato" or self._login_launcher is not _default_login_launcher:
+            return await asyncio.to_thread(self.open_login, provider)
+        focus = getattr(self._runner, 'focus_existing', None)
+        if focus and await focus(self.profile_dir(provider)):
+            return {"provider": provider, "status": "focused", "session": "visible_persistent"}
+        async def show(page, _context):
+            await page.bring_to_front()
+            return {"provider": provider, "status": "started", "session": "visible_persistent"}
+        connected = getattr(self._runner, "is_connected", lambda _p: False)(self.profile_dir(provider))
+        # OPEN must only focus an existing session, preserving login/challenge
+        # forms and the current search instead of navigating back to the feed.
+        return await self.run_in_profile(provider, show, start_url=None if connected else DEFAULT_START_URLS[provider])
+
+    async def close(self):
+        closer = getattr(self._runner, "close", None)
+        if closer:
+            await closer()
 
     def profile_dir(self, provider: str) -> Path:
         clean = str(provider or "").casefold().strip()
@@ -410,21 +435,32 @@ class BrowserProfileManager:
         return {"provider": clean, "status": "started", "pid": int(pid)}
 
     async def check_search(self, provider: str) -> dict[str, Any]:
-        """Check the actual search surface, never profile-folder existence."""
-        from .social_browser_source import BrowserSocialSource
-        if provider not in {"tiktok", "instagram"}:
-            raise ValueError("unsupported social provider")
-        try:
-            payload = await BrowserSocialSource(provider, self)._browser_search("nature", 1)
-            diagnostics = payload.get("diagnostics") or {}
-            ready = bool(payload.get("rows")) or diagnostics.get("browser_state") == "zero_results"
-            return {"provider": provider, "ready": ready,
-                    "login_state": diagnostics.get("login_state", "unknown"),
-                    "detail": "Search page accessible" if ready else "Search grid unavailable; login or provider verification may be required.",
-                    "browser_state": diagnostics.get("browser_state", "unknown")}
+        """Read the open page only: no test query, navigation, or new browser."""
+        from .social_page_evidence import inspect_search_html, challenge_required
+        from urllib.parse import urlparse
+        if provider not in {'tiktok','instagram'}:raise ValueError('unsupported social provider')
+        if not getattr(self._runner,'is_connected',lambda p:False)(self.profile_dir(provider)):
+            self.connection_ready[provider]=False
+            return {'provider':provider,'ready':False,'login_state':'unknown','browser_state':'browser_closed','detail':'Open the RAMBLA browser and sign in; no test search was performed.'}
+        async def inspect(page,context):
+            html=await page.content()
+            evidence=inspect_search_html(html)
+            parsed=urlparse(str(page.url));host=(parsed.hostname or '').lower()
+            valid=host==provider+'.com' or host.endswith('.'+provider+'.com')
+            challenge=challenge_required(html)
+            login=evidence.login_required or parsed.path.startswith(('/login','/accounts/login'))
+            grid=valid and parsed.path.startswith('/search') and ('search_video-item' in html or 'search-card-video' in html)
+            confirmed=valid and not challenge and not login and (evidence.signed_in or grid or self.connection_ready.get(provider,False))
+            ready=valid and not challenge and not login and bool(evidence.visible_text.strip())
+            ready=bool(ready or confirmed)
+            self.connection_ready[provider]=bool(confirmed)
+            return {'provider':provider,'ready':bool(ready),'login_state':'required' if login else 'verified' if evidence.signed_in else 'unknown',
+                    'browser_state':'challenge_required' if challenge else 'login_required' if login else 'session_ready' if confirmed else 'session_unconfirmed' if ready else 'session_unknown',
+                    'detail':'TikTok/Instagram verification required: resolve it manually in the open window. No automatic retry.' if challenge else 'Connected session reused; no test search performed.' if confirmed else 'Browser open; session not confirmed. You can start the real search. No test search performed.' if ready else 'Open the provider page and complete any login request.'}
+        try:return await self.run_in_profile(provider,inspect,start_url=None)
         except Exception as exc:
-            return {"provider": provider, "ready": False, "login_state": "unknown",
-                    "detail": str(exc)[:400], "error": type(exc).__name__}
+            self.connection_ready[provider]=False
+            return {'provider':provider,'ready':False,'login_state':'unknown','detail':str(exc)[:400],'error':type(exc).__name__}
 
     def status(self) -> dict[str, dict[str, Any]]:
         if importlib.util.find_spec("playwright") is not None:
@@ -445,6 +481,9 @@ class BrowserProfileManager:
                 ),
                 "search_ready": search_ready,
                 "search_backend": search_backend,
+                "connection_ready": bool(self.connection_ready.get(provider)) and bool(
+                    getattr(self._runner, "is_connected", lambda _p: False)(self.profile_dir(provider))
+                ),
             }
             for provider in SUPPORTED_SOCIAL_PROVIDERS
         }

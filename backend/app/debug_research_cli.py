@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -154,12 +155,14 @@ def run_research(
                 beat_id=beat_id, mode=mode, providers=list(provider_scope),
             )
 
+        from .beat_research import existing_video_keys
+        worker_env={**os.environ,'RAMBLA_SOCIAL_EXCLUDED_KEYS':json.dumps(existing_video_keys(existing_video,beat_id) if mode=='append' else [])}
         subprocess.run(
             video_sourcing_command(
                 output, transcript, outline, client_id, source_frames,
                 beat_id=beat_id, research_mode=mode, providers=provider_scope,
             ),
-            check=True,
+            check=True, env=worker_env,
         )
         fresh_video = _read_json(video_artifact, [])
         merged_video = merge_video_rows(existing_video, fresh_video, beat_id, mode)
@@ -188,7 +191,9 @@ def main() -> None:
     parser.add_argument("--research-mode", choices=("replace", "append"), required=True)
     parser.add_argument("--providers", nargs="+")
     parser.add_argument("--client-id", default="debug-reel")
+    parser.add_argument('--search-options-json',default='{}')
     args = parser.parse_args()
+    os.environ['RAMBLA_SOCIAL_SEARCH_OPTIONS']=json.dumps(json.loads(args.search_options_json))
     run_research(
         video=args.video.resolve(),
         output=args.output_dir.resolve(),
