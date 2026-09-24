@@ -6,6 +6,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -130,6 +131,11 @@ class LocalSourceRequest(BaseModel):
     path: str
 
 
+class TextSourceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str
+
+
 class ProjectSelectionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     asset_ids: list[str] = []
@@ -242,6 +248,19 @@ def _write_selection(output_dir: Path, selections: dict[str, str]) -> None:
 
 
 def _command(state: RunState) -> list[str]:
+    if os.environ.get("RAMBLA_RUNTIME_MODE", "").casefold().strip() == "cloud":
+        module = "backend.app.cloud_analyze_cli" if state.stage_type == "analyze" else "backend.app.debug_run_cli"
+        command = [
+            sys.executable, "-m", module,
+            "--video", str(state.video_path),
+            "--output-dir", str(state.output_dir),
+            "--stage", state.stage_type,
+        ]
+        if state.guide_audio:
+            command.extend(["--guide-audio", str(state.guide_audio)])
+        if state.analysis_signature:
+            command.extend(["--analysis-signature", state.analysis_signature])
+        return command
     raw = os.environ.get("RAMBLA_DEBUG_COMMAND_JSON", "").strip()
     if raw:
         try:
@@ -486,9 +505,12 @@ def render_debug_page(default_video: str = DEFAULT_VIDEO, default_output: str = 
 
 
 def _project_payload(project: CurationProject) -> dict[str, Any]:
+    source_name = Path(project.source_video.path).name if project.source_video else ""
+    source_kind = "text" if source_name == "text-timeline.mp4" else "audio" if source_name == "audio-timeline.mp4" else "video"
     return {
         "project_id": project.project_id,
         "name": project.name,
+        "source_kind": source_kind,
         "source_video": None if project.source_video is None else {
             "path": project.source_video.path,
             "duration": project.source_video.duration,
@@ -532,6 +554,8 @@ def _probe_source_video(source: Path) -> dict[str, Any]:
 
 def create_app(*, project_root: Path | None = None, curation_run_root: Path | None = None, allowed_media_roots: list[Path] | None = None, probe_runner: Any = None, audio_probe_runner: Any = None, audio_command_runner: Any = None) -> FastAPI:
     load_project_credentials()
+    if os.environ.get("RAMBLA_RUNTIME_MODE", "").casefold().strip() == "cloud":
+        os.environ.setdefault("RAMBLA_RETRIEVAL_RANKING", "provider")
     app = FastAPI(title="RAMBLA Debug Runner", version="0.1.0")
     project_root = project_root or Path(os.environ.get("RAMBLA_PROJECT_ROOT", str(Path(DEFAULT_OUTPUT).parent / "curation-projects")))
     # Legacy/default artifacts are deliberately never used by project routes.
@@ -756,6 +780,32 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
             raise HTTPException(status_code=413, detail=str(exc)) from exc
         return _project_payload(select_default_guide(project))
 
+    @app.put("/api/curation/projects/{project_id}/source/audio")
+    async def upload_primary_audio(project_id: str, request: Request, filename: str = "source-audio") -> dict[str, Any]:
+        load_project(project_id)
+        try:
+            project = projects.write_primary_audio(
+                project_id, filename, [await request.body()], command_runner=guide_command_runner,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=413, detail=str(exc)) from exc
+        except (RuntimeError, subprocess.CalledProcessError) as exc:
+            raise HTTPException(status_code=422, detail=f"audio source preparation failed: {exc}") from exc
+        return _project_payload(project)
+
+    @app.put("/api/curation/projects/{project_id}/source/text")
+    async def upload_text_source(project_id: str, request: TextSourceRequest) -> dict[str, Any]:
+        load_project(project_id)
+        try:
+            project = projects.write_text_source(
+                project_id, request.text, command_runner=guide_command_runner,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except (RuntimeError, subprocess.CalledProcessError) as exc:
+            raise HTTPException(status_code=422, detail=f"text timeline preparation failed: {exc}") from exc
+        return _project_payload(project)
+
     @app.post("/api/curation/projects/{project_id}/guide/original")
     async def use_original_guide(project_id: str) -> dict[str, Any]:
         load_project(project_id)
@@ -819,6 +869,15 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
             source = allowed_source(Path(project.source_video.path))
             if not source.is_file():
                 raise HTTPException(status_code=404, detail="media non disponibile")
+            return FileResponse(source)
+        if asset_id == "source-audio" and variant == "source" and project.guide_audio is not None:
+            source = Path(project.guide_audio.path).resolve()
+            try:
+                source.relative_to(project_root.resolve())
+            except ValueError:
+                raise HTTPException(status_code=403, detail="audio fuori dal project store") from None
+            if not source.is_file():
+                raise HTTPException(status_code=404, detail="audio non disponibile")
             return FileResponse(source)
         run_root = project_run_root(project_id)
         candidate = project_run(project_id).candidate_index.get(asset_id)
@@ -1001,7 +1060,13 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
-        return {"status": "ok", "debug_runner": True, "resolve_calls": 0}
+        return {
+            "status": "ok",
+            "debug_runner": True,
+            "runtime_mode": os.environ.get("RAMBLA_RUNTIME_MODE", "local"),
+            "local_gpu_required": os.environ.get("RAMBLA_RUNTIME_MODE", "").casefold().strip() != "cloud",
+            "resolve_calls": 0,
+        }
 
     return app
 
