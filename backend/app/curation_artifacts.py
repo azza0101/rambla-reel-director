@@ -114,7 +114,7 @@ def load_curation_run(run_dir: Path) -> CurationRunView:
             found.setdefault(cid, []).append(CurationCandidate(f"{cid}--{row['provider']}:{row['provider_id']}", cid, "image", row["provider"], row["source_page"], row["title"], row.get("description", ""), float(row.get("score", 0.0)), row["rights_state"], row["orientation"], preview_path=row.get("preview_path"), local_asset_path=row.get("preview_path"), preview_url=None if row.get("preview_path") else row.get("thumbnail_url") or row.get("full_url"),license_name=row.get("license_name"),license_url=row.get("license_url"),attribution=row.get("attribution"),shot_id=row.get("shot_id"),matched_query=row.get("matched_query",row.get("query")),quality_state=row.get("quality_state"),clip_verified=bool(row.get("clip_verified")),quality_reasons=tuple(row.get("quality_reasons",[])),source_start_seconds=row.get("source_start_seconds"),source_end_seconds=row.get("source_end_seconds")))
     views=[]; index={}
     for row in chunks:
-        shelf=build_candidate_shelf(found.get(row["id"], []), social_limit=24)
+        shelf=build_candidate_shelf(found.get(row["id"], []), social_limit=96)
         for candidate in (*shelf.video,*shelf.images): index[candidate.asset_id]=candidate
         views.append(CurationChunkView(row["id"],row.get("text", ""),shelf.video,shelf.images))
     return CurationRunView(tuple(views),index,tuple(errors))

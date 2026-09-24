@@ -56,7 +56,7 @@ class BeatResearchRequest(BaseModel):
     mode: str
     providers: tuple[str, ...] = ()
     visual_verify: bool = False
-    variation_round: int = Field(default=0,ge=0,le=3)
+    variation_round: int = Field(default=0,ge=0)
     query_overrides: dict[str,str] = Field(default_factory=dict,max_length=30)
 
 
