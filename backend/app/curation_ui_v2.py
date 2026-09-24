@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 """Product UI augmentation for project/media lifecycle and social controls.
 
 The established Curation V1 page owns the editor state and media rendering. This
@@ -238,4 +239,19 @@ def render_curation_page_v2(build_token: str | None = None) -> str:
     needle = 'draw();restore()})();</script></html>'
     if needle not in html:
         raise RuntimeError('curation V1 bootstrap marker changed; management UI injection aborted')
-    return html.replace(needle, GALLERY_JS + _MANAGEMENT_JS + ANIMATION_JS + TRANSCRIPT_EDITOR_JS + needle, 1)
+    html = html.replace(needle, GALLERY_JS + _MANAGEMENT_JS + ANIMATION_JS + TRANSCRIPT_EDITOR_JS + needle, 1)
+    if os.environ.get("RAMBLA_RUNTIME_MODE", "").casefold().strip() == "cloud":
+        html = html.replace('<button id="path">Open Local Path</button>', '<button id="path" hidden>Open Local Path</button>', 1)
+        html = html.replace('id="socialQwenV2"', 'id="socialQwenV2" disabled', 1)
+        html = html.replace('Verifica social con Qwen (GPU)', 'Cloud mode · local GPU disabled', 1)
+        html = html.replace(
+            'const payload={mode,providers,visual_verify:!!document.getElementById("socialQwenV2")?.checked,...options};',
+            'const payload={mode,providers,visual_verify:false,...options};',
+            1,
+        )
+        html = html.replace(
+            '<button id="analyze" class="primary" disabled>ANALYZE</button>',
+            '<button id="analyze" class="primary" disabled>ANALYZE</button><span class="badge">CLOUD · GPU FREE</span>',
+            1,
+        )
+    return html
