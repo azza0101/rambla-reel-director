@@ -180,6 +180,7 @@ def filter_candidates(
 class PexelsSource:
     """Async Pexels video search with sanitized, provider-neutral output."""
 
+    provider_name = "pexels"
     supported_source_classes = ("GENERIC_STOCK",)
     endpoint = "https://api.pexels.com/videos/search"
 

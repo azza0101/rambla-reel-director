@@ -113,3 +113,19 @@ def test_beat_research_endpoint_starts_dedicated_worker_without_analyze(tmp_path
     assert body["resolve_calls"] == 0
     import time; time.sleep(.05)
     assert calls == [("research:append:beat-1", "beat-1", "append")]
+
+def test_beat_clean_route_preserves_other_beat_and_rejects_busy(tmp_path):
+    import backend.app.debug_server as debug
+    client, root, source = _client(tmp_path)
+    pid = client.post('/api/curation/projects',json={'name':'Scoped'}).json()['project_id']
+    run = root/pid/'run';run.mkdir(parents=True,exist_ok=True)
+    (run/'visual-plan.json').write_text(json.dumps({'visual_beats':[{'id':'beat_1','action':'BROLL'}]}))
+    (run/'online-candidates.json').write_text(json.dumps([{'beat_id':'beat_1'},{'beat_id':'beat_2'}]))
+    url=f'/api/curation/projects/{pid}/beats/beat_1/media/clean'
+    state=debug.RunState('busy-scoped',source,run,status='RUNNING',stage_type='videos')
+    debug.RUNS[state.run_id]=state
+    try: assert client.post(url).status_code==409
+    finally: debug.RUNS.pop(state.run_id,None)
+    assert client.post(url).status_code==200
+    assert json.loads((run/'online-candidates.json').read_text())==[{'beat_id':'beat_2'}]
+    assert client.post(url.replace('beat_1','unknown')).status_code==404

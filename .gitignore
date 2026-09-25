@@ -17,6 +17,7 @@ env/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.pytest-tmp-v5/
 .mypy_cache/
 .ruff_cache/
 .coverage
@@ -40,6 +41,10 @@ renders/
 output/
 outputs/
 *.log
+.curation-acceptance-server.json
+.curation-logs/
+.user-launch.json
+rambla-data/
 
 # AI models and weights
 models/

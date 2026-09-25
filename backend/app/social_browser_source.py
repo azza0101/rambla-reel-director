@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any
+import os
 from urllib.parse import quote_plus, urlparse
 
 from .browser_profiles import BrowserProfileManager
@@ -18,6 +19,7 @@ SOCIAL_SEARCH_URLS = {
 # can therefore mistake the user's own videos for search results.
 SOCIAL_RESULT_SELECTORS = {
     "tiktok": (
+        '[data-e2e="search_video-item"] a[href*="/video/"], '
         '[data-e2e="search-card-video-link"][href*="/video/"], '
         '[data-e2e="search-card-video"] a[href*="/video/"], '
         'div[class*="DivItemContainerForSearch"] a[href*="/video/"]'
@@ -96,17 +98,40 @@ async def _page_anchors(
         selector,
         """els => els.map(a => {
           const card = a.closest(
-            '[data-e2e="search-card-video"], div[class*="DivItemContainerForSearch"], article'
+            '[data-e2e="search_video-item"], [data-e2e="search-card-video"], div[class*="DivItemContainerForSearch"], article'
           ) || a;
           const image = card.querySelector('img') || a.querySelector('img');
+          const video = card.querySelector('video');
           return {
             href: a.href || '',
-            text: (card.innerText || a.innerText || a.textContent || '').trim(),
-            aria: a.getAttribute('aria-label') || '',
-            img: (image && (image.currentSrc || image.src)) || ''
+            text: ((image && image.alt) || card.innerText || a.innerText || a.textContent || '').trim(),
+            aria: a.getAttribute('aria-label') || (image && image.alt) || '',
+            img: (image && (image.currentSrc || image.src || image.getAttribute('data-src'))) || (video && video.poster) || ''
           };
         })""",
     )
+
+
+async def hydrate_search_thumbnails(page: Any, provider: str, limit: int) -> None:
+    """Bring lazy result covers into view before taking the extraction snapshot."""
+    if not callable(getattr(page, 'locator', None)):
+        return
+    cards = page.locator(SOCIAL_RESULT_SELECTORS[provider])
+    for index in range(min(await cards.count(), limit, 12)):
+        card = cards.nth(index)
+        try:
+            ready = await card.evaluate("""a => {
+                const image=a.querySelector('img'),video=a.querySelector('video');
+                return !!((image && (image.currentSrc || image.getAttribute('src'))) || (video && video.poster));
+            }""")
+            if not ready:
+                await card.scroll_into_view_if_needed(timeout=2000)
+                # TikTok mounts the cover after intersection with the viewport.
+                await page.wait_for_timeout(350)
+        except Exception:
+            # A removed/virtualized card is not a provider failure. Its source
+            # link remains useful, but must never be presented as a video clip.
+            continue
 
 
 async def _page_title(page: Any) -> str:
@@ -131,8 +156,27 @@ class BrowserSocialSource:
         self.profile_manager = profile_manager
         self.fallback = fallback
         self.last_attempt: dict[str, Any] = {}
+        self._browser_disabled_reason: str | None = None
+        self._browser_disabled_detail: str | None = None
 
     async def _browser_search(self, query: str, limit: int) -> dict[str, Any]:
+        endpoint = os.environ.get("RAMBLA_SOCIAL_SESSION_URL", "")
+        if endpoint and not getattr(self.profile_manager, "owns_live_session", False):
+            # Sourcing workers share the UI server's page; never launch a second
+            # process against its locked profile and never copy session cookies.
+            import httpx
+            parsed_endpoint = urlparse(endpoint)
+            if parsed_endpoint.scheme != "http" or parsed_endpoint.hostname != "127.0.0.1":
+                raise RuntimeError("Invalid local social session endpoint")
+            async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
+                response = await client.post(
+                    endpoint.rstrip('/') + f"/api/curation/social/{self.provider_name}/session-search",
+                    headers={"X-Rambla-Session": os.environ.get("RAMBLA_SOCIAL_SESSION_TOKEN", "")},
+                    json={"query": query, "limit": max(1, min(limit, 30))},
+                )
+                if response.is_error:
+                    raise RuntimeError("social_session_failed: " + str(response.json().get("detail", response.status_code))[:400])
+                return response.json()
         url = SOCIAL_SEARCH_URLS[self.provider_name].format(query=quote_plus(query))
 
         async def collect(page: Any, _context: Any) -> dict[str, Any]:
@@ -140,6 +184,8 @@ class BrowserSocialSource:
             seen: set[str] = set()
             current_url = str(getattr(page, "url", "") or "")
             parsed = urlparse(current_url)
+            if parsed.path.startswith(("/login", "/accounts/login")):
+                raise RuntimeError("login_required: sign in in the open RAMBLA window and keep it open, then verify again")
             if self.provider_name == "tiktok":
                 if not (parsed.hostname or "").casefold().endswith("tiktok.com") or not parsed.path.startswith("/search/video"):
                     raise RuntimeError(f"TikTok search navigation left /search/video: {current_url[:220]}")
@@ -147,6 +193,16 @@ class BrowserSocialSource:
                 if not (parsed.hostname or "").casefold().endswith("instagram.com"):
                     raise RuntimeError(f"Instagram search navigation left instagram.com: {current_url[:220]}")
 
+            content = getattr(page, "content", None)
+            html = (await content()).casefold() if callable(content) else ""
+            from .social_page_evidence import inspect_search_html, challenge_required
+            evidence = inspect_search_html(html)
+            if evidence.login_required or "/accounts/login" in parsed.path:
+                raise RuntimeError("login_required: sign in in the RAMBLA provider window and keep it open, then retry")
+            if challenge_required(html):
+                raise RuntimeError("challenge_required: complete verification in the RAMBLA provider login window")
+            if callable(content) and not html.strip():
+                raise RuntimeError("empty_browser_document: browser did not render the search page")
             wait_error = ""
             waiter = getattr(page, "wait_for_selector", None)
             if callable(waiter):
@@ -166,6 +222,7 @@ class BrowserSocialSource:
                 pass
 
             for scroll_index in range(4):
+                await hydrate_search_thumbnails(page, self.provider_name, limit)
                 anchors = await _page_anchors(page, self.provider_name, search_only=True)
                 for row in extract_social_result_links(self.provider_name, anchors):
                     if row["source_page"] not in seen:
@@ -176,23 +233,48 @@ class BrowserSocialSource:
                 if len(found) >= limit:
                     break
                 if scroll_index < 3:
-                    await page.evaluate("window.scrollBy(0, Math.max(window.innerHeight * 1.8, 1400))")
+                    await page.evaluate("""() => {
+                      const grid = document.querySelector('#grid-main');
+                      if (grid && grid.scrollHeight > grid.clientHeight)
+                        grid.scrollBy(0, Math.max(grid.clientHeight * 1.8, 1400));
+                      else window.scrollBy(0, Math.max(window.innerHeight * 1.8, 1400));
+                    }""")
                     await page.wait_for_timeout(900)
 
-            state = "search_results" if found else ("search_results_timeout" if wait_error else "zero_results")
+            if callable(content):
+                html=(await content()).casefold()
+                evidence = inspect_search_html(html)
+            current_url = str(getattr(page, "url", "") or "")
+            if urlparse(current_url).path.startswith(("/login", "/accounts/login")) or evidence.login_required:
+                raise RuntimeError("login_required: sign in in the RAMBLA window and keep it open")
+            if challenge_required(html):
+                raise RuntimeError("challenge_required: complete verification in the open RAMBLA window")
+            explicit_zero = any(mark in evidence.visible_text for mark in ("no results found", "no videos found", "nessun risultato", "no results for"))
+            state = "search_results" if found else ("zero_results" if explicit_zero else "search_results_unavailable")
             return {
                 "rows": found[:limit],
                 "diagnostics": {
                     "browser_state": state,
+                    "login_state": "verified" if evidence.signed_in else "unknown",
                     "current_url": current_url[:300],
-                    "page_title": await _page_title(page),
+                    "page_title": await _page_title(page) or " ".join(evidence.title)[:180],
+                    "visible_text_length": len(evidence.visible_text),
+                    "zero_result_evidence": explicit_zero,
                     "all_video_link_count": all_video_links,
                     "search_result_link_count": len(found),
                     **({"search_wait_error": wait_error} if wait_error else {}),
                 },
             }
 
-        return await self.profile_manager.run_in_profile(self.provider_name, collect, start_url=url)
+        try:
+            payload = await self.profile_manager.run_in_profile(self.provider_name, collect, start_url=url)
+        except Exception:
+            if hasattr(self.profile_manager, "connection_ready"):
+                self.profile_manager.connection_ready[self.provider_name] = False
+            raise
+        if hasattr(self.profile_manager, "connection_ready"):
+            self.profile_manager.connection_ready[self.provider_name] = bool(payload.get('rows')) or payload.get('diagnostics', {}).get('browser_state') == 'zero_results'
+        return payload
 
     async def search(
         self,
@@ -210,13 +292,29 @@ class BrowserSocialSource:
         browser_error_detail: str | None = None
         browser_diagnostics: dict[str, Any] = {}
         raw: list[dict[str, Any]] = []
-        try:
-            payload = await self._browser_search(clean, limit)
-            raw = list(payload.get("rows") or [])
-            browser_diagnostics = dict(payload.get("diagnostics") or {})
-        except Exception as exc:
-            browser_error = type(exc).__name__
-            browser_error_detail = " ".join(str(exc).split())[:240] or None
+        if self._browser_disabled_reason:
+            browser_error = self._browser_disabled_reason
+            browser_error_detail = self._browser_disabled_detail
+            browser_diagnostics = {"browser_state": "disabled_after_failure"}
+        else:
+            try:
+                payload = await self._browser_search(clean, limit)
+                raw = list(payload.get("rows") or [])
+                browser_diagnostics = dict(payload.get("diagnostics") or {})
+            except Exception as exc:
+                browser_error = type(exc).__name__
+                browser_error_detail = " ".join(str(exc).split())[:240] or None
+                if browser_error in {"BrowserUnavailableError", "ModuleNotFoundError", "ImportError"}:
+                    self._browser_disabled_reason = browser_error
+                    self._browser_disabled_detail = browser_error_detail
+
+        if 'challenge_required' in str(browser_error_detail or ''):
+            self._browser_disabled_reason=browser_error or 'challenge_required'
+            self._browser_disabled_detail=browser_error_detail
+            self.last_attempt={'provider':self.provider_name,'query':clean,'browser_state':'challenge_required',
+                               'browser_error':'challenge_required','browser_error_detail':browser_error_detail,
+                               'fallback_used':False,'authenticated_search_valid':False}
+            return []
 
         if raw:
             # Browser search cards do not expose a trustworthy source duration.
@@ -262,25 +360,34 @@ class BrowserSocialSource:
             return rows
 
         fallback_rows: list[VerticalRemoteCandidate] = []
+        fallback_attempt: dict[str, Any] = {}
         if self.fallback is not None:
             try:
                 fallback_rows = await self.fallback.search(
                     clean, orientation=orientation, min_duration=min_duration,
                     max_duration=max_duration, limit=limit,
                 )
-            except Exception:
+                fallback_attempt = dict(getattr(self.fallback, "last_attempt", {}) or {})
+            except Exception as exc:
                 fallback_rows = []
+                fallback_attempt = {"error": type(exc).__name__}
         self.last_attempt = {
             "provider": self.provider_name,
             "query": clean,
             "hits": len(fallback_rows),
             "browser": True,
             "fallback_used": bool(self.fallback is not None),
+            "fallback_attempt": fallback_attempt,
             "authenticated_search_valid": False,
             **browser_diagnostics,
             **({"browser_error": browser_error} if browser_error else {}),
             **({"browser_error_detail": browser_error_detail} if browser_error_detail else {}),
         }
+        browser_completed = browser_diagnostics.get("browser_state") == "zero_results"
+        fallback_completed = "hits" in fallback_attempt and not fallback_attempt.get("error") and not fallback_attempt.get("errors")
+        if not fallback_rows and not browser_completed and not fallback_completed:
+            self.last_attempt["error"] = fallback_attempt.get("error") or browser_error or browser_diagnostics.get("browser_state") or "social_search_unavailable"
+            self.last_attempt.pop("hits", None)
         return fallback_rows
 
     def drain_vertical_attempts(self) -> list[dict[str, Any]]:

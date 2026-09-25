@@ -209,3 +209,7 @@ async def test_pexels_candidate_is_explicit_generic_stock() -> None:
     rows = await source.search("camera", orientation=None, min_duration=1, max_duration=20, limit=2)
     assert rows[0].source_class == "GENERIC_STOCK"
     assert rows[0].source_authenticity is None
+
+
+def test_pexels_provider_identity_is_explicit_for_priority_routing() -> None:
+    assert PexelsSource.provider_name == "pexels"

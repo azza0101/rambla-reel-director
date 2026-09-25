@@ -214,7 +214,36 @@ def test_real_engine_provider_filter_builds_social_only_adapter(monkeypatch, tmp
         providers={"tiktok", "instagram"},
     )
 
-    assert len(engine.sources) == 1
-    adapter = engine.sources[0]
-    assert adapter.include_base_youtube is False
-    assert [source.provider_name for source in adapter.vertical_sources] == ["tiktok", "instagram"]
+    assert [source.provider_name for source in engine.sources] == ["tiktok", "instagram"]
+
+
+def test_browser_unavailable_is_circuit_broken_after_first_failure():
+    from backend.app.social_browser_source import BrowserSocialSource
+
+    class BrowserUnavailableError(RuntimeError):
+        pass
+
+    class Manager:
+        def __init__(self):
+            self.calls = 0
+
+        async def run_in_profile(self, *_args, **_kwargs):
+            self.calls += 1
+            raise BrowserUnavailableError("browser missing")
+
+    class Fallback:
+        provider_name = "tiktok"
+        async def search(self, *_args, **_kwargs):
+            return []
+
+    manager = Manager()
+    source = BrowserSocialSource("tiktok", manager, fallback=Fallback())
+
+    for query in ("first query", "second query"):
+        asyncio.run(source.search(
+            query, orientation="portrait", min_duration=1, max_duration=60, limit=2
+        ))
+
+    assert manager.calls == 1
+    assert source._browser_disabled_reason == "BrowserUnavailableError"
+    assert source.last_attempt["browser_state"] == "disabled_after_failure"

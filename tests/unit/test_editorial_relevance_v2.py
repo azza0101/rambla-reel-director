@@ -61,8 +61,8 @@ def test_basil_context_generates_literal_wilted_basil_fallbacks():
     spec = build_retrieval_spec(beat, shot, "image")
 
     assert spec["generic_shot_demoted"] is False
-    assert "wilted basil balcony" == spec["queries"][0]
-    assert any("dying basil" in value.casefold() or "dead basil" in value.casefold() for value in spec["queries"])
+    assert spec["queries"] == ["wilted basil balcony"]
+    assert spec["visual_target"] == "Wilted basil plant on balcony"
 
 
 def test_encoded_intent_round_trips_machine_actionable_negatives():

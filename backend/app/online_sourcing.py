@@ -146,8 +146,8 @@ class OnlineSourcingEngine:
         retrieval_intent: str | None = None,
     ) -> dict[str, Any]:
         if getattr(self,'quality_mode',False):
-            from .quality_video import source_video_beat
-            return await source_video_beat(self,beat_id=beat_id,client_id=client_id,queries=queries,min_duration=min_duration,max_duration=max_duration,orientation=orientation,retrieval_intent=retrieval_intent)
+            from .funnel_runtime import cached_source_video_beat
+            return await cached_source_video_beat(self,beat_id=beat_id,client_id=client_id,queries=queries,min_duration=min_duration,max_duration=max_duration,orientation=orientation,retrieval_intent=retrieval_intent)
         clean_queries = _normalize_queries(queries)
         if not beat_id or not client_id:
             raise ValueError("beat and client identity are required")

@@ -65,44 +65,18 @@ def test_vertical_factory_can_add_web_video_source(monkeypatch):
 
 def test_real_engine_reaches_web_video_lane_when_enabled(monkeypatch, tmp_path):
     import backend.app.online_sourcing_cli as cli
-    import backend.app.vertical_social as vertical
-    from backend.app.web_video_source import WebVideoRemoteCandidate
 
     monkeypatch.setattr(cli, "create_retrieval_ranker", lambda *_args, **_kwargs: object())
     monkeypatch.setenv("RAMBLA_ENABLE_VERTICAL_SOCIAL", "1")
     monkeypatch.setenv("RAMBLA_ENABLE_WEB_VIDEO", "1")
 
-    class FakeWeb:
-        provider_name = "web_video"
-        last_attempt = {}
-        async def search(self, query, **_kwargs):
-            self.last_attempt = {"provider": "web_video", "query": query, "hits": 1}
-            return [WebVideoRemoteCandidate(
-                provider="web_video", provider_id="story", query=query,
-                source_page="https://news.example/video/story",
-                creator_name=None, creator_page=None,
-                title="Eyewitness video", description="Eyewitness video",
-                duration=12, width=0, height=0, orientation="unknown",
-                preview_url="https://img.example/story.jpg",
-                selected_rendition_url="https://news.example/video/story",
-                rendition_width=0, rendition_height=0,
-                rights_state="review_required", provider_rank=0,
-            )]
-
-    monkeypatch.setattr(vertical, "build_default_vertical_sources", lambda: [FakeWeb()])
     engine = cli._real_engine(
         client_id="test", pexels_api_key=None, model_root=tmp_path,
         embedding_code_root=None, cache_root=tmp_path / "cache", max_candidates=4,
     )
-    adapter = engine.sources[0]
-    async def no_youtube(*_args, **_kwargs):
-        return []
-    adapter.source.search = no_youtube
-    rows = asyncio.run(adapter.search(
-        "current event eyewitness", orientation=None,
-        min_duration=1, max_duration=300, limit=3,
-    ))
-    assert [row.provider for row in rows] == ["web_video"]
+    assert [getattr(source, "provider_name", None) for source in engine.sources] == [
+        "youtube", "youtube_shorts", "envato", "web_video"
+    ]
 
 
 def test_web_video_thumbnail_failure_keeps_manual_source_link():
@@ -165,7 +139,7 @@ def test_curation_artifacts_expose_discovery_source_when_clip_download_failed(tm
     poster.write_bytes(b"fake")
     (run / "online-candidates.json").write_text(json.dumps([{
         "parent_beat_id": "b1",
-        "quality_version": "clip-quality-13",
+        "quality_version": "clip-quality-14",
         "candidates": [],
         "discovery_sources": [{
             "id": "web_video:story42",
@@ -190,3 +164,19 @@ def test_curation_artifacts_expose_discovery_source_when_clip_download_failed(tm
     assert candidate.preview_status == "preview_pending"
     assert candidate.clip_verified is False
     assert candidate.source_page == "https://news.example/video/42"
+
+
+def test_http_google_parser_extracts_nested_anchor_thumbnail():
+    from backend.app.web_video_source import _GoogleVideoHTMLParser, extract_google_video_results
+
+    parser = _GoogleVideoHTMLParser()
+    parser.feed("""
+    <a href="https://www.google.com/url?q=https%3A%2F%2Fnews.example%2Fvideo%2Fabc">
+      <img src="https://img.example/thumb.jpg" width="320" height="180">
+      Eyewitness street video
+    </a>
+    """)
+    rows = extract_google_video_results(parser.rows, limit=3)
+    assert len(rows) == 1
+    assert rows[0]["source_page"] == "https://news.example/video/abc"
+    assert rows[0]["title"] == "Eyewitness street video"

@@ -23,6 +23,17 @@ def seen_candidate_keys(candidates: Iterable[dict[str, Any]]) -> set[str]:
     return {_candidate_key(candidate) for candidate in candidates if isinstance(candidate, dict)}
 
 
+def existing_video_keys(rows, beat_id):
+    return sorted(seen_candidate_keys(c for r in rows if _target(r, beat_id)
+        for c in list(r.get('candidates') or []) + list(r.get('discovery_sources') or [])))
+
+
+def unseen_video_candidates(pool, keys):
+    known=set(keys)
+    return [c for c in pool if _candidate_key({'provider':c.provider,
+        'provider_id':c.provider_id,'source_page':c.source_page}) not in known]
+
+
 def _merge_candidates(existing: list[dict[str, Any]], fresh: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
     output = [deepcopy(row) for row in existing if isinstance(row, dict)]
     seen = seen_candidate_keys(output)
@@ -53,11 +64,23 @@ def _next_round(existing: list[dict[str, Any]], beat_id: str) -> int:
 
 def _cap_video_beat(rows: list[dict[str, Any]], beat_id: str, limit: int = 12) -> None:
     remaining = limit
+    social_counts = {}
     for row in rows:
         if not _target(row, beat_id): continue
         candidates = list(row.get("candidates") or [])
-        row["candidates"] = candidates[:remaining]
-        remaining -= len(row["candidates"])
+        kept=[]
+        for candidate in candidates:
+            provider=candidate.get('provider') or candidate.get('source')
+            if provider in {'tiktok','instagram','youtube_shorts'}:
+                if social_counts.get(provider,0)<24:
+                    kept.append(candidate);social_counts[provider]=social_counts.get(provider,0)+1
+            elif remaining>0:
+                kept.append(candidate);remaining-=1
+        row["candidates"] = kept
+        if row.get("quality_version"):
+            from .quality_video import synchronize_proposals
+            synchronize_proposals(row)
+            row["eligible_candidate_count"] = sum(bool(c.get("clip_verified")) for c in row["candidates"])
         if remaining <= 0: remaining = 0
 
 
@@ -88,11 +111,12 @@ def merge_video_rows(existing: list[dict[str, Any]], fresh: list[dict[str, Any]]
             row["research_round"] = research_round; output.append(row); continue
         matched.add(key)
         merged = deepcopy(row)
-        merged["candidates"] = _merge_candidates(list(row.get("candidates") or []), list(incoming.get("candidates") or []), 12)
+        merged["discovery_sources"] = _merge_candidates(list(row.get("discovery_sources") or []), list(incoming.get("discovery_sources") or []), 96)
+        merged["candidates"] = _merge_candidates(list(row.get("candidates") or []), list(incoming.get("candidates") or []), 96)
         for field in ("search_attempts", "errors", "rejected_candidates"):
             merged[field] = list(row.get(field) or []) + list(incoming.get(field) or [])
         for field, value in incoming.items():
-            if field not in {"candidates", "search_attempts", "errors", "rejected_candidates"}:
+            if field not in {"candidates", "discovery_sources", "search_attempts", "errors", "rejected_candidates"}:
                 merged[field] = deepcopy(value)
         merged["research_round"] = research_round
         output.append(merged)

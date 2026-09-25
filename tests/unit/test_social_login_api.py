@@ -54,3 +54,27 @@ def test_social_status_exposes_readiness_without_paths_or_cookie_data(tmp_path):
     assert "cookie" not in serialized
     assert "profile_dir" not in serialized
     assert "password" not in serialized
+
+
+def test_envato_login_api_is_supported(tmp_path):
+    calls = []
+
+    class Manager:
+        def open_login(self, provider, *, start_url=None):
+            calls.append((provider, start_url))
+            return {"provider": provider, "status": "started", "pid": 77}
+        def status(self):
+            return {"tiktok": {"profile_ready": False}, "instagram": {"profile_ready": False}, "envato": {"profile_ready": True}}
+
+    from backend.app.curation_server import create_app
+    client = TestClient(create_app(
+        project_root=tmp_path / "projects",
+        allowed_media_roots=[tmp_path],
+        probe_runner=lambda _: {"duration": 1, "fps": 25, "width": 1080, "height": 1920, "has_audio": False},
+        browser_profile_manager=Manager(),
+    ))
+
+    response = client.post("/api/curation/social/envato/login")
+    assert response.status_code == 200
+    assert response.json()["provider"] == "envato"
+    assert calls == [("envato", None)]

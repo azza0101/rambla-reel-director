@@ -11,7 +11,7 @@ CONTRASTS={'wilt':{'healthy','fresh','lush'},'dry':{'wet','soaked'},'empty':{'fu
 GENERIC_PROPS={
     'laptop': re.compile(r'\b(laptop|computer|typing|notebook|taking notes?|working remotely)\b',re.I),
     'map': re.compile(r'\b(map|route planning|travel planning|itinerary planning|comparing routes?)\b',re.I),
-    'hotel': re.compile(r'\b(hotel room|accommodation options?|booking|hotel comparison)\b',re.I),
+    'hotel': re.compile(r'\b(hotel room|guesthouse|guest house|lodging|accommodation options?|booking|hotel comparison)\b',re.I),
     'tutorial': re.compile(r'\b(tutorial|tips|how to|guide to|text on screen|presentation|slide)\b',re.I),
 }
 
@@ -75,7 +75,7 @@ def metadata_quality(intent,text):
     overlap=len(wanted & found)/max(1,len(wanted))
     contradictions=[c for c,opposites in CONTRASTS.items() if c in wanted and found & opposites and c not in found]
     missing_conditions=[c for c in CONTRASTS if c in wanted and c not in found]
-    generic=bool(re.search(r'\b(vlog|youtuber|subscribe|my trip|travel diary|selfie|reaction)\b',text,re.I)) and not bool(re.search(r'\b(vlog|youtuber|selfie|reaction)\b',intent,re.I))
+    generic=bool(re.search(r'\b(vlog|youtuber|subscribe|my trip|travel diary|selfie|reaction|podcast|interview|talking head|news anchor|tutorial|infographic|screenshot|text overlay|subtitles)\b',text,re.I)) and not bool(re.search(r'\b(vlog|youtuber|selfie|reaction|interview|podcast|tutorial|infographic|screenshot)\b',intent,re.I))
     return overlap,contradictions,missing_conditions,generic
 
 
@@ -92,14 +92,18 @@ class QualityRanker:
 
     def rank(self,intent,assets):
         spec=decode_retrieval_intent(intent)
-        positive_intent=spec['positive'] or str(intent or '')
+        editorial_intent=spec['positive'] or str(intent or '')
+        positive_intent=spec.get('visual_target') or editorial_intent
         negatives=list(spec.get('negatives') or [])[:3]
-        measured={};counter={};query_measured={};talking_head={};graphic_frame={};action_counter={};participant_counter={};negative_counter={}
+        measured={};counter={};query_measured={};talking_head={};graphic_frame={};action_counter={};participant_counter={};negative_counter={};overlay_frame={}
         def visual_rank(query,rows):
             return [r for i in range(0,len(rows),4) for r in self.visual.rank(query,rows[i:i+4])]
         if self.visual and assets:
             try:
                 measured={r['id']:r for r in visual_rank(positive_intent,assets)}
+                social_frames=[a for a in assets if a.get('kind')=='video' and (a.get('provider') or a.get('source')) in {'tiktok','instagram','youtube_shorts'}]
+                if social_frames:
+                    overlay_frame={r['id']:r.get('embedding_score') for r in visual_rank('A social video with large superimposed captions, subtitles or added text covering the footage. Not physical signs in the scene.',social_frames)}
                 for query in dict.fromkeys(a.get('retrieval_query') or a.get('query') for a in assets):
                     if query:
                         group=[a for a in assets if (a.get('retrieval_query') or a.get('query'))==query]
@@ -137,6 +141,12 @@ class QualityRanker:
             if nonphoto:reasons.append('non-photographic/composite result')
             face=talking_head.get(a['id']);creator_frame=face is not None and visual is not None and face>float(visual)+.04
             if creator_frame:reasons.append('actual frame matches talking-head vlog more than requested action')
+            overlay=overlay_frame.get(a['id'])
+            overlay_conflict=overlay is not None and positive_visual is not None and overlay>float(positive_visual)+.02
+            if overlay_conflict:
+                score-=.25
+                creator_frame=True
+                reasons.append('superimposed text evidence dominates actual social frame; unsuitable clean B-roll')
             opposite_action=action_counter.get(a['id']);wrong_action=opposite_action is not None and query_visual is not None and opposite_action>query_visual+.02
             wrong_participant=participant_counter.get(a['id']) is not None and query_visual is not None and participant_counter[a['id']]>query_visual+.02
             if wrong_participant:reasons.append('vehicles or empty scene match frames better than requested people')
@@ -156,5 +166,5 @@ class QualityRanker:
             if reject:score=min(score,.29)
             state='rejected' if reject else ('accepted' if float(visual)>=.60 else 'needs_review') if visual is not None else 'metadata_only'
             if state=='needs_review':reasons.append('borderline visual relevance; inspect candidate')
-            output.append({**a,'score':round(max(0,score),4),'embedding_score':visual,'metadata_score':round(meta,4),'shot_embedding_score':positive_visual,'query_embedding_score':query_visual,'negative_embedding_score':negative_score,'editorial_positive':positive_intent,'editorial_negatives':negatives,'quality_state':state,'condition_counter_score':opposite,'action_counter_score':opposite_action,'quality_reasons':reasons,'rank_reason':'Qwen editorial context + query + hard negatives' if visual is not None else 'Metadata only; visual relevance needs review','ranking_warning':self.warning,'matched_query':a.get('query') or a.get('matched_query')})
+            output.append({**a,'score':round(max(0,score),4),'embedding_score':visual,'metadata_score':round(meta,4),'shot_embedding_score':positive_visual,'query_embedding_score':query_visual,'negative_embedding_score':negative_score,'visual_target':positive_intent,'editorial_positive':editorial_intent,'editorial_negatives':negatives,'quality_state':state,'condition_counter_score':opposite,'action_counter_score':opposite_action,'quality_reasons':reasons,'rank_reason':'Qwen concrete shot target + query + hard negatives' if visual is not None else 'Metadata only; visual relevance needs review','ranking_warning':self.warning,'matched_query':a.get('query') or a.get('matched_query')})
         return sorted(output,key=lambda r:-r['score'])

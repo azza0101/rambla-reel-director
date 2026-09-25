@@ -201,7 +201,9 @@ class ProjectStore:
                 if total > max_bytes:
                     raise ValueError("source upload exceeds 5 GiB")
                 handle.write(chunk)
-        return self.register_local_video(project_id, target)
+        project = self.register_local_video(project_id, target)
+        self._write_source_input(project_id, {"kind": "video", "filename": safe, "path": str(target)})
+        return project
 
     def write_external_guide_audio(self, project_id: str, filename: str, chunks: Any, *, command_runner: Callable[[list[str]], Any] = subprocess.run) -> GuideAudioInfo:
         project = self.load(project_id)
@@ -217,6 +219,119 @@ class ProjectStore:
         guide = GuideAudioInfo(str(target), "external", project.source_video.signature if project.source_video else "", signature, self.audio_probe_runner(target))
         self._save(CurationProject(project.project_id, project.name, project.source_video, guide))
         return guide
+
+
+    def _write_source_input(self, project_id: str, payload: dict[str, Any]) -> None:
+        from .atomic_io import write_json
+        target = self.root / project_id / "source" / "source-input.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        write_json(target, payload)
+
+    def source_input(self, project_id: str) -> dict[str, Any]:
+        path = self.root / project_id / "source" / "source-input.json"
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError):
+            return {"kind": "video"}
+        return value if isinstance(value, dict) else {"kind": "video"}
+
+    @staticmethod
+    def _timeline_duration_for_text(text: str) -> float:
+        words = re.findall(r"\S+", str(text or ""))
+        if not words:
+            raise ValueError("transcript text is empty")
+        return max(2.0, len(words) / 2.5)
+
+    def _render_placeholder_video(
+        self,
+        target: Path,
+        duration: float,
+        *,
+        command_runner: Callable[[list[str]], Any] = subprocess.run,
+    ) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        command_runner([
+            "ffmpeg", "-y", "-f", "lavfi",
+            "-i", f"color=c=black:s=360x640:r=25:d={max(0.5, float(duration)):.3f}",
+            "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+            str(target),
+        ])
+        if not target.is_file():
+            raise RuntimeError("ffmpeg did not create the synthetic timeline video")
+
+    def write_primary_audio(
+        self,
+        project_id: str,
+        filename: str,
+        chunks: Any,
+        *,
+        command_runner: Callable[[list[str]], Any] = subprocess.run,
+    ) -> CurationProject:
+        self.load(project_id)
+        safe = Path(filename).name or "source-audio"
+        source = self.root / project_id / "source" / ("audio-" + safe)
+        source.parent.mkdir(parents=True, exist_ok=True)
+        total = 0
+        with source.open("wb") as handle:
+            for chunk in chunks:
+                total += len(chunk)
+                if total > 1024**3:
+                    raise ValueError("audio upload exceeds 1 GiB")
+                handle.write(chunk)
+        guide_path = source.parent / "guide-audio.wav"
+        command_runner([
+            "ffmpeg", "-y", "-i", str(source),
+            "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(guide_path),
+        ])
+        duration = float(self.audio_probe_runner(guide_path))
+        timeline = source.parent / "audio-timeline.mp4"
+        self._render_placeholder_video(timeline, duration, command_runner=command_runner)
+        project = self.register_local_video(project_id, timeline)
+        stat = source.stat()
+        guide_signature = hashlib.sha256(
+            f"primary-audio|{source.name}|{stat.st_size}|{stat.st_mtime_ns}".encode()
+        ).hexdigest()
+        guide = GuideAudioInfo(
+            str(guide_path), "external", project.source_video.signature if project.source_video else "",
+            guide_signature, duration,
+        )
+        project = CurationProject(project.project_id, project.name, project.source_video, guide)
+        self._save(project)
+        self._write_source_input(project_id, {
+            "kind": "audio",
+            "filename": safe,
+            "original_path": str(source),
+            "duration": duration,
+        })
+        return project
+
+    def write_text_source(
+        self,
+        project_id: str,
+        text: str,
+        *,
+        command_runner: Callable[[list[str]], Any] = subprocess.run,
+    ) -> CurationProject:
+        clean = " ".join(str(text or "").split())
+        if not clean:
+            raise ValueError("transcript text is empty")
+        if len(clean) > 500_000:
+            raise ValueError("transcript text exceeds 500,000 characters")
+        source_dir = self.root / project_id / "source"
+        source_dir.mkdir(parents=True, exist_ok=True)
+        text_path = source_dir / "source-text.txt"
+        text_path.write_text(clean, encoding="utf-8")
+        duration = self._timeline_duration_for_text(clean)
+        timeline = source_dir / "text-timeline.mp4"
+        self._render_placeholder_video(timeline, duration, command_runner=command_runner)
+        project = self.register_local_video(project_id, timeline)
+        self._write_source_input(project_id, {
+            "kind": "text",
+            "filename": "source-text.txt",
+            "text_path": str(text_path),
+            "duration": duration,
+        })
+        return project
 
     def _path(self, project_id: str) -> Path:
         if not re.fullmatch(r"[a-f0-9]{12}", project_id):

@@ -91,7 +91,7 @@ def transcript_package(run, project_id, duration):
     return {'schema_version':'rambla-editorial-input-1','project_id':project_id,
         'duration':duration,'language':raw.get('language','und'),'transcript_signature':signature,
         'chunks':chunks,'full_transcript':' '.join(c['text'].strip() for c in chunks),
-        'word_timestamps':[w for s in raw.get('segments',[]) for w in s.get('words',[])],
+        'word_timestamps':[] if (run/'transcript-corrections.json').exists() else [w for s in raw.get('segments',[]) for w in s.get('words',[])],
         'instructions':INSTRUCTIONS,'visual_plan_schema':contract_schema()}
 
 
@@ -182,6 +182,10 @@ def import_plan(run, plan, package):
     root.mkdir(parents=True,exist_ok=True)
     write_json(root/'imported-plan.json',plan)
     write_json(run/'visual-plan.json',plan)
+    marker=run/'transcript-corrections.json'
+    if marker.is_file():
+        corrections=read(marker); corrections.pop('stale_plan_digest',None);write_json(marker,corrections)
+    (run/'editorial-location.json').unlink(missing_ok=True)
     return root
 
 
@@ -193,9 +197,18 @@ def load_import(run):
     return validate_import(plan,transcript_package(run,plan['project_id'],duration))
 
 
+def plan_retrieval_root(run, plan):
+    pointer=run/'editorial-location.json'
+    if pointer.is_file():
+        location=read(pointer)
+        if location.get('plan_digest')==digest(plan) and re.fullmatch('[a-f0-9]{64}',str(location.get('directory',''))):
+            return run/'editorial'/location['directory']
+    return run/'editorial'/digest(plan)
+
+
 def retrieval_bundle(run):
     plan=load_import(run)
-    root=run/'editorial'/digest(plan); root.mkdir(parents=True,exist_ok=True)
+    root=plan_retrieval_root(run,plan); root.mkdir(parents=True,exist_ok=True)
     chunks=[]; internal={'schema_version':'imported-retrieval-1','chunks':{}}; beats=[]
     for b in plan['visual_beats']:
         chunks.append({'id':b['id'],'start':b['start'],'end':b['end'],'text':b['original_text']})

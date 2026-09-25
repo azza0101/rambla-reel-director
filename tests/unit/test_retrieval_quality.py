@@ -205,3 +205,252 @@ def test_proxy_has_wall_time_bound_and_removes_partial_file(tmp_path,monkeypatch
     monkeypatch.setattr(module,'time',NS(monotonic=lambda:next(ticks)),raising=False)
     with pytest.raises(TimeoutError):module.download_preview_proxy('https://example.com/video',tmp_path,'id',max_seconds=30)
     assert not list(tmp_path.iterdir())
+
+
+def test_video_discovery_rejects_single_generic_noun_match():
+    from types import SimpleNamespace as NS
+    from backend.app.quality_video import _discovery_relevant
+
+    good = NS(
+        provider="youtube_shorts",
+        query="small passenger ferry with luggage",
+        title="Passengers board island ferry carrying luggage",
+        description="Travelers boarding a ferry with bags",
+        orientation="portrait",
+        source_authenticity=.94,
+        provider_rank=0,
+    )
+    bad = NS(
+        provider="youtube_shorts",
+        query="small passenger ferry with luggage",
+        title="Huge wave shatters ferry window during storm",
+        description="Storm damages ferry window in Germany",
+        orientation="portrait",
+        source_authenticity=.94,
+        provider_rank=1,
+    )
+
+    intent = "Small passenger ferry crossing water with travelers holding luggage"
+    assert _discovery_relevant(good, intent) is True
+    assert _discovery_relevant(bad, intent) is False
+
+
+def test_video_discovery_pool_reserves_normal_youtube_among_vertical_results():
+    from types import SimpleNamespace as NS
+    from backend.app.quality_video import _balanced_discovery_pool
+
+    def row(provider, pid, title, rank=0):
+        return NS(
+            provider=provider,
+            provider_id=pid,
+            query="airport shuttle bus departing",
+            title=title,
+            description=title,
+            orientation="portrait" if provider != "youtube" else "landscape",
+            source_authenticity=.94,
+            provider_rank=rank,
+        )
+
+    pool = [
+        row("youtube_shorts", "s1", "Airport shuttle bus departing terminal"),
+        row("youtube_shorts", "s2", "Airport shuttle bus at terminal", 1),
+        row("tiktok", "t1", "Airport shuttle bus departing", 0),
+        row("instagram", "i1", "Airport shuttle bus departure", 0),
+        row("youtube", "y1", "Airport shuttle bus departing with luggage", 0),
+    ]
+
+    selected = _balanced_discovery_pool(pool, "Airport shuttle bus departing with luggage", limit=4)
+    providers = [item.provider for item in selected]
+    assert "youtube" in providers
+    assert len(set(providers)) >= 3
+
+
+def test_imported_queries_do_not_append_broad_contextual_topic_fallbacks():
+    from backend.app.editorial_relevance import build_retrieval_spec
+
+    beat = {
+        "core_meaning": "Accept compromises and reduce harm",
+        "subtext": "Sustainable travel is imperfect",
+        "original_text": "Significa capire su quali cose è possibile accettare il compromesso.",
+        "avoid": [],
+    }
+    shot = {
+        "shot_id": "s1",
+        "description": "Traveler boarding a local bus with a backpack",
+        "image_queries": ["traveler boarding local bus"],
+        "video_queries": ["traveler boarding local bus"],
+    }
+
+    spec = build_retrieval_spec(beat, shot, "video")
+    assert spec["queries"] == ["traveler boarding local bus"]
+    assert "greenwashing tourism" not in spec["queries"]
+    assert spec["visual_target"] == "Traveler boarding a local bus with a backpack"
+
+
+def test_quality_ranker_uses_concrete_visual_target_not_full_editorial_argument():
+    from backend.app.editorial_relevance import INTENT_PREFIX
+    from backend.app.retrieval_quality import QualityRanker
+
+    seen = []
+
+    class Visual:
+        def rank(self, query, rows):
+            seen.append(query)
+            return [dict(row, embedding_score=.75) for row in rows]
+
+    intent = INTENT_PREFIX + json.dumps({
+        "positive": "Abstract argument about sustainability and compromise",
+        "visual_target": "traveler boarding local bus with backpack",
+        "context": "long abstract spoken context",
+        "negatives": [],
+        "generic_shot_demoted": False,
+        "shot_id": "s1",
+    })
+    rows = QualityRanker(Visual()).rank(intent, [{
+        "id": "x",
+        "description": "traveler boarding local bus with backpack",
+        "query": "traveler boarding local bus",
+        "kind": "video",
+    }])
+
+    assert seen[0] == "traveler boarding local bus with backpack"
+    assert rows[0]["visual_target"] == "traveler boarding local bus with backpack"
+    assert rows[0]["editorial_positive"] == "Abstract argument about sustainability and compromise"
+
+
+def test_storyboard_sampling_is_bounded_and_spans_video():
+    from backend.app.quality_video import _storyboard_sample_indices
+
+    rows = _storyboard_sample_indices(500, 10)
+    assert len(rows) == 10
+    assert rows == sorted(set(rows))
+    assert rows[0] > 0
+    assert rows[-1] < 499
+    assert rows[-1] - rows[0] > 350
+
+
+def test_storyboard_locator_rejects_talking_head_and_prefers_clean_visual_match():
+    from backend.app.quality_video import _choose_storyboard_starts
+
+    samples = [
+        {"index": 10, "timestamp": 20.0},
+        {"index": 20, "timestamp": 40.0},
+        {"index": 30, "timestamp": 60.0},
+    ]
+    positive = {"10": .72, "20": .66, "30": .62}
+    talking = {"10": .30, "20": .70, "30": .28}
+    text = {"10": .25, "20": .22, "30": .68}
+
+    starts = _choose_storyboard_starts(
+        samples, positive, talking, text, duration=90.0, limit=2
+    )
+
+    assert starts == [18.8]
+
+
+def test_stale_query_is_rejected_against_concrete_visual_target():
+    from backend.app.quality_video import _query_matches_target, _query_from_target
+
+    target = "A local language map pin or hand pointing at a small-town sign in a market alley."
+    assert _query_matches_target("free range chickens garden", target) is False
+    assert _query_matches_target("hand pointing at town sign", target) is True
+    repaired = _query_from_target(target)
+    assert "map" in repaired and "sign" in repaired
+
+
+@pytest.mark.asyncio
+async def test_valid_storyboard_with_no_matching_scene_returns_empty_not_fallback(tmp_path, monkeypatch):
+    from types import SimpleNamespace as NS
+    from backend.app import quality_video as module
+
+    monkeypatch.setattr(
+        module,
+        "_youtube_storyboard_frames",
+        lambda *_args, **_kwargs: [
+            {"path": str(tmp_path / "a.jpg"), "timestamp": 10.0, "index": 1},
+            {"path": str(tmp_path / "b.jpg"), "timestamp": 20.0, "index": 2},
+        ],
+    )
+
+    class Visual:
+        def rank(self, _query, rows):
+            return [{**row, "embedding_score": .20} for row in rows]
+
+    engine = NS(ranker=NS(visual=Visual()))
+    candidate = NS(
+        provider="youtube",
+        duration=120,
+        query="elephant sanctuary entrance",
+        source_page="https://youtube.com/watch?v=x",
+    )
+
+    result = await module._storyboard_starts(
+        engine, candidate, "elephant sanctuary entrance",
+        tmp_path, "youtube:x", "client", lambda *_args, **_kwargs: None,
+    )
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_envato_search_card_survives_even_when_clip_relevance_gate_is_strict(tmp_path):
+    from types import SimpleNamespace as NS
+    from backend.app import quality_video as module
+
+    candidate = NS(
+        provider="envato",
+        provider_id="env1",
+        query="small ferry crossing water",
+        source_page="https://elements.envato.com/passenger-boat-river-ABCDEFG",
+        title="Passenger boat on river",
+        description="Passenger boat on river",
+        width=640,
+        height=360,
+        orientation="landscape",
+        rights_state="subscription_license_required",
+        creator_name=None,
+        duration=20,
+        preview_url="https://assets.example/thumb.jpg",
+        preview_rendition_url=None,
+        selected_rendition_url="https://elements.envato.com/passenger-boat-river-ABCDEFG",
+        source_authenticity=.97,
+        provider_rank=0,
+    )
+
+    class Source:
+        provider_name = "envato"
+        last_attempt = {"provider": "envato", "hits": 1, "engine": "envato_public_search"}
+
+    async def search(*_args, **_kwargs):
+        return [candidate], None
+
+    async def poster(*_args):
+        path = tmp_path / "envato.jpg"
+        path.write_bytes(b"image")
+        return NS(path=path, cache_hit=False)
+
+    engine = NS(
+        sources=[Source()],
+        _search_one=search,
+        query_intents={},
+        cache=NS(materialize_preview=poster),
+        ranker=NS(warning=None),
+        event_callback=None,
+    )
+
+    result = await module.source_video_beat(
+        engine,
+        beat_id="b",
+        client_id="p",
+        queries=["small ferry crossing water"],
+        min_duration=1,
+        max_duration=60,
+        orientation=None,
+        retrieval_intent="A small passenger ferry cutting through water with luggage on deck",
+    )
+
+    assert result["candidates"] == []
+    assert result["discovery_sources"]
+    assert result["discovery_sources"][0]["source"] == "envato"
+    assert result["discovery_sources"][0]["source_page"].startswith("https://elements.envato.com/")
+    assert result["search_attempts"][0]["hits"] == 1
+    assert result["search_attempts"][0]["engine"] == "envato_public_search"

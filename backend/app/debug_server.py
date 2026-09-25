@@ -6,6 +6,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -130,6 +131,11 @@ class LocalSourceRequest(BaseModel):
     path: str
 
 
+class TextSourceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str
+
+
 class ProjectSelectionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     asset_ids: list[str] = []
@@ -151,12 +157,14 @@ class RunState:
     guide_audio: Path | None = None
     analysis_signature: str = ""
     stage_type: str = "all"
+    research_options: dict[str, Any] = field(default_factory=dict)
 
     def total(self) -> float:
         scopes = {
             "analyze": {"prepare", "asr", "semantic_chunking", "analysis"},
             "videos": {"prepare", "visual_planning", "coverage", "evidence_intent", "source_strategy", "online_search", "qwen_coarse", "bounded_acquisition", "qwen_final", "edit_plan", "review"},
             "images": {"prepare", "visual_planning", "image_search"},
+            "director_api": {"visual_planning"},
         }
         keys = scopes.get(self.stage_type, set(WEIGHTS))
         total_weight = sum(WEIGHTS.get(key, 0) for key in keys)
@@ -240,6 +248,22 @@ def _write_selection(output_dir: Path, selections: dict[str, str]) -> None:
 
 
 def _command(state: RunState) -> list[str]:
+    from .runtime_mode import uses_api_runtime
+    if uses_api_runtime():
+        module = "backend.app.cloud_analyze_cli" if state.stage_type == "analyze" else "backend.app.debug_run_cli"
+        command = [
+            sys.executable, "-m", module,
+            "--video", str(state.video_path),
+            "--output-dir", str(state.output_dir),
+            "--stage", state.stage_type,
+        ]
+        if state.guide_audio:
+            command.extend(["--guide-audio", str(state.guide_audio)])
+        if state.analysis_signature:
+            command.extend(["--analysis-signature", state.analysis_signature])
+        if module == "backend.app.debug_run_cli":
+            command.extend(["--model-cache", str(state.output_dir / ".cloud-model-cache")])
+        return command
     raw = os.environ.get("RAMBLA_DEBUG_COMMAND_JSON", "").strip()
     if raw:
         try:
@@ -484,9 +508,12 @@ def render_debug_page(default_video: str = DEFAULT_VIDEO, default_output: str = 
 
 
 def _project_payload(project: CurationProject) -> dict[str, Any]:
+    source_name = Path(project.source_video.path).name if project.source_video else ""
+    source_kind = "text" if source_name == "text-timeline.mp4" else "audio" if source_name == "audio-timeline.mp4" else "video"
     return {
         "project_id": project.project_id,
         "name": project.name,
+        "source_kind": source_kind,
         "source_video": None if project.source_video is None else {
             "path": project.source_video.path,
             "duration": project.source_video.duration,
@@ -530,6 +557,9 @@ def _probe_source_video(source: Path) -> dict[str, Any]:
 
 def create_app(*, project_root: Path | None = None, curation_run_root: Path | None = None, allowed_media_roots: list[Path] | None = None, probe_runner: Any = None, audio_probe_runner: Any = None, audio_command_runner: Any = None) -> FastAPI:
     load_project_credentials()
+    from .runtime_mode import uses_api_runtime
+    if uses_api_runtime():
+        os.environ.setdefault("RAMBLA_RETRIEVAL_RANKING", "provider")
     app = FastAPI(title="RAMBLA Debug Runner", version="0.1.0")
     project_root = project_root or Path(os.environ.get("RAMBLA_PROJECT_ROOT", str(Path(DEFAULT_OUTPUT).parent / "curation-projects")))
     # Legacy/default artifacts are deliberately never used by project routes.
@@ -631,7 +661,9 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
             editorial_plan = approved_plan(project_id)
         except HTTPException as exc:
             editorial_error = exc.detail
-        flags = {'provider_status':provider_status(),'analysis_ready':analysis_ready,'editorial_plan_ready':editorial_plan is not None,'editorial_error':editorial_error}
+        from .animation_context import build_animation_context
+        from .transcript_corrections import needs_editorial_refresh
+        flags = {'transcript_needs_plan':needs_editorial_refresh(project_run_root(project_id)), 'animation_context':build_animation_context({**editorial_plan,'global_topic':''} if editorial_plan and needs_editorial_refresh(project_run_root(project_id)) else editorial_plan), 'provider_status':provider_status(),'analysis_ready':analysis_ready,'editorial_plan_ready':editorial_plan is not None,'editorial_error':editorial_error}
         existing = _read_json(project_run_root(project_id)/'visual-plan.json',{})
         if not editorial_plan and existing.get('schema_version')=='rambla-visual-plan-1':
             return {**flags,'project_id':project_id,'chunks':[],'selection_plan':{'chunks':{}},'resolve_calls':0}
@@ -653,6 +685,10 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
         image_diagnostics = image_artifact.get("chunks", {}) if isinstance(image_artifact, dict) else {}
         from .retrieval_diagnostics import image_diagnostic,video_diagnostic
         video_rows=_read_json(retrieval_root/'online-candidates.json',[])
+        from .live_retrieval_diagnostics import overlay_live_rows
+        active_runs=[s for s in RUNS.values() if s.status in {'QUEUED','RUNNING'} and Path(s.output_dir).resolve()==project_run_root(project_id).resolve()]
+        if active_runs:
+            video_rows=overlay_live_rows(video_rows,[e.as_dict() for e in active_runs[-1].events])
         def media_diagnostics(cid):
             rows=[r for r in video_rows if r.get('parent_beat_id')==cid]
             image_row=image_diagnostics.get(cid,{})
@@ -700,6 +736,7 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
                  "source_start_seconds":item.source_start_seconds,"source_end_seconds":item.source_end_seconds,
                  "quality_state":item.quality_state,"quality_reasons":list(item.quality_reasons),
                  "selectable":item.kind!="video" or (item.preview_status=="ready" and item.clip_verified),
+                 "download_url": f"/api/curation/projects/{project_id}/media/{item.asset_id}/download" if item.kind=="video" and item.preview_status=="ready" and item.clip_verified and item.preview_path and Path(item.preview_path).is_file() else None,
                  "preview_url": item.preview_url or f"/api/curation/projects/{project_id}/media/{item.asset_id}/preview",
                  "poster_url": f"/api/curation/projects/{project_id}/media/{item.asset_id}/poster"}
                 for item in (*row.video_candidates, *row.image_candidates)
@@ -747,6 +784,32 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
             raise HTTPException(status_code=413, detail=str(exc)) from exc
         return _project_payload(select_default_guide(project))
 
+    @app.put("/api/curation/projects/{project_id}/source/audio")
+    async def upload_primary_audio(project_id: str, request: Request, filename: str = "source-audio") -> dict[str, Any]:
+        load_project(project_id)
+        try:
+            project = projects.write_primary_audio(
+                project_id, filename, [await request.body()], command_runner=guide_command_runner,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=413, detail=str(exc)) from exc
+        except (RuntimeError, subprocess.CalledProcessError) as exc:
+            raise HTTPException(status_code=422, detail=f"audio source preparation failed: {exc}") from exc
+        return _project_payload(project)
+
+    @app.put("/api/curation/projects/{project_id}/source/text")
+    async def upload_text_source(project_id: str, request: TextSourceRequest) -> dict[str, Any]:
+        load_project(project_id)
+        try:
+            project = projects.write_text_source(
+                project_id, request.text, command_runner=guide_command_runner,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except (RuntimeError, subprocess.CalledProcessError) as exc:
+            raise HTTPException(status_code=422, detail=f"text timeline preparation failed: {exc}") from exc
+        return _project_payload(project)
+
     @app.post("/api/curation/projects/{project_id}/guide/original")
     async def use_original_guide(project_id: str) -> dict[str, Any]:
         load_project(project_id)
@@ -762,6 +825,47 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
         projects.write_external_guide_audio(project_id, filename, [await request.body()], command_runner=guide_command_runner)
         return _project_payload(projects.load(project_id))
 
+    social_media_slots = asyncio.Semaphore(2)
+    social_media_locks = {}
+
+    @app.post("/api/curation/projects/{project_id}/social-media/{asset_id}/{mode}")
+    async def prepare_social_media(project_id: str, asset_id: str, mode: str):
+        from .social_media import prepare_media, media_path
+        candidate = project_run(project_id).candidate_index.get(asset_id)
+        if candidate is None or candidate.provider not in {'tiktok','instagram','youtube_shorts'} or mode not in {'preview','full','hover'}:
+            raise HTTPException(status_code=404, detail='Social video not found')
+        root = project_run_root(project_id)
+        key=(project_id,asset_id,mode)
+        lock=social_media_locks.setdefault(key,asyncio.Lock())
+        try:
+            async with lock, social_media_slots:
+                cookies=[]
+                profiles=getattr(app.state,'social_profiles',None)
+                if profiles and candidate.provider in {'tiktok','instagram'} and profiles.status()[candidate.provider].get('connection_ready'):
+                    async def read_session(page,context):
+                        return await context.cookies([candidate.source_page])
+                    cookies=await profiles.run_in_profile(candidate.provider,read_session)
+                path=await asyncio.to_thread(prepare_media,candidate.source_page,candidate.provider,root,mode,cookies=cookies)
+            return {'url':f'/api/curation/projects/{project_id}/social-media/{asset_id}/{mode}', 'verified':False}
+        except (ValueError,RuntimeError) as exc:
+            raise HTTPException(status_code=502,detail=str(exc)) from None
+
+    @app.get("/api/curation/projects/{project_id}/social-media/{asset_id}/{mode}")
+    async def get_social_media(project_id: str, asset_id: str, mode: str):
+        from .social_media import media_path
+        candidate=project_run(project_id).candidate_index.get(asset_id)
+        if candidate is None:
+            raise HTTPException(status_code=404,detail='Social video not found')
+        try:
+            root=project_run_root(project_id)
+            path=media_path(candidate.source_page,candidate.provider,root,mode)
+            path.resolve().relative_to(root.resolve())
+        except ValueError:
+            raise HTTPException(status_code=404,detail='Invalid media') from None
+        if not path.is_file():
+            raise HTTPException(status_code=404,detail='Media not prepared')
+        return FileResponse(path, filename=f'{candidate.provider}-video.mp4') if mode=='full' else FileResponse(path)
+
     @app.get("/api/curation/projects/{project_id}/media/{asset_id}/{variant}")
     async def get_project_media(project_id: str, asset_id: str, variant: str) -> FileResponse:
         project = load_project(project_id)
@@ -770,11 +874,22 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
             if not source.is_file():
                 raise HTTPException(status_code=404, detail="media non disponibile")
             return FileResponse(source)
+        if asset_id == "source-audio" and variant == "source" and project.guide_audio is not None:
+            source = Path(project.guide_audio.path).resolve()
+            try:
+                source.relative_to(project_root.resolve())
+            except ValueError:
+                raise HTTPException(status_code=403, detail="audio fuori dal project store") from None
+            if not source.is_file():
+                raise HTTPException(status_code=404, detail="audio non disponibile")
+            return FileResponse(source)
         run_root = project_run_root(project_id)
         candidate = project_run(project_id).candidate_index.get(asset_id)
-        if candidate is None or variant not in {"preview", "poster"}:
+        if candidate is None or variant not in {"preview", "poster", "download"}:
             raise HTTPException(status_code=404, detail="asset non trovato")
-        path = candidate.preview_path if variant == "preview" else candidate.poster_path
+        if variant == "download" and not (candidate.kind == "video" and candidate.preview_status == "ready" and candidate.clip_verified):
+            raise HTTPException(status_code=404, detail="clip scaricabile non disponibile")
+        path = candidate.preview_path if variant in {"preview", "download"} else candidate.poster_path
         if variant == "preview" and candidate.preview_url:
             return RedirectResponse(candidate.preview_url)
         if not path or not Path(path).is_file():
@@ -783,7 +898,7 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
             Path(path).resolve().relative_to(run_root.resolve())
         except ValueError:
             raise HTTPException(status_code=403, detail="media fuori dalla run") from None
-        return FileResponse(path)
+        return FileResponse(path, filename=Path(path).name) if variant == "download" else FileResponse(path)
 
     @app.get("/api/curation/projects/{project_id}/curation")
     async def get_project_curation(project_id: str) -> dict[str, Any]:
@@ -814,6 +929,9 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
         if not (run_root / "semantic-chunks.json").is_file():
             raise HTTPException(status_code=422, detail="analysis required before sourcing")
         approved_plan(project_id)
+        from .transcript_corrections import require_current_editorial
+        try: require_current_editorial(run_root)
+        except ValueError as exc: raise HTTPException(status_code=409,detail=str(exc)) from exc
         active = RUNS.get(project_runs.get(project_id, ""))
         if active and active.status in {"QUEUED", "RUNNING"}:
             raise HTTPException(status_code=409, detail="project stage already running")
@@ -835,6 +953,9 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
     @app.get("/api/curation/projects/{project_id}/transcript")
     async def get_project_transcript(project_id: str) -> dict[str, Any]:
         path = project_run_root(project_id) / "transcript-raw.json"
+        if (path.parent/'transcript-corrections.json').is_file():
+            from .editorial_import import normalized_chunks
+            return {"segments":normalized_chunks(path.parent),"manually_corrected":True}
         return _read_json(path, {"segments": [], "status": "pending"})
 
     @app.put("/api/curation/projects/{project_id}/curation/chunks/{chunk_id}/selection")
@@ -943,7 +1064,15 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
-        return {"status": "ok", "debug_runner": True, "resolve_calls": 0}
+        from .runtime_mode import uses_api_runtime
+        return {
+            "status": "ok",
+            "debug_runner": True,
+            "runtime_mode": os.environ.get("RAMBLA_RUNTIME_MODE", "local"),
+            "local_gpu_required": not uses_api_runtime(),
+            "build_token": os.environ.get("RAMBLA_BUILD_TOKEN", "development"),
+            "resolve_calls": 0,
+        }
 
     return app
 

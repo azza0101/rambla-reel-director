@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -122,7 +123,7 @@ def run_research(
     retrieval_root, chunks, visual_plan, _ = retrieval_bundle(output)
     if beat_id not in {str(row.get("id")) for row in chunks}:
         raise ValueError("unknown visual beat")
-    visual_beat = next((row for row in visual_plan.get("visual_beats", []) if str(row.get("id")) == beat_id), None)
+    visual_beat = visual_plan["chunks"].get(beat_id)
     if isinstance(visual_beat, dict) and visual_beat.get("action") != "BROLL":
         raise ValueError("media research is only available for BROLL beats")
 
@@ -154,12 +155,14 @@ def run_research(
                 beat_id=beat_id, mode=mode, providers=list(provider_scope),
             )
 
+        from .beat_research import existing_video_keys
+        worker_env={**os.environ,'RAMBLA_SOCIAL_EXCLUDED_KEYS':json.dumps(existing_video_keys(existing_video,beat_id) if mode=='append' else [])}
         subprocess.run(
             video_sourcing_command(
                 output, transcript, outline, client_id, source_frames,
                 beat_id=beat_id, research_mode=mode, providers=provider_scope,
             ),
-            check=True,
+            check=True, env=worker_env,
         )
         fresh_video = _read_json(video_artifact, [])
         merged_video = merge_video_rows(existing_video, fresh_video, beat_id, mode)
@@ -174,6 +177,9 @@ def run_research(
     except Exception:
         _restore(snapshot)
         raise
+    if provider_scope and set(provider_scope) <= {"tiktok", "instagram"}:
+        from .debug_social_cli import require_completed_social_search
+        require_completed_social_search(fresh_video)
     return {"beat_id": beat_id, "mode": mode, "providers": list(provider_scope), "resolve_calls": 0}
 
 
@@ -185,7 +191,9 @@ def main() -> None:
     parser.add_argument("--research-mode", choices=("replace", "append"), required=True)
     parser.add_argument("--providers", nargs="+")
     parser.add_argument("--client-id", default="debug-reel")
+    parser.add_argument('--search-options-json',default='{}')
     args = parser.parse_args()
+    os.environ['RAMBLA_SOCIAL_SEARCH_OPTIONS']=json.dumps(json.loads(args.search_options_json))
     run_research(
         video=args.video.resolve(),
         output=args.output_dir.resolve(),

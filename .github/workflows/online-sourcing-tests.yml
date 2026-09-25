@@ -1,6 +1,9 @@
 name: Online sourcing tests
 
 on:
+  pull_request:
+    branches:
+      - feat/curation-ui-v1
   push:
     branches:
       - feat/online-sourcing-engine-v1
@@ -10,6 +13,7 @@ on:
       - feat/editorial-intelligence-style-dna-v1
       - feat/vertical-social-dense-coverage
       - feat/curation-ui-v1
+      - feat/api-first-text-first-v1
   workflow_dispatch:
 
 jobs:
@@ -27,8 +31,10 @@ jobs:
       - name: Tests
         shell: bash
         run: |
-          if [[ "$GITHUB_REF_NAME" == "feat/vertical-social-dense-coverage" || "$GITHUB_REF_NAME" == "feat/curation-ui-v1" ]]; then
+          if [[ "$GITHUB_REF_NAME" == "feat/vertical-social-dense-coverage" || "$GITHUB_REF_NAME" == "feat/curation-ui-v1" || "$GITHUB_REF_NAME" == "feat/api-first-text-first-v1" ]]; then
             pytest -q \
+              tests/unit/test_api_first_director.py \
+              tests/unit/test_api_director_curation.py \
               tests/unit/test_dense_coverage.py \
               tests/unit/test_vertical_social.py \
               tests/unit/test_vertical_social_style_v2.py \
@@ -38,6 +44,7 @@ jobs:
               tests/unit/test_social_login_api.py \
               tests/unit/test_social_curation_ui.py \
               tests/unit/test_web_video_source.py \
+              tests/unit/test_envato_source.py \
               tests/unit/test_youtube_source.py \
               tests/unit/test_retrieval_quality.py \
               tests/unit/test_retrieval_diagnostics_states.py \
@@ -60,7 +67,7 @@ jobs:
             pytest -q
           fi
       - name: Full repository test suite
-        if: github.ref_name == 'feat/curation-ui-v1'
+        if: github.ref_name == 'feat/curation-ui-v1' || github.ref_name == 'feat/api-first-text-first-v1'
         run: pytest -q
       - name: Check embedded curation JavaScript syntax
         shell: bash
@@ -85,5 +92,37 @@ jobs:
             $errors | ForEach-Object { Write-Error $_.Message }
             exit 1
           }
+      - name: Check V5 probe PowerShell syntax
+        if: github.ref_name == 'feat/api-first-text-first-v1' || github.event_name == 'pull_request'
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'tools/run_api_first_v5_probe.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
       - name: Compile backend
         run: python -m compileall backend
+      - name: Build and smoke GPU-free cloud image
+        if: github.ref_name == 'feat/api-first-text-first-v1' || github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          docker build --tag rambla-cloud-ci .
+          docker run -d --name rambla-cloud-smoke -p 18080:8080 rambla-cloud-ci
+          trap 'docker rm -f rambla-cloud-smoke >/dev/null 2>&1 || true' EXIT
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:18080/health > /tmp/rambla-health.json; then
+              break
+            fi
+            sleep 1
+          done
+          python - <<'PY'
+          import json
+          payload=json.load(open('/tmp/rambla-health.json',encoding='utf-8'))
+          assert payload['status']=='ok'
+          assert payload['runtime_mode']=='cloud'
+          assert payload['local_gpu_required'] is False
+          assert payload['resolve_calls']==0
+          PY

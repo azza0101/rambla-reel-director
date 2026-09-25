@@ -22,6 +22,7 @@ from .retrieval_ranker import create_retrieval_ranker
 from .director_engine import FasterWhisperArtifact, build_edit_plan
 from .director_preview import render_report
 from .evidence_intent import plan_evidence_intent
+from .envato_source import EnvatoSource
 from .online_assets import PexelsSource
 from .online_sourcing import OnlineSourcingEngine
 from .qwen_stack import LocalQwenEmbedder, QwenConfig, QwenMultimodalRanker
@@ -30,6 +31,7 @@ from .taste_profile import TasteContext
 from .visual_routing import plan_visual_route
 from .visual_planner import merge_visual_diagnostics, persist_visual_plan
 from .youtube_source import YouTubeOnlineSourceAdapter, YouTubeSource
+from .web_video_source import WebVideoSource
 
 
 class AcquisitionPort(Protocol):
@@ -116,6 +118,12 @@ async def _source_outline(
         event_callback("coverage", 100.0, "Coverage slots planned", slots=len(slots), providers=providers)
 
     engine.event_callback=event_callback
+    try:
+        source_concurrency=int(os.environ.get("RAMBLA_SOURCE_CONCURRENCY","4"))
+    except ValueError:
+        source_concurrency=4
+    source_concurrency=max(1,min(8,source_concurrency))
+    source_gate=asyncio.Semaphore(source_concurrency)
     tasks = []
     completed_count = 0
     route_by_slot: dict[str, Any] = {}
@@ -123,7 +131,13 @@ async def _source_outline(
     for slot in slots:
         duration = slot.duration_seconds
         editorial: dict[str, Any] = {}
-        if taste_context is not None:
+        # Imported/API-first plans already contain shot-level visual intent and
+        # concrete provider queries. Do not replace those with a second strategy
+        # inferred from broad raw-ASR segments, which can leak nouns from adjacent
+        # speech into the wrong beat (for example an "eco label" query on a
+        # transport beat).
+        imported_editorial = slot.evidence_class == "imported_editorial_shot"
+        if taste_context is not None and not imported_editorial:
             context = " ".join(
                 str(segment.get("text") or "").strip()
                 for segment in (transcript or {}).get("segments", [])
@@ -142,20 +156,24 @@ async def _source_outline(
             }
         if getattr(engine,'quality_mode',False):
             editorial['retrieval_intent']=slot.visual_intent
-        task = engine.source_beat(
-                beat_id=slot.id,
-                client_id=client_id,
-                queries=list(slot.queries)[: engine.max_queries],
-                min_duration=max(1.0, min(duration, 3.0)),
-                # Long-video evidence (interviews, social/repertory) must remain
-                # eligible even though the editorial insert itself is only 3–4 s.
-                max_duration=4 * 60 * 60,
-                orientation=None,
-                **editorial,
-            )
-        async def source_with_progress(slot_value: Any = slot, task_value: Any = task) -> Any:
+        async def source_with_progress(
+            slot_value: Any = slot,
+            duration_value: float = duration,
+            editorial_value: dict[str, Any] = dict(editorial),
+        ) -> Any:
             nonlocal completed_count
-            result = await task_value
+            async with source_gate:
+                result = await engine.source_beat(
+                    beat_id=slot_value.id,
+                    client_id=client_id,
+                    queries=list(slot_value.queries)[: engine.max_queries],
+                    min_duration=max(1.0, min(duration_value, 3.0)),
+                    # Long videos stay eligible, but only a bounded number of
+                    # slots may perform network/local-Qwen work concurrently.
+                    max_duration=4 * 60 * 60,
+                    orientation=None,
+                    **editorial_value,
+                )
             completed_count += 1
             completed = completed_count
             progress = 100.0 * completed / len(slots)
@@ -163,6 +181,7 @@ async def _source_outline(
             rejected = list(result.get("rejected_candidates") or [])
             queries = list(slot_value.queries)[: engine.max_queries]
             if event_callback:
+                event_callback('retrieval_evidence', progress, 'Shot retrieval completed', slot_id=slot_value.id, providers=providers, search_attempts=result.get('search_attempts',[]), rejected_candidates=rejected)
                 event_callback("online_search", progress, f"Slot {completed}/{len(slots)} searched", slot_id=slot_value.id, query=queries, providers=providers, raw=result.get('raw_result_count',len(candidates)+len(rejected)), accepted=sum(c.get('clip_verified',False) for c in candidates) if getattr(engine,'quality_mode',False) else len(candidates), preview_pending=sum(c.get('quality_state')=='source_found' for c in candidates), rejected=len(rejected), errors=result.get("errors", []))
                 event_callback("qwen_final", progress, f"Slot {completed}/{len(slots)} retrieval ranked", slot_id=slot_value.id, ranked=[{"id": row.get("id"), "score": row.get("qwen_score", row.get("score"))} for row in candidates[:3]])
                 event_callback("bounded_acquisition", progress, f"Slot {completed}/{len(slots)} previews materialized", slot_id=slot_value.id, previews=sum(bool(row.get("preview_path")) for row in candidates), cache_hits=result.get("preview_cache_hits", 0))
@@ -192,6 +211,8 @@ async def _source_outline(
             result.setdefault('raw_result_count',len(candidates) + len(result.get('rejected_candidates') or []))
             if getattr(engine,'quality_mode',False):
                 result['eligible_candidate_count']=sum(c.get('clip_verified',False) for c in retained)
+                from .quality_video import synchronize_proposals
+                synchronize_proposals(result)
             valid = {c['id'] for c in retained}
             for key in ('proposal_A','proposal_B','proposal_C'):
                 proposal = (result.get('proposals') or {}).get(key)
@@ -204,6 +225,11 @@ async def _source_outline(
     annotated_results: list[dict[str, Any]] = []
 
     for slot, result in zip(slots, results):
+        shot_id=slot.id.split(':shot:')[-1] if ':shot:' in slot.id else None
+        for candidate in result.get('candidates',[])+result.get('discovery_sources',[]):
+            candidate['shot_id']=shot_id
+        for attempt in result.get('search_attempts',[]):
+            attempt['shot_id']=shot_id
         proposals = result.get("proposals") or {}
         row = asdict(slot)
         if slot.id in route_by_slot:
@@ -261,6 +287,29 @@ async def _source_outline(
         beat_id: sorted(rows.values(), key=lambda item: (-float(item.get("score", 0.0)), str(item.get("id", ""))))
         for beat_id, rows in candidate_by_beat_and_id.items()
     }
+    if getattr(engine,'quality_mode',False):
+        # Match curation's bounded, shot-balanced discovery shelf. Retained rows
+        # and actually surfaced cards are separate diagnostics.
+        groups={}
+        for row in annotated_results:
+            for card in row.get('discovery_sources',[]):
+                groups.setdefault((row['parent_beat_id'],card['source']),[]).append(card)
+        surfaced=set()
+        for (beat,provider),cards in groups.items():
+            primary=[];alternatives=[];shots=set();pages=set()
+            for card in sorted(cards,key=lambda c:(-c.get('score',0),c['id'])):
+                page=card.get('source_page')
+                if page in pages:continue
+                pages.add(page)
+                if card.get('shot_id') not in shots:
+                    primary.append(card);shots.add(card.get('shot_id'))
+                else:alternatives.append(card)
+            surfaced.update((beat,card['id']) for card in (primary+alternatives)[:6 if provider in {'tiktok','instagram','youtube_shorts'} else 3])
+        for row in annotated_results:
+            for attempt in row.get('search_attempts',[]):
+                cards=[c for c in row.get('discovery_sources',[]) if c.get('source')==attempt['provider'] and c.get('query')==attempt['query']]
+                attempt['cards_retained']=len(cards)
+                attempt['cards_surfaced']=sum((row['parent_beat_id'],c['id']) in surfaced for c in cards)
     return candidate_map, annotated_results, coverage_by_beat
 
 
@@ -487,6 +536,9 @@ def run_online_from_artifacts(
         "plan_seconds": round(plan_seconds, 4),
         "total_seconds": round(time.perf_counter() - started, 4),
         "resolve_calls": 0,
+        "shot_timings": {r['coverage_slot_id']:r.get('timings',{}) for r in sourcing_results},
+        "model_load_seconds": round(getattr(getattr(getattr(sourcing_engine.ranker,'visual',None),'embed',None),'model_load_seconds',0.0),4),
+        "provider_counters": {r['coverage_slot_id']:r.get('provider_counts',{}) for r in sourcing_results},
     }
     _write_json(output_dir / "online-sourcing-benchmark.json", benchmark)
     return plan
@@ -504,37 +556,56 @@ def _real_engine(
     providers: set[str] | None = None,
 ) -> OnlineSourcingEngine:
     ranker = create_retrieval_ranker(client_id, model_root, embedding_code_root)
+    visual=getattr(ranker,'visual',None)
+    if visual is not None and hasattr(visual,'embed'):
+        from .funnel_cache import JsonCache
+        visual.embed.disk_cache=JsonCache(cache_root/'embedding','qwen-vl-2b-embedding-v1')
     provider_filter = {str(value).casefold().strip() for value in (providers or set()) if str(value).strip()}
     sources: list[Any] = []
     include_youtube = not provider_filter or "youtube" in provider_filter
-    vertical_names = {"youtube_shorts", "tiktok", "instagram", "web_video"}
-    requested_vertical = vertical_names if not provider_filter else (provider_filter & vertical_names)
+    social_names = {"youtube_shorts", "tiktok", "instagram"}
+    # Normal FIND B-ROLL includes Shorts, but TikTok/Instagram stay in their
+    # dedicated FIND SOCIAL / ADD TIKTOK + IG stage. Otherwise every ordinary
+    # YouTube query fans out into authenticated/public social searches too.
+    requested_social = {"youtube_shorts"} if not provider_filter else (provider_filter & social_names)
+    include_web_video = not provider_filter or "web_video" in provider_filter
+    include_envato = not provider_filter or "envato" in provider_filter
 
-    if include_youtube or requested_vertical:
-        if provider_filter:
-            from .vertical_social import build_default_vertical_sources
-            vertical_sources = [
-                source for source in build_default_vertical_sources()
-                if str(getattr(source, "provider_name", "")).casefold() in requested_vertical
-            ]
-            sources.append(
-                YouTubeOnlineSourceAdapter(
-                    YouTubeSource(discover=_discover_youtube),
-                    vertical_sources=vertical_sources,
-                    include_base_youtube=include_youtube,
-                )
-            )
-        else:
-            sources.append(YouTubeOnlineSourceAdapter(YouTubeSource(discover=_discover_youtube)))
-
+    # Clean stock is an independent lane and must never suppress YouTube/news.
     if pexels_api_key and (not provider_filter or "pexels" in provider_filter):
         sources.append(PexelsSource(pexels_api_key))
+
+    if include_youtube or requested_social:
+        from .vertical_social import build_default_vertical_sources
+        vertical_sources = [
+            source for source in build_default_vertical_sources()
+            if str(getattr(source, "provider_name", "")).casefold() in requested_social
+        ]
+        if include_youtube:sources.append(
+            YouTubeOnlineSourceAdapter(
+                YouTubeSource(discover=_discover_youtube),
+                vertical_sources=[],
+                include_base_youtube=include_youtube,
+            )
+        )
+        sources.extend(vertical_sources)
+
+    # Envato is discovery-only: expose searchable covers/links, never automate
+    # subscription downloads or project licensing.
+    if include_envato and str(os.environ.get("RAMBLA_ENABLE_ENVATO", "1")).casefold() in {"1","true","yes","on"}:
+        sources.append(EnvatoSource())
+
+    # Google Videos/news is intentionally separate from social/YouTube so the
+    # curator can see current-event/repertory sources even when clip download
+    # is manual or unavailable.
+    if include_web_video and str(os.environ.get("RAMBLA_ENABLE_WEB_VIDEO", "1")).casefold() in {"1","true","yes","on"}:
+        sources.append(WebVideoSource())
     engine = OnlineSourcingEngine(
         sources=sources,
         cache=AssetCache(cache_root),
         ranker=ranker,
-        max_results_per_query=max_candidates,
-        max_preview_candidates=max_candidates,
+        max_results_per_query=min(max_candidates,12 if any(getattr(s, 'provider_name', '') in {'tiktok','instagram','youtube_shorts'} for s in sources) else 5),
+        max_preview_candidates=min(max_candidates,5),
         download_selected=False,
     )
     engine.quality_mode = True
@@ -558,7 +629,7 @@ def main() -> None:
     parser.add_argument(
         "--providers",
         nargs="+",
-        choices=("youtube", "youtube_shorts", "tiktok", "instagram", "web_video", "pexels"),
+        choices=("youtube", "youtube_shorts", "tiktok", "instagram", "web_video", "pexels", "envato"),
     )
     parser.add_argument("--pexels-key-env", default="PEXELS_API_KEY")
     parser.add_argument("--max-candidates", type=int, default=12)
@@ -637,6 +708,9 @@ def main() -> None:
                 "candidate_count": benchmark["candidate_count"],
                 "downloaded_selected": benchmark["downloaded_selected"],
                 "total_seconds": benchmark["total_seconds"],
+                "model_load_seconds": benchmark["model_load_seconds"],
+                "shot_timings": benchmark["shot_timings"],
+                "provider_counters": benchmark["provider_counters"],
                 "review": str(args.output_dir / "review.html"),
             }
         )

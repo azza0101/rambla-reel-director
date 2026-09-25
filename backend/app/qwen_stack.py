@@ -548,16 +548,24 @@ class LocalQwenEmbedder(_LocalModel):
         return self
 
     def __call__(self, items: list[Any]) -> list[list[float]]:
-        if self.model is None:
-            self.load()
         keys=[]
         for index,item in enumerate(items):
             path=Path(item) if isinstance(item,str) else None
             is_image=path is not None and path.suffix.lower() in {'.png','.jpg','.jpeg','.webp'}
             stamp=(path.stat().st_size,path.stat().st_mtime_ns) if is_image and path.is_file() else None
             keys.append((str(item),stamp,index==0 and not is_image))
+        disk=getattr(self,'disk_cache',None)
+        if disk:
+            for key in keys:
+                if key not in self._vector_cache:
+                    vector=disk.get(key,30*86400)
+                    if vector is not None:self._vector_cache[key]=vector
         missing=[i for i,key in enumerate(keys) if key not in self._vector_cache]
         if not missing:return [self._vector_cache[key] for key in keys]
+        if self.model is None:
+            load_started=time.perf_counter()
+            self.load()
+            self.model_load_seconds=time.perf_counter()-load_started
         payload: list[dict[str, Any]] = []
         for index, item in enumerate(items):
             if index not in missing:continue
@@ -576,7 +584,9 @@ class LocalQwenEmbedder(_LocalModel):
         else:
             vectors = [list(vector) for vector in result]
         self.completed_calls += 1
-        for index,vector in zip(missing,vectors):self._vector_cache[keys[index]]=vector
+        for index,vector in zip(missing,vectors):
+            self._vector_cache[keys[index]]=vector
+            if disk:disk.put(keys[index],vector)
         result=[self._vector_cache[key] for key in keys]
         if len(self._vector_cache)>512:self._vector_cache.clear()
         return result

@@ -1,0 +1,25 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const text=fs.readFileSync(process.argv[2],'utf8');
+const code=text.slice(text.indexOf('let socialSearchScopeV5'),text.indexOf('const expandedShelvesV2'));
+const nodes=new Map(),calls=[];let ready=false;
+const context={beginSearchV9:()=>{},socialStatusV2:async()=>{},$:id=>{if(!nodes.has(id))nodes.set(id,{disabled:false,checked:false,textContent:'',showModal(){},close(){}});return nodes.get(id)},state:{pid:'project',run:null,active:'beat_002'},api:async(path,opts)=>{calls.push([path,opts]);if(path.endsWith('/source/social'))return {status:'started',run_id:'run1'};return {ready:path.includes('tiktok')||ready,detail:'check',login_state:'unknown'}},watch:async id=>calls.push(['WATCH',id]),researchBeatV2:async(mode,providers)=>calls.push(['BEAT',providers]),reportError:e=>{throw e},Promise};
+vm.createContext(context);vm.runInContext(code,context);
+(async()=>{
+ await context.checkSocialAndRunV5(['tiktok']);
+ assert(!calls.some(c=>c[0].includes('/instagram/')), 'TikTok-only verification must not contact Instagram');
+ calls.length=0;
+ await context.prepareSocialV5();await context.checkSocialAndRunV5();
+ assert(!calls.some(c=>c[0].endsWith('/source/social')),'verification must not start search');
+ assert.equal(context.$('startSocialV5').disabled,false,'TikTok ready must enable start');
+ await context.startSelectedSocialV5();
+ let request=calls.find(c=>c[0].endsWith('/source/social'));
+ assert.deepEqual(JSON.parse(request[1].body).providers,['tiktok']);
+ assert(calls.some(c=>c[0]==='WATCH'));
+ await context.prepareSocialV5('beat_002');ready=true;await context.checkSocialAndRunV5();
+ context.$('useInstagramV5').checked=false;
+ await context.startSelectedSocialV5();
+ assert.deepEqual(Array.from(calls.find(c=>c[0]==='BEAT')[1]),['tiktok']);
+ context.$('useTiktokV5').checked=false;context.syncSocialStartV5();
+ assert.equal(context.$('startSocialV5').disabled,true);
+ console.log('Explicit start and partial-provider dispatch passed');
+})().catch(e=>{console.error(e);process.exit(1)});

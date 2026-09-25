@@ -347,3 +347,129 @@ def test_youtube_discovery_normalizes_flat_search_metadata():
         "duration": 42.0, "thumbnail": "https://img.example/thumb.jpg",
         "width": 1280, "height": 720,
     }]
+
+
+@pytest.mark.asyncio
+async def test_imported_editorial_plan_keeps_director_queries_authoritative(tmp_path):
+    from backend.app.online_sourcing_cli import _source_outline
+    from backend.app.taste_profile import TasteProfile, build_taste_context
+
+    seen = []
+
+    class Engine:
+        sources = []
+        max_queries = 6
+        max_preview_candidates = 12
+        quality_mode = True
+        retrieval_output = tmp_path
+        event_callback = None
+
+        async def source_beat(self, **kwargs):
+            seen.append(kwargs)
+            return {
+                "candidates": [],
+                "rejected_candidates": [],
+                "errors": [],
+                "preview_cache_hits": 0,
+                "proposals": {
+                    "proposal_A": None,
+                    "proposal_B": None,
+                    "proposal_C": None,
+                    "review_state": "NO_VISUAL_FOUND",
+                },
+            }
+
+    outline = {
+        "beats": [{
+            "id": "beat_002",
+            "start_seconds": 2.2,
+            "end_seconds": 5.56,
+            "intent": "the trip involves three flights, a bus, and two boats",
+            "broll_queries": [
+                "airport shuttle bus departing",
+                "airplane window takeoff wing",
+                "small passenger ferry with luggage",
+            ],
+            "external_plan": True,
+            "visual_plan": {
+                "id": "beat_002",
+                "start": 2.2,
+                "end": 5.56,
+                "covered_chunk_ids": ["chunk-2"],
+                "original_text": "però se per arrivarci prendiamo tre voli, un autobus e due barche,",
+                "action": "BROLL",
+                "editorial_function": "show accumulating transfers",
+                "core_meaning": "three flights, a bus, and two boats",
+                "subtext": "",
+                "visual_mode": "sequence",
+                "avoid": ["animated transit map"],
+                "shots": [{
+                    "shot_id": "beat_002_shot_01",
+                    "description": "Airport shuttle bus pulling away with travel bags visible",
+                    "image_queries": ["airport shuttle bus luggage"],
+                    "video_queries": ["airport shuttle bus departing"],
+                }],
+            },
+        }]
+    }
+    transcript = {
+        "segments": [{
+            "start": 0.0,
+            "end": 8.0,
+            "text": "green eco label travel document etichetta verde",
+        }]
+    }
+    taste = build_taste_context(TasteProfile(client_id="rambla", version=1, approved=True))
+
+    await _source_outline(
+        outline,
+        Engine(),
+        client_id="rambla",
+        transcript=transcript,
+        taste_context=taste,
+    )
+
+    assert len(seen) == 1
+    call = seen[0]
+    assert call["queries"] == ["airport shuttle bus departing"]
+    assert call["retrieval_intent"].startswith("RAMBLA_INTENT::")
+    assert "source_strategy" not in call
+    assert "evidence_intent" not in call
+
+
+def test_real_engine_keeps_pexels_youtube_and_google_video_as_independent_lanes(monkeypatch, tmp_path):
+    import backend.app.online_sourcing_cli as cli
+
+    monkeypatch.setattr(cli, "create_retrieval_ranker", lambda *_args, **_kwargs: object())
+    monkeypatch.setenv("RAMBLA_ENABLE_VERTICAL_SOCIAL", "1")
+    monkeypatch.setenv("RAMBLA_ENABLE_WEB_VIDEO", "1")
+
+    engine = cli._real_engine(
+        client_id="test",
+        pexels_api_key="pexels-key",
+        model_root=tmp_path,
+        embedding_code_root=None,
+        cache_root=tmp_path / "cache",
+        max_candidates=4,
+    )
+
+    providers = [getattr(source, "provider_name", None) for source in engine.sources]
+    assert providers == ["pexels", "youtube", "youtube_shorts", "envato", "web_video"]
+
+
+def test_default_broll_engine_only_fans_out_to_youtube_shorts_not_tiktok_instagram(monkeypatch, tmp_path):
+    import backend.app.online_sourcing_cli as cli
+
+    monkeypatch.setattr(cli, "create_retrieval_ranker", lambda *_args, **_kwargs: object())
+    monkeypatch.setenv("RAMBLA_ENABLE_VERTICAL_SOCIAL", "1")
+    engine = cli._real_engine(
+        client_id="test",
+        pexels_api_key=None,
+        model_root=tmp_path,
+        embedding_code_root=None,
+        cache_root=tmp_path / "cache",
+        max_candidates=4,
+    )
+    youtube = next(source for source in engine.sources if getattr(source, "provider_name", None) == "youtube")
+    assert youtube.vertical_sources == []
+    assert [s.provider_name for s in engine.sources if s.provider_name in {"youtube_shorts", "tiktok", "instagram"}] == ["youtube_shorts"]
