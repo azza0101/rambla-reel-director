@@ -248,7 +248,8 @@ def _write_selection(output_dir: Path, selections: dict[str, str]) -> None:
 
 
 def _command(state: RunState) -> list[str]:
-    if os.environ.get("RAMBLA_RUNTIME_MODE", "").casefold().strip() == "cloud":
+    from .runtime_mode import uses_api_runtime
+    if uses_api_runtime():
         module = "backend.app.cloud_analyze_cli" if state.stage_type == "analyze" else "backend.app.debug_run_cli"
         command = [
             sys.executable, "-m", module,
@@ -556,7 +557,8 @@ def _probe_source_video(source: Path) -> dict[str, Any]:
 
 def create_app(*, project_root: Path | None = None, curation_run_root: Path | None = None, allowed_media_roots: list[Path] | None = None, probe_runner: Any = None, audio_probe_runner: Any = None, audio_command_runner: Any = None) -> FastAPI:
     load_project_credentials()
-    if os.environ.get("RAMBLA_RUNTIME_MODE", "").casefold().strip() == "cloud":
+    from .runtime_mode import uses_api_runtime
+    if uses_api_runtime():
         os.environ.setdefault("RAMBLA_RETRIEVAL_RANKING", "provider")
     app = FastAPI(title="RAMBLA Debug Runner", version="0.1.0")
     project_root = project_root or Path(os.environ.get("RAMBLA_PROJECT_ROOT", str(Path(DEFAULT_OUTPUT).parent / "curation-projects")))
@@ -1062,11 +1064,13 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
+        from .runtime_mode import uses_api_runtime
         return {
             "status": "ok",
             "debug_runner": True,
             "runtime_mode": os.environ.get("RAMBLA_RUNTIME_MODE", "local"),
-            "local_gpu_required": os.environ.get("RAMBLA_RUNTIME_MODE", "").casefold().strip() != "cloud",
+            "local_gpu_required": not uses_api_runtime(),
+            "build_token": os.environ.get("RAMBLA_BUILD_TOKEN", "development"),
             "resolve_calls": 0,
         }
 

@@ -133,3 +133,18 @@ def test_cloud_ui_offers_video_audio_text_and_disables_local_gpu(monkeypatch):
     assert 'id="path" hidden' in html
     assert 'id="socialQwenV2" disabled' in html
     assert "visual_verify:false" in html
+
+
+def test_desktop_api_uses_api_workers_but_keeps_local_social_controls(monkeypatch):
+    from backend.app.curation_ui_v2 import render_curation_page_v2
+    from backend.app.debug_server import RunState, _command
+
+    monkeypatch.setenv('RAMBLA_RUNTIME_MODE','desktop_api')
+    video=Path('video.mp4')
+    command=_command(RunState('desktop',video,Path('run'),stage_type='analyze'))
+    html=render_curation_page_v2('desktop-build')
+
+    assert 'backend.app.cloud_analyze_cli' in command
+    assert 'DESKTOP · GPU FREE' in html
+    assert 'id="socialConnectionsV5" hidden' not in html
+    assert 'id="path" hidden' not in html

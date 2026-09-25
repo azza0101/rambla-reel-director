@@ -42,6 +42,9 @@ output/
 outputs/
 *.log
 .curation-acceptance-server.json
+.curation-logs/
+.user-launch.json
+rambla-data/
 
 # AI models and weights
 models/

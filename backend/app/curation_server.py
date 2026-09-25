@@ -715,7 +715,8 @@ def create_app(
             analysis_signature=project.analysis_signature, stage_type=stage,
         )
         debug.RUNS[state.run_id] = state
-        cloud_mode = os.environ.get("RAMBLA_RUNTIME_MODE", "").casefold().strip() == "cloud"
+        from .runtime_mode import uses_api_runtime
+        cloud_mode = uses_api_runtime()
         state.research_options={
             'visual_verify': False if cloud_mode else request.visual_verify,
             'variation_round': request.variation_round,
