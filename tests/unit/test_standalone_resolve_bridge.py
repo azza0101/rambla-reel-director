@@ -11,9 +11,9 @@ from tools.resolve_bridge.standalone_bridge import (
 
 
 def test_window_expands_for_a_received_package_and_stays_on_screen():
-    assert window_geometry(1920, 1080, requested_height=700, package_visible=False) == "680x700"
-    assert window_geometry(1920, 1080, requested_height=820, package_visible=True) == "760x860"
-    assert window_geometry(1280, 720, requested_height=900, package_visible=True) == "760x630"
+    assert window_geometry(1920, 1080, requested_height=700, package_visible=False) == "720x760"
+    assert window_geometry(1920, 1080, requested_height=820, package_visible=True) == "820x930"
+    assert window_geometry(1280, 720, requested_height=900, package_visible=True) == "820x640"
 
 
 def test_bridge_branding_assets_and_visual_language_are_present():
@@ -24,6 +24,9 @@ def test_bridge_branding_assets_and_visual_language_are_present():
     assert "draw_bridge_mark" in source
     assert "build_bridge_icon" in source
     assert "self.root.iconphoto(True, bridge_icon)" in source
+    assert "RoundedButton" in source
+    assert "RoundedPanel" in source
+    assert "Scrollable bridge surface" in source
     assert "#7c6cf2" in source
     assert Path("backend/assets/branding/rmbl_mark_white.png").is_file()
     assert Path("backend/assets/branding/rmbl_bridge_mark.svg").is_file()
@@ -139,6 +142,19 @@ def test_app_polls_immediately_then_schedules_every_second():
     app.start()
     assert client.polls == 1
     assert root.scheduled[0][0] == 1000
+
+
+def test_new_package_forces_the_expanded_geometry_after_render():
+    class Widget:
+        def configure(self, **_kwargs): pass
+    class IdleRoot(FakeRoot):
+        def after_idle(self, callback): callback()
+    root=IdleRoot(); app=BridgeApp(root,FakeClient(),build_ui=False)
+    app.widgets={name:Widget() for name in ('connection','timeline','package','apply','discard','message','progress')}
+    fitted=[]; app._fit_window=lambda *,package_visible: fitted.append(package_visible)
+    package={'package_id':'new','bridge_received_at':'now','summary':{},'change_summary':{}}
+    app._render(BridgeSnapshot(True,{'project':'P','timeline':'T'},package))
+    assert fitted == [True]
 
 
 def test_app_close_cancels_poll_and_releases_instance():

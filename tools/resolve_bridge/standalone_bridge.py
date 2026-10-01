@@ -16,6 +16,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from typing import Any, Callable
+import tkinter as tk
 
 APP_ROOT = Path(__file__).resolve().parents[2]
 def current_desktop_name() -> str:
@@ -54,9 +55,9 @@ LOADED_BUILD = bridge_build_token()
 
 def window_geometry(screen_width: int, screen_height: int, *, requested_height: int, package_visible: bool) -> str:
     """Return a useful bridge size without extending below the Windows work area."""
-    width = min(760 if package_visible else 680, max(560, screen_width - 80))
-    wanted = max(760, requested_height + 40) if package_visible else max(640, requested_height)
-    height = min(wanted, max(560, screen_height - 90))
+    width = min(820 if package_visible else 720, max(600, screen_width - 80))
+    wanted = max(930, requested_height + 70) if package_visible else max(760, requested_height + 30)
+    height = min(wanted, max(600, screen_height - 80))
     return f"{width}x{height}"
 
 
@@ -102,6 +103,103 @@ def build_bridge_icon(tk: Any, logo_path: Path) -> Any:
     _photo_line(icon, "#f7f8ff", (75, 8), (88, 22), 3)
     icon.put("#d8ff5b", to=(7, 28, 89, 34))
     return icon
+
+
+def _rounded_points(x1: int, y1: int, x2: int, y2: int, radius: int) -> list[int]:
+    radius = min(radius, max(1, (x2 - x1) // 2), max(1, (y2 - y1) // 2))
+    return [x1+radius,y1, x2-radius,y1, x2,y1, x2,y1+radius, x2,y2-radius,
+            x2,y2, x2-radius,y2, x1+radius,y2, x1,y2, x1,y2-radius,
+            x1,y1+radius, x1,y1]
+
+
+class RoundedPanel(tk.Canvas):
+    def __init__(self, parent: Any, *, fill: str = "#202746", outline: str = "#3d456d", height: int = 90, radius: int = 18, padding: int = 16):
+        super().__init__(parent, height=height, bg=parent.cget("bg"), highlightthickness=0, bd=0)
+        self.fill, self.outline, self.radius, self.padding = fill, outline, radius, padding
+        self.body = tk.Frame(self, bg=fill)
+        self._window = self.create_window(padding, padding, anchor="nw", window=self.body)
+        self.bind("<Configure>", self._redraw)
+
+    def _redraw(self, _event: Any = None) -> None:
+        width, height = max(2, self.winfo_width()), max(2, self.winfo_height())
+        self.delete("panel-bg")
+        self.create_polygon(_rounded_points(1, 1, width-1, height-1, self.radius), smooth=True,
+                            splinesteps=24, fill=self.fill, outline=self.outline, width=1, tags="panel-bg")
+        self.tag_lower("panel-bg")
+        self.itemconfigure(self._window, width=max(1, width-self.padding*2), height=max(1, height-self.padding*2))
+
+
+class RoundedButton(tk.Canvas):
+    def __init__(self, parent: Any, *, text: str, command: Callable[[], None], accent: bool = False, state: str = "normal"):
+        super().__init__(parent, height=48, bg=parent.cget("bg"), highlightthickness=0, bd=0, cursor="hand2")
+        self._text, self._command, self._accent, self._state, self._hover = text, command, accent, state, False
+        self.bind("<Configure>", self._draw); self.bind("<Enter>", self._enter); self.bind("<Leave>", self._leave); self.bind("<Button-1>", self._click)
+
+    def configure(self, cnf: Any = None, **kwargs: Any) -> Any:
+        if "state" in kwargs:
+            self._state = str(kwargs.pop("state"))
+            super().configure(cursor="arrow" if self._state == "disabled" else "hand2")
+        if "text" in kwargs:
+            self._text = str(kwargs.pop("text"))
+        result = super().configure(cnf, **kwargs) if cnf is not None or kwargs else None
+        self._draw()
+        return result
+
+    config = configure
+
+    def _enter(self, _event: Any) -> None: self._hover = True; self._draw()
+    def _leave(self, _event: Any) -> None: self._hover = False; self._draw()
+    def _click(self, _event: Any) -> None:
+        if self._state != "disabled": self._command()
+
+    def _draw(self, _event: Any = None) -> None:
+        self.delete("all")
+        width, height = max(20, self.winfo_width()), max(20, self.winfo_height())
+        if self._state == "disabled": fill, outline, ink = "#282d4b", "#3a4164", "#747b9d"
+        elif self._accent: fill, outline, ink = (("#e6ff84", "#efffae", "#111522") if self._hover else ("#d8ff5b", "#e8ff98", "#111522"))
+        else: fill, outline, ink = (("#514d8d", "#8c82ee", "#ffffff") if self._hover else ("#343b62", "#575f8d", "#f7f8ff"))
+        self.create_polygon(_rounded_points(1, 1, width-1, height-1, 14), smooth=True, splinesteps=24, fill=fill, outline=outline, width=1)
+        self.create_text(width/2, height/2, text=self._text, fill=ink, font=("Segoe UI Semibold", 10))
+
+
+class ProgressBar(tk.Canvas):
+    def __init__(self, parent: Any):
+        super().__init__(parent, height=12, bg=parent.cget("bg"), highlightthickness=0, bd=0)
+        self.value = 0
+        self.bind("<Configure>", self._draw)
+
+    def configure(self, cnf: Any = None, **kwargs: Any) -> Any:
+        if "value" in kwargs: self.value = max(0, min(100, int(kwargs.pop("value") or 0)))
+        result = super().configure(cnf, **kwargs) if cnf is not None or kwargs else None
+        self._draw(); return result
+
+    config = configure
+
+    def _draw(self, _event: Any = None) -> None:
+        self.delete("all"); width=max(2,self.winfo_width())
+        self.create_polygon(_rounded_points(0,1,width,11,5),smooth=True,fill="#29304f",outline="")
+        if self.value:
+            filled=max(10,int(width*self.value/100))
+            self.create_polygon(_rounded_points(0,1,filled,11,5),smooth=True,fill="#d8ff5b",outline="")
+
+
+class StatusPill(RoundedPanel):
+    def __init__(self, parent: Any):
+        super().__init__(parent, fill="#30202a", outline="#774052", height=46, radius=14, padding=11)
+        self.label = tk.Label(self.body, text="● CONNESSIONE IN CORSO", bg=self.fill, fg="#ff9d9d", font=("Segoe UI Semibold", 10), anchor="w")
+        self.label.pack(fill="both", expand=True)
+
+    def configure(self, cnf: Any = None, **kwargs: Any) -> Any:
+        text = kwargs.pop("text", None); style = kwargs.pop("style", None)
+        if style:
+            ready = style == "Lime.TLabel"
+            self.fill, self.outline = (("#173a2b", "#3f8b61") if ready else ("#30202a", "#774052"))
+            self.body.configure(bg=self.fill); self.label.configure(bg=self.fill, fg="#d8ff5b" if ready else "#ff9d9d")
+        if text is not None: self.label.configure(text=text)
+        result = super().configure(cnf, **kwargs) if cnf is not None or kwargs else None
+        self._redraw(); return result
+
+    config = configure
 
 
 def discover_base() -> str:
@@ -295,31 +393,25 @@ class BridgeApp:
             self._build_ui()
 
     def _build_ui(self) -> None:
-        import tkinter as tk
-        from tkinter import ttk
         self.root.title(f"RMBL B ROLL {RELEASE_VERSION}")
-        self.root.geometry("680x700")
-        self.root.minsize(560, 560)
+        self.root.geometry("720x760")
+        self.root.minsize(600, 600)
+        self.root.resizable(True, True)
         self.root.configure(bg="#11152b")
         self.root.protocol("WM_DELETE_WINDOW", self.close)
-        style = ttk.Style(self.root); style.theme_use("clam")
-        style.configure("R.TFrame", background="#11152b")
-        style.configure("Header.TFrame", background="#181d39")
-        style.configure("Card.TFrame", background="#202746")
-        style.configure("R.TLabel", background="#11152b", foreground="#e8ebff", font=("Segoe UI", 10))
-        style.configure("Eyebrow.TLabel", background="#181d39", foreground="#aeb6df", font=("Segoe UI Semibold", 9))
-        style.configure("Title.TLabel", background="#181d39", foreground="#f7f8ff", font=("Segoe UI Semibold", 19))
-        style.configure("Card.TLabel", background="#202746", foreground="#e8ebff", font=("Segoe UI", 10))
-        style.configure("Lime.TLabel", background="#183727", foreground="#d8ff5b", font=("Segoe UI Semibold", 10), padding=9)
-        style.configure("Bad.TLabel", background="#3a202b", foreground="#ff9d9d", font=("Segoe UI Semibold", 10), padding=9)
-        style.configure("R.TButton", background="#343b62", foreground="#f7f8ff", padding=11, font=("Segoe UI Semibold", 10), borderwidth=1)
-        style.map("R.TButton", background=[("active", "#4e4a86")])
-        style.configure("Apply.TButton", background="#d8ff5b", foreground="#111522", padding=12, font=("Segoe UI Semibold", 11))
-        style.map("Apply.TButton", background=[("disabled", "#343b62"), ("active", "#ebff9a")])
-        style.configure("R.Horizontal.TProgressbar", background="#d8ff5b", troughcolor="#29304f", borderwidth=0)
+        # Scrollable bridge surface: resizing never hides APPLICA on smaller displays.
+        viewport = tk.Canvas(self.root, bg="#11152b", highlightthickness=0, bd=0)
+        scrollbar = tk.Scrollbar(self.root, orient="vertical", command=viewport.yview, bg="#242b4b", troughcolor="#11152b", activebackground="#7c6cf2", bd=0, highlightthickness=0)
+        viewport.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y"); viewport.pack(side="left", fill="both", expand=True)
+        shell = tk.Frame(viewport, bg="#11152b", padx=24, pady=22)
+        shell_window = viewport.create_window(0, 0, anchor="nw", window=shell)
+        shell.bind("<Configure>", lambda _event: viewport.configure(scrollregion=viewport.bbox("all")))
+        viewport.bind("<Configure>", lambda event: viewport.itemconfigure(shell_window, width=event.width))
+        self.root.bind("<MouseWheel>", lambda event: viewport.yview_scroll(int(-event.delta / 120), "units"))
+        self.widgets["content"] = shell
 
-        shell = ttk.Frame(self.root, style="R.TFrame", padding=20); shell.pack(fill="both", expand=True)
-        header = ttk.Frame(shell, style="Header.TFrame", padding=14); header.pack(fill="x", pady=(0, 14))
+        header = RoundedPanel(shell, fill="#181d39", outline="#434b77", height=104, radius=24, padding=16); header.pack(fill="x", pady=(0, 14))
         logo_path = APP_ROOT / "backend" / "assets" / "branding" / "rmbl_mark_white.png"
         if logo_path.is_file():
             try:
@@ -327,53 +419,60 @@ class BridgeApp:
                 header_icon = bridge_icon.subsample(2, 2)
                 self._brand_images.extend([bridge_icon, header_icon])
                 self.root.iconphoto(True, bridge_icon)
-                ttk.Label(header, image=header_icon, style="Title.TLabel").pack(side="left", padx=(0, 13))
+                tk.Label(header.body, image=header_icon, bg="#181d39", bd=0).pack(side="left", padx=(0, 14))
             except tk.TclError:
-                mark = tk.Canvas(header, width=72, height=56, bg="#181d39", highlightthickness=0); mark.pack(side="left", padx=(0, 13)); draw_bridge_mark(mark)
+                mark = tk.Canvas(header.body, width=72, height=56, bg="#181d39", highlightthickness=0); mark.pack(side="left", padx=(0, 13)); draw_bridge_mark(mark)
         else:
-            mark = tk.Canvas(header, width=72, height=56, bg="#181d39", highlightthickness=0); mark.pack(side="left", padx=(0, 13)); draw_bridge_mark(mark)
-        heading = ttk.Frame(header, style="Header.TFrame"); heading.pack(side="left", fill="x", expand=True)
+            mark = tk.Canvas(header.body, width=72, height=56, bg="#181d39", highlightthickness=0); mark.pack(side="left", padx=(0, 13)); draw_bridge_mark(mark)
+        heading = tk.Frame(header.body, bg="#181d39"); heading.pack(side="left", fill="x", expand=True)
         wordmark_path = APP_ROOT / "backend" / "assets" / "branding" / "rmbl_wordmark_white.png"
         if wordmark_path.is_file():
             try:
                 wordmark = tk.PhotoImage(file=str(wordmark_path)).subsample(14, 14)
                 self._brand_images.append(wordmark)
-                ttk.Label(heading, image=wordmark, style="Title.TLabel").pack(anchor="w")
+                tk.Label(heading, image=wordmark, bg="#181d39", bd=0).pack(anchor="w")
             except tk.TclError:
-                ttk.Label(heading, text="RMBL / BRIDGE", style="Title.TLabel").pack(anchor="w")
+                tk.Label(heading, text="RMBL / BRIDGE", bg="#181d39", fg="#f7f8ff", font=("Segoe UI Semibold", 19)).pack(anchor="w")
         else:
-            ttk.Label(heading, text="RMBL / BRIDGE", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(heading, text=f"RESOLVE HANDOFF  ·  {RELEASE_VERSION}", style="Eyebrow.TLabel").pack(anchor="w", pady=(2, 0))
-        self.widgets["connection"] = ttk.Label(shell, text="● CONNESSIONE IN CORSO", style="Bad.TLabel"); self.widgets["connection"].pack(fill="x", pady=(0, 12))
-        card = ttk.Frame(shell, style="Card.TFrame", padding=14); card.pack(fill="x", pady=(0, 10))
-        self.widgets["timeline"] = ttk.Label(card, text="Timeline in attesa…", style="Card.TLabel", justify="left"); self.widgets["timeline"].pack(anchor="w")
-        options = ttk.Frame(shell, style="R.TFrame"); options.pack(fill="x", pady=4)
+            tk.Label(heading, text="RMBL / BRIDGE", bg="#181d39", fg="#f7f8ff", font=("Segoe UI Semibold", 19)).pack(anchor="w")
+        tk.Label(heading, text=f"RESOLVE HANDOFF  ·  {RELEASE_VERSION}", bg="#181d39", fg="#aeb6df", font=("Segoe UI Semibold", 9)).pack(anchor="w", pady=(3, 0))
+
+        self.widgets["connection"] = StatusPill(shell); self.widgets["connection"].pack(fill="x", pady=(0, 12))
+        card = RoundedPanel(shell, height=96, radius=18, padding=16); card.pack(fill="x", pady=(0, 12))
+        tk.Label(card.body, text="TIMELINE ATTIVA", bg="#202746", fg="#9299bc", font=("Segoe UI Semibold", 8), anchor="w").pack(fill="x")
+        self.widgets["timeline"] = tk.Label(card.body, text="Timeline in attesa…", bg="#202746", fg="#f1f3ff", font=("Segoe UI", 10), justify="left", anchor="w"); self.widgets["timeline"].pack(fill="x", pady=(5, 0))
+
+        options_card = RoundedPanel(shell, fill="#181d39", outline="#343c65", height=242, radius=20, padding=16); options_card.pack(fill="x", pady=(0, 12))
+        options = options_card.body
         self.detect_videos = tk.BooleanVar(value=os.environ.get('RAMBLA_BRIDGE_DETECT', '1') == '1'); self.include_v1 = tk.BooleanVar(value=os.environ.get('RAMBLA_BRIDGE_V1', '0') == '1')
-        ttk.Checkbutton(options, text="Detect videos · segnala le frasi già coperte", variable=self.detect_videos).pack(anchor="w", pady=3)
-        ttk.Checkbutton(options, text="Includi anche V1 · considera la traccia principale", variable=self.include_v1).pack(anchor="w", pady=3)
-        self.widgets["capture"] = ttk.Button(options, text="USA AUDIO IN RMBL B ROLL", style="R.TButton", command=self.capture_audio); self.widgets["capture"].pack(fill="x", pady=(9, 5))
-        self.widgets['open'] = ttk.Button(options, text='APRI RMBL B ROLL · PROGETTO SALVATO', style='R.TButton', command=self.open_rambla)
-        self.widgets['open'].pack(fill='x', pady=(4, 5))
-        self.widgets["capture_status"] = ttk.Label(options, text="", style="R.TLabel", wraplength=540); self.widgets["capture_status"].pack(anchor="w", pady=(0, 8))
-        ttk.Label(shell, text="PACCHETTO DA RMBL B ROLL", style="R.TLabel").pack(anchor="w", pady=(8, 5))
-        package_card = ttk.Frame(shell, style="Card.TFrame", padding=14); package_card.pack(fill="x")
-        self.widgets["package"] = ttk.Label(package_card, text="Nessun pacchetto ricevuto", style="Card.TLabel", justify="left", wraplength=530); self.widgets["package"].pack(anchor="w")
+        check_style = dict(bg="#181d39", fg="#eef0ff", activebackground="#181d39", activeforeground="#ffffff", selectcolor="#302d55", font=("Segoe UI", 10), bd=0, highlightthickness=0)
+        tk.Checkbutton(options, text="Rileva i video già presenti", variable=self.detect_videos, **check_style).pack(anchor="w", pady=(0, 5))
+        tk.Checkbutton(options, text="Considera anche la traccia principale V1", variable=self.include_v1, **check_style).pack(anchor="w", pady=(0, 10))
+        self.widgets["capture"] = RoundedButton(options, text="USA AUDIO IN RMBL B ROLL", command=self.capture_audio); self.widgets["capture"].pack(fill="x", pady=(0, 7))
+        self.widgets['open'] = RoundedButton(options, text='APRI RMBL B ROLL · PROGETTO SALVATO', command=self.open_rambla); self.widgets['open'].pack(fill='x')
+        self.widgets["capture_status"] = tk.Label(options, text="", bg="#181d39", fg="#b9c1e0", font=("Segoe UI", 9), wraplength=690, justify="left", anchor="w"); self.widgets["capture_status"].pack(fill="x", pady=(8, 0))
+
+        tk.Label(shell, text="PACCHETTO DA RMBL B ROLL", bg="#11152b", fg="#aeb6df", font=("Segoe UI Semibold", 9), anchor="w").pack(fill="x", pady=(6, 7))
+        package_card = RoundedPanel(shell, height=132, radius=18, padding=16); package_card.pack(fill="x")
+        self.widgets["package"] = tk.Label(package_card.body, text="Nessun pacchetto ricevuto", bg="#202746", fg="#f1f3ff", font=("Segoe UI", 10), justify="left", anchor="w", wraplength=690); self.widgets["package"].pack(fill="both", expand=True)
         self.destination = tk.StringVar(value=os.environ.get('RAMBLA_BRIDGE_DESTINATION', 'new'))
-        destinations = ttk.Frame(shell, style="R.TFrame"); destinations.pack(fill="x", pady=(10, 5))
-        ttk.Radiobutton(destinations, text="CREA NUOVA TIMELINE · TEMP (predefinito)", value="new", variable=self.destination).pack(anchor="w", pady=3)
-        ttk.Radiobutton(destinations, text="IMPORTA SULLA TIMELINE ATTIVA · con copia TEMP", value="active", variable=self.destination).pack(anchor="w", pady=3)
-        self.widgets["progress"] = ttk.Progressbar(shell, maximum=100, value=0, style="R.Horizontal.TProgressbar"); self.widgets["progress"].pack(fill="x", pady=(10, 5))
-        self.widgets["message"] = ttk.Label(shell, text="L'applicazione parte soltanto quando premi APPLICA.", style="R.TLabel", wraplength=540); self.widgets["message"].pack(anchor="w", pady=(0, 9))
-        actions = ttk.Frame(shell, style="R.TFrame"); actions.pack(fill="x")
-        self.widgets["apply"] = ttk.Button(actions, text="APPLICA", style="Apply.TButton", command=self.apply, state="disabled"); self.widgets["apply"].pack(side="left", fill="x", expand=True, padx=(0, 5))
-        self.widgets["discard"] = ttk.Button(actions, text="SCARTA", style="R.TButton", command=self.discard, state="disabled"); self.widgets["discard"].pack(side="left", fill="x", expand=True, padx=(5, 0))
+        destinations = tk.Frame(shell, bg="#11152b"); destinations.pack(fill="x", pady=(12, 5))
+        radio_style = dict(bg="#11152b", fg="#eef0ff", activebackground="#11152b", activeforeground="#ffffff", selectcolor="#302d55", font=("Segoe UI", 10), bd=0, highlightthickness=0)
+        tk.Radiobutton(destinations, text="CREA NUOVA TIMELINE · TEMP", value="new", variable=self.destination, **radio_style).pack(anchor="w", pady=3)
+        tk.Radiobutton(destinations, text="IMPORTA SULLA TIMELINE ATTIVA · con copia TEMP", value="active", variable=self.destination, **radio_style).pack(anchor="w", pady=3)
+        self.widgets["progress"] = ProgressBar(shell); self.widgets["progress"].pack(fill="x", pady=(12, 8))
+        self.widgets["message"] = tk.Label(shell, text="L'applicazione parte soltanto quando premi APPLICA.", bg="#11152b", fg="#b9c1e0", font=("Segoe UI", 9), wraplength=690, justify="left", anchor="w"); self.widgets["message"].pack(fill="x", pady=(0, 10))
+        actions = tk.Frame(shell, bg="#11152b"); actions.pack(fill="x", pady=(0, 8))
+        self.widgets["apply"] = RoundedButton(actions, text="APPLICA", command=self.apply, accent=True, state="disabled"); self.widgets["apply"].pack(side="left", fill="x", expand=True, padx=(0, 6))
+        self.widgets["discard"] = RoundedButton(actions, text="SCARTA", command=self.discard, state="disabled"); self.widgets["discard"].pack(side="left", fill="x", expand=True, padx=(6, 0))
         self._fit_window(package_visible=False)
 
     def _fit_window(self, *, package_visible: bool) -> None:
         if not hasattr(self.root, "winfo_screenheight"):
             return
         self.root.update_idletasks()
-        requested = int(self.root.winfo_reqheight())
+        content = self.widgets.get("content")
+        requested = int(content.winfo_reqheight() if content is not None else self.root.winfo_reqheight())
         geometry = window_geometry(
             int(self.root.winfo_screenwidth()),
             int(self.root.winfo_screenheight()),
@@ -439,13 +538,13 @@ class BridgeApp:
             package_id = str(package.get("package_id") or "")
             if package_id and package_id != self._last_package_id:
                 self._last_package_id = package_id
-                self._fit_window(package_visible=True)
+                self.root.after_idle(lambda: self._fit_window(package_visible=True))
         else:
             self.widgets["package"].configure(text="Nessun pacchetto ricevuto\nInvia il montaggio dalla sezione EXPORT TIMELINE di RMBL B ROLL.")
             self.widgets["apply"].configure(state="disabled"); self.widgets["discard"].configure(state="disabled"); self.widgets["progress"].configure(value=0)
             if self._last_package_id:
                 self._last_package_id = ""
-                self._fit_window(package_visible=False)
+                self.root.after_idle(lambda: self._fit_window(package_visible=False))
 
     def apply(self) -> None:
         try:

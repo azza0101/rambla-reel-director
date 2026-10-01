@@ -24,7 +24,7 @@ def test_bridge_requires_confirmation_and_offers_both_destinations():
     assert 'IMPORTA SULLA TIMELINE ATTIVA' in source
     assert 'APPLICA' in source and 'SCARTA' in source
     assert '/resolve-handoffs/pending' in source
-    assert 'ttk.Progressbar' in source
+    assert 'ProgressBar' in source
     assert 'def _render_job' in source
     assert 'NUOVA REVISIONE' in source
     assert 'self.client.apply(self.destination.get())' in source
@@ -32,4 +32,4 @@ def test_bridge_requires_confirmation_and_offers_both_destinations():
     assert 'RMBL B ROLL CONNECTED' in source
     assert 'BRIDGE OFFLINE' in source
     assert 'SingleInstance' in source
-    assert 'background="#d8ff5b"' in source
+    assert '"#d8ff5b"' in source
