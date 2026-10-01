@@ -66,9 +66,78 @@ def test_search_relaxes_nonessential_travel_modifiers():
     assert "travel planning map" in variants
 
 
+def test_stock_query_rounds_become_simpler_and_change_each_time():
+    from backend.app.retrieval_quality import provider_video_variants
+
+    queries = ["person checking dry skin on foot", "candid hand rubbing foot callus"]
+    target = "a person sits on a bed or sofa and looks down at the side of their foot near a small dry patch"
+    first = provider_video_variants(queries, target, 1)
+    second = provider_video_variants(queries, target, 2)
+    assert first[0] == "dry skin foot"
+    assert "person" not in first[0]
+    assert second[0] != first[0]
+    assert any("foot" in query for query in second)
+    assert all("sits bed" not in query for query in second)
+
+
+def test_later_stock_rounds_switch_to_the_shared_concrete_keyword():
+    from backend.app.retrieval_quality import provider_video_variants
+
+    queries = [
+        "opening small bathroom door",
+        "phone shot home bathroom sink",
+        "walking into bathroom door",
+    ]
+    target = "a small residential bathroom entrance with a sink, mirror and towel"
+
+    assert provider_video_variants(queries, target, 1)[0] == "bathroom door"
+    assert provider_video_variants(queries, target, 3)[0] == "bathroom"
+    assert provider_video_variants(queries, target, 4)[0] == "bathroom interior"
+
+
+def test_keyword_fallback_comes_from_director_queries_not_verbose_target_props():
+    from backend.app.retrieval_quality import provider_video_variants
+
+    variants = provider_video_variants(
+        ["opening small bathroom door"],
+        "ordinary bathroom with sink, mirror, towel and no luxury hotel styling",
+        3,
+    )
+
+    assert variants[0] == "bathroom"
+    assert all("mirror" not in query and "towel" not in query for query in variants)
+
+
+def test_later_stock_round_prefers_scene_location_over_repeated_prop():
+    from backend.app.retrieval_quality import provider_video_variants
+
+    variants = provider_video_variants(
+        [
+            "closing bathroom mirror cabinet",
+            "hand shutting medicine cabinet door",
+            "phone shot closing bathroom cabinet",
+        ],
+        "ordinary private bathroom with a mirror cabinet",
+        3,
+    )
+
+    assert variants[0] == "bathroom"
+
+
+def test_pexels_basic_query_can_surface_a_concrete_source_for_manual_review():
+    from types import SimpleNamespace
+    from backend.app.quality_video import _discovery_relevant
+
+    intent = "person casually checking a dry patch on the side of a foot"
+    foot = SimpleNamespace(provider="pexels", query="dry skin foot", title="close up video of a foot", description="")
+    soap = SimpleNamespace(provider="pexels", query="dry skin foot", title="person holding a soap", description="")
+    assert _discovery_relevant(foot, intent) is True
+    assert _discovery_relevant(soap, intent) is False
+
+
 def test_video_retrieval_version_changes_when_localization_contract_changes():
     from backend.app.quality_video import QUALITY_VERSION
-    assert QUALITY_VERSION == "clip-quality-13"
+    assert QUALITY_VERSION == "clip-quality-15-social"
 
 
 def test_contextual_image_retrieval_version_is_current():
@@ -87,3 +156,19 @@ def test_stale_retrieval_artifacts_do_not_drive_current_diagnostics():
     current_images = {"schema_version": image_version, "chunks": {"b1": {"raw_count": 1}}}
     assert current_image_chunks(stale_images) == {}
     assert current_image_chunks(current_images) == current_images["chunks"]
+
+
+def test_manual_discovery_result_keeps_pexels_available_without_ranker():
+    from backend.app.retrieval_diagnostics import video_diagnostic
+
+    result = video_diagnostic([{
+        "quality_version": _versions()[0],
+        "search_attempts": [{"provider": "pexels", "query": "egypt ruins", "hits": 12}],
+        "candidates": [],
+        "discovery_sources": [{"id": "pexels:42", "source": "pexels", "title": "Egyptian ruins"}],
+        "ranking_warning": "ranker unavailable",
+        "rejected_candidates": [],
+    }], "pexels")
+
+    assert result["code"] == "available"
+    assert result["counts"]["accepted"] == 1

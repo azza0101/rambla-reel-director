@@ -1,4 +1,9 @@
 from html.parser import HTMLParser
+import json
+import shutil
+import subprocess
+
+import pytest
 
 from backend.app.curation_ui import BUILD_PREFIX, BUILD_SENTINEL_PREFIX, move_selection, phrase_status, remaining_decisions, render_curation_page
 
@@ -37,6 +42,27 @@ def test_authoritative_renderer_has_build_marker_and_no_legacy_ui():
     assert "Solo selezionati" not in page
     assert "Selezione locale" not in page
     assert page.count("<script>") == 1
+    from backend.app.curation_ui_v2 import render_curation_page_v2
+    product_page=render_curation_page_v2("abc1234")
+    assert '/desktop-target' in product_page
+    assert 'desktopTargetRevision' in product_page
+
+
+def test_visual_beat_number_is_stable_when_the_rail_is_filtered():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node runtime unavailable")
+    page = render_curation_page("beat-number")
+    function = next(
+        line for line in page.splitlines()
+        if line.startswith("function visualBeatLabelV36(")
+    )
+    script = function + "\nconsole.log(visualBeatLabelV36([{id:'a'},{id:'b'},{id:'c'}],{id:'b'}));"
+
+    result = subprocess.run([node, "-e", script], capture_output=True, text=True, encoding="utf-8")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "BEAT 2"
 
 
 def test_acceptance_launcher_uses_dynamic_local_port_and_fast_forward_contract():
@@ -85,6 +111,13 @@ def test_staged_curation_controller_separates_actions_and_inspection():
     assert "if(video)target.play().catch" in page
     assert "r.transcript_status==='active'" in page
     assert "Analysis failed before ASR:" in page
+
+
+def test_selected_media_card_has_an_explicit_visual_state():
+    page = render_curation_page("selected-card")
+    assert ".card.active{" in page
+    assert "--selected-card" in page
+    assert "SELEZIONATO" in page
 
 
 def test_analysis_details_render_concrete_visual_plan_and_search_evidence():

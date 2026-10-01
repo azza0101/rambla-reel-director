@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .video_preview import probe_preview
@@ -86,6 +86,8 @@ def load_curation_run(run_dir: Path) -> CurationRunView:
         if any(slot.get('quality_version')!=VIDEO_QUALITY_VERSION for slot in online):
             errors.append('Video retrieval predates clip verification: rerun video search.')
             online=[slot for slot in online if slot.get('quality_version')==VIDEO_QUALITY_VERSION]
+    from .envato_download_bridge import load_registry
+    envato_downloads = load_registry(run_dir)["assets"]
     found: dict[str, list[CurationCandidate]] = {}
     for slot in online:
         cid = slot.get("parent_beat_id")
@@ -96,6 +98,16 @@ def load_curation_run(run_dir: Path) -> CurationRunView:
             if not isinstance(row, dict):
                 continue
             candidate = _video_candidate(str(cid), row)
+            downloaded = envato_downloads.get(candidate.asset_id) if candidate.provider == "envato" else None
+            downloaded_path = Path(str((downloaded or {}).get("media_path") or ""))
+            if downloaded_path.is_file() and probe_preview(downloaded_path)["playable"]:
+                candidate = replace(
+                    candidate,
+                    local_asset_path=str(downloaded_path.resolve()),
+                    clip_verified=True,
+                    acquisition_state="CLIP_READY",
+                    preview_status="ready",
+                )
             seen_ids.add(candidate.asset_id)
             found.setdefault(str(cid), []).append(candidate)
         # Discovery is intentionally kept separate from final verified candidates.
@@ -114,7 +126,10 @@ def load_curation_run(run_dir: Path) -> CurationRunView:
             found.setdefault(cid, []).append(CurationCandidate(f"{cid}--{row['provider']}:{row['provider_id']}", cid, "image", row["provider"], row["source_page"], row["title"], row.get("description", ""), float(row.get("score", 0.0)), row["rights_state"], row["orientation"], preview_path=row.get("preview_path"), local_asset_path=row.get("preview_path"), preview_url=None if row.get("preview_path") else row.get("thumbnail_url") or row.get("full_url"),license_name=row.get("license_name"),license_url=row.get("license_url"),attribution=row.get("attribution"),shot_id=row.get("shot_id"),matched_query=row.get("matched_query",row.get("query")),quality_state=row.get("quality_state"),clip_verified=bool(row.get("clip_verified")),quality_reasons=tuple(row.get("quality_reasons",[])),source_start_seconds=row.get("source_start_seconds"),source_end_seconds=row.get("source_end_seconds")))
     views=[]; index={}
     for row in chunks:
-        shelf=build_candidate_shelf(found.get(row["id"], []))
+        # Keep the accumulated provider pages available to the UI gallery.
+        # Pagination is a presentation concern; truncating stock here made
+        # every successful "Cerca altre 6" round appear to find nothing.
+        shelf=build_candidate_shelf(found.get(row["id"], []), video_limit=96, social_limit=96)
         for candidate in (*shelf.video,*shelf.images): index[candidate.asset_id]=candidate
         views.append(CurationChunkView(row["id"],row.get("text", ""),shelf.video,shelf.images))
     return CurationRunView(tuple(views),index,tuple(errors))

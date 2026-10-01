@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import importlib.util
+import json
 import os
 from html.parser import HTMLParser
 from pathlib import Path
@@ -17,10 +18,11 @@ from typing import Any, Awaitable, Callable
 from urllib.parse import urljoin
 
 
-SUPPORTED_SOCIAL_PROVIDERS = ("tiktok", "instagram")
+SUPPORTED_SOCIAL_PROVIDERS = ("tiktok", "instagram", "envato")
 DEFAULT_START_URLS = {
     "tiktok": "https://www.tiktok.com/",
     "instagram": "https://www.instagram.com/",
+    "envato": "https://elements.envato.com/",
 }
 
 PlaywrightRunner = Callable[[Path, str | None, Callable[[Any, Any], Any]], Awaitable[Any]]
@@ -29,6 +31,45 @@ LoginLauncher = Callable[[str, Path, str], int]
 
 class BrowserUnavailableError(RuntimeError):
     pass
+
+
+def normal_chrome_profile() -> tuple[Path, str] | None:
+    """Return the current user's real Chrome user-data root and last-used profile."""
+    override = os.environ.get("RAMBLA_CHROME_USER_DATA_DIR", "").strip()
+    if override:
+        root = Path(override)
+    elif os.name == "nt" and os.environ.get("LOCALAPPDATA"):
+        root = Path(os.environ["LOCALAPPDATA"]) / "Google" / "Chrome" / "User Data"
+    else:
+        root = Path.home() / ".config" / "google-chrome"
+    if not root.is_dir():
+        return None
+    profile = os.environ.get("RAMBLA_CHROME_PROFILE", "").strip()
+    if not profile:
+        try:
+            payload = json.loads((root / "Local State").read_text(encoding="utf-8"))
+            profile = str(((payload.get("profile") or {}).get("last_used") or "")).strip()
+        except Exception:
+            profile = ""
+    profile = profile or "Default"
+    if not (root / profile).is_dir():
+        profile = "Default" if (root / "Default").is_dir() else profile
+    return root, profile
+
+
+def _installed_chrome() -> str | None:
+    for name in ("chrome", "chrome.exe", "google-chrome"):
+        found = shutil.which(name)
+        if found:
+            return found
+    if os.name == "nt":
+        for root in (os.environ.get("PROGRAMFILES"), os.environ.get("PROGRAMFILES(X86)"), os.environ.get("LOCALAPPDATA")):
+            if not root:
+                continue
+            candidate = Path(root) / "Google" / "Chrome" / "Application" / "chrome.exe"
+            if candidate.is_file():
+                return str(candidate)
+    return None
 
 
 class _DomAnchorParser(HTMLParser):
@@ -44,7 +85,7 @@ class _DomAnchorParser(HTMLParser):
     def _scope_flags(self, tag: str, values: dict[str, str | None]) -> tuple[bool, bool]:
         frames = [*self._stack, (tag, values)]
         tiktok = any(
-            attrs.get("data-e2e") in {"search-card-video", "search-card-video-link"}
+            attrs.get("data-e2e") in {"search-card-video", "search-card-video-link", "search_video-item"}
             or "DivItemContainerForSearch" in str(attrs.get("class") or "")
             for _name, attrs in frames
         )
@@ -99,6 +140,7 @@ class _DumpDomPage:
         parser = _DomAnchorParser(url)
         parser.feed(html or "")
         self._anchors = parser.rows
+        self._html = html or ""
         self.url = url
 
     @staticmethod
@@ -120,6 +162,9 @@ class _DumpDomPage:
         if provider not in {"tiktok", "instagram"}:
             raise ValueError("unsupported social provider")
         return [self._public_row(row) for row in self._anchors if row.get(key)]
+
+    async def content(self) -> str:
+        return self._html
 
     async def evaluate(self, _script: str) -> None:
         return None
@@ -154,7 +199,7 @@ async def _default_chromium_dom_runner(
         "--no-default-browser-check",
         f"--user-data-dir={profile_dir}",
         "--profile-directory=Default",
-        "--virtual-time-budget=8000",
+        "--timeout=15000",
         "--dump-dom",
         start_url,
     ]
@@ -174,10 +219,30 @@ async def _default_chromium_dom_runner(
 
     try:
         completed = await asyncio.to_thread(run_dump)
+    except subprocess.TimeoutExpired as exc:
+        # Chrome can finish the DOM dump while a child retains the pipe. A
+        # complete document can still be inspected; a partial one cannot.
+        output = exc.stdout or ""
+        if isinstance(output, bytes):
+            output = output.decode("utf-8", errors="replace")
+        if "<html" in output.casefold() and "</html>" in output.casefold():
+            completed = subprocess.CompletedProcess(command, 0, output, "")
+        else:
+            raise BrowserUnavailableError(
+                "search_timeout: Chrome did not return a complete search page within 25 seconds; "
+                "login state unknown. Close only the RAMBLA social login windows, then retry verification."
+            ) from exc
     except Exception as exc:
-        raise BrowserUnavailableError("Chromium DOM automation failed") from exc
+        raise BrowserUnavailableError(f"Chromium DOM automation failed: {type(exc).__name__}") from exc
     if int(getattr(completed, "returncode", 1)) != 0:
-        raise BrowserUnavailableError("Chromium DOM automation failed")
+        stderr = str(getattr(completed, "stderr", "") or "").casefold()
+        if "processsingleton" in stderr or "lock file can not be created" in stderr:
+            reason = "profile_in_use: close the RAMBLA social login browser window, then retry"
+        elif "access is denied" in stderr or "accesso negato" in stderr:
+            reason = "browser_access_denied: browser launch was denied by the current environment"
+        else:
+            reason = f"browser_exit_{completed.returncode}"
+        raise BrowserUnavailableError(reason)
     page = _DumpDomPage(str(getattr(completed, "stdout", "") or ""), start_url)
     result = callback(page, None)
     if inspect.isawaitable(result):
@@ -203,26 +268,28 @@ async def _default_playwright_runner(
 
     profile_dir.mkdir(parents=True, exist_ok=True)
     async with async_playwright() as playwright:
-        context = None
-        failures: list[str] = []
-        for channel in ("msedge", "chrome", None):
-            try:
-                kwargs = {
-                    "user_data_dir": str(profile_dir),
-                    "headless": True,
-                    "accept_downloads": True,
-                }
-                if channel:
-                    kwargs["channel"] = channel
-                context = await playwright.chromium.launch_persistent_context(**kwargs)
-                break
-            except Exception as exc:  # provider/browser specific, surfaced compactly
-                failures.append(f"{channel or 'chromium'}:{type(exc).__name__}")
-        if context is None:
-            try:
-                return await _default_chromium_dom_runner(profile_dir, start_url, callback)
-            except BrowserUnavailableError as exc:
-                raise BrowserUnavailableError("No supported Chromium browser available (" + ", ".join(failures) + ")") from exc
+        browser = _installed_browser()
+        if not browser:
+            raise BrowserUnavailableError("No supported Edge/Chrome browser found")
+        try:
+            context = await playwright.chromium.launch_persistent_context(
+                user_data_dir=str(profile_dir), executable_path=browser,
+                headless=True, accept_downloads=True, chromium_sandbox=True,
+            )
+        except Exception as exc:
+            # Use the same executable as OPEN. Never switch browsers against
+            # one profile or replace a failed dynamic search with a DOM dump.
+            detail = str(exc)
+            import logging
+            logging.getLogger(__name__).error("Social browser launch failed: %s", detail)
+            lowered = detail.casefold()
+            if any(marker in lowered for marker in ("processsingleton", "profile already in use", "user data directory is already in use")):
+                reason = "profile_in_use: close the RAMBLA login window before verification"
+            elif "access is denied" in lowered or "accesso negato" in lowered:
+                reason = "browser_access_denied: browser launch or IPC was denied"
+            else:
+                reason = "browser_launch_failed: " + " ".join(detail.split())[:280]
+            raise BrowserUnavailableError(reason) from exc
         try:
             page = context.pages[0] if context.pages else await context.new_page()
             if start_url:
@@ -240,19 +307,23 @@ async def _default_playwright_runner(
 
 def _installed_browser() -> str | None:
     """Return an installed Chromium browser without reading a user's main profile."""
-    for name in ("msedge", "msedge.exe", "chrome", "chrome.exe", "google-chrome"):
+    for name in ("msedge", "msedge.exe", "chrome", "chrome.exe", "google-chrome", "chromium", "chromium-browser"):
         found = shutil.which(name)
         if found:
             return found
     if os.name == "nt":
-        candidates = []
-        for root in (os.environ.get("PROGRAMFILES"), os.environ.get("PROGRAMFILES(X86)"), os.environ.get("LOCALAPPDATA")):
-            if not root:
-                continue
-            candidates.extend((
-                Path(root) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
-                Path(root) / "Google" / "Chrome" / "Application" / "chrome.exe",
-            ))
+        roots = [
+            Path(root) for root in (
+                os.environ.get("PROGRAMFILES"),
+                os.environ.get("PROGRAMFILES(X86)"),
+                os.environ.get("LOCALAPPDATA"),
+            ) if root
+        ]
+        # Keep the browser preference global.  Interleaving candidates per
+        # installation root could return Chrome from Program Files before the
+        # preferred Edge installation in Program Files (x86).
+        candidates = [root / "Microsoft" / "Edge" / "Application" / "msedge.exe" for root in roots]
+        candidates += [root / "Google" / "Chrome" / "Application" / "chrome.exe" for root in roots]
         for candidate in candidates:
             if candidate.is_file():
                 return str(candidate)
@@ -260,29 +331,49 @@ def _installed_browser() -> str | None:
 
 
 def _default_login_launcher(provider: str, profile_dir: Path, start_url: str) -> int:
-    """Open the login page in a RAMBLA-owned persistent browser profile.
-
-    Login itself does not need Playwright. This keeps credentials in the real
-    browser and lets the curation UI work even when the server venv has no pip.
-    """
-    del provider  # provider is already encoded by start_url/profile_dir
-    profile_dir.mkdir(parents=True, exist_ok=True)
-    browser = _installed_browser()
-    if not browser:
-        raise BrowserUnavailableError("No supported Edge/Chrome browser found")
-    command = [
-        browser,
-        f"--user-data-dir={profile_dir}",
-        "--no-first-run",
-        "--no-default-browser-check",
-        start_url,
-    ]
+    """Open provider login. Envato deliberately uses the user's normal Chrome."""
+    if provider == "envato":
+        if os.name == "nt":
+            # Hand the URL to the already-running user browser through Windows.
+            # Spawning chrome.exe directly can create a second ProcessSingleton,
+            # crash Crashpad, and show an application-error dialog.
+            os.startfile(start_url)  # type: ignore[attr-defined]
+            return 0
+        browser = _installed_chrome()
+        if not browser:
+            raise BrowserUnavailableError("Google Chrome not found")
+        command = [browser, start_url]
+    else:
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        browser = _installed_browser()
+        if not browser:
+            raise BrowserUnavailableError("No supported Edge/Chrome browser found")
+        command = [
+            browser,
+            f"--user-data-dir={profile_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            start_url,
+        ]
     kwargs: dict[str, Any] = {"stdin": subprocess.DEVNULL}
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     else:
         kwargs["start_new_session"] = True
     process = subprocess.Popen(command, **kwargs)
+    # Popen success only means process creation. Chrome can immediately fail
+    # with a locked profile or denied IPC; do not present that as a login window.
+    if provider in {"tiktok", "instagram"}:
+        try:
+            code = process.wait(timeout=6)
+        except subprocess.TimeoutExpired:
+            code = None
+        if code not in {None, 0}:
+            raise BrowserUnavailableError(
+                f"{provider}: browser exited with code {code}. "
+                "Close the RAMBLA login window if already open. If no window opens, "
+                "start RAMBLA from its local launcher outside the restricted agent runtime."
+            )
     return int(process.pid)
 
 
@@ -293,16 +384,43 @@ class BrowserProfileManager:
         *,
         playwright_runner: PlaywrightRunner | None = None,
         login_launcher: LoginLauncher | None = None,
+        owns_live_session: bool = False,
     ) -> None:
         self.root = Path(root)
-        self._runner = playwright_runner or _default_playwright_runner
+        self.owns_live_session = owns_live_session
+        self.connection_ready = {}
+        from .live_social_sessions import LiveSocialSessions
+        self._runner = playwright_runner or LiveSocialSessions()
         self._login_launcher = login_launcher or _default_login_launcher
         self._locks = {provider: asyncio.Lock() for provider in SUPPORTED_SOCIAL_PROVIDERS}
+
+    async def open_login_async(self, provider: str) -> dict[str, Any]:
+        if provider == "envato" or self._login_launcher is not _default_login_launcher:
+            return await asyncio.to_thread(self.open_login, provider)
+        focus = getattr(self._runner, 'focus_existing', None)
+        if focus and await focus(self.profile_dir(provider)):
+            return {"provider": provider, "status": "focused", "session": "visible_persistent"}
+        async def show(page, _context):
+            await page.bring_to_front()
+            return {"provider": provider, "status": "started", "session": "visible_persistent"}
+        connected = getattr(self._runner, "is_connected", lambda _p: False)(self.profile_dir(provider))
+        # OPEN must only focus an existing session, preserving login/challenge
+        # forms and the current search instead of navigating back to the feed.
+        return await self.run_in_profile(provider, show, start_url=None if connected else DEFAULT_START_URLS[provider])
+
+    async def close(self):
+        closer = getattr(self._runner, "close", None)
+        if closer:
+            await closer()
 
     def profile_dir(self, provider: str) -> Path:
         clean = str(provider or "").casefold().strip()
         if clean not in SUPPORTED_SOCIAL_PROVIDERS:
             raise ValueError("unsupported social provider")
+        if clean == "envato":
+            resolved = normal_chrome_profile()
+            if resolved is not None:
+                return resolved[0]
         return self.root / clean
 
     async def run_in_profile(
@@ -326,6 +444,34 @@ class BrowserProfileManager:
         pid = self._login_launcher(clean, directory, url)
         return {"provider": clean, "status": "started", "pid": int(pid)}
 
+    async def check_search(self, provider: str) -> dict[str, Any]:
+        """Read the open page only: no test query, navigation, or new browser."""
+        from .social_page_evidence import inspect_search_html, challenge_required
+        from urllib.parse import urlparse
+        if provider not in {'tiktok','instagram'}:raise ValueError('unsupported social provider')
+        if not getattr(self._runner,'is_connected',lambda p:False)(self.profile_dir(provider)):
+            self.connection_ready[provider]=False
+            return {'provider':provider,'ready':False,'login_state':'unknown','browser_state':'browser_closed','detail':'Open the RAMBLA browser and sign in; no test search was performed.'}
+        async def inspect(page,context):
+            html=await page.content()
+            evidence=inspect_search_html(html)
+            parsed=urlparse(str(page.url));host=(parsed.hostname or '').lower()
+            valid=host==provider+'.com' or host.endswith('.'+provider+'.com')
+            challenge=challenge_required(html)
+            login=evidence.login_required or parsed.path.startswith(('/login','/accounts/login'))
+            grid=valid and parsed.path.startswith('/search') and ('search_video-item' in html or 'search-card-video' in html)
+            confirmed=valid and not challenge and not login and (evidence.signed_in or grid or self.connection_ready.get(provider,False))
+            ready=valid and not challenge and not login and bool(evidence.visible_text.strip())
+            ready=bool(ready or confirmed)
+            self.connection_ready[provider]=bool(confirmed)
+            return {'provider':provider,'ready':bool(ready),'login_state':'required' if login else 'verified' if evidence.signed_in else 'unknown',
+                    'browser_state':'challenge_required' if challenge else 'login_required' if login else 'session_ready' if confirmed else 'session_unconfirmed' if ready else 'session_unknown',
+                    'detail':'TikTok/Instagram verification required: resolve it manually in the open window. No automatic retry.' if challenge else 'Connected session reused; no test search performed.' if confirmed else 'Browser open; session not confirmed. You can start the real search. No test search performed.' if ready else 'Open the provider page and complete any login request.'}
+        try:return await self.run_in_profile(provider,inspect,start_url=None)
+        except Exception as exc:
+            self.connection_ready[provider]=False
+            return {'provider':provider,'ready':False,'login_state':'unknown','detail':str(exc)[:400],'error':type(exc).__name__}
+
     def status(self) -> dict[str, dict[str, Any]]:
         if importlib.util.find_spec("playwright") is not None:
             search_backend = "playwright"
@@ -338,9 +484,16 @@ class BrowserProfileManager:
             search_ready = False
         return {
             provider: {
-                "profile_ready": self.profile_dir(provider).is_dir(),
+                "profile_ready": (
+                    bool(normal_chrome_profile())
+                    if provider == "envato"
+                    else self.profile_dir(provider).is_dir()
+                ),
                 "search_ready": search_ready,
                 "search_backend": search_backend,
+                "connection_ready": bool(self.connection_ready.get(provider)) and bool(
+                    getattr(self._runner, "is_connected", lambda _p: False)(self.profile_dir(provider))
+                ),
             }
             for provider in SUPPORTED_SOCIAL_PROVIDERS
         }

@@ -35,13 +35,14 @@ def test_social_fallback_card_state_is_derived_from_preview_status_and_selectabi
     assert "socialStateV2" in html
 
 
-def test_v2_renderer_labels_itself_as_v2_without_changing_internal_build_sentinel():
+def test_product_renderer_keeps_clean_curation_branding_and_internal_build_sentinel():
     from backend.app.curation_ui_v2 import render_curation_page_v2
 
     html = render_curation_page_v2("label-test")
-    assert "<h1>RAMBLA Curation V2</h1>" in html
-    assert "CURATION V2 · build label-test" in html
-    assert "CURATION V1 · build label-test" not in html
+    assert '<span class="brandProductV41">RMBL B ROLL</span><span class="releaseVersionV35">v0021</span>' in html
+    assert "RAMBLA Curation V2" not in html
+    assert "CURATION · build label-test" in html
+    assert "CURATION V2" not in html
     assert "CURATION-V1-build-label-test" in html
 
 

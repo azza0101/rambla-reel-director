@@ -7,6 +7,8 @@ filter, preview, rank and persist safely.
 
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import dataclass
 from typing import Any, Iterable
 from urllib.parse import urlsplit, urlunsplit
@@ -180,6 +182,7 @@ def filter_candidates(
 class PexelsSource:
     """Async Pexels video search with sanitized, provider-neutral output."""
 
+    provider_name = "pexels"
     supported_source_classes = ("GENERIC_STOCK",)
     endpoint = "https://api.pexels.com/videos/search"
 
@@ -222,6 +225,12 @@ class PexelsSource:
             "query": query.strip(),
             "per_page": min(limit, 80),
         }
+        try:
+            variation_round = max(0, int(json.loads(os.environ.get("RAMBLA_SOCIAL_SEARCH_OPTIONS", "{}") or "{}").get("variation_round") or 0))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            variation_round = 0
+        if variation_round:
+            params["page"] = 1 + (variation_round % 10)
         if orientation is not None:
             params["orientation"] = orientation
         try:

@@ -1,7 +1,7 @@
 import copy
 import json
 import pytest
-from backend.app.editorial_import import transcript_package, validate_import, import_plan, retrieval_bundle
+from backend.app.editorial_import import transcript_package, validate_import, import_plan, retrieval_bundle, digest
 
 
 def fixture(tmp_path):
@@ -54,6 +54,41 @@ def test_stale_transcript_fails_closed(tmp_path):
     package, plan = fixture(tmp_path); import_plan(tmp_path, plan, package)
     (tmp_path/'semantic-chunks.json').write_text('[]', encoding='utf-8')
     with pytest.raises(ValueError): retrieval_bundle(tmp_path)
+
+
+def test_editorial_input_includes_explicit_coverage_selection(tmp_path):
+    package, _plan = fixture(tmp_path)
+    intent_signature = digest([
+        {'id':str(row['id']),'start':float(row['start']),'end':float(row['end']),'text':str(row['text'])}
+        for row in package['chunks']
+    ])
+    (tmp_path / 'phrase-intents.json').write_text(json.dumps({
+        'schema_version': 'rambla-phrase-intents-1',
+        'transcript_signature': intent_signature,
+        'phrases': {
+            'c1': {'coverage': False, 'animation': True, 'highlight': False},
+            'c2': {'coverage': True, 'coverage_word_indices': [1, 2], 'animation': False, 'highlight': False},
+            'c3': {'coverage': False, 'animation': False, 'highlight': False},
+        },
+    }), encoding='utf-8')
+
+    package = transcript_package(tmp_path, 'project1', 8.0)
+    assert package['coverage_selected_chunk_ids'] == ['c2__coverage_02']
+    assert [row['text'] for row in package['chunks'][1:4]] == ['Keep', 'the pieces', 'small.']
+    assert package['coverage_selected_ranges'] == [{
+        'source_chunk_ids': ['c2'], 'text': 'the pieces',
+        'start_seconds': 3.75, 'end_seconds': 5.25,
+        'word_start_index': 1, 'word_end_index': 2,
+    }]
+
+
+def test_manual_plan_cannot_drop_or_merge_selected_coverage(tmp_path):
+    package, plan = fixture(tmp_path)
+    package['coverage_selected_chunk_ids'] = ['c1']
+    plan['visual_beats'][0]['action'] = 'KEEP_TALKING_HEAD'
+    plan['visual_beats'][0]['shots'] = []
+    with pytest.raises(ValueError, match='selected Coverage'):
+        validate_import(plan, package)
 
 
 def test_api_import_export_selection_and_source_gate_without_models(tmp_path, monkeypatch):

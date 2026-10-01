@@ -113,7 +113,11 @@ def video_diagnostic(rows, provider, configured=True):
     candidates = [
         c
         for r in rows
-        for c in r.get("candidates", [])
+        # Discovery sources are deliberately retained for manual review when
+        # the local visual ranker is unavailable or a bounded preview cannot
+        # be verified. They are still real provider results and must keep the
+        # Pexels/Envato shelf available instead of reporting a false zero.
+        for c in [*(r.get("candidates") or []), *(r.get("discovery_sources") or [])]
         if _provider_matches(c.get("provider", c.get("source")), provider)
     ]
     counts = {

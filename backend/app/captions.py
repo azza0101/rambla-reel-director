@@ -29,6 +29,33 @@ def render_srt(segments: list[dict[str, Any]]) -> str:
     return "\n\n".join(cues) + ("\n" if cues else "")
 
 
+def render_semantic_srt(chunks: list[dict[str, Any]], *, max_words: int = 3) -> str:
+    """Render compact captions from semantic chunks and real word timestamps."""
+    if max_words not in {2, 3}:
+        raise ValueError("semantic captions support two or three words per cue")
+    segments: list[dict[str, Any]] = []
+    for chunk in chunks:
+        words = list(chunk.get("words") or [])
+        if not words:
+            tokens = str(chunk.get("text") or "").split()
+            start, end = float(chunk["start"]), float(chunk["end"])
+            step = (end - start) / max(1, len(tokens))
+            words = [
+                {"start": start + index * step, "end": end if index == len(tokens) - 1 else start + (index + 1) * step, "text": token}
+                for index, token in enumerate(tokens)
+            ]
+        group: list[dict[str, Any]] = []
+        for word in words:
+            group.append(word)
+            text = str(word.get("text") or "").rstrip()
+            if len(group) >= max_words or (len(group) >= 2 and text.endswith((",", ";", ":", ".", "!", "?"))):
+                segments.append({"start": float(group[0]["start"]), "end": float(group[-1]["end"]), "text": " ".join(str(row["text"]).strip() for row in group)})
+                group = []
+        if group:
+            segments.append({"start": float(group[0]["start"]), "end": float(group[-1]["end"]), "text": " ".join(str(row["text"]).strip() for row in group)})
+    return render_srt(segments)
+
+
 def validate_overlay_probe(probe: dict[str, Any], *, expected_frames: int, fps: int) -> int:
     videos = [stream for stream in probe.get("streams", []) if stream.get("codec_type") == "video"]
     if len(videos) != 1:

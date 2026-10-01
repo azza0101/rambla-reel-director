@@ -1,0 +1,105 @@
+import shutil
+import uuid
+from pathlib import Path
+
+import pytest
+
+from backend.app.resolve_handoff import ResolveHandoffStore
+
+
+def _root():
+    path = Path(".test-resolve-handoff") / uuid.uuid4().hex
+    path.mkdir(parents=True)
+    return path
+
+
+def _payload(**updates):
+    payload = {
+        "project_id": "p1", "project_name": "Egitto", "source_project_name": "Egitto2",
+        "source_timeline_id": "tl-1", "source_timeline_name": "EGITTO", "duration_seconds": 42.5,
+        "titles": [{"text": "ciao"}], "subtitles": [{"text": "ciao"}, {"text": "mondo"}],
+        "broll_clips": [{"media_path": __file__, "provider": "pexels"}],
+        "generic_broll_clips": [{"media_path": "missing.mp4", "provider": "pexels"}],
+        "broll_unavailable": [{"asset_id": "x", "reason": "download missing"}],
+    }
+    payload.update(updates)
+    return payload
+
+
+def test_prepare_is_versioned_and_summarizes_unavailable_media():
+    root = _root()
+    try:
+        store = ResolveHandoffStore(root.parent)
+        one = store.prepare(root, _payload())
+        two = store.prepare(root, _payload())
+        assert one["package_id"] != two["package_id"]
+        assert one["status"] == "pending"
+        assert one["summary"] == {
+            "duration_seconds": 42.5, "title_count": 1, "subtitle_count": 2,
+            "broll_count": 1, "generic_broll_count": 0, "unavailable_count": 2,
+        }
+        assert store.read(root, one["package_id"])["schema"] == "rambla-resolve-handoff-1"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_pending_filters_and_transitions_are_guarded():
+    root = _root()
+    try:
+        store = ResolveHandoffStore(root.parent)
+        package = store.prepare(root, _payload())
+        assert [p["package_id"] for p in store.pending(resolve_project="Egitto2", timeline_id="tl-1")] == [package["package_id"]]
+        assert not store.pending(resolve_project="Other", timeline_id="tl-1")
+        assert not store.pending(resolve_project="Egitto2", timeline_id="generated-timeline")
+        applying = store.transition(root, package["package_id"], "applying", progress={"percent": 5})
+        failed = store.transition(root, package["package_id"], "failed", error="boom")
+        discarded = store.transition(root, package["package_id"], "discarded")
+        assert applying["status"] == "applying" and failed["status"] == "failed" and discarded["status"] == "discarded"
+        with pytest.raises(ValueError):
+            store.transition(root, package["package_id"], "applying")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_new_bridge_session_does_not_offer_old_pending_package():
+    root = _root()
+    try:
+        store = ResolveHandoffStore(root.parent)
+        old = store.prepare(root, _payload(bridge_session_id="old-session"))
+        current = store.prepare(root, _payload(bridge_session_id="current-session"))
+
+        rows = store.pending(resolve_project="Egitto2", timeline_id="tl-1", bridge_session_id="current-session")
+
+        assert [row["package_id"] for row in rows] == [current["package_id"]]
+        assert old["package_id"] not in {row["package_id"] for row in rows}
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_unassigned_package_can_be_claimed_and_acknowledged_by_current_bridge():
+    root = _root()
+    try:
+        store = ResolveHandoffStore(root.parent)
+        package = store.prepare(root, _payload(bridge_session_id=""))
+        rows = store.pending(resolve_project="Egitto2", timeline_id="tl-1", bridge_session_id="live")
+        assert [row["package_id"] for row in rows] == [package["package_id"]]
+        received = store.mark_received(root, package["package_id"], bridge_session_id="live")
+        assert received["bridge_session_id"] == "live"
+        assert received["bridge_received_at"]
+        assert received["progress"]["percent"] == 100
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_new_package_describes_revision_against_last_completed_package():
+    root=_root()
+    try:
+        store=ResolveHandoffStore(root.parent)
+        first=store.prepare(root,_payload(broll_clips=[{"asset_id":"a","media_path":__file__}]))
+        store.transition(root,first["package_id"],"applying")
+        store.transition(root,first["package_id"],"completed")
+        second=store.prepare(root,_payload(broll_clips=[{"asset_id":"b","media_path":__file__}]))
+        assert second["revision"] == 2 and second["supersedes"] == first["package_id"]
+        assert second["change_summary"]["broll_added"] == 1
+        assert second["change_summary"]["broll_removed"] == 1
+    finally: shutil.rmtree(root,ignore_errors=True)

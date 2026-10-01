@@ -1,0 +1,110 @@
+import shutil, time, uuid
+from pathlib import Path
+
+from backend.app.resolve_handoff import ResolveHandoffStore
+from backend.app.resolve_handoff_jobs import ResolveHandoffJobs
+
+
+def test_failure_preserves_last_checkpoint_and_traceback():
+    import json
+    root=Path('.test-resolve-jobs')/uuid.uuid4().hex;root.mkdir(parents=True)
+    try:
+        store=ResolveHandoffStore(root.parent)
+        package=store.prepare(root,{'project_id':'p','source_project_name':'P'})
+        def runner(payload):
+            Path(payload['handoff_progress_path']).write_text(json.dumps({'phase':'broll','percent':84,'message':'Clip 5/13'}),encoding='utf-8')
+            time.sleep(.08)
+            raise RuntimeError('Import failed')
+        jobs=ResolveHandoffJobs(store,runner)
+        jobs.apply(root,package['package_id'],'new',current_project='P',current_timeline_id='T')
+        for _ in range(100):
+            row=store.read(root,package['package_id'])
+            if row['status']=='failed':break
+            time.sleep(.01)
+        assert row['status']=='failed' and row['progress']['percent']==84
+        assert row['diagnostics']['last_progress']['phase']=='broll'
+        assert 'RuntimeError: Import failed' in row['diagnostics']['traceback']
+        assert (root/'resolve-outbox'/package['package_id']/'progress.json').is_file()
+    finally:shutil.rmtree(root,ignore_errors=True)
+
+
+def test_apply_is_async_persists_progress_and_is_idempotent():
+    root = Path('.test-resolve-jobs') / uuid.uuid4().hex
+    root.mkdir(parents=True)
+    try:
+        store = ResolveHandoffStore(root.parent)
+        package = store.prepare(root, {"project_id":"p", "source_project_name":"P", "source_timeline_id":"T", "subtitles":[]})
+        calls=[]
+        jobs=ResolveHandoffJobs(store, lambda payload: calls.append(payload) or {"timeline_name":"OUT", "broll_count":0})
+        started=jobs.apply(root, package["package_id"], "new", current_project="P", current_timeline_id="T")
+        assert started["status"] == "applying"
+        for _ in range(100):
+            result=store.read(root, package["package_id"])
+            if result["status"] != "applying": break
+            time.sleep(.01)
+        assert result["status"] == "completed" and result["progress"]["percent"] == 100
+        assert jobs.apply(root, package["package_id"], "new", current_project="P", current_timeline_id="T")["status"] == "completed"
+        assert len(calls) == 1 and calls[0]["destination_mode"] == "new"
+    finally: shutil.rmtree(root, ignore_errors=True)
+
+
+def test_active_destination_uses_the_timeline_focused_at_apply_time():
+    root = Path('.test-resolve-jobs') / uuid.uuid4().hex
+    root.mkdir(parents=True)
+    try:
+        store=ResolveHandoffStore(root.parent)
+        package=store.prepare(root,{"project_id":"p","source_project_name":"P","source_timeline_id":"T"})
+        calls=[]
+        jobs=ResolveHandoffJobs(store, lambda payload: calls.append(payload) or {})
+        assert jobs.apply(root,package["package_id"],"active",current_project="P",current_timeline_id="focused")["status"] == "applying"
+        for _ in range(100):
+            result=store.read(root,package["package_id"])
+            if result["status"] != "applying": break
+            time.sleep(.01)
+        assert result["status"] == "completed"
+        assert calls[0]["source_timeline_id"] == "focused"
+    finally: shutil.rmtree(root, ignore_errors=True)
+
+
+def test_new_destination_can_be_applied_while_a_generated_timeline_is_open():
+    root=Path('.test-resolve-jobs')/uuid.uuid4().hex; root.mkdir(parents=True)
+    try:
+        store=ResolveHandoffStore(root.parent); package=store.prepare(root,{"project_id":"p","source_project_name":"P","source_timeline_id":"source"})
+        jobs=ResolveHandoffJobs(store,lambda payload:{"timeline_name":"v2"})
+        assert jobs.apply(root,package["package_id"],"new",current_project="P",current_timeline_id="generated")["status"]=="applying"
+    finally: shutil.rmtree(root,ignore_errors=True)
+
+
+def test_apply_surfaces_real_helper_progress_file():
+    root = Path('.test-resolve-jobs') / uuid.uuid4().hex
+    root.mkdir(parents=True)
+    try:
+        store=ResolveHandoffStore(root.parent)
+        package=store.prepare(root,{"project_id":"p","source_project_name":"P","source_timeline_id":"T"})
+        def runner(payload):
+            import json
+            Path(payload["handoff_progress_path"]).write_text(json.dumps({"phase":"subtitles","percent":78,"message":"Inserisco sottotitoli"}),encoding="utf-8")
+            time.sleep(.08)
+            return {"timeline_name":"OUT"}
+        jobs=ResolveHandoffJobs(store,runner)
+        jobs.apply(root,package["package_id"],"new",current_project="P",current_timeline_id="T")
+        seen=[]
+        for _ in range(100):
+            row=store.read(root,package["package_id"]); seen.append(row.get("progress",{}).get("percent"))
+            if row["status"] != "applying": break
+            time.sleep(.01)
+        assert 78 in seen and row["status"] == "completed"
+    finally: shutil.rmtree(root, ignore_errors=True)
+
+
+def test_package_read_retries_transient_windows_lock(monkeypatch):
+    from backend.app.resolve_handoff import _read_json
+    attempts=[]
+    def read(path, **kwargs):
+        attempts.append(path)
+        if len(attempts)==1:
+            raise PermissionError("sharing violation")
+        return '{"status":"completed"}'
+    monkeypatch.setattr(Path, 'read_text', read)
+    assert _read_json(Path('package.json'))['status']=='completed'
+    assert len(attempts)==2

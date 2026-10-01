@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title">
+  <title id="title">RMBL Bridge</title>
+  <rect width="128" height="128" rx="28" fill="#181d39"/>
+  <path d="M18 83h92" fill="none" stroke="#d8ff5b" stroke-width="8" stroke-linecap="round"/>
+  <path d="M27 83V58c0-24 16-39 37-39s37 15 37 39v25" fill="none" stroke="#fff" stroke-width="10" stroke-linecap="round"/>
+  <path d="M39 58v34M89 58v34" fill="none" stroke="#fff" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="64" cy="76" r="8" fill="#7c6cf2"/>
+</svg>

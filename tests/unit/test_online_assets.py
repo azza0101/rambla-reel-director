@@ -116,6 +116,19 @@ async def test_pexels_search_normalizes_vertical_video() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pexels_incremental_research_requests_a_new_provider_page(monkeypatch) -> None:
+    monkeypatch.setenv("RAMBLA_SOCIAL_SEARCH_OPTIONS", '{"variation_round": 4}')
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["page"] == "5"
+        return httpx.Response(200, json=_payload(), request=request)
+
+    source = PexelsSource(api_key="SECRET", transport=httpx.MockTransport(handler))
+    rows = await source.search("bathroom", orientation=None, min_duration=1, max_duration=20, limit=5)
+    assert rows
+
+
+@pytest.mark.asyncio
 async def test_pexels_mixed_aspect_search_omits_orientation_filter() -> None:
     source = PexelsSource(
         api_key="SECRET",
@@ -209,3 +222,7 @@ async def test_pexels_candidate_is_explicit_generic_stock() -> None:
     rows = await source.search("camera", orientation=None, min_duration=1, max_duration=20, limit=2)
     assert rows[0].source_class == "GENERIC_STOCK"
     assert rows[0].source_authenticity is None
+
+
+def test_pexels_provider_identity_is_explicit_for_priority_routing() -> None:
+    assert PexelsSource.provider_name == "pexels"
