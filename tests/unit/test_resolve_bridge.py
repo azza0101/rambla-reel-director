@@ -4,7 +4,7 @@ import uuid
 
 from fastapi.testclient import TestClient
 
-from backend.app.resolve_bridge import can_reuse_audio_capture, detect_video_ranges, phrase_has_video, timeline_audio_fingerprint, timeline_range, count_audio_items
+from backend.app.resolve_bridge import can_reuse_audio_capture, detect_video_ranges, phrase_has_video, timeline_audio_fingerprint, timeline_range, count_audio_items, require_explicit_capture_range
 from backend.app.curation_server import create_app
 
 
@@ -16,12 +16,26 @@ class Timeline:
 
 
 def test_bridge_prefers_audio_in_out():
-    assert timeline_range(Timeline({"audio": {"in": 120, "out": 180}, "video": {"in": 130, "out": 170}})) == (120, 180, "audio")
+    assert timeline_range(Timeline({"audio": {"in": 20, "out": 80}, "video": {"in": 30, "out": 70}})) == (120, 180, "audio")
 
 
 def test_bridge_uses_video_marks_then_whole_timeline():
-    assert timeline_range(Timeline({"video": {"in": 130, "out": 170}})) == (130, 170, "video")
+    assert timeline_range(Timeline({"video": {"in": 30, "out": 70}})) == (130, 170, "video")
     assert timeline_range(Timeline({})) == (100, 300, "timeline")
+
+
+def test_bridge_normalizes_relative_resolve_marks_and_accepts_start_as_implicit_in():
+    timeline=Timeline({"video":{"out":3194},"audio":{"out":3194}})
+    timeline.GetStartFrame=lambda:108000
+    timeline.GetEndFrame=lambda:112983
+    assert timeline_range(timeline) == (108000,111194,"audio")
+
+
+def test_forced_in_out_capture_refuses_to_fall_back_to_the_whole_timeline():
+    require_explicit_capture_range("audio")
+    try: require_explicit_capture_range("timeline")
+    except ValueError as exc: assert "IN" in str(exc) and "OUT" in str(exc)
+    else: raise AssertionError("forced capture must require an explicit Resolve range")
 
 
 class Item:

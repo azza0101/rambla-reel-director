@@ -11,12 +11,35 @@ from typing import Any
 
 
 def timeline_range(timeline: Any) -> tuple[int, int, str]:
+    timeline_start = int(timeline.GetStartFrame())
+    timeline_end = int(timeline.GetEndFrame()) - 1
+    relative_end = max(0, timeline_end - timeline_start)
+
+    def absolute_mark(value: Any) -> int:
+        frame = int(value)
+        # Resolve 21 reports timeline marks relative to the timeline start,
+        # even when the timeline itself starts at a large timecode frame.
+        if 0 <= frame <= relative_end:
+            return timeline_start + frame
+        return frame
+
     marks = timeline.GetMarkInOut() or {}
     for kind in ("audio", "video"):
         row = marks.get(kind) or {}
-        if "in" in row and "out" in row and int(row["out"]) >= int(row["in"]):
-            return int(row["in"]), int(row["out"]), kind
-    return int(timeline.GetStartFrame()), int(timeline.GetEndFrame()) - 1, "timeline"
+        if "in" in row or "out" in row:
+            mark_in = absolute_mark(row.get("in", 0))
+            mark_out = absolute_mark(row.get("out", relative_end))
+            mark_in = max(timeline_start, min(timeline_end, mark_in))
+            mark_out = max(timeline_start, min(timeline_end, mark_out))
+            if mark_out >= mark_in:
+                return mark_in, mark_out, kind
+    return timeline_start, timeline_end, "timeline"
+
+
+def require_explicit_capture_range(range_source: str) -> None:
+    """Prevent a forced IN/OUT capture from silently rendering everything."""
+    if str(range_source or "timeline") == "timeline":
+        raise ValueError("Imposta i punti IN e OUT in Resolve prima di ricalcolare l'audio")
 
 
 def detect_video_ranges(timeline: Any, mark_in: int, mark_out: int, fps: float,

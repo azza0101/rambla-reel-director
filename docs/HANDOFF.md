@@ -21,7 +21,7 @@ Branch di consegna: `feat/curation-ui-v1`
 4. Il bridge riceve il pacchetto nella stessa sessione, si espande e abilita **APPLICA**.
 5. L'utente sceglie nuova timeline o timeline attiva con backup TEMP e conferma.
 
-Il bridge espone anche **RICALCOLA AUDIO · IN → OUT**: invia `force_recalculate=true`, impedisce il riuso della guida precedente e renderizza il range IN/OUT letto dalla timeline focalizzata in quel momento. Il riepilogo mostra `mark_in`, `mark_out` e `range_source` realmente acquisiti.
+Il bridge espone anche **RICALCOLA AUDIO · IN → OUT**: invia `force_recalculate=true`, impedisce il riuso della guida precedente e renderizza il range IN/OUT letto dalla timeline focalizzata in quel momento. Resolve 21 restituisce i mark relativi all'inizio timeline e può omettere `in` quando coincide con l'inizio: `timeline_range()` normalizza entrambi i casi in frame assoluti. Il ricalcolo forzato rifiuta di partire se non vede almeno un range esplicito, evitando il fallback silenzioso all'intera timeline. Il riepilogo mostra `mark_in`, `mark_out` e `range_source` realmente acquisiti.
 
 La timeline sorgente resta protetta. Le mutazioni Resolve passano dai job di `resolve_handoff_jobs.py`; i calcoli temporali usano FPS e frame iniziale della timeline acquisita.
 
@@ -78,4 +78,4 @@ Il vincolo di sviluppo resta `resolve_calls=0`: i test non devono modificare una
 
 ### Stato suite al passaggio v0029
 
-I test focalizzati su ricalcolo audio IN/OUT, cache, bridge standalone, tema persistente, UI, versione e distribuzione Windows passano (`69 passed`). La precedente batteria focalizzata su profili browser, login social, download Envato e navigazione guidata passa (`73 passed`). Il JavaScript completo renderizzato passa inoltre `node --check`.
+I test focalizzati su ricalcolo audio IN/OUT, normalizzazione dei mark Resolve 21, cache, bridge standalone, tema persistente, UI, versione e distribuzione Windows passano (`71 passed`). La precedente batteria focalizzata su profili browser, login social, download Envato e navigazione guidata passa (`73 passed`). Il JavaScript completo renderizzato passa inoltre `node --check`.

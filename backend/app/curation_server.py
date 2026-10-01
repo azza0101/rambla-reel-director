@@ -598,10 +598,15 @@ def create_app(
     async def resolve_bridge_capture(request: ResolveBridgeCaptureRequest) -> dict[str, Any]:
         import tempfile
         from .atomic_io import write_json
-        from .resolve_bridge import can_reuse_audio_capture, capture_active_timeline, inspect_active_timeline
+        from .resolve_bridge import can_reuse_audio_capture, capture_active_timeline, inspect_active_timeline, require_explicit_capture_range
         inspection = await asyncio.to_thread(
             inspect_active_timeline, detect_videos=request.detect_videos, include_v1=request.include_v1
         )
+        if request.force_recalculate:
+            try:
+                require_explicit_capture_range(inspection.get("range_source", "timeline"))
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
         from .resolve_project_links import linked_project
         saved_id = linked_project(root, inspection['resolve_timeline_id'])
         saved_manifest = _read_json(root / saved_id / 'resolve-bridge.json', {}) if saved_id else {}
