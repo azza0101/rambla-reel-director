@@ -69,6 +69,41 @@ def draw_bridge_mark(canvas: Any) -> None:
     canvas.create_oval(32, 30, 40, 38, fill="#7c6cf2", outline="")
 
 
+def _photo_line(image: Any, color: str, start: tuple[int, int], end: tuple[int, int], width: int = 2) -> None:
+    """Small deterministic raster line helper for the native Tk title-bar icon."""
+    x0, y0 = start; x1, y1 = end
+    dx, dy = abs(x1 - x0), -abs(y1 - y0)
+    sx, sy = (1 if x0 < x1 else -1), (1 if y0 < y1 else -1)
+    error = dx + dy
+    while True:
+        radius = max(0, width // 2)
+        image.put(color, to=(max(0, x0 - radius), max(0, y0 - radius), min(96, x0 + radius + 1), min(96, y0 + radius + 1)))
+        if x0 == x1 and y0 == y1:
+            break
+        twice = 2 * error
+        if twice >= dy:
+            error += dy; x0 += sx
+        if twice <= dx:
+            error += dx; y0 += sy
+
+
+def build_bridge_icon(tk: Any, logo_path: Path) -> Any:
+    """Compose the supplied RMBL mark with a bridge above it for this app only."""
+    icon = tk.PhotoImage(width=96, height=96)
+    icon.put("#181d39", to=(0, 0, 96, 96))
+    original = tk.PhotoImage(file=str(logo_path))
+    scaled = original.subsample(17, 17)
+    icon.tk.call(str(icon), "copy", str(scaled), "-to", 13, 25)
+    # Suspension bridge overlay: towers, cables and lime deck sit above the RMBL mark.
+    icon.put("#f7f8ff", to=(18, 7, 24, 31)); icon.put("#f7f8ff", to=(72, 7, 78, 31))
+    _photo_line(icon, "#f7f8ff", (21, 8), (48, 23), 3)
+    _photo_line(icon, "#f7f8ff", (48, 23), (75, 8), 3)
+    _photo_line(icon, "#f7f8ff", (21, 8), (8, 22), 3)
+    _photo_line(icon, "#f7f8ff", (75, 8), (88, 22), 3)
+    icon.put("#d8ff5b", to=(7, 28, 89, 34))
+    return icon
+
+
 def discover_base() -> str:
     if str(APP_ROOT) not in sys.path:
         sys.path.insert(0, str(APP_ROOT))
@@ -285,7 +320,18 @@ class BridgeApp:
 
         shell = ttk.Frame(self.root, style="R.TFrame", padding=20); shell.pack(fill="both", expand=True)
         header = ttk.Frame(shell, style="Header.TFrame", padding=14); header.pack(fill="x", pady=(0, 14))
-        mark = tk.Canvas(header, width=72, height=56, bg="#181d39", highlightthickness=0); mark.pack(side="left", padx=(0, 13)); draw_bridge_mark(mark)
+        logo_path = APP_ROOT / "backend" / "assets" / "branding" / "rmbl_mark_white.png"
+        if logo_path.is_file():
+            try:
+                bridge_icon = build_bridge_icon(tk, logo_path)
+                header_icon = bridge_icon.subsample(2, 2)
+                self._brand_images.extend([bridge_icon, header_icon])
+                self.root.iconphoto(True, bridge_icon)
+                ttk.Label(header, image=header_icon, style="Title.TLabel").pack(side="left", padx=(0, 13))
+            except tk.TclError:
+                mark = tk.Canvas(header, width=72, height=56, bg="#181d39", highlightthickness=0); mark.pack(side="left", padx=(0, 13)); draw_bridge_mark(mark)
+        else:
+            mark = tk.Canvas(header, width=72, height=56, bg="#181d39", highlightthickness=0); mark.pack(side="left", padx=(0, 13)); draw_bridge_mark(mark)
         heading = ttk.Frame(header, style="Header.TFrame"); heading.pack(side="left", fill="x", expand=True)
         wordmark_path = APP_ROOT / "backend" / "assets" / "branding" / "rmbl_wordmark_white.png"
         if wordmark_path.is_file():
@@ -298,12 +344,6 @@ class BridgeApp:
         else:
             ttk.Label(heading, text="RMBL / BRIDGE", style="Title.TLabel").pack(anchor="w")
         ttk.Label(heading, text=f"RESOLVE HANDOFF  ·  {RELEASE_VERSION}", style="Eyebrow.TLabel").pack(anchor="w", pady=(2, 0))
-        logo_path = APP_ROOT / "backend" / "assets" / "branding" / "rmbl_mark_white.png"
-        if logo_path.is_file():
-            try:
-                icon = tk.PhotoImage(file=str(logo_path)); self._brand_images.append(icon); self.root.iconphoto(True, icon)
-            except tk.TclError:
-                pass
         self.widgets["connection"] = ttk.Label(shell, text="● CONNESSIONE IN CORSO", style="Bad.TLabel"); self.widgets["connection"].pack(fill="x", pady=(0, 12))
         card = ttk.Frame(shell, style="Card.TFrame", padding=14); card.pack(fill="x", pady=(0, 10))
         self.widgets["timeline"] = ttk.Label(card, text="Timeline in attesa…", style="Card.TLabel", justify="left"); self.widgets["timeline"].pack(anchor="w")

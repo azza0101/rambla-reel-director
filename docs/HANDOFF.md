@@ -1,7 +1,7 @@
 # RMBL B ROLL — handoff tecnico
 
 Aggiornato: 2026-10-01  
-Versione: `v0021`  
+Versione: `v0022`  
 Branch di consegna: `feat/curation-ui-v1`
 
 ## Avvio rapido
@@ -27,7 +27,7 @@ La timeline sorgente resta protetta. Le mutazioni Resolve passano dai job di `re
 
 - `backend/assets/branding/rmbl_wordmark_white.png`: marchio orizzontale originale fornito dall'utente.
 - `backend/assets/branding/rmbl_mark_white.png`: simbolo originale usato come icona app/finestra.
-- `backend/assets/branding/rmbl_bridge_mark.svg`: variante bridge, disegnata come ponte e mantenuta separata dal logo originale.
+- `backend/assets/branding/rmbl_bridge_mark.svg`: variante del simbolo RMBL con un ponte sovrapposto; è usata esclusivamente dal bridge.
 
 ## Distribuzione
 
@@ -53,6 +53,6 @@ $env:TMP=$env:TEMP
 
 Il vincolo di sviluppo resta `resolve_calls=0`: i test non devono modificare una timeline reale. Per prove reali su EGITTO serve l'azione esplicita dell'utente nel bridge.
 
-### Stato suite al passaggio v0021
+### Stato suite al passaggio v0022
 
 I test focalizzati su branding, bridge, versione, launcher e distribuzione passano (`19 passed`). La suite completa eseguita con accesso temporaneo elevato riporta `844 passed, 7 failed`. I sette errori sono contratti legacy già esterni a questo intervento: due test del vecchio `/curation` debug, il launcher Envato che ora usa intenzionalmente `os.startfile`, un test Node bloccato dall'accesso Windows al file temporaneo, una variante di ricerca stock e due fixture `MemoryPath` incompatibili con il registro Envato. Non sono stati mascherati né rimossi.

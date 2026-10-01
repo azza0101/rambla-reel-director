@@ -22,9 +22,19 @@ def test_bridge_branding_assets_and_visual_language_are_present():
     source = Path("tools/resolve_bridge/standalone_bridge.py").read_text(encoding="utf-8")
     assert "rmbl_wordmark_white.png" in source
     assert "draw_bridge_mark" in source
+    assert "build_bridge_icon" in source
+    assert "self.root.iconphoto(True, bridge_icon)" in source
     assert "#7c6cf2" in source
     assert Path("backend/assets/branding/rmbl_mark_white.png").is_file()
     assert Path("backend/assets/branding/rmbl_bridge_mark.svg").is_file()
+
+
+def test_bridge_svg_layers_the_bridge_over_the_original_rmbl_mark():
+    from pathlib import Path
+
+    source = Path("backend/assets/branding/rmbl_bridge_mark.svg").read_text(encoding="utf-8")
+    assert 'href="rmbl_mark_white.png"' in source
+    assert 'id="bridge-overlay"' in source
 
 
 def test_hidden_test_desktop_cannot_block_the_users_bridge():
