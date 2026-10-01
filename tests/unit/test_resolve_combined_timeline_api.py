@@ -64,3 +64,24 @@ def test_combined_drt_route_streams_helper_output(tmp_path, monkeypatch):
     assert response.status_code == 200, response.text
     assert response.content == b"DRT DATA"
     assert response.headers["content-disposition"].endswith('.drt"')
+
+
+def test_combined_timeline_allows_subtitles_without_highlights(tmp_path, monkeypatch):
+    client, project = client_with_selection(tmp_path)
+    run = tmp_path / "projects" / project.project_id / "run"
+    data = json.loads((run / "phrase-intents.json").read_text(encoding="utf-8"))
+    data["phrases"]["c1"] = {"highlight": False, "highlighted_word_indices": []}
+    (run / "phrase-intents.json").write_text(json.dumps(data), encoding="utf-8")
+    captured = {}
+
+    def fake(payload, **_):
+        captured.update(payload)
+        return {"status": "created"}
+
+    monkeypatch.setattr("backend.app.resolve_textplus_timeline.run_resolve_helper", fake)
+    response = client.post(f"/api/curation/projects/{project.project_id}/resolve/combined-timeline")
+
+    assert response.status_code == 200, response.text
+    assert captured["title_count"] == 0
+    assert captured["titles"] == []
+    assert [row["text"] for row in captured["subtitles"]] == ["Uno due"]

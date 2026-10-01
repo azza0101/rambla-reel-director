@@ -1253,7 +1253,12 @@ def create_app(
     async def prepare_selected_timeline_media(project_id: str, report=None) -> list[str]:
         from .curation_artifacts import load_curation_run
         from .social_media import media_path, prepare_media
+        from .transcript_intents import has_selected_intent
         run = run_root(project_id)
+        if not has_selected_intent(run, "coverage"):
+            if report:
+                report(60, "Nessun B-roll selezionato · salto download media")
+            return []
         view = load_curation_run(run)
         selection = _read_json(active_retrieval_root(run) / "selection-plan.json", {"chunks": {}})
         wanted = [str(row.get("asset_id")) for choice in (selection.get("chunks") or {}).values() for row in (choice.get("selected_assets") or [])]
@@ -1291,12 +1296,11 @@ def create_app(
         return failures
 
     def editing_resolve_payload(project_id: str) -> dict[str, Any]:
+        from .transcript_intents import has_selected_intent
         payload = combined_resolve_payload(project_id)
-        try:
+        if has_selected_intent(run_root(project_id), "coverage"):
             broll = broll_timeline_payload(project_id)
-        except ValueError as exc:
-            if 'Select at least one B-roll' not in str(exc):
-                raise
+        else:
             broll = {"clips": [], "clip_count": 0, "unavailable": []}
         project = load_project(project_id)
         bridge = _read_json(root / project_id / "resolve-bridge.json", {})

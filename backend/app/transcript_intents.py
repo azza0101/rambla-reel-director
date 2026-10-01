@@ -334,6 +334,19 @@ def selected_word_ranges(run: Path, intent: str, *, max_words: int | None = None
     return ranges
 
 
+def has_selected_intent(run: Path, intent: str) -> bool:
+    """Return whether the current transcript has an active word selection.
+
+    This deliberately reads the current phrase-intent document instead of old
+    retrieval/visual-plan artifacts.  Timeline export can therefore omit an
+    optional stage that the editor did not select in the current review.
+    """
+    if intent not in WORD_FIELDS:
+        raise ValueError(f"Unsupported transcript intent: {intent}")
+    field = WORD_FIELDS[intent]
+    return any(bool(row.get(field)) for row in load_phrase_intents(run)["phrases"].values())
+
+
 def planning_chunks_for_coverage(run: Path) -> list[dict[str, Any]]:
     """Split Coverage into short, chronological units suited to media search."""
     chunks = normalized_chunks(run)
@@ -523,7 +536,16 @@ def build_combined_resolve_export(run: Path, project_id: str, *, fps: int = 25) 
     """Build title rows plus native-subtitle rows without duplicating highlights."""
     if fps <= 0:
         raise ValueError("Timeline fps must be positive")
-    title_export = build_textplus_export(run, project_id, fps=fps)
+    title_rows = selected_word_ranges(run, "highlight", max_words=3)
+    titles = []
+    for row in title_rows:
+        start, end = float(row["start_seconds"]), float(row["end_seconds"])
+        titles.append({
+            "kind": "TEXT_PLUS", "phrase_id": row["source_chunk_ids"][0], "text": row["text"],
+            "word_start_index": row["word_start_index"], "word_end_index": row["word_end_index"],
+            "start_seconds": start, "end_seconds": end, "duration_seconds": round(end - start, 6),
+            "start_frame": round(start * fps), "end_frame": round(end * fps), "track_hint": 3,
+        })
     intents = load_phrase_intents(run).get("phrases", {})
     subtitles: list[dict[str, Any]] = []
     for chunk in normalized_chunks(run):
@@ -562,8 +584,8 @@ def build_combined_resolve_export(run: Path, project_id: str, *, fps: int = 25) 
         "fps": int(fps),
         "timeline_basis": "source transcript word timestamps",
         "transcript_signature": load_phrase_intents(run).get("transcript_signature"),
-        "title_count": len(title_export["items"]),
+        "title_count": len(titles),
         "subtitle_count": len(subtitles),
-        "titles": title_export["items"],
+        "titles": titles,
         "subtitles": subtitles,
     }
