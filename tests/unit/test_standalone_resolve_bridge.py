@@ -34,16 +34,17 @@ def test_old_implicit_new_default_is_migrated_to_active(monkeypatch):
 def test_bridge_uses_modern_cards_for_capture_and_destination_controls():
     from pathlib import Path
     source = Path("tools/resolve_bridge/standalone_bridge.py").read_text(encoding="utf-8")
-    assert "ToggleCard" in source
+    assert "CompactChoiceRow" in source
     assert "DestinationCard" in source
     assert "Non sposta né modifica le clip già presenti" in source
     assert "Analizza le tracce video superiori" in source
+    assert "ToggleCard" not in source
 
 
 def test_window_expands_for_a_received_package_and_stays_on_screen():
-    assert window_geometry(1920, 1080, requested_height=700, package_visible=False) == "720x760"
-    assert window_geometry(1920, 1080, requested_height=820, package_visible=True) == "820x930"
-    assert window_geometry(1280, 720, requested_height=900, package_visible=True) == "820x640"
+    assert window_geometry(1920, 1080, requested_height=640, package_visible=False) == "600x680"
+    assert window_geometry(1920, 1080, requested_height=780, package_visible=True) == "660x840"
+    assert window_geometry(1280, 720, requested_height=900, package_visible=True) == "600x640"
 
 
 def test_bridge_branding_assets_and_visual_language_are_present():

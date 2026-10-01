@@ -85,3 +85,17 @@ def test_combined_timeline_allows_subtitles_without_highlights(tmp_path, monkeyp
     assert captured["title_count"] == 0
     assert captured["titles"] == []
     assert [row["text"] for row in captured["subtitles"]] == ["Uno due"]
+
+
+def test_each_resolve_export_uses_a_fresh_subtitle_source(tmp_path, monkeypatch):
+    client, project = client_with_selection(tmp_path)
+    paths = []
+
+    def fake(payload, **_):
+        paths.append(payload["subtitle_srt_path"])
+        return {"status": "created"}
+
+    monkeypatch.setattr("backend.app.resolve_textplus_timeline.run_resolve_helper", fake)
+    assert client.post(f"/api/curation/projects/{project.project_id}/resolve/combined-timeline").status_code == 200
+    assert client.post(f"/api/curation/projects/{project.project_id}/resolve/combined-timeline").status_code == 200
+    assert paths[0] != paths[1]

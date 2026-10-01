@@ -62,9 +62,10 @@ def default_destination() -> str:
 
 def window_geometry(screen_width: int, screen_height: int, *, requested_height: int, package_visible: bool) -> str:
     """Return a useful bridge size without extending below the Windows work area."""
-    width = min(820 if package_visible else 720, max(600, screen_width - 80))
-    wanted = max(930, requested_height + 70) if package_visible else max(760, requested_height + 30)
-    height = min(wanted, max(600, screen_height - 80))
+    preferred_width = 660 if package_visible and screen_width >= 1600 else 600
+    width = min(preferred_width, max(520, screen_width - 80))
+    wanted = max(840, requested_height + 60) if package_visible else max(680, requested_height + 40)
+    height = min(wanted, max(560, screen_height - 80))
     return f"{width}x{height}"
 
 
@@ -138,7 +139,7 @@ class RoundedPanel(tk.Canvas):
 
 class RoundedButton(tk.Canvas):
     def __init__(self, parent: Any, *, text: str, command: Callable[[], None], accent: bool = False, state: str = "normal"):
-        super().__init__(parent, height=48, bg=parent.cget("bg"), highlightthickness=0, bd=0, cursor="hand2")
+        super().__init__(parent, height=40, bg=parent.cget("bg"), highlightthickness=0, bd=0, cursor="hand2")
         self._text, self._command, self._accent, self._state, self._hover = text, command, accent, state, False
         self.bind("<Configure>", self._draw); self.bind("<Enter>", self._enter); self.bind("<Leave>", self._leave); self.bind("<Button-1>", self._click)
 
@@ -169,10 +170,10 @@ class RoundedButton(tk.Canvas):
         self.create_text(width/2, height/2, text=self._text, fill=ink, font=("Segoe UI Semibold", 10))
 
 
-class ToggleCard(tk.Canvas):
-    """Large switch card used for capture options."""
+class CompactChoiceRow(tk.Canvas):
+    """Compact click row that lights up when the option is selected."""
     def __init__(self, parent: Any, *, title: str, description: str, variable: Any):
-        super().__init__(parent, height=68, bg=parent.cget("bg"), highlightthickness=0, bd=0, cursor="hand2")
+        super().__init__(parent, height=50, bg=parent.cget("bg"), highlightthickness=0, bd=0, cursor="hand2")
         self.title, self.description, self.variable = title, description, variable
         self.bind("<Configure>", self._draw); self.bind("<Button-1>", self._toggle)
         variable.trace_add("write", lambda *_: self._draw())
@@ -182,19 +183,18 @@ class ToggleCard(tk.Canvas):
 
     def _draw(self, _event: Any = None) -> None:
         self.delete("all"); width=max(200,self.winfo_width()); active=bool(self.variable.get())
-        fill,outline=("#242c4d","#7c6cf2") if active else ("#171c35","#343c65")
-        self.create_polygon(_rounded_points(1,1,width-1,67,15),smooth=True,splinesteps=24,fill=fill,outline=outline,width=2 if active else 1)
-        self.create_text(16,21,text=self.title,anchor="w",fill="#f7f8ff",font=("Segoe UI Semibold",10))
-        self.create_text(16,44,text=self.description,anchor="w",fill="#aeb6cf",font=("Segoe UI",8))
-        x=width-48; self.create_polygon(_rounded_points(x-18,18,x+18,48,15),smooth=True,fill="#7c6cf2" if active else "#303752",outline="")
-        knob=x+7 if active else x-7
-        self.create_oval(knob-9,24,knob+9,42,fill="#ffffff" if active else "#9299bc",outline="")
+        fill,outline=("#292951","#8f82ff") if active else ("#171c35","#343c65")
+        self.create_polygon(_rounded_points(1,1,width-1,49,13),smooth=True,splinesteps=24,fill=fill,outline=outline,width=2 if active else 1)
+        if active:self.create_polygon(_rounded_points(2,8,7,42,3),smooth=True,fill="#d8ff5b",outline="")
+        self.create_text(15,17,text=self.title,anchor="w",fill="#ffffff" if active else "#dce0f2",font=("Segoe UI Semibold",9))
+        self.create_text(15,35,text=self.description,anchor="w",fill="#c5cae1" if active else "#8f97b8",font=("Segoe UI",8))
+        self.create_text(width-18,25,text="✓" if active else "",anchor="e",fill="#d8ff5b",font=("Segoe UI Semibold",12))
 
 
 class DestinationCard(tk.Canvas):
     """Mutually exclusive destination card with an explicit selected state."""
     def __init__(self, parent: Any, *, title: str, description: str, value: str, variable: Any, recommended: bool = False, on_select: Callable[[str], None] | None = None):
-        super().__init__(parent, height=76, bg=parent.cget("bg"), highlightthickness=0, bd=0, cursor="hand2")
+        super().__init__(parent, height=58, bg=parent.cget("bg"), highlightthickness=0, bd=0, cursor="hand2")
         self.title,self.description,self.value,self.variable,self.recommended=title,description,value,variable,recommended
         self.bind("<Configure>",self._draw); self.bind("<Button-1>",lambda _event:(on_select or variable.set)(value))
         variable.trace_add("write",lambda *_:self._draw())
@@ -202,13 +202,13 @@ class DestinationCard(tk.Canvas):
     def _draw(self, _event: Any = None) -> None:
         self.delete("all"); width=max(200,self.winfo_width()); selected=self.variable.get()==self.value
         fill,outline=("#25304c","#d8ff5b") if selected else ("#171c35","#343c65")
-        self.create_polygon(_rounded_points(1,1,width-1,75,16),smooth=True,splinesteps=24,fill=fill,outline=outline,width=2 if selected else 1)
-        self.create_oval(16,22,36,42,fill=fill,outline="#d8ff5b" if selected else "#697193",width=2)
-        if selected:self.create_oval(21,27,31,37,fill="#d8ff5b",outline="")
-        self.create_text(48,22,text=self.title,anchor="w",fill="#f7f8ff",font=("Segoe UI Semibold",10))
-        self.create_text(48,48,text=self.description,anchor="w",fill="#b8bfd9",font=("Segoe UI",8))
+        self.create_polygon(_rounded_points(1,1,width-1,57,13),smooth=True,splinesteps=24,fill=fill,outline=outline,width=2 if selected else 1)
+        self.create_oval(14,18,32,36,fill=fill,outline="#d8ff5b" if selected else "#697193",width=2)
+        if selected:self.create_oval(19,23,27,31,fill="#d8ff5b",outline="")
+        self.create_text(42,17,text=self.title,anchor="w",fill="#f7f8ff",font=("Segoe UI Semibold",9))
+        self.create_text(42,39,text=self.description,anchor="w",fill="#b8bfd9",font=("Segoe UI",8))
         if self.recommended:
-            self.create_text(width-18,22,text="PREDEFINITA",anchor="e",fill="#d8ff5b",font=("Segoe UI Semibold",8))
+            self.create_text(width-14,17,text="PREDEFINITA",anchor="e",fill="#d8ff5b",font=("Segoe UI Semibold",7))
 
 
 class ProgressBar(tk.Canvas):
@@ -446,8 +446,8 @@ class BridgeApp:
 
     def _build_ui(self) -> None:
         self.root.title(f"RMBL B ROLL {RELEASE_VERSION}")
-        self.root.geometry("720x760")
-        self.root.minsize(600, 600)
+        self.root.geometry("600x680")
+        self.root.minsize(520, 560)
         self.root.resizable(True, True)
         self.root.configure(bg="#11152b")
         self.root.protocol("WM_DELETE_WINDOW", self.close)
@@ -456,14 +456,14 @@ class BridgeApp:
         scrollbar = tk.Scrollbar(self.root, orient="vertical", command=viewport.yview, bg="#242b4b", troughcolor="#11152b", activebackground="#7c6cf2", bd=0, highlightthickness=0)
         viewport.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y"); viewport.pack(side="left", fill="both", expand=True)
-        shell = tk.Frame(viewport, bg="#11152b", padx=24, pady=22)
+        shell = tk.Frame(viewport, bg="#11152b", padx=16, pady=14)
         shell_window = viewport.create_window(0, 0, anchor="nw", window=shell)
         shell.bind("<Configure>", lambda _event: viewport.configure(scrollregion=viewport.bbox("all")))
         viewport.bind("<Configure>", lambda event: viewport.itemconfigure(shell_window, width=event.width))
         self.root.bind("<MouseWheel>", lambda event: viewport.yview_scroll(int(-event.delta / 120), "units"))
         self.widgets["content"] = shell
 
-        header = RoundedPanel(shell, fill="#181d39", outline="#434b77", height=104, radius=24, padding=16); header.pack(fill="x", pady=(0, 14))
+        header = RoundedPanel(shell, fill="#181d39", outline="#434b77", height=86, radius=20, padding=12); header.pack(fill="x", pady=(0, 10))
         logo_path = APP_ROOT / "backend" / "assets" / "branding" / "rmbl_mark_white.png"
         if logo_path.is_file():
             try:
@@ -490,31 +490,31 @@ class BridgeApp:
         tk.Label(heading, text=f"RESOLVE HANDOFF  ·  {RELEASE_VERSION}", bg="#181d39", fg="#aeb6df", font=("Segoe UI Semibold", 9)).pack(anchor="w", pady=(3, 0))
 
         self.widgets["connection"] = StatusPill(shell); self.widgets["connection"].pack(fill="x", pady=(0, 12))
-        card = RoundedPanel(shell, height=96, radius=18, padding=16); card.pack(fill="x", pady=(0, 12))
+        card = RoundedPanel(shell, height=78, radius=16, padding=12); card.pack(fill="x", pady=(0, 9))
         tk.Label(card.body, text="TIMELINE ATTIVA", bg="#202746", fg="#9299bc", font=("Segoe UI Semibold", 8), anchor="w").pack(fill="x")
         self.widgets["timeline"] = tk.Label(card.body, text="Timeline in attesa…", bg="#202746", fg="#f1f3ff", font=("Segoe UI", 10), justify="left", anchor="w"); self.widgets["timeline"].pack(fill="x", pady=(5, 0))
 
-        options_card = RoundedPanel(shell, fill="#181d39", outline="#343c65", height=410, radius=20, padding=16); options_card.pack(fill="x", pady=(0, 12))
+        options_card = RoundedPanel(shell, fill="#181d39", outline="#343c65", height=344, radius=18, padding=12); options_card.pack(fill="x", pady=(0, 9))
         options = options_card.body
         self.detect_videos = tk.BooleanVar(value=os.environ.get('RAMBLA_BRIDGE_DETECT', '1') == '1'); self.include_v1 = tk.BooleanVar(value=os.environ.get('RAMBLA_BRIDGE_V1', '0') == '1')
         tk.Label(options,text="ANALISI DELLA TIMELINE",bg="#181d39",fg="#9299bc",font=("Segoe UI Semibold",8),anchor="w").pack(fill="x",pady=(0,6))
-        ToggleCard(options,title="Rileva i video già presenti",description="Analizza le tracce video superiori e segnala le frasi già coperte",variable=self.detect_videos).pack(fill="x",pady=(0,7))
-        ToggleCard(options,title="Considera anche la traccia principale V1",description="Include il montato principale nel controllo delle coperture esistenti",variable=self.include_v1).pack(fill="x",pady=(0,12))
+        CompactChoiceRow(options,title="Rileva i video già presenti",description="Analizza le tracce video superiori e segnala le frasi già coperte",variable=self.detect_videos).pack(fill="x",pady=(0,5))
+        CompactChoiceRow(options,title="Considera anche la traccia principale V1",description="Include il montato principale nel controllo delle coperture esistenti",variable=self.include_v1).pack(fill="x",pady=(0,9))
         self.widgets["capture"] = RoundedButton(options, text="USA AUDIO IN RMBL B ROLL", command=self.capture_audio); self.widgets["capture"].pack(fill="x", pady=(0, 7))
         self.widgets["recalculate"] = RoundedButton(options, text="RICALCOLA AUDIO · IN → OUT", command=lambda: self.capture_audio(force_recalculate=True)); self.widgets["recalculate"].pack(fill="x", pady=(0, 7))
         self.widgets['open'] = RoundedButton(options, text='APRI RMBL B ROLL · PROGETTO SALVATO', command=self.open_rambla); self.widgets['open'].pack(fill='x')
-        self.widgets["capture_status"] = tk.Label(options, text="", bg="#181d39", fg="#b9c1e0", font=("Segoe UI", 9), wraplength=690, justify="left", anchor="w"); self.widgets["capture_status"].pack(fill="x", pady=(8, 0))
+        self.widgets["capture_status"] = tk.Label(options, text="", bg="#181d39", fg="#b9c1e0", font=("Segoe UI", 9), wraplength=520, justify="left", anchor="w"); self.widgets["capture_status"].pack(fill="x", pady=(6, 0))
 
         tk.Label(shell, text="PACCHETTO DA RMBL B ROLL", bg="#11152b", fg="#aeb6df", font=("Segoe UI Semibold", 9), anchor="w").pack(fill="x", pady=(6, 7))
-        package_card = RoundedPanel(shell, height=132, radius=18, padding=16); package_card.pack(fill="x")
-        self.widgets["package"] = tk.Label(package_card.body, text="Nessun pacchetto ricevuto", bg="#202746", fg="#f1f3ff", font=("Segoe UI", 10), justify="left", anchor="w", wraplength=690); self.widgets["package"].pack(fill="both", expand=True)
+        package_card = RoundedPanel(shell, height=108, radius=16, padding=12); package_card.pack(fill="x")
+        self.widgets["package"] = tk.Label(package_card.body, text="Nessun pacchetto ricevuto", bg="#202746", fg="#f1f3ff", font=("Segoe UI", 9), justify="left", anchor="w", wraplength=520); self.widgets["package"].pack(fill="both", expand=True)
         self.destination = tk.StringVar(value=default_destination())
         destinations = tk.Frame(shell, bg="#11152b"); destinations.pack(fill="x", pady=(12, 5))
         tk.Label(destinations,text="DESTINAZIONE",bg="#11152b",fg="#9299bc",font=("Segoe UI Semibold",8),anchor="w").pack(fill="x",pady=(0,6))
         DestinationCard(destinations,title="IMPORTA SULLA TIMELINE ATTIVA",description="Crea prima una copia TEMP. Non sposta né modifica le clip già presenti",value="active",variable=self.destination,recommended=True,on_select=self._select_destination).pack(fill="x",pady=(0,7))
         DestinationCard(destinations,title="CREA UNA NUOVA TIMELINE TEMP",description="Genera una timeline separata contenente soltanto il nuovo montaggio",value="new",variable=self.destination,on_select=self._select_destination).pack(fill="x")
         self.widgets["progress"] = ProgressBar(shell); self.widgets["progress"].pack(fill="x", pady=(12, 8))
-        self.widgets["message"] = tk.Label(shell, text="L'applicazione parte soltanto quando premi APPLICA.", bg="#11152b", fg="#b9c1e0", font=("Segoe UI", 9), wraplength=690, justify="left", anchor="w"); self.widgets["message"].pack(fill="x", pady=(0, 10))
+        self.widgets["message"] = tk.Label(shell, text="L'applicazione parte soltanto quando premi APPLICA.", bg="#11152b", fg="#b9c1e0", font=("Segoe UI", 9), wraplength=520, justify="left", anchor="w"); self.widgets["message"].pack(fill="x", pady=(0, 8))
         actions = tk.Frame(shell, bg="#11152b"); actions.pack(fill="x", pady=(0, 8))
         self.widgets["apply"] = RoundedButton(actions, text="APPLICA", command=self.apply, accent=True, state="disabled"); self.widgets["apply"].pack(side="left", fill="x", expand=True, padx=(0, 6))
         self.widgets["discard"] = RoundedButton(actions, text="SCARTA", command=self.discard, state="disabled"); self.widgets["discard"].pack(side="left", fill="x", expand=True, padx=(6, 0))

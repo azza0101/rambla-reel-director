@@ -1199,7 +1199,7 @@ def create_app(
             json.dumps(payload["subtitles"], ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest()[:10]
         subtitle_path = run_root(project_id) / "exports" / (
-            f"RAMBLA_{payload['subtitle_count']}_NATIVE_SUBS_{subtitle_key}.srt"
+            f"RAMBLA_{payload['subtitle_count']}_NATIVE_SUBS_{subtitle_key}_{uuid.uuid4().hex[:8]}.srt"
         )
         payload.update(
             mode="combined",

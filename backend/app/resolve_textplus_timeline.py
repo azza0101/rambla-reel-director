@@ -14,7 +14,7 @@ import sys
 import tempfile
 import time
 import uuid
-from typing import Any
+from typing import Any, Callable
 
 from backend.app.resolve_native_subtitles import (
     cleanup_stale_subtitle_media,
@@ -392,6 +392,22 @@ def set_textplus_content(item: Any, text: str) -> None:
     raise RuntimeError(f"Resolve did not persist Text+ text: {text}")
 
 
+def insert_fusion_title_with_retry(
+    timeline: Any, title_name: str, *, attempts: int = 20,
+    on_retry: Callable[[], Any] | None = None,
+) -> Any:
+    """Wait briefly while Resolve initializes Fusion on an activated duplicate."""
+    for attempt in range(attempts):
+        inserted = timeline.InsertFusionTitleIntoTimeline(title_name)
+        if inserted:
+            return inserted
+        if attempt + 1 < attempts:
+            if on_retry is not None:
+                on_retry()
+            time.sleep(0.5)
+    return None
+
+
 def save_resolve_project(project_manager: Any) -> None:
     if project_manager.SaveProject() is False:
         raise RuntimeError("Resolve could not save the generated timeline in the project")
@@ -685,7 +701,10 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
         for operation in boundary_operations(plan):
             boundary = operation["frame"]
             move_to_boundary(generated, boundary=boundary, base_frame=base_frame, fps=fps)
-            inserted = generated.InsertFusionTitleIntoTimeline(title_name)
+            inserted = insert_fusion_title_with_retry(
+                generated, title_name,
+                on_retry=lambda: activate_timeline(resolve, project, generated),
+            )
             if not inserted:
                 raise RuntimeError(
                     f"Resolve Fusion Title '{title_name}' is unavailable. Install it and restart Resolve"

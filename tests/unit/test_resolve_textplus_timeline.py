@@ -2,6 +2,23 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+
+def test_fusion_title_insert_retries_while_resolve_initializes_the_duplicate(monkeypatch):
+    from backend.app.resolve_textplus_timeline import insert_fusion_title_with_retry
+
+    class Timeline:
+        def __init__(self): self.calls = 0
+        def InsertFusionTitleIntoTimeline(self, _name):
+            self.calls += 1
+            return None if self.calls < 3 else "title-item"
+
+    delays = []
+    monkeypatch.setattr("backend.app.resolve_textplus_timeline.time.sleep", delays.append)
+    timeline = Timeline()
+    assert insert_fusion_title_with_retry(timeline, "KURA") == "title-item"
+    assert timeline.calls == 3
+    assert delays == [0.5, 0.5]
 import shutil
 import uuid
 
