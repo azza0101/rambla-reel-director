@@ -320,9 +320,11 @@ class BridgeClient:
         self.current_package = None
         return row
 
-    def capture(self, *, detect_videos: bool, include_v1: bool) -> dict[str, Any]:
+    def capture(self, *, detect_videos: bool, include_v1: bool,
+                force_recalculate: bool = False) -> dict[str, Any]:
         return self.request_json("/api/curation/resolve-bridge/capture", "POST", {
             "detect_videos": detect_videos, "include_v1": include_v1,
+            "force_recalculate": force_recalculate,
         })
 
     def open_project(self) -> dict[str, Any]:
@@ -442,13 +444,14 @@ class BridgeApp:
         tk.Label(card.body, text="TIMELINE ATTIVA", bg="#202746", fg="#9299bc", font=("Segoe UI Semibold", 8), anchor="w").pack(fill="x")
         self.widgets["timeline"] = tk.Label(card.body, text="Timeline in attesa…", bg="#202746", fg="#f1f3ff", font=("Segoe UI", 10), justify="left", anchor="w"); self.widgets["timeline"].pack(fill="x", pady=(5, 0))
 
-        options_card = RoundedPanel(shell, fill="#181d39", outline="#343c65", height=242, radius=20, padding=16); options_card.pack(fill="x", pady=(0, 12))
+        options_card = RoundedPanel(shell, fill="#181d39", outline="#343c65", height=296, radius=20, padding=16); options_card.pack(fill="x", pady=(0, 12))
         options = options_card.body
         self.detect_videos = tk.BooleanVar(value=os.environ.get('RAMBLA_BRIDGE_DETECT', '1') == '1'); self.include_v1 = tk.BooleanVar(value=os.environ.get('RAMBLA_BRIDGE_V1', '0') == '1')
         check_style = dict(bg="#181d39", fg="#eef0ff", activebackground="#181d39", activeforeground="#ffffff", selectcolor="#302d55", font=("Segoe UI", 10), bd=0, highlightthickness=0)
         tk.Checkbutton(options, text="Rileva i video già presenti", variable=self.detect_videos, **check_style).pack(anchor="w", pady=(0, 5))
         tk.Checkbutton(options, text="Considera anche la traccia principale V1", variable=self.include_v1, **check_style).pack(anchor="w", pady=(0, 10))
         self.widgets["capture"] = RoundedButton(options, text="USA AUDIO IN RMBL B ROLL", command=self.capture_audio); self.widgets["capture"].pack(fill="x", pady=(0, 7))
+        self.widgets["recalculate"] = RoundedButton(options, text="RICALCOLA AUDIO · IN → OUT", command=lambda: self.capture_audio(force_recalculate=True)); self.widgets["recalculate"].pack(fill="x", pady=(0, 7))
         self.widgets['open'] = RoundedButton(options, text='APRI RMBL B ROLL · PROGETTO SALVATO', command=self.open_rambla); self.widgets['open'].pack(fill='x')
         self.widgets["capture_status"] = tk.Label(options, text="", bg="#181d39", fg="#b9c1e0", font=("Segoe UI", 9), wraplength=690, justify="left", anchor="w"); self.widgets["capture_status"].pack(fill="x", pady=(8, 0))
 
@@ -573,15 +576,22 @@ class BridgeApp:
             self.client.discard(); self._render(BridgeSnapshot(True, {}, None))
         except Exception as exc: self._show_error(str(exc))
 
-    def capture_audio(self) -> None:
-        self.widgets["capture"].configure(state="disabled"); self.widgets["capture_status"].configure(text="Render audio e invio a RMBL B ROLL in corso…"); self.root.update_idletasks()
+    def capture_audio(self, force_recalculate: bool = False) -> None:
+        self.widgets["capture"].configure(state="disabled"); self.widgets["recalculate"].configure(state="disabled")
+        activity = "Ricalcolo forzato dell'audio tra IN e OUT" if force_recalculate else "Render audio e invio a RMBL B ROLL"
+        self.widgets["capture_status"].configure(text=activity + " in corso…"); self.root.update_idletasks()
         try:
-            row = self.client.capture(detect_videos=bool(self.detect_videos.get()), include_v1=bool(self.include_v1.get()))
+            row = self.client.capture(
+                detect_videos=bool(self.detect_videos.get()), include_v1=bool(self.include_v1.get()),
+                force_recalculate=force_recalculate,
+            )
             detected = len(row.get("existing_video_ranges") or []); reused = "Audio precedente riutilizzato" if row.get("reused_audio") else "Nuovo audio renderizzato"
-            self.widgets["capture_status"].configure(text=f"✓ {reused} · {detected} intervalli video rilevati · RMBL B ROLL aperta")
+            interval = f"Frame {row.get('mark_in','?')} → {row.get('mark_out','?')} ({row.get('range_source','timeline')})"
+            self.widgets["capture_status"].configure(text=f"✓ {reused} · {interval} · {detected} intervalli video rilevati · RMBL B ROLL aperta")
             self._focus_rambla(row.get("url", ""))
         except Exception as exc: self._show_error(str(exc), target="capture_status")
-        finally: self.widgets["capture"].configure(state="normal")
+        finally:
+            self.widgets["capture"].configure(state="normal"); self.widgets["recalculate"].configure(state="normal")
 
     def open_rambla(self) -> None:
         try:

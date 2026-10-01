@@ -91,6 +91,7 @@ def test_audio_cache_requires_the_same_timeline_range_and_fingerprint():
     assert not can_reuse_audio_capture(previous, {**current, "mark_out":201}, guide_ready=True)
     assert not can_reuse_audio_capture(previous, {**current, "audio_fingerprint":"changed"}, guide_ready=True)
     assert not can_reuse_audio_capture(previous, {**current, "audio_item_count":0}, guide_ready=True)
+    assert not can_reuse_audio_capture(previous, current, guide_ready=True, force_recalculate=True)
 
 
 def test_resolve_script_is_a_stable_non_blocking_standalone_launcher():

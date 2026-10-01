@@ -25,6 +25,8 @@ Gli accessi a TikTok, Instagram ed Envato restano invece nel profilo Chrome del 
 
 `RMBL_B_ROLL_APP.vbs` avvia solo l'app e riutilizza una singola istanza. Non avvia né modifica Resolve.
 
+Nel bridge, **RICALCOLA AUDIO · IN → OUT** ignora sempre la guida precedente, legge nuovamente la timeline focalizzata e renderizza soltanto l'intervallo IN/OUT corrente. È il comando da usare dopo aver spostato clip audio o modificato i punti di montaggio.
+
 ## Accessi esterni
 
 TikTok, Instagram ed Envato vengono aperti in una nuova finestra del profilo Google Chrome già in uso. Anche **SCARICA DA ENVATO** usa Chrome, così restano disponibili gli accessi già salvati nel profilo dell'utente.

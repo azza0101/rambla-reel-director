@@ -1,7 +1,7 @@
 # RMBL B ROLL — handoff tecnico
 
 Aggiornato: 2026-10-01  
-Versione: `v0028`  
+Versione: `v0029`  
 Branch di consegna: `feat/curation-ui-v1`
 
 ## Avvio rapido
@@ -20,6 +20,8 @@ Branch di consegna: `feat/curation-ui-v1`
 3. L'app prepara un handoff senza modificare Resolve.
 4. Il bridge riceve il pacchetto nella stessa sessione, si espande e abilita **APPLICA**.
 5. L'utente sceglie nuova timeline o timeline attiva con backup TEMP e conferma.
+
+Il bridge espone anche **RICALCOLA AUDIO · IN → OUT**: invia `force_recalculate=true`, impedisce il riuso della guida precedente e renderizza il range IN/OUT letto dalla timeline focalizzata in quel momento. Il riepilogo mostra `mark_in`, `mark_out` e `range_source` realmente acquisiti.
 
 La timeline sorgente resta protetta. Le mutazioni Resolve passano dai job di `resolve_handoff_jobs.py`; i calcoli temporali usano FPS e frame iniziale della timeline acquisita.
 
@@ -74,6 +76,6 @@ $env:TMP=$env:TEMP
 
 Il vincolo di sviluppo resta `resolve_calls=0`: i test non devono modificare una timeline reale. Per prove reali su EGITTO serve l'azione esplicita dell'utente nel bridge.
 
-### Stato suite al passaggio v0028
+### Stato suite al passaggio v0029
 
-I test focalizzati su tema persistente, UI, versione e distribuzione Windows passano (`43 passed`). La precedente batteria focalizzata su profili browser, login social, download Envato e navigazione guidata passa (`73 passed`). Il JavaScript completo renderizzato passa inoltre `node --check`.
+I test focalizzati su ricalcolo audio IN/OUT, cache, bridge standalone, tema persistente, UI, versione e distribuzione Windows passano (`68 passed`). La precedente batteria focalizzata su profili browser, login social, download Envato e navigazione guidata passa (`73 passed`). Il JavaScript completo renderizzato passa inoltre `node --check`.

@@ -110,9 +110,10 @@ def count_audio_items(timeline: Any, mark_in: int, mark_out: int) -> int:
     return count
 
 
-def can_reuse_audio_capture(previous: dict[str, Any], current: dict[str, Any], *, guide_ready: bool) -> bool:
+def can_reuse_audio_capture(previous: dict[str, Any], current: dict[str, Any], *, guide_ready: bool,
+                            force_recalculate: bool = False) -> bool:
     """Reuse a guide only for the exact same, still-audible Resolve edit."""
-    if not guide_ready or int(current.get("audio_item_count") or 0) <= 0:
+    if force_recalculate or not guide_ready or int(current.get("audio_item_count") or 0) <= 0:
         return False
     identity_fields = ("resolve_timeline_id", "mark_in", "mark_out", "fps")
     if any(str(previous.get(key)) != str(current.get(key)) for key in identity_fields):

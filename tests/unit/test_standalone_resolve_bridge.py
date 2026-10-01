@@ -114,6 +114,24 @@ def test_apply_is_gated_until_bridge_received_at_exists():
     else: raise AssertionError("apply should be gated")
 
 
+def test_force_audio_recalculation_is_sent_to_the_server():
+    calls=[]
+    def request(path,method="GET",payload=None):
+        calls.append((path,method,payload)); return {"status":"captured"}
+    client=BridgeClient(request_json=request,session_id="s")
+    client.capture(detect_videos=True,include_v1=False,force_recalculate=True)
+    assert calls == [("/api/curation/resolve-bridge/capture","POST",{
+        "detect_videos":True,"include_v1":False,"force_recalculate":True,
+    })]
+
+
+def test_bridge_exposes_a_force_recalculate_in_out_button():
+    from pathlib import Path
+    source=Path("tools/resolve_bridge/standalone_bridge.py").read_text(encoding="utf-8")
+    assert "RICALCOLA AUDIO · IN → OUT" in source
+    assert "force_recalculate=True" in source
+
+
 class FakeRoot:
     def __init__(self):
         self.scheduled=[]

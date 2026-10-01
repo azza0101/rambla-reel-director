@@ -4,7 +4,7 @@ from tools.resolve_bridge.standalone_bridge import RELEASE_VERSION as BRIDGE_VER
 
 
 def test_rambla_and_native_bridge_share_the_same_visible_release_version():
-    assert RELEASE_VERSION == "v0028"
+    assert RELEASE_VERSION == "v0029"
     assert BRIDGE_VERSION == RELEASE_VERSION
     page = render_curation_page_v2("release-version-test")
     assert f'<span class="brandProductV41">RMBL B ROLL</span><span class="releaseVersionV35">{RELEASE_VERSION}</span>' in page

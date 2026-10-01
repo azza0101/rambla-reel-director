@@ -101,6 +101,7 @@ class ResolveBridgeCaptureRequest(BaseModel):
     project_id: str | None = None
     detect_videos: bool = True
     include_v1: bool = False
+    force_recalculate: bool = False
 
 
 class ResolveBridgeSessionRequest(BaseModel):
@@ -630,7 +631,10 @@ def create_app(
             project = store.load(project_id)
             manifest = _read_json(root / project_id / "resolve-bridge.json", {})
             guide_ready = bool(project.guide_audio and Path(project.guide_audio.path).is_file())
-            if can_reuse_audio_capture(manifest, inspection, guide_ready=guide_ready):
+            if can_reuse_audio_capture(
+                manifest, inspection, guide_ready=guide_ready,
+                force_recalculate=request.force_recalculate,
+            ):
                 reused = {**manifest, **inspection, "schema_version": "rambla-resolve-bridge-1",
                           "project_id": project_id, "reused_audio": True,
                           "reused_audio_reason": "unchanged_audio"}
