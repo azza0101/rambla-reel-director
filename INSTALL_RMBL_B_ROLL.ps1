@@ -69,17 +69,24 @@ if ((Resolve-Path -LiteralPath $SourceRoot).Path -ne [IO.Path]::GetFullPath($Ins
 }
 
 $python = $null
-$py = Get-Command py.exe -ErrorAction SilentlyContinue
-if ($py) {
-    & $py.Source -3.12 -c "import sys; assert sys.version_info[:2] == (3, 12)" 2>$null
-    if ($LASTEXITCODE -eq 0) { $python = @($py.Source, '-3.12') }
-}
-if (-not $python) {
-    $candidate = Get-Command python.exe -ErrorAction SilentlyContinue
-    if ($candidate) {
-        & $candidate.Source -c "import sys; assert sys.version_info[:2] == (3, 12)" 2>$null
-        if ($LASTEXITCODE -eq 0) { $python = @($candidate.Source) }
+$probeErrorAction = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    $py = Get-Command py.exe -ErrorAction SilentlyContinue
+    if ($py) {
+        & $py.Source -3.12 -c "import sys; assert sys.version_info[:2] == (3, 12)" 2>$null
+        if ($LASTEXITCODE -eq 0) { $python = @($py.Source, '-3.12') }
     }
+    if (-not $python) {
+        $candidate = Get-Command python.exe -ErrorAction SilentlyContinue
+        if ($candidate) {
+            & $candidate.Source -c "import sys; assert sys.version_info[:2] == (3, 12)" 2>$null
+            if ($LASTEXITCODE -eq 0) { $python = @($candidate.Source) }
+        }
+    }
+}
+finally {
+    $ErrorActionPreference = $probeErrorAction
 }
 if (-not $python) {
     $winget = Get-Command winget.exe -ErrorAction SilentlyContinue

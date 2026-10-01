@@ -78,4 +78,4 @@ Il vincolo di sviluppo resta `resolve_calls=0`: i test non devono modificare una
 
 ### Stato suite al passaggio v0029
 
-I test focalizzati su ricalcolo audio IN/OUT, cache, bridge standalone, tema persistente, UI, versione e distribuzione Windows passano (`68 passed`). La precedente batteria focalizzata su profili browser, login social, download Envato e navigazione guidata passa (`73 passed`). Il JavaScript completo renderizzato passa inoltre `node --check`.
+I test focalizzati su ricalcolo audio IN/OUT, cache, bridge standalone, tema persistente, UI, versione e distribuzione Windows passano (`69 passed`). La precedente batteria focalizzata su profili browser, login social, download Envato e navigazione guidata passa (`73 passed`). Il JavaScript completo renderizzato passa inoltre `node --check`.

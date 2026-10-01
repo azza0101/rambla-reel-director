@@ -44,3 +44,10 @@ def test_single_file_windows_installer_wraps_the_complete_zip():
     assert "Expand-Archive" in bootstrap
     assert "INSTALL_RMBL_B_ROLL.ps1" in bootstrap
     assert "LOCALAPPDATA" in bootstrap
+
+
+def test_installer_can_probe_missing_python_312_without_aborting_before_winget():
+    script = Path("INSTALL_RMBL_B_ROLL.ps1").read_text(encoding="utf-8")
+    assert "$probeErrorAction = $ErrorActionPreference" in script
+    assert "$ErrorActionPreference = 'Continue'" in script
+    assert "$ErrorActionPreference = $probeErrorAction" in script
