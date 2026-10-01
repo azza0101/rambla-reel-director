@@ -1,7 +1,7 @@
 """RAMBLA studio theme: quiet indigo panels and explicit gallery controls."""
 CSS = r'''<style id="rambla-studio-v10">
-:root{--bg:#191c35;--p:#242743;--p2:#20233d;--line:#3b3f63;--ink:#f2f2ff;--muted:#b0b4d2;--lime:#8592ff;--cyan:#91b9ff}
-body{background:radial-gradient(ellipse at top left,#383f6a 0,transparent 55%),#191c35;color:var(--ink);font-size:14px;line-height:1.5}
+:root{--bg:#0b2427;--p:#242743;--p2:#20233d;--line:#3b3f63;--ink:#f2f2ff;--muted:#b0b4d2;--lime:#8592ff;--cyan:#91b9ff}
+body{background:radial-gradient(ellipse at top left,#24575c 0,transparent 52%),linear-gradient(180deg,#0b2427,#081b1e);color:var(--ink);font-size:14px;line-height:1.5}
 main{max-width:1800px;padding:28px 24px;margin:auto}.top{gap:18px}.top h1{letter-spacing:-.045em;font-weight:750}.grid{gap:18px}
 .panel,.rail,.stage,.tray{background:var(--p);border:1px solid #44496a80;border-radius:22px;padding:20px;box-shadow:0 12px 32px #0c0e231f}
 .panel{margin-top:18px}.rail,.tray{background:#21243e}.stage{background:linear-gradient(150deg,#292c4b,#232640)}.rail{top:18px;height:calc(100vh - 36px)}

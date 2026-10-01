@@ -40,7 +40,7 @@ _MANAGEMENT_CSS = r"""
 
 _WORKFLOW_ACCORDION_CSS = r"""
 <style id="workflow-accordion-v42-style">
-[data-workflow-step-v42]{position:relative}.workflowHeaderV42{display:flex!important;align-items:center;gap:10px;cursor:pointer;user-select:none}.workflowTitleRowV43{display:flex;align-items:center;gap:10px}.workflowHeaderV42:focus-visible{outline:2px solid #d8ff5b;outline-offset:4px}.workflowChevronV42{display:inline-grid;flex:0 0 32px;place-items:center;width:32px;height:32px;margin:0;padding:0;border:1px solid #7781aa;border-radius:8px;background:#252c4c;color:#f3f5ff;font-size:21px;font-weight:900;line-height:1;box-shadow:0 2px 8px #070a1870;vertical-align:middle;transition:background .15s,border-color .15s,transform .15s}.workflowChevronV42:hover{background:#343d66;border-color:#aab4e4}.workflowChevronV42:active{transform:scale(.94)}.workflowCollapsedV42>.workflowBodyV42{display:none}.workflowBodyV42{display:block}.workflowStepFiveClosedV42+.grid{display:none}.workflowStepFiveOpenV42+.grid{display:grid}.workflowNextV42{border-color:#839249!important;box-shadow:0 0 0 1px #d8ff5b33}.workflowNextV42>.workflowHeaderV42,.workflowNextV42.workflowHeaderV42{color:#f1ffc1}
+[data-workflow-step-v42]{position:relative}.workflowHeaderV42{display:flex!important;align-items:center;gap:10px;cursor:pointer;user-select:none}.workflowTitleRowV43{display:flex;align-items:center;gap:10px}.workflowHeaderV42:focus-visible{outline:2px solid #d8ff5b;outline-offset:4px}.workflowChevronV42{display:inline-grid;flex:0 0 32px;place-items:center;width:32px;height:32px;margin:0;padding:0;border:1px solid #7781aa;border-radius:8px;background:#252c4c;color:#f3f5ff;font-size:21px;font-weight:900;line-height:1;box-shadow:0 2px 8px #070a1870;vertical-align:middle;transition:background .15s,border-color .15s,transform .15s}.workflowChevronV42:hover{background:#343d66;border-color:#aab4e4}.workflowChevronV42:active{transform:scale(.94)}.workflowCollapsedV42>.workflowBodyV42{display:none}.workflowBodyV42{display:block}.workflowStepFiveClosedV42+.grid{display:none}.workflowStepFiveOpenV42+.grid{display:grid}
 </style>
 """
 
@@ -280,7 +280,7 @@ def _organize_workflow(html: str) -> str:
         f'<div><b>Still images</b><span id="imagesCompleteV12" class="stepStatusV12" hidden></span>{images}<small>Photos matched to each shot</small></div></div>'
         f'<details class="toolsV5"><summary>Media maintenance</summary><div class="row">{maintenance}<small>Remove retrieved media while keeping the transcript and plan.</small></div></details></section>'
     )
-    html = html.replace('<div class="grid"><aside class="rail">', panel + '<h2 id="sceneWorkspaceHeading" data-workflow-step-v42="5">5 · Visual beats · testo e B-roll</h2><div class="grid"><aside class="rail">', 1)
+    html = html.replace('<div class="grid"><aside class="rail">', panel + '<section class="panel workflowSceneHeaderV44" data-workflow-step-v42="5"><h2 id="sceneWorkspaceHeading">5 · Visual beats · testo e B-roll</h2></section><div class="grid"><aside class="rail">', 1)
     html = html.replace('<h2>Source</h2>', '<h2>1 · Source &amp; analysis <span id="analysisCompleteV12" class="stepStatusV12" hidden></span></h2>', 1)
     html = html.replace('<h2>Editorial Plan</h2>', '<h2>3 · Editorial plan <span id="planCompleteV12" class="stepStatusV12" hidden></span></h2>', 1)
     html = re.sub(r'(<section class="panel")(?=>\s*<h2>1 ·)', r'\1 data-workflow-step-v42="1"', html, count=1)
