@@ -51,6 +51,13 @@ La timeline sorgente resta protetta. Le mutazioni Resolve passano dai job di `re
 - L'app apre automaticamente una sola sezione: il primo passaggio ancora da completare.
 - Ogni intestazione resta cliccabile per aprire o richiudere manualmente la sezione.
 
+## Tema grafico
+
+- Il canvas predefinito di `v0028` è verde acqua scuro e solido, senza il precedente gradiente marcato.
+- Il pannello finale **⚙ IMPOSTAZIONI GRAFICHE** controlla live canvas e sezioni 1–7, ciascuno in modalità solida o gradiente.
+- `GET/PUT /api/curation/theme-preferences` valida soltanto colori esadecimali e persiste in `rambla-data/theme-preferences.json`.
+- Il file resta fuori dai progetti e viene conservato dall'installer durante ogni aggiornamento.
+
 ## Dati locali esclusi dal repository
 
 Non pubblicare `.env.local`, `rambla-data`, profili browser, progetti cliente, media scaricati, cache, log, render, pacchetti DRA/XML di prova o cartelle `.test-*`. Le chiavi provider rimangono locali.
@@ -69,4 +76,4 @@ Il vincolo di sviluppo resta `resolve_calls=0`: i test non devono modificare una
 
 ### Stato suite al passaggio v0028
 
-I test focalizzati su profili browser, login social, download Envato, navigazione guidata e versione passano (`73 passed`). La suite completa riporta `852 passed, 6 failed`: i sei errori sono contratti legacy già presenti fuori da questo intervento (due test del vecchio `/curation` debug, un controller Node legacy, una variante di ricerca stock e due fixture `MemoryPath` incompatibili con il registro Envato). Il JavaScript completo renderizzato passa inoltre `node --check`.
+I test focalizzati su tema persistente, UI, versione e distribuzione Windows passano (`43 passed`). La precedente batteria focalizzata su profili browser, login social, download Envato e navigazione guidata passa (`73 passed`). Il JavaScript completo renderizzato passa inoltre `node --check`.

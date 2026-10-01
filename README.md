@@ -15,6 +15,12 @@ Se trova RMBL B ROLL gia installato, mostra la versione presente e quella nuova 
 
 Lo ZIP `RMBL-B-ROLL-Windows-vXXXX.zip` rimane disponibile come alternativa manuale: estrailo e avvia `INSTALL_RMBL_B_ROLL.cmd`.
 
+### Credenziali sul nuovo PC
+
+Il setup non contiene password, token o chiavi API, nemmeno in forma cifrata. Dopo l'installazione configura localmente `.env.local` nella cartella dell'app, partendo da `cloud.env.example`. Le chiavi usate dalle funzioni abilitate sono `GROQ_API_KEY`, `GEMINI_API_KEY` e `PEXELS_API_KEY`; `GOOGLE_API_KEY` e `GOOGLE_CSE_ID` sono opzionali per la ricerca Google, mentre `RAMBLA_REVIEW_WEBAPP_URL` e `RAMBLA_REVIEW_OWNER_SECRET` servono soltanto al ponte di revisione online.
+
+Gli accessi a TikTok, Instagram ed Envato restano invece nel profilo Chrome del singolo PC. Vanno quindi effettuati nel Chrome del nuovo computer. Gli aggiornamenti sullo stesso PC conservano `.env.local`, dati, progetti e preferenze.
+
 ## Launcher senza bridge
 
 `RMBL_B_ROLL_APP.vbs` avvia solo l'app e riutilizza una singola istanza. Non avvia né modifica Resolve.
@@ -22,6 +28,10 @@ Lo ZIP `RMBL-B-ROLL-Windows-vXXXX.zip` rimane disponibile come alternativa manua
 ## Accessi esterni
 
 TikTok, Instagram ed Envato vengono aperti in una nuova finestra del profilo Google Chrome già in uso. Anche **SCARICA DA ENVATO** usa Chrome, così restano disponibili gli accessi già salvati nel profilo dell'utente.
+
+## Aspetto
+
+In fondo all'app, **⚙ IMPOSTAZIONI GRAFICHE** permette di scegliere uno sfondo solido o a gradiente per il canvas e per ciascuna sezione 1–7. L'anteprima è immediata; il salvataggio scrive `rambla-data/theme-preferences.json`, che resta intatto durante gli aggiornamenti.
 
 ## Creare il pacchetto
 
