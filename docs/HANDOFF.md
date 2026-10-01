@@ -1,7 +1,7 @@
 # RMBL B ROLL — handoff tecnico
 
 Aggiornato: 2026-10-01  
-Versione: `v0027`  
+Versione: `v0028`  
 Branch di consegna: `feat/curation-ui-v1`
 
 ## Avvio rapido
@@ -67,6 +67,6 @@ $env:TMP=$env:TEMP
 
 Il vincolo di sviluppo resta `resolve_calls=0`: i test non devono modificare una timeline reale. Per prove reali su EGITTO serve l'azione esplicita dell'utente nel bridge.
 
-### Stato suite al passaggio v0027
+### Stato suite al passaggio v0028
 
 I test focalizzati su profili browser, login social, download Envato, navigazione guidata e versione passano (`73 passed`). La suite completa riporta `852 passed, 6 failed`: i sei errori sono contratti legacy già presenti fuori da questo intervento (due test del vecchio `/curation` debug, un controller Node legacy, una variante di ricerca stock e due fixture `MemoryPath` incompatibili con il registro Envato). Il JavaScript completo renderizzato passa inoltre `node --check`.

@@ -18,6 +18,7 @@ from .social_gallery import CSS as GALLERY_CSS, JS as GALLERY_JS
 from .curation_theme import CSS as STUDIO_CSS
 from .transcript_intent_ui import CSS as TRANSCRIPT_INTENT_CSS, JS as TRANSCRIPT_INTENT_JS, PANEL as TRANSCRIPT_INTENT_PANEL
 from .timeline_export_ui import CSS as TIMELINE_EXPORT_CSS, JS as TIMELINE_EXPORT_JS, PANEL as TIMELINE_EXPORT_PANEL
+from .theme_settings_ui import CSS as THEME_SETTINGS_CSS, JS as THEME_SETTINGS_JS, PANEL as THEME_SETTINGS_PANEL
 from .release_version import RELEASE_VERSION
 
 
@@ -370,8 +371,8 @@ def render_curation_page_v2(build_token: str | None = None) -> str:
         1,
     )
     html = _organize_workflow(html)
-    html = html.replace('</style>', '</style>' + _MANAGEMENT_CSS + _WORKFLOW_ACCORDION_CSS + GALLERY_CSS + STUDIO_CSS + TRANSCRIPT_INTENT_CSS + TIMELINE_EXPORT_CSS, 1)
-    html = html.replace('</main><dialog id="lightbox">', TIMELINE_EXPORT_PANEL + '</main><dialog id="lightbox">', 1)
+    html = html.replace('</style>', '</style>' + _MANAGEMENT_CSS + _WORKFLOW_ACCORDION_CSS + GALLERY_CSS + STUDIO_CSS + TRANSCRIPT_INTENT_CSS + TIMELINE_EXPORT_CSS + THEME_SETTINGS_CSS, 1)
+    html = html.replace('</main><dialog id="lightbox">', TIMELINE_EXPORT_PANEL + THEME_SETTINGS_PANEL + '</main><dialog id="lightbox">', 1)
     html = html.replace('</main><dialog id="lightbox">', _PROJECT_DIALOG + '</main><dialog id="lightbox">', 1)
     needle = 'draw();restore()})();</script></html>'
     if needle not in html:
@@ -380,7 +381,7 @@ def render_curation_page_v2(build_token: str | None = None) -> str:
 let desktopTargetRevision=0,desktopProjectSwitchBusy=false;
 setInterval(async()=>{try{const target=await api('/desktop-target');if(!target.revision||target.revision===desktopTargetRevision||desktopProjectSwitchBusy)return;desktopTargetRevision=target.revision;const next=new URL(target.url||('/curation?project='+encodeURIComponent(target.project_id)),location.href);if(next.hostname!=='127.0.0.1')return;const versionChanged=next.searchParams.get('build')&&next.searchParams.get('build')!==new URL(location.href).searchParams.get('build');if(target.project_id&&(target.project_id!==state.pid||next.origin!==location.origin||versionChanged)){desktopProjectSwitchBusy=true;if(state.pid){await saveWorkspaceSessionV13();await api(`/projects/${state.pid}/workspace-backup`,{method:'POST'})}location.replace(next.href)}}catch(_){desktopProjectSwitchBusy=false;desktopTargetRevision=0}},900);
 """
-    html = html.replace(needle, GALLERY_JS + _MANAGEMENT_JS + TRANSCRIPT_INTENT_JS + TIMELINE_EXPORT_JS + desktop_target_js + needle, 1)
+    html = html.replace(needle, GALLERY_JS + _MANAGEMENT_JS + TRANSCRIPT_INTENT_JS + TIMELINE_EXPORT_JS + THEME_SETTINGS_JS + desktop_target_js + needle, 1)
     from .runtime_mode import current_mode
     runtime_mode = current_mode()
     if runtime_mode == "cloud":

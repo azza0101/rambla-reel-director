@@ -29,6 +29,7 @@ from .curation_ui_v2 import render_curation_page_v2
 from .editorial_import import active_retrieval_root
 from .project_maintenance import clean_beat_media, clean_project_media, delete_project_tree, project_library_rows, rename_project
 from .debug_research_cli import research_stage_type
+from .theme_preferences import ThemePreferences, load_theme_preferences, save_theme_preferences, validate_theme_preferences
 
 
 class BeatSplitRequest(BaseModel):
@@ -492,6 +493,7 @@ def create_app(
     app.state.social_profiles = social_profiles
     envato_download_sessions: dict[str, dict[str, Any]] = {}
     bridge_session_path = root.parent / "bridge-session.json"
+    theme_preferences_path = root.parent / "theme-preferences.json"
     bridge_session_state = _read_json(bridge_session_path, {})
     active_bridge_session_id = str(bridge_session_state.get("bridge_session_id") or "")
     bridge_last_seen = 0.0
@@ -518,6 +520,18 @@ def create_app(
         return {"project_id": str(target.get("project_id") or ""),
                 "url": str(target.get("url") or ""),
                 "revision": int(target.get("revision") or 0)}
+
+    @app.get("/api/curation/theme-preferences")
+    async def get_theme_preferences() -> dict[str, Any]:
+        return {"theme": load_theme_preferences(theme_preferences_path), "resolve_calls": 0}
+
+    @app.put("/api/curation/theme-preferences")
+    async def put_theme_preferences(request: ThemePreferences) -> dict[str, Any]:
+        try:
+            validated = validate_theme_preferences(request)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"theme": save_theme_preferences(theme_preferences_path, validated), "resolve_calls": 0}
 
     @app.post("/api/curation/projects/{project_id}/workspace-backup")
     async def create_workspace_backup(project_id: str) -> dict[str, Any]:
