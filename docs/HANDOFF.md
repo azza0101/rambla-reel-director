@@ -1,7 +1,7 @@
 # RMBL B ROLL — handoff tecnico
 
 Aggiornato: 2026-10-01  
-Versione: `v0029`  
+Versione: `v0030`  
 Branch di consegna: `feat/curation-ui-v1`
 
 ## Avvio rapido
@@ -52,6 +52,7 @@ La timeline sorgente resta protetta. Le mutazioni Resolve passano dai job di `re
 - Le sezioni numerate 1–7 partono chiuse.
 - L'app apre automaticamente una sola sezione: il primo passaggio ancora da completare.
 - Ogni intestazione resta cliccabile per aprire o richiudere manualmente la sezione.
+- In modifica trascrizione, **ANNULLA MODIFICHE** e **SALVA MODIFICHE TESTO** sono affiancati sotto il box, allineati a destra; **MODIFICA TESTO** resta disponibile sotto la trascrizione in modalità normale.
 
 ## Tema grafico
 
@@ -76,6 +77,6 @@ $env:TMP=$env:TEMP
 
 Il vincolo di sviluppo resta `resolve_calls=0`: i test non devono modificare una timeline reale. Per prove reali su EGITTO serve l'azione esplicita dell'utente nel bridge.
 
-### Stato suite al passaggio v0029
+### Stato suite al passaggio v0030
 
-I test focalizzati su ricalcolo audio IN/OUT, normalizzazione dei mark Resolve 21, cache, bridge standalone, tema persistente, UI, versione e distribuzione Windows passano (`71 passed`). La precedente batteria focalizzata su profili browser, login social, download Envato e navigazione guidata passa (`73 passed`). Il JavaScript completo renderizzato passa inoltre `node --check`.
+I test focalizzati sulla disposizione dei comandi di modifica testo, UI, tema e versione passano (`47 passed`). La batteria precedente su ricalcolo audio IN/OUT, normalizzazione dei mark Resolve 21, cache, bridge standalone e distribuzione Windows passa (`71 passed`). Il JavaScript completo renderizzato passa inoltre `node --check`.

@@ -39,7 +39,7 @@ def test_product_renderer_keeps_clean_curation_branding_and_internal_build_senti
     from backend.app.curation_ui_v2 import render_curation_page_v2
 
     html = render_curation_page_v2("label-test")
-    assert '<span class="brandProductV41">RMBL B ROLL</span><span class="releaseVersionV35">v0029</span>' in html
+    assert '<span class="brandProductV41">RMBL B ROLL</span><span class="releaseVersionV35">v0030</span>' in html
     assert "RAMBLA Curation V2" not in html
     assert "CURATION · build label-test" in html
     assert "CURATION V2" not in html

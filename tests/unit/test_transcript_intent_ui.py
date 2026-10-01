@@ -104,6 +104,20 @@ def test_page_contains_full_transcript_intent_workspace():
     assert "/resolve/broll-timeline.dra" in page
 
 
+def test_text_edit_save_and_cancel_are_together_below_the_text_box():
+    page = render_curation_page_v2("text-edit-actions")
+    editor_start = page.index('class="transcriptEditorV14"')
+    textarea = page.index('id="fullTranscriptV14"', editor_start)
+    actions = page.index('class="transcriptEditActionsV33"', textarea)
+    cancel = page.index('id="editTranscriptV16"', actions)
+    save = page.index('id="saveTranscriptV14"', actions)
+    editor_end = page.index('</div>', save)
+    assert textarea < actions < cancel < save < editor_end
+    assert 'id="startTranscriptEditV33"' in page
+    assert "ANNULLA MODIFICHE" in page
+    assert ".transcriptEditActionsV33{display:flex;justify-content:flex-end" in page
+
+
 def test_intent_buttons_have_persistent_tinted_colors_and_video_legend_is_compact():
     page = render_curation_page_v2("intent-colors")
 
