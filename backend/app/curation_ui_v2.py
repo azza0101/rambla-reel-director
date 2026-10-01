@@ -38,6 +38,46 @@ _MANAGEMENT_CSS = r"""
 </style>
 """
 
+_WORKFLOW_ACCORDION_CSS = r"""
+<style id="workflow-accordion-v42-style">
+[data-workflow-step-v42]{position:relative}.workflowHeaderV42{cursor:pointer;user-select:none}.workflowHeaderV42:focus-visible{outline:2px solid #d8ff5b;outline-offset:4px}.workflowChevronV42{display:inline-grid;place-items:center;width:25px;height:25px;margin-left:9px;padding:0;border:1px solid #626d99;border-radius:50%;background:#1a2039;color:#dbe1ff;font-size:14px;vertical-align:middle}.workflowCollapsedV42>.workflowBodyV42{display:none}.workflowBodyV42{display:block}.workflowStepFiveClosedV42+.grid{display:none}.workflowStepFiveOpenV42+.grid{display:grid}.workflowNextV42{border-color:#839249!important;box-shadow:0 0 0 1px #d8ff5b33}.workflowNextV42>.workflowHeaderV42,.workflowNextV42.workflowHeaderV42{color:#f1ffc1}
+</style>
+"""
+
+_WORKFLOW_ACCORDION_JS = r"""
+let workflowProjectV42=null,workflowSuggestedV42=0,transcriptConfirmedProjectV42=null;
+function workflowStepNodesV42(){return [...document.querySelectorAll('[data-workflow-step-v42]')].sort((a,b)=>Number(a.dataset.workflowStepV42)-Number(b.dataset.workflowStepV42))}
+function workflowHeaderV42(node){if(node.matches('h2'))return node;return node.querySelector(':scope > .top')||node.querySelector(':scope > h2')||node.querySelector(':scope > details > summary')}
+function setWorkflowOpenV42(node,open){
+ const step=Number(node.dataset.workflowStepV42),header=workflowHeaderV42(node),chevron=header?.querySelector('.workflowChevronV42');
+ if(step===5){node.classList.toggle('workflowStepFiveClosedV42',!open);node.classList.toggle('workflowStepFiveOpenV42',open)}
+ else if(step===6){const details=node.querySelector(':scope > details');if(details)details.open=!!open}
+ else node.classList.toggle('workflowCollapsedV42',!open);
+ if(header){header.setAttribute('aria-expanded',String(!!open));if(chevron)chevron.textContent=open?'⌃':'⌄'}
+}
+function workflowIsOpenV42(node){const step=Number(node.dataset.workflowStepV42);if(step===5)return node.classList.contains('workflowStepFiveOpenV42');if(step===6)return !!node.querySelector(':scope > details')?.open;return !node.classList.contains('workflowCollapsedV42')}
+function installWorkflowAccordionV42(){
+ for(const node of workflowStepNodesV42()){
+  if(node.dataset.workflowAccordionV42)continue;node.dataset.workflowAccordionV42='1';const step=Number(node.dataset.workflowStepV42),header=workflowHeaderV42(node);if(!header)continue;
+  if(step!==5&&step!==6){const body=document.createElement('div');body.className='workflowBodyV42';for(const child of [...node.children])if(child!==header)body.appendChild(child);node.appendChild(body)}
+  header.classList.add('workflowHeaderV42');header.tabIndex=0;header.setAttribute('role','button');const chevron=document.createElement('button');chevron.type='button';chevron.className='workflowChevronV42';chevron.tabIndex=-1;chevron.setAttribute('aria-label',`Apri o chiudi sezione ${step}`);header.appendChild(chevron);
+  const toggle=event=>{if(event.type==='keydown'&&!['Enter',' '].includes(event.key))return;if(event.target.closest('button')&&event.target!==chevron)return;event.preventDefault();setWorkflowOpenV42(node,!workflowIsOpenV42(node))};header.addEventListener('click',toggle);header.addEventListener('keydown',toggle);setWorkflowOpenV42(node,false);
+ }
+}
+function openOnlyWorkflowStepV42(step,scroll=true){installWorkflowAccordionV42();for(const node of workflowStepNodesV42()){const open=Number(node.dataset.workflowStepV42)===Number(step);setWorkflowOpenV42(node,open);node.classList.toggle('workflowNextV42',open)}const target=document.querySelector(`[data-workflow-step-v42="${step}"]`);if(scroll)target?.scrollIntoView({behavior:'smooth',block:'start'})}
+function nextWorkflowStepV42(){
+ if(!state.pid)return 0;if(!state.data.analysis_ready)return 1;if(!state.data.editorial_plan_ready)return transcriptConfirmedProjectV42===state.pid?3:2;
+ const chunks=state.data.chunks||[],attempts=chunks.flatMap(c=>c.retrieval_diagnostics?.video_attempts||[]);if(!attempts.length)return 4;
+ const broll=chunks.filter(c=>c.action==='BROLL'),unresolved=broll.some(c=>{const value=state.sel.get(c.id);return value!=='NO_BROLL'&&value!=='CONTINUE'&&(!Array.isArray(value)||!value.length)});if(unresolved)return 5;
+ if(!(genericCoverageV33?.selected||[]).length)return 6;return 7;
+}
+function syncWorkflowAccordionV42(force=false){installWorkflowAccordionV42();const next=nextWorkflowStepV42();if(!next)return;const projectChanged=workflowProjectV42!==state.pid;if(projectChanged){workflowProjectV42=state.pid;workflowSuggestedV42=next;openOnlyWorkflowStepV42(next,false);return}if(force||next!==workflowSuggestedV42){workflowSuggestedV42=next;openOnlyWorkflowStepV42(next,force)}}
+document.addEventListener('click',event=>{if(event.target.closest('#continueWorkflowV15')){transcriptConfirmedProjectV42=state.pid;workflowSuggestedV42=3;setTimeout(()=>openOnlyWorkflowStepV42(3),0)}});
+const workflowTerminalBaseV42=window.ramblaRunTerminal;window.ramblaRunTerminal=(run)=>{if(workflowTerminalBaseV42)workflowTerminalBaseV42(run);if(run?.status!=='SUCCEEDED')return;const kind=workflowKindV12(run.stage_type);if(kind==='analyze')openOnlyWorkflowStepV42(2);else if(kind==='director_api')openOnlyWorkflowStepV42(4);else if(['videos','social','images'].includes(kind))openOnlyWorkflowStepV42(5)};
+const workflowDrawBaseV42=draw;draw=()=>{workflowDrawBaseV42();syncWorkflowAccordionV42(false)};
+installWorkflowAccordionV42();
+"""
+
 _PROJECT_DIALOG = r"""
 <dialog id="socialConnectDialogV5" class="libraryV2">
 <h2>TikTok + Instagram · connection check</h2>
@@ -74,7 +114,7 @@ async function openSocialCheckV5(provider){
  const node=$(provider+'CheckStateV5');socialOpeningV5++;socialReadyV5[provider]=false;
  socialCheckboxV5(provider).checked=false;socialCheckboxV5(provider).disabled=true;syncSocialStartV5();
  node.textContent=provider+': opening browser…';
- try{await api(`/social/${provider}/login`,{method:'POST'});node.textContent=provider+': sign in and KEEP this window open, then VERIFY CONNECTIONS.'}
+ try{const opened=await api(`/social/${provider}/login`,{method:'POST'});node.textContent=opened.session==='normal_chrome'?provider+': aperto nel profilo Chrome attivo. Completa l’accesso, poi premi VERIFICA CONNESSIONI.':provider+': sign in and KEEP this window open, then VERIFY CONNECTIONS.'}
  catch(e){node.textContent=provider+': '+(e.message||String(e))}
  finally{socialOpeningV5--;syncSocialStartV5()}
 }
@@ -177,7 +217,7 @@ function renderDirectorProgressV34(r){const wrap=$('directorProgressV34');if(!wr
 function socialBackendLabelV2(value){return value==='playwright'?'Playwright':value==='chromium_dom'?'Edge/Chrome headless':'unavailable'}
 function socialProviderStateV2(name,row){const profile=row?.profile_ready?'PROFILE SAVED':'NO PROFILE',ready=row?.search_ready?`search ready via ${socialBackendLabelV2(row.search_backend)}`:'search unavailable';return `${name}: ${profile} · ${ready}`}
 async function socialStatusV2(){try{const s=await api('/social/status'),p=s.providers||{};const badges=$('socialBadgesV6');if(badges)badges.innerHTML=['tiktok','instagram'].map(k=>`<span class="connectionV6 ${p[k]?.connection_ready?'ready':''}">${p[k]?.connection_ready?'✓':'○'} ${k==='tiktok'?'TikTok':'Instagram'} · ${p[k]?.connection_ready?'Connected':'Not verified'}</span>`).join('');$('tiktokLoginV2').textContent=`TIKTOK LOGIN${p.tiktok?.profile_ready?' · PROFILE SAVED':''}`;$('instagramLoginV2').textContent=`INSTAGRAM LOGIN${p.instagram?.profile_ready?' · PROFILE SAVED':''}`;$('envatoLoginV2').textContent='ENVATO · APRI ACCESSO';$('socialLoginStateV2').textContent=`${socialProviderStateV2('TikTok',p.tiktok)} · ${socialProviderStateV2('Instagram',p.instagram)} · Envato: login e download ufficiale nel Chrome personale · PROFILE SAVED means the local RAMBLA browser profile exists; it does not verify login.`}catch(e){$('socialLoginStateV2').textContent=e.message||String(e)}}
-async function socialLoginV2(provider){const buttons={tiktok:$('tiktokLoginV2'),instagram:$('instagramLoginV2'),envato:$('envatoLoginV2')},button=buttons[provider];button.disabled=true;try{if(provider==='envato'){window.open('https://elements.envato.com/','_blank','noopener');$('socialLoginStateV2').textContent='Envato aperto direttamente da RAMBLA. Accedi solo se richiesto dal download ufficiale.'}else{await api(`/social/${provider}/login`,{method:'POST'});$('socialLoginStateV2').textContent=`${provider} browser opened · log in normally and KEEP this window open during verification and search.`}setTimeout(()=>socialStatusV2(),1800)}catch(e){$('socialLoginStateV2').textContent=e.message||String(e)}finally{button.disabled=false}}
+async function socialLoginV2(provider){const buttons={tiktok:$('tiktokLoginV2'),instagram:$('instagramLoginV2'),envato:$('envatoLoginV2')},button=buttons[provider];button.disabled=true;try{const opened=await api(`/social/${provider}/login`,{method:'POST'});$('socialLoginStateV2').textContent=opened.session==='normal_chrome'?`${provider} aperto in una nuova finestra del profilo Chrome attivo.`:`${provider} browser aperto.`;setTimeout(()=>socialStatusV2(),1800)}catch(e){$('socialLoginStateV2').textContent=e.message||String(e)}finally{button.disabled=false}}
 function latestSocialAttemptV2(chunk,provider){const rows=(chunk?.retrieval_diagnostics?.video_attempts||[]).filter(a=>String(a.provider||'').toLowerCase()===provider);return rows.length?rows[rows.length-1]:null}
 function socialEmptyMessageV2(chunk,provider){const a=latestSocialAttemptV2(chunk,provider);const label=provider==='youtube_shorts'?'YouTube Shorts':provider==='web_video'?'Web / News':provider[0].toUpperCase()+provider.slice(1);if(!a){const busy=typeof searchesV9!=='undefined'&&(searchesV9.get(galleryKeyV9(provider))||searchesV9.get(galleryKeyV9(provider,'*')))?.busy;return busy?`${label} · ricerca in corso; in attesa della risposta del provider.`:`No ${label} search attempt recorded for this beat yet.`;}const hits=a.hits==null?'unknown':Number(a.hits),query=a.query?` · query: ${a.query}`:'',state=a.browser_state?` · ${a.browser_state}`:'',detail=a.browser_error_detail?`: ${a.browser_error_detail}`:'';if(a.browser_error)return `${label} authenticated search failed: ${a.browser_error}${detail}${a.fallback_used?' · public fallback: '+(a.fallback_attempt?.error_detail||a.fallback_attempt?.error||'completed'):''} · ${hits} results${state}${query}`;if(a.error)return `${label} search failed: ${a.error} · ${hits} results${query}`;const rejected=(chunk.retrieval_diagnostics?.video_rejections||[]).filter(r=>(r.source||r.provider)===provider),count=new Set(rejected.map(r=>r.id||r.source_url)).size;const reasons=[...new Set(rejected.flatMap(r=>r.quality_reasons||[]))];if(Number(hits)>0)return `${label} · ${hits} risultati grezzi nell'ultima query · 0 card disponibili. ${count?`${count} candidati scartati nelle ricerche registrate: ${reasons.slice(0,3).join('; ')}.`:'Risultati non ancora disponibili come card; consulta la diagnostica di elaborazione.'}${query}`;return `${label} searched · ${hits} results${a.fallback_used?' · public fallback used':''}${state}${query}`}
 function socialStateV2(a){if(a.preview_status==='manual'||(!a.preview_url&&a.selectable===false))return 'MANUAL';if(a.preview_status==='ready'&&a.selectable!==false)return 'CLIP READY';return 'PREVIEW'}
@@ -198,7 +238,7 @@ function installSocialMediaV8(node,a){
  node.addEventListener('mouseleave',()=>{inside=false;clearTimeout(timer);const img=node.querySelector(':scope>img');if(img&&poster)img.src=poster});
 }
 function decorateSocialCardsV2(chunk){for(const id of ['verticalVideos','tiktokVideosV2','instagramVideosV2','webNewsVideosV2','envatoVideosV2']){const container=$(id);if(!container)continue;container.querySelectorAll('.card').forEach(node=>{const a=(chunk.assets||[]).find(x=>x.asset_id===node.dataset.a);if(!a)return;if(a.provider==='envato')installEnvatoDownloadV29(node,a);const stateLabel=socialStateV2(a),copy=node.querySelector('.copy'),badge=document.createElement('span');if(['tiktok','instagram','youtube_shorts'].includes(a.provider)){node.classList.add('portraitSocialV6');installSocialMediaV8(node,a);const title=copy?.querySelector('b');if(title){let text=(a.title||a.provider).split(/\s+#| creato da | created by /i)[0].trim();title.textContent=text.length>100?text.slice(0,97)+'…':text;}if(a.download_url&&!copy.querySelector('.downloadV6')){const download=document.createElement('a');download.className='downloadV6';download.href=a.download_url;download.textContent='Clip selezionata'+(a.source_end_seconds!=null&&a.source_start_seconds!=null?' · '+(a.source_end_seconds-a.source_start_seconds).toFixed(1)+' s':'');download.setAttribute('download','');copy.appendChild(download)}}badge.className=`socialStateV2 ${stateLabel==='CLIP READY'?'ready':stateLabel==='MANUAL'?'manual':'preview'}`;badge.textContent=stateLabel;const head=copy?.querySelector('div');if(head&&!head.querySelector('.socialStateV2'))head.appendChild(badge);const link=copy?.querySelector('a');if(link){link.textContent='Apri fonte ↗';link.classList.add('sourceButtonV9')};if(stateLabel==='MANUAL'&&node.classList.contains('portraitSocialV6')){node.classList.add('noCoverV7');if(!node.querySelector('.socialMissingV7')){const missing=document.createElement('div');missing.className='socialMissingV7';missing.textContent='Anteprima non disponibile';node.insertBefore(missing,copy)}}else if(stateLabel==='MANUAL'){const img=node.querySelector('img');if(img)img.src='data:image/svg+xml;charset=utf-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22640%22 height=%22360%22%3E%3Crect width=%22100%25%22 height=%22100%25%22 fill=%22%23202b37%22/%3E%3Ctext x=%2250%25%22 y=%2250%25%22 fill=%22%2394a3b8%22 font-size=%2226%22 text-anchor=%22middle%22 dominant-baseline=%22middle%22%3EOPEN SOURCE%3C/text%3E%3C/svg%3E'}})}}
-function installEnvatoDownloadV29(node,a){if(node.dataset.envatoDownloadV29)return;node.dataset.envatoDownloadV29='1';const copy=node.querySelector('.copy'),status=document.createElement('span');status.className='envatoDownloadStateV29';const button=document.createElement('button');button.className='envatoDownloadV29';button.textContent=a.clip_verified?'PRONTA ✓':'SCARICA DA ENVATO';button.disabled=!!a.clip_verified;copy.appendChild(button);copy.appendChild(status);button.onclick=async event=>{event.stopPropagation();button.disabled=true;status.textContent='Apro Envato: completa il download ufficiale…';const external=window.open('about:blank','_blank');try{const started=await api(`/projects/${state.pid}/envato/download/start`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({asset_id:a.asset_id})});if(external)external.location.href=started.open_url;else window.open(started.open_url,'_blank','noopener');let attempts=0;const poll=async()=>{attempts++;try{const result=await api(`/projects/${state.pid}/envato/download/${started.token}`);if(result.status==='ready'){button.textContent='PRONTA ✓';button.disabled=true;node.classList.add('selectedMediaV27');status.textContent='Download associato · pronto per XML, DRA e Resolve';return}if(attempts>=300){button.disabled=false;status.textContent='Download non rilevato. Premi di nuovo per riprovare.';return}status.textContent='In attesa del download Envato…';setTimeout(poll,2000)}catch(error){button.disabled=false;status.textContent=error.message||String(error)}};setTimeout(poll,1200)}catch(error){if(external)external.close();button.disabled=false;status.textContent=error.message||String(error)}}}
+function installEnvatoDownloadV29(node,a){if(node.dataset.envatoDownloadV29)return;node.dataset.envatoDownloadV29='1';const copy=node.querySelector('.copy'),status=document.createElement('span');status.className='envatoDownloadStateV29';const button=document.createElement('button');button.className='envatoDownloadV29';button.textContent=a.clip_verified?'PRONTA ✓':'SCARICA DA ENVATO';button.disabled=!!a.clip_verified;copy.appendChild(button);copy.appendChild(status);button.onclick=async event=>{event.stopPropagation();button.disabled=true;status.textContent='Apro Envato nel tuo profilo Chrome…';try{const started=await api(`/projects/${state.pid}/envato/download/start`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({asset_id:a.asset_id})});if(!started.opened_in_chrome)throw Error('Chrome non ha confermato l’apertura di Envato');let attempts=0;const poll=async()=>{attempts++;try{const result=await api(`/projects/${state.pid}/envato/download/${started.token}`);if(result.status==='ready'){button.textContent='PRONTA ✓';button.disabled=true;node.classList.add('selectedMediaV27');status.textContent='Download associato · pronto per XML, DRA e Resolve';return}if(attempts>=300){button.disabled=false;status.textContent='Download non rilevato. Premi di nuovo per riprovare.';return}status.textContent='In attesa del download Envato dalla finestra Chrome…';setTimeout(poll,2000)}catch(error){button.disabled=false;status.textContent=error.message||String(error)}};setTimeout(poll,1200)}catch(error){button.disabled=false;status.textContent=error.message||String(error)}}}
 function installProviderGalleriesV26(chunk){const providers={videos:'youtube',verticalVideos:'youtube_shorts',stockVideos:'pexels',envatoVideosV2:'envato',webNewsVideosV2:'web_video',tiktokVideosV2:'tiktok',instagramVideosV2:'instagram'};for(const [id,provider] of Object.entries(providers))installGalleryV9(chunk,id,provider)}
 function installSocialShelvesV2(){const chunk=activeChunkV2();if(!chunk)return;installProviderGalleriesV26(chunk);bindCardsV2(chunk);decorateSocialCardsV2(chunk)}
 function envatoEmptyV5(chunk){const attempts=(chunk.retrieval_diagnostics?.video_attempts||[]).filter(a=>a.provider==='envato');if(!attempts.length)return 'Not searched yet for this beat.';return attempts.map(a=>`Envato ${a.error?'request failed':'searched'} · ${a.hits??'unknown'} results · query: ${a.query} · engine: ${a.engine||'unrecorded'} · parser: ${a.parser||'unrecorded'}${a.error?' · '+a.error:''}${a.cache_hit?' · cached':''}`).join(' | ')}
@@ -230,19 +270,21 @@ def _organize_workflow(html: str) -> str:
     login_status = take("socialLoginStateV2", "span")
     maintenance = take("cleanMediaV2")
     panel = (
-        '<section class="panel workflowV5" id="mediaWorkflowV5"><h2>4 · Find media</h2>'
+        '<section class="panel workflowV5" id="mediaWorkflowV5" data-workflow-step-v42="4"><h2>4 · Find media</h2>'
         '<p class="muted">These searches cover all B-roll beats. Use the controls inside a beat to search only that beat.</p>'
         '<details class="toolsV5 providerLoginV29" id="socialConnectionsV5"><summary>LOGIN PROVIDER ESTERNI</summary>'
-        f'<p class="muted">TikTok and Instagram reuse their RAMBLA sessions. Envato opens your normal Chrome: complete the official licensed download there and RAMBLA will attach the file automatically.</p><div class="row">{logins}</div>{login_status}</details>'
+        f'<p class="muted">TikTok, Instagram ed Envato si aprono in una nuova finestra del profilo Chrome attivo. I download ufficiali Envato vengono associati automaticamente.</p><div class="row">{logins}</div>{login_status}</details>'
         '<div class="searchGroupsV5">'
         f'<div><b>Video sources</b><span id="videoCompleteV12" class="stepStatusV12" hidden></span>{video}<small>YouTube, Shorts, Pexels, Envato and web</small><div id="brollProgressV34" class="realProgressV34" hidden><progress id="brollProgressBarV34" max="100" value="0"></progress><span id="brollProgressLabelV34">Pronto</span><div id="brollSourceChecksV34" class="sourceChecksV34"></div></div></div>'
         f'<div><b>Social sources</b><span id="socialCompleteV12" class="stepStatusV12" hidden></span><div id="socialBadgesV6" class="row" aria-live="polite"></div>{social}<small>TikTok + Instagram only · adds results</small></div>'
         f'<div><b>Still images</b><span id="imagesCompleteV12" class="stepStatusV12" hidden></span>{images}<small>Photos matched to each shot</small></div></div>'
         f'<details class="toolsV5"><summary>Media maintenance</summary><div class="row">{maintenance}<small>Remove retrieved media while keeping the transcript and plan.</small></div></details></section>'
     )
-    html = html.replace('<div class="grid"><aside class="rail">', panel + '<h2 id="sceneWorkspaceHeading">5 · Visual beats · testo e B-roll</h2><div class="grid"><aside class="rail">', 1)
+    html = html.replace('<div class="grid"><aside class="rail">', panel + '<h2 id="sceneWorkspaceHeading" data-workflow-step-v42="5">5 · Visual beats · testo e B-roll</h2><div class="grid"><aside class="rail">', 1)
     html = html.replace('<h2>Source</h2>', '<h2>1 · Source &amp; analysis <span id="analysisCompleteV12" class="stepStatusV12" hidden></span></h2>', 1)
     html = html.replace('<h2>Editorial Plan</h2>', '<h2>3 · Editorial plan <span id="planCompleteV12" class="stepStatusV12" hidden></span></h2>', 1)
+    html = re.sub(r'(<section class="panel")(?=>\s*<h2>1 ·)', r'\1 data-workflow-step-v42="1"', html, count=1)
+    html = re.sub(r'(<section class="panel")(?=>\s*<h2>3 ·)', r'\1 data-workflow-step-v42="3"', html, count=1)
     # Primary Director controls precede the optional manual import/export tools.
     pattern = r'<span class="directorV5">.*?<span id="directorStateV5".*?</span></span>'
     director = re.search(pattern, html, re.S)
@@ -328,7 +370,7 @@ def render_curation_page_v2(build_token: str | None = None) -> str:
         1,
     )
     html = _organize_workflow(html)
-    html = html.replace('</style>', '</style>' + _MANAGEMENT_CSS + GALLERY_CSS + STUDIO_CSS + TRANSCRIPT_INTENT_CSS + TIMELINE_EXPORT_CSS, 1)
+    html = html.replace('</style>', '</style>' + _MANAGEMENT_CSS + _WORKFLOW_ACCORDION_CSS + GALLERY_CSS + STUDIO_CSS + TRANSCRIPT_INTENT_CSS + TIMELINE_EXPORT_CSS, 1)
     html = html.replace('</main><dialog id="lightbox">', TIMELINE_EXPORT_PANEL + '</main><dialog id="lightbox">', 1)
     html = html.replace('</main><dialog id="lightbox">', _PROJECT_DIALOG + '</main><dialog id="lightbox">', 1)
     needle = 'draw();restore()})();</script></html>'
@@ -372,7 +414,7 @@ setInterval(async()=>{try{const target=await api('/desktop-target');if(!target.r
         )
     from .scene_workspace_ui import CSS as SCENE_CSS, JS as SCENE_JS
     html = html.replace('</main>', SCENE_CSS + '</main>', 1)
-    html = html.replace(needle, SCENE_JS + needle, 1)
+    html = html.replace(needle, SCENE_JS + _WORKFLOW_ACCORDION_JS + needle, 1)
     html = html.replace("filter:'all'", "filter:'broll'")
     html = html.replace('RAMBLA · B-ROLL', 'RMBL B ROLL').replace('RAMBLA - B-ROLL', 'RMBL B ROLL')
     html = re.sub(r'\bRAMBLA\b', 'RMBL B ROLL', html)

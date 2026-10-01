@@ -1,10 +1,10 @@
 """Confirmed RAMBLA to Resolve handoff panel."""
 
 PANEL = r'''
-<section class="panel genericCoverageMicroV34">
+<section class="panel genericCoverageMicroV34" data-workflow-step-v42="6">
   <details class="genericCoverageV33"><summary><strong>6 · Coperture generiche</strong><small>12 video Pexels sul tema generale, pronti per la coda della timeline</small></summary><h3>Coperture del tema</h3><button id="loadGenericCoverageV33">CERCA 12 VIDEO GENERICI</button><h3>Coperture del luogo</h3><p class="muted">I luoghi riconosciuti nel testo avranno gruppi separati di risultati.</p><button id="loadPlaceCoverageV35">COPERTURE DEL LUOGO · CERCA VIDEO</button><p id="genericCoverageStatusV33" class="muted"></p><div id="genericCoverageCardsV33" class="genericCoverageCardsV33"></div></details>
 </section>
-<section class="panel timelineExportV33" id="timelineExportV33">
+<section class="panel timelineExportV33" id="timelineExportV33" data-workflow-step-v42="7">
   <div class="top"><div><h2>7 · Export timeline <span id="timelineExportCompleteV28" class="stepStatusV12" hidden></span> <span id="resolveBridgeLiveV34" class="resolveBridgeLiveV34 off">BRIDGE OFFLINE</span></h2>
   <p class="muted">Prepara sottotitoli, parole evidenziate e B-roll. Resolve li applica soltanto dopo la conferma nel bridge.</p></div></div>
   <button id="sendResolvePackageV33" class="primary resolvePrimaryV33">INVIA A RESOLVE · SUBS + FRASI + B-ROLL</button>

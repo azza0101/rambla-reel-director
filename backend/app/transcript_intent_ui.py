@@ -1,7 +1,7 @@
 """Transcript review and persistent phrase-intent controls for Curation V2."""
 
 PANEL = r'''
-<section class="panel transcriptWorkspaceV14" id="transcriptWorkspaceV14" hidden>
+<section class="panel transcriptWorkspaceV14" id="transcriptWorkspaceV14" data-workflow-step-v42="2" hidden>
   <div class="top"><div><h2>2 · Transcript review <span id="transcriptCompleteV14" class="stepStatusV12" hidden></span></h2>
   <p class="muted">Correct the complete transcript, then tag the phrases that need coverage, animation or highlighted Text+.</p></div>
   <span id="intentCountsV14" class="intentCountsV14"></span></div>

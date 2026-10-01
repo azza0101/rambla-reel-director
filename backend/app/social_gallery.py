@@ -50,7 +50,7 @@ function installGalleryV9(chunk,id,provider){
  shell.querySelector('.galleryNextV9')?.remove();
  let progress=$('progressV9-'+provider);if(!progress){progress=document.createElement('div');progress.id='progressV9-'+provider;progress.className='providerProgressV9';progress.setAttribute('role','status');shell.before(progress)}
  let bar=$('galleryBarV9-'+provider);if(!bar){bar=document.createElement('div');bar.id='galleryBarV9-'+provider}
- bar.className='galleryBarV9 providerControlsV25';const header=providerHeaderV25(shell);if(header)header.appendChild(bar);else shell.after(bar)
+ bar.className='galleryBarV9 providerControlsV25';const header=providerHeaderV25(shell);if(header)header.appendChild(bar);else shell.after(bar);
  const keywordOpen=bar.querySelector('details')?.open||false;
  bar.innerHTML=`<span class="galleryPageV10">Pagina ${g.page+1} / ${nav.pages}<small>${rows.length?g.page*6+1:0}–${Math.min(rows.length,(g.page+1)*6)} di ${rows.length} risultati</small></span><button class="gallerySearchV10" ${nav.search?'':'disabled'}>${state.run?'Ricerca in corso…':'＋ Cerca fino a 6 nuove'}</button><span class="galleryRoundV10">${g.round} ricerche aggiuntive</span><details ${keywordOpen?'open':''}><summary>Keyword per shot</summary><div class="galleryKeywordsV9"></div></details>`;
  bar.querySelector('.gallerySearchV10').onclick=async()=>{if(!galleryNavigationV10(g,rows.length,!!state.run).search)return;g.pending={before:rows.length,round:g.round+1};try{await researchBeatV2('append',[provider],{variation_round:g.round+1,query_overrides:g.overrides})}catch(e){delete g.pending;searchesV9.set(galleryKeyV9(provider),{busy:false,state:'failed',text:e.message});renderSearchStatusV9()}};

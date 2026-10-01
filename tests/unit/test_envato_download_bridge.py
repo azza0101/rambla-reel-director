@@ -73,16 +73,21 @@ def test_reports_waiting_when_no_completed_download_changed():
         shutil.rmtree(root, ignore_errors=True)
 
 
-def test_envato_uses_windows_url_shell_instead_of_spawning_chrome(monkeypatch):
+def test_envato_uses_active_chrome_profile_instead_of_windows_default_browser(monkeypatch):
     from backend.app import browser_profiles
 
-    opened = []
-    monkeypatch.setattr(browser_profiles.os, "name", "nt")
-    monkeypatch.setattr(browser_profiles.os, "startfile", lambda url: opened.append(url), raising=False)
+    launched = []
+    monkeypatch.setattr(browser_profiles, "_installed_chrome", lambda: r"C:\Chrome\chrome.exe")
+    monkeypatch.setattr(browser_profiles, "normal_chrome_profile", lambda: (Path("C:/Chrome/User Data"), "Profile 2"))
+    class Process:
+        pid = 41
+        def wait(self, timeout):
+            return 0
+    monkeypatch.setattr(browser_profiles.subprocess, "Popen", lambda command, **kwargs: launched.append(command) or Process())
 
     pid = browser_profiles._default_login_launcher(
         "envato", Path("unused"), "https://elements.envato.com/example"
     )
 
-    assert opened == ["https://elements.envato.com/example"]
-    assert pid == 0
+    assert launched == [[r"C:\Chrome\chrome.exe", "--profile-directory=Profile 2", "--new-window", "https://elements.envato.com/example"]]
+    assert pid == 41

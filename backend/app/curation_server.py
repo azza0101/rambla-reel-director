@@ -939,6 +939,7 @@ def create_app(
 
     @app.post("/api/curation/projects/{project_id}/envato/download/start")
     async def start_envato_download(project_id: str, request: EnvatoDownloadRequest) -> dict[str, Any]:
+        from .browser_profiles import BrowserUnavailableError
         from .curation_artifacts import load_curation_run
         from .envato_download_bridge import capture_snapshot, default_downloads_dir
         run = run_root(project_id)
@@ -954,11 +955,21 @@ def create_app(
             "downloads": downloads,
             "baseline": capture_snapshot(downloads),
         }
+        try:
+            await asyncio.to_thread(
+                social_profiles.open_login,
+                "envato",
+                start_url=candidate.source_page,
+            )
+        except (BrowserUnavailableError, OSError, RuntimeError, ValueError) as exc:
+            envato_download_sessions.pop(token, None)
+            raise HTTPException(status_code=503, detail=f"Google Chrome non disponibile: {exc}") from exc
         return {
             "status": "waiting",
             "token": token,
             "asset_id": request.asset_id,
             "open_url": candidate.source_page,
+            "opened_in_chrome": True,
             "detail": "Complete the official Envato download in Chrome; RAMBLA will attach the completed file.",
             "resolve_calls": 0,
         }

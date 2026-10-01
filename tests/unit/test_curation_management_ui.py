@@ -193,6 +193,20 @@ def test_workflow_steps_expose_persistent_completion_indicators():
     assert "retrieval_diagnostics" in html
 
 
+def test_numbered_workflow_is_collapsed_and_opens_only_the_next_step():
+    from backend.app.curation_ui_v2 import render_curation_page_v2
+
+    html = render_curation_page_v2("progressive-workflow")
+    assert "installWorkflowAccordionV42" in html
+    assert "workflowCollapsedV42" in html
+    assert "openOnlyWorkflowStepV42" in html
+    assert "nextWorkflowStepV42" in html
+    assert "continueWorkflowV15" in html
+    for step in range(1, 8):
+        assert f'data-workflow-step-v42="{step}"' in html
+    assert "else shell.after(bar);" in html
+
+
 def test_workspace_session_restores_across_ports_and_periodically_autosaves():
     from backend.app.curation_ui_v2 import render_curation_page_v2
 
@@ -263,7 +277,7 @@ def test_api_first_product_keeps_curation_identity_without_v2_branding():
     from backend.app.curation_ui_v2 import render_curation_page_v2
 
     html = render_curation_page_v2("v5-brand")
-    assert '<span class="brandProductV41">RMBL B ROLL</span><span class="releaseVersionV35">v0024</span>' in html
+    assert '<span class="brandProductV41">RMBL B ROLL</span><span class="releaseVersionV35">v0025</span>' in html
     assert "RAMBLA Curation V2" not in html
     assert "CURATION V2" not in html
     assert "Choose the editorial engine" in html
@@ -305,7 +319,11 @@ def test_product_ui_exposes_clickable_envato_search_shelf():
     html = render_curation_page_v2("envato")
     assert "ENVATO ELEMENTS" in html
     assert 'id="envatoVideosV2"' in html
-    assert "a?.provider==='envato'?window.open(a.source_page" in html
+    assert "started.opened_in_chrome" in html
+    assert "const external=window.open('about:blank','_blank')" not in html
+    assert "if(provider==='envato'){window.open" not in html
+    assert "session==='normal_chrome'" in html
+    assert "socialReadyV5[provider]=true" not in html
     assert "official Envato download" in html
     assert 'id="envatoLoginV2"' in html
     assert "ENVATO · APRI ACCESSO" in html

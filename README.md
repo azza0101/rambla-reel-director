@@ -19,6 +19,10 @@ Lo ZIP `RMBL-B-ROLL-Windows-vXXXX.zip` rimane disponibile come alternativa manua
 
 `RMBL_B_ROLL_APP.vbs` avvia solo l'app e riutilizza una singola istanza. Non avvia né modifica Resolve.
 
+## Accessi esterni
+
+TikTok, Instagram ed Envato vengono aperti in una nuova finestra del profilo Google Chrome già in uso. Anche **SCARICA DA ENVATO** usa Chrome, così restano disponibili gli accessi già salvati nel profilo dell'utente.
+
 ## Creare il pacchetto
 
 Da PowerShell:
