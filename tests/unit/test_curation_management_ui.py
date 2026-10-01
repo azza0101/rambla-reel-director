@@ -202,6 +202,10 @@ def test_numbered_workflow_is_collapsed_and_opens_only_the_next_step():
     assert "openOnlyWorkflowStepV42" in html
     assert "nextWorkflowStepV42" in html
     assert "continueWorkflowV15" in html
+    assert "header.prepend(chevron)" in html
+    assert "titleRow.append(chevron,nestedHeading)" in html
+    assert "open?'▼':'▶'" in html
+    assert "border-radius:8px" in html
     for step in range(1, 8):
         assert f'data-workflow-step-v42="{step}"' in html
     assert "else shell.after(bar);" in html
@@ -277,7 +281,7 @@ def test_api_first_product_keeps_curation_identity_without_v2_branding():
     from backend.app.curation_ui_v2 import render_curation_page_v2
 
     html = render_curation_page_v2("v5-brand")
-    assert '<span class="brandProductV41">RMBL B ROLL</span><span class="releaseVersionV35">v0025</span>' in html
+    assert '<span class="brandProductV41">RMBL B ROLL</span><span class="releaseVersionV35">v0026</span>' in html
     assert "RAMBLA Curation V2" not in html
     assert "CURATION V2" not in html
     assert "Choose the editorial engine" in html

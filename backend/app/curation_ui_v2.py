@@ -40,7 +40,7 @@ _MANAGEMENT_CSS = r"""
 
 _WORKFLOW_ACCORDION_CSS = r"""
 <style id="workflow-accordion-v42-style">
-[data-workflow-step-v42]{position:relative}.workflowHeaderV42{cursor:pointer;user-select:none}.workflowHeaderV42:focus-visible{outline:2px solid #d8ff5b;outline-offset:4px}.workflowChevronV42{display:inline-grid;place-items:center;width:25px;height:25px;margin-left:9px;padding:0;border:1px solid #626d99;border-radius:50%;background:#1a2039;color:#dbe1ff;font-size:14px;vertical-align:middle}.workflowCollapsedV42>.workflowBodyV42{display:none}.workflowBodyV42{display:block}.workflowStepFiveClosedV42+.grid{display:none}.workflowStepFiveOpenV42+.grid{display:grid}.workflowNextV42{border-color:#839249!important;box-shadow:0 0 0 1px #d8ff5b33}.workflowNextV42>.workflowHeaderV42,.workflowNextV42.workflowHeaderV42{color:#f1ffc1}
+[data-workflow-step-v42]{position:relative}.workflowHeaderV42{display:flex!important;align-items:center;gap:10px;cursor:pointer;user-select:none}.workflowTitleRowV43{display:flex;align-items:center;gap:10px}.workflowHeaderV42:focus-visible{outline:2px solid #d8ff5b;outline-offset:4px}.workflowChevronV42{display:inline-grid;flex:0 0 32px;place-items:center;width:32px;height:32px;margin:0;padding:0;border:1px solid #7781aa;border-radius:8px;background:#252c4c;color:#f3f5ff;font-size:21px;font-weight:900;line-height:1;box-shadow:0 2px 8px #070a1870;vertical-align:middle;transition:background .15s,border-color .15s,transform .15s}.workflowChevronV42:hover{background:#343d66;border-color:#aab4e4}.workflowChevronV42:active{transform:scale(.94)}.workflowCollapsedV42>.workflowBodyV42{display:none}.workflowBodyV42{display:block}.workflowStepFiveClosedV42+.grid{display:none}.workflowStepFiveOpenV42+.grid{display:grid}.workflowNextV42{border-color:#839249!important;box-shadow:0 0 0 1px #d8ff5b33}.workflowNextV42>.workflowHeaderV42,.workflowNextV42.workflowHeaderV42{color:#f1ffc1}
 </style>
 """
 
@@ -53,14 +53,14 @@ function setWorkflowOpenV42(node,open){
  if(step===5){node.classList.toggle('workflowStepFiveClosedV42',!open);node.classList.toggle('workflowStepFiveOpenV42',open)}
  else if(step===6){const details=node.querySelector(':scope > details');if(details)details.open=!!open}
  else node.classList.toggle('workflowCollapsedV42',!open);
- if(header){header.setAttribute('aria-expanded',String(!!open));if(chevron)chevron.textContent=open?'⌃':'⌄'}
+ if(header){header.setAttribute('aria-expanded',String(!!open));if(chevron)chevron.textContent=open?'▼':'▶'}
 }
 function workflowIsOpenV42(node){const step=Number(node.dataset.workflowStepV42);if(step===5)return node.classList.contains('workflowStepFiveOpenV42');if(step===6)return !!node.querySelector(':scope > details')?.open;return !node.classList.contains('workflowCollapsedV42')}
 function installWorkflowAccordionV42(){
  for(const node of workflowStepNodesV42()){
   if(node.dataset.workflowAccordionV42)continue;node.dataset.workflowAccordionV42='1';const step=Number(node.dataset.workflowStepV42),header=workflowHeaderV42(node);if(!header)continue;
   if(step!==5&&step!==6){const body=document.createElement('div');body.className='workflowBodyV42';for(const child of [...node.children])if(child!==header)body.appendChild(child);node.appendChild(body)}
-  header.classList.add('workflowHeaderV42');header.tabIndex=0;header.setAttribute('role','button');const chevron=document.createElement('button');chevron.type='button';chevron.className='workflowChevronV42';chevron.tabIndex=-1;chevron.setAttribute('aria-label',`Apri o chiudi sezione ${step}`);header.appendChild(chevron);
+  header.classList.add('workflowHeaderV42');header.tabIndex=0;header.setAttribute('role','button');const chevron=document.createElement('button');chevron.type='button';chevron.className='workflowChevronV42';chevron.tabIndex=-1;chevron.setAttribute('aria-label',`Apri o chiudi sezione ${step}`);const nestedHeading=header.querySelector(':scope > div > h2');if(nestedHeading){const titleRow=document.createElement('div');titleRow.className='workflowTitleRowV43';nestedHeading.before(titleRow);titleRow.append(chevron,nestedHeading)}else header.prepend(chevron);
   const toggle=event=>{if(event.type==='keydown'&&!['Enter',' '].includes(event.key))return;if(event.target.closest('button')&&event.target!==chevron)return;event.preventDefault();setWorkflowOpenV42(node,!workflowIsOpenV42(node))};header.addEventListener('click',toggle);header.addEventListener('keydown',toggle);setWorkflowOpenV42(node,false);
  }
 }
