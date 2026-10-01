@@ -10,6 +10,16 @@ def test_one_click_installer_covers_app_and_resolve_bridge():
     assert "RMBL_B_ROLL_APP.vbs" in script
 
 
+def test_installer_detects_existing_versions_and_preserves_local_data():
+    script = Path("INSTALL_RMBL_B_ROLL.ps1").read_text(encoding="utf-8")
+    assert "installedVersion" in script
+    assert "MessageBox" in script
+    assert "previous_version" in script
+    assert "rambla-data" in script
+    assert "data_root" in script
+    assert "Remove-Item" not in script
+
+
 def test_standalone_launcher_never_starts_the_resolve_bridge():
     launcher = Path("RMBL_B_ROLL_APP.vbs").read_text(encoding="utf-8")
     assert "launch_local_v5.py" in launcher
@@ -22,3 +32,15 @@ def test_distribution_builder_has_an_explicit_safe_payload():
     assert "backend" in source and "tools" in source and "tests" not in source
     assert "Compress-Archive" in source
     assert "rambla-data" not in source
+
+
+def test_single_file_windows_installer_wraps_the_complete_zip():
+    builder = Path("BUILD_WINDOWS_INSTALLER.ps1").read_text(encoding="utf-8")
+    bootstrap = Path("INSTALL_FROM_ARCHIVE.ps1").read_text(encoding="utf-8")
+    assert "iexpress.exe" in builder
+    assert "RMBL-B-ROLL-Setup-" in builder
+    assert "RMBL-B-ROLL-Windows-" in builder
+    assert "Start-Process" in builder and "-Wait" in builder
+    assert "Expand-Archive" in bootstrap
+    assert "INSTALL_RMBL_B_ROLL.ps1" in bootstrap
+    assert "LOCALAPPDATA" in bootstrap

@@ -1,7 +1,7 @@
 # RMBL B ROLL — handoff tecnico
 
 Aggiornato: 2026-10-01  
-Versione: `v0023`  
+Versione: `v0024`  
 Branch di consegna: `feat/curation-ui-v1`
 
 ## Avvio rapido
@@ -35,6 +35,8 @@ La timeline sorgente resta protetta. Le mutazioni Resolve passano dai job di `re
 - `INSTALL_RMBL_B_ROLL.ps1` installa app, dipendenze, shortcut e bridge.
 - `INSTALL_RESOLVE_BRIDGE.ps1` può aggiornare soltanto il bridge.
 - `BUILD_WINDOWS_PACKAGE.ps1` genera lo ZIP trasferibile senza dati privati.
+- `BUILD_WINDOWS_INSTALLER.ps1` avvolge ZIP e bootstrap in un solo `RMBL-B-ROLL-Setup-vXXXX.exe` tramite IExpress.
+- Gli aggiornamenti rilevano la versione installata, chiedono conferma e mantengono `rambla-data`, profili browser, progetti e configurazioni locali. Il registro di sicurezza e in `%LOCALAPPDATA%\RMBL B ROLL\install-backups`.
 - `RMBL_B_ROLL_APP.vbs` è il launcher app senza bridge.
 
 ## Dati locali esclusi dal repository
@@ -53,6 +55,6 @@ $env:TMP=$env:TEMP
 
 Il vincolo di sviluppo resta `resolve_calls=0`: i test non devono modificare una timeline reale. Per prove reali su EGITTO serve l'azione esplicita dell'utente nel bridge.
 
-### Stato suite al passaggio v0023
+### Stato suite al passaggio v0024
 
-I test focalizzati su branding, bridge, versione, launcher e distribuzione passano (`19 passed`). La suite completa eseguita con accesso temporaneo elevato riporta `844 passed, 7 failed`. I sette errori sono contratti legacy già esterni a questo intervento: due test del vecchio `/curation` debug, il launcher Envato che ora usa intenzionalmente `os.startfile`, un test Node bloccato dall'accesso Windows al file temporaneo, una variante di ricerca stock e due fixture `MemoryPath` incompatibili con il registro Envato. Non sono stati mascherati né rimossi.
+I test focalizzati su branding, bridge, versione, launcher e distribuzione passano (`25 passed`). La suite completa eseguita con accesso temporaneo elevato riporta `844 passed, 7 failed`. I sette errori sono contratti legacy già esterni a questo intervento: due test del vecchio `/curation` debug, il launcher Envato che ora usa intenzionalmente `os.startfile`, un test Node bloccato dall'accesso Windows al file temporaneo, una variante di ricerca stock e due fixture `MemoryPath` incompatibili con il registro Envato. Non sono stati mascherati né rimossi.

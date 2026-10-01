@@ -1,9 +1,62 @@
 param(
     [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA 'RMBL B ROLL\app'),
-    [switch]$SkipDependencyInstall
+    [switch]$SkipDependencyInstall,
+    [switch]$ForceUpdate
 )
 $ErrorActionPreference = 'Stop'
 $SourceRoot = $PSScriptRoot
+$productRoot = Split-Path -Parent $InstallRoot
+$dataRoot = Join-Path $productRoot 'rambla-data'
+$manifestPath = Join-Path $productRoot 'install.json'
+$incomingVersion = (Get-Content -LiteralPath (Join-Path $SourceRoot 'RAMBLA_VERSION') -Raw).Trim()
+$installedVersion = ''
+if (Test-Path -LiteralPath (Join-Path $InstallRoot 'RAMBLA_VERSION')) {
+    $installedVersion = (Get-Content -LiteralPath (Join-Path $InstallRoot 'RAMBLA_VERSION') -Raw).Trim()
+}
+
+if ($installedVersion -and -not $ForceUpdate) {
+    Add-Type -AssemblyName PresentationFramework
+    if ($installedVersion -eq $incomingVersion) {
+        $question = "RMBL B ROLL $installedVersion e gia installato.`n`nVuoi riparare l'installazione senza cancellare dati, progetti, accessi o configurazioni?"
+        $caption = 'RMBL B ROLL - Riparazione'
+    }
+    else {
+        $question = "RMBL B ROLL $installedVersion e gia installato.`n`nVuoi aggiornarlo a $incomingVersion? Dati, progetti, accessi e configurazioni saranno conservati."
+        $caption = 'RMBL B ROLL - Aggiornamento'
+    }
+    $choice = [System.Windows.MessageBox]::Show(
+        $question, $caption,
+        [System.Windows.MessageBoxButton]::YesNo,
+        [System.Windows.MessageBoxImage]::Question
+    )
+    if ($choice -ne [System.Windows.MessageBoxResult]::Yes) {
+        Write-Host 'Installazione annullata. Nessun file e stato modificato.'
+        exit 0
+    }
+}
+
+New-Item -ItemType Directory -Force -Path $productRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
+if ($installedVersion) {
+    $backupRoot = Join-Path $productRoot 'install-backups'
+    $backup = Join-Path $backupRoot ((Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + $installedVersion)
+    New-Item -ItemType Directory -Force -Path $backup | Out-Null
+    foreach ($localFile in @('.env.local', 'cloud.env.local', 'settings.json', 'user-settings.json')) {
+        $candidate = Join-Path $InstallRoot $localFile
+        if (Test-Path -LiteralPath $candidate) {
+            Copy-Item -LiteralPath $candidate -Destination $backup -Force
+        }
+    }
+    if (Test-Path -LiteralPath $manifestPath) {
+        Copy-Item -LiteralPath $manifestPath -Destination (Join-Path $backup 'install.json') -Force
+    }
+    @{
+        previous_version = $installedVersion
+        incoming_version = $incomingVersion
+        data_root = $dataRoot
+        created_at = (Get-Date).ToString('o')
+    } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $backup 'update.json') -Encoding UTF8
+}
 
 if ((Resolve-Path -LiteralPath $SourceRoot).Path -ne [IO.Path]::GetFullPath($InstallRoot)) {
     New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
@@ -48,6 +101,14 @@ if (-not $SkipDependencyInstall) {
 }
 
 & (Join-Path $InstallRoot 'INSTALL_RESOLVE_BRIDGE.ps1') -AppRoot $InstallRoot
+$previousVersion = $installedVersion
+@{
+    app_root = $InstallRoot
+    data_root = $dataRoot
+    version = $incomingVersion
+    previous_version = $previousVersion
+    installed_at = (Get-Date).ToString('o')
+} | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding UTF8
 $desktop = [Environment]::GetFolderPath('Desktop')
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut((Join-Path $desktop 'RMBL B ROLL.lnk'))
