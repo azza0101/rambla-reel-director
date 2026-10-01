@@ -97,3 +97,18 @@ def test_install_preserves_collision_and_reuses_matching_hash(tmp_path):
     assert first.destination.name.startswith("shared-")
     assert second.status == "installed"
     assert second.destination == first.destination
+    extracted = installed / "Edit" / "Titles" / "My_Title" / "My_Title.setting"
+    assert extracted.read_bytes() == b"Tools = ordered() {}"
+
+
+def test_install_status_requires_the_extracted_resolve_title(tmp_path):
+    from backend.app.resolve_title_templates import template_install_status
+    root = tmp_path / "library"
+    installed = tmp_path / "resolve"
+    template = store_uploaded_drfx(BytesIO(valid_bytes()), "shared.drfx", root)
+    installed.mkdir()
+    (installed / "shared.drfx").write_bytes(template.source_path.read_bytes())
+
+    assert template_install_status(template, installed) == "not_installed"
+    install_template(template, installed)
+    assert template_install_status(template, installed) == "installed"

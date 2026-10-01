@@ -1,7 +1,7 @@
 # RMBL B ROLL — handoff tecnico
 
 Aggiornato: 2026-10-01  
-Versione: `v0033`  
+Versione: `v0034`  
 Branch di consegna: `feat/curation-ui-v1`
 
 ## Avvio rapido
@@ -77,9 +77,10 @@ $env:TMP=$env:TEMP
 
 Il vincolo di sviluppo resta `resolve_calls=0`: i test non devono modificare una timeline reale. Per prove reali su EGITTO serve l'azione esplicita dell'utente nel bridge.
 
-### Stato suite al passaggio v0033
+### Stato suite al passaggio v0034
 
 I test focalizzati sulla disposizione dei comandi di modifica testo, UI, tema e versione passano (`47 passed`). La batteria precedente su ricalcolo audio IN/OUT, normalizzazione dei mark Resolve 21, cache, bridge standalone e distribuzione Windows passa (`71 passed`). Il JavaScript completo renderizzato passa inoltre `node --check`.
+
 
 
 

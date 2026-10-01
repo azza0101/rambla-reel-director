@@ -137,18 +137,44 @@ def install_template(template: ResolveTitleTemplate, resolve_root: Path) -> Inst
     destination = resolve_root / template.original_filename
     if destination.exists():
         if _digest(destination) == template.sha256:
-            return InstallResult("installed", destination)
-        destination = resolve_root / f"{Path(template.original_filename).stem}-{template.sha256[:12]}.drfx"
-        if destination.exists() and _digest(destination) == template.sha256:
-            return InstallResult("installed", destination)
-    handle, raw_temp = tempfile.mkstemp(prefix=".install-", suffix=".drfx", dir=resolve_root)
-    os.close(handle)
-    temp = Path(raw_temp)
+            pass
+        else:
+            destination = resolve_root / f"{Path(template.original_filename).stem}-{template.sha256[:12]}.drfx"
+    package_ready = destination.is_file() and _digest(destination) == template.sha256
+    if not package_ready:
+        handle, raw_temp = tempfile.mkstemp(prefix=".install-", suffix=".drfx", dir=resolve_root)
+        os.close(handle)
+        temp = Path(raw_temp)
+        try:
+            shutil.copyfile(template.source_path, temp)
+            os.replace(temp, destination)
+        finally:
+            temp.unlink(missing_ok=True)
+
+    relative_folder = Path(*PurePosixPath(template.setting_path).parent.parts)
+    extracted = resolve_root / relative_folder
+    marker = extracted / ".rambla-template-sha256"
+    extracted_ready = (
+        (resolve_root / Path(*PurePosixPath(template.setting_path).parts)).is_file()
+        and marker.is_file()
+        and marker.read_text(encoding="ascii").strip() == template.sha256
+    )
+    if extracted_ready:
+        return InstallResult("installed", destination)
+
+    staging = Path(tempfile.mkdtemp(prefix=".extract-", dir=resolve_root))
     try:
-        shutil.copyfile(template.source_path, temp)
-        os.replace(temp, destination)
+        with zipfile.ZipFile(template.source_path) as archive:
+            archive.extractall(staging)
+        staged_title = staging / relative_folder
+        if not (staging / Path(*PurePosixPath(template.setting_path).parts)).is_file():
+            raise TemplateValidationError("DRFX title setting disappeared during extraction")
+        extracted.parent.mkdir(parents=True, exist_ok=True)
+        shutil.rmtree(extracted, ignore_errors=True)
+        shutil.copytree(staged_title, extracted)
+        marker.write_text(template.sha256, encoding="ascii")
     finally:
-        temp.unlink(missing_ok=True)
+        shutil.rmtree(staging, ignore_errors=True)
     return InstallResult("restart_required", destination)
 
 
@@ -157,10 +183,19 @@ def template_install_status(template: ResolveTitleTemplate, resolve_root: Path) 
     resolve_root = Path(resolve_root)
     direct = resolve_root / template.original_filename
     digest_name = resolve_root / f"{Path(template.original_filename).stem}-{template.sha256[:12]}.drfx"
+    package_ready = False
     for candidate in (direct, digest_name):
         try:
             if candidate.is_file() and _digest(candidate) == template.sha256:
-                return "installed"
+                package_ready = True
+                break
         except OSError:
             continue
-    return "not_installed"
+    relative_setting = Path(*PurePosixPath(template.setting_path).parts)
+    extracted = resolve_root / relative_setting
+    marker = extracted.parent / ".rambla-template-sha256"
+    try:
+        extracted_ready = extracted.is_file() and marker.read_text(encoding="ascii").strip() == template.sha256
+    except OSError:
+        extracted_ready = False
+    return "installed" if package_ready and extracted_ready else "not_installed"
