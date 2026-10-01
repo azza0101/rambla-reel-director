@@ -53,6 +53,13 @@ def bridge_build_token() -> str:
 LOADED_BUILD = bridge_build_token()
 
 
+def default_destination() -> str:
+    if os.environ.get("RAMBLA_BRIDGE_DESTINATION_EXPLICIT") != "1":
+        return "active"
+    value = os.environ.get("RAMBLA_BRIDGE_DESTINATION", "active")
+    return value if value in {"active", "new"} else "active"
+
+
 def window_geometry(screen_width: int, screen_height: int, *, requested_height: int, package_visible: bool) -> str:
     """Return a useful bridge size without extending below the Windows work area."""
     width = min(820 if package_visible else 720, max(600, screen_width - 80))
@@ -160,6 +167,48 @@ class RoundedButton(tk.Canvas):
         else: fill, outline, ink = (("#514d8d", "#8c82ee", "#ffffff") if self._hover else ("#343b62", "#575f8d", "#f7f8ff"))
         self.create_polygon(_rounded_points(1, 1, width-1, height-1, 14), smooth=True, splinesteps=24, fill=fill, outline=outline, width=1)
         self.create_text(width/2, height/2, text=self._text, fill=ink, font=("Segoe UI Semibold", 10))
+
+
+class ToggleCard(tk.Canvas):
+    """Large switch card used for capture options."""
+    def __init__(self, parent: Any, *, title: str, description: str, variable: Any):
+        super().__init__(parent, height=68, bg=parent.cget("bg"), highlightthickness=0, bd=0, cursor="hand2")
+        self.title, self.description, self.variable = title, description, variable
+        self.bind("<Configure>", self._draw); self.bind("<Button-1>", self._toggle)
+        variable.trace_add("write", lambda *_: self._draw())
+
+    def _toggle(self, _event: Any = None) -> None:
+        self.variable.set(not bool(self.variable.get()))
+
+    def _draw(self, _event: Any = None) -> None:
+        self.delete("all"); width=max(200,self.winfo_width()); active=bool(self.variable.get())
+        fill,outline=("#242c4d","#7c6cf2") if active else ("#171c35","#343c65")
+        self.create_polygon(_rounded_points(1,1,width-1,67,15),smooth=True,splinesteps=24,fill=fill,outline=outline,width=2 if active else 1)
+        self.create_text(16,21,text=self.title,anchor="w",fill="#f7f8ff",font=("Segoe UI Semibold",10))
+        self.create_text(16,44,text=self.description,anchor="w",fill="#aeb6cf",font=("Segoe UI",8))
+        x=width-48; self.create_polygon(_rounded_points(x-18,18,x+18,48,15),smooth=True,fill="#7c6cf2" if active else "#303752",outline="")
+        knob=x+7 if active else x-7
+        self.create_oval(knob-9,24,knob+9,42,fill="#ffffff" if active else "#9299bc",outline="")
+
+
+class DestinationCard(tk.Canvas):
+    """Mutually exclusive destination card with an explicit selected state."""
+    def __init__(self, parent: Any, *, title: str, description: str, value: str, variable: Any, recommended: bool = False, on_select: Callable[[str], None] | None = None):
+        super().__init__(parent, height=76, bg=parent.cget("bg"), highlightthickness=0, bd=0, cursor="hand2")
+        self.title,self.description,self.value,self.variable,self.recommended=title,description,value,variable,recommended
+        self.bind("<Configure>",self._draw); self.bind("<Button-1>",lambda _event:(on_select or variable.set)(value))
+        variable.trace_add("write",lambda *_:self._draw())
+
+    def _draw(self, _event: Any = None) -> None:
+        self.delete("all"); width=max(200,self.winfo_width()); selected=self.variable.get()==self.value
+        fill,outline=("#25304c","#d8ff5b") if selected else ("#171c35","#343c65")
+        self.create_polygon(_rounded_points(1,1,width-1,75,16),smooth=True,splinesteps=24,fill=fill,outline=outline,width=2 if selected else 1)
+        self.create_oval(16,22,36,42,fill=fill,outline="#d8ff5b" if selected else "#697193",width=2)
+        if selected:self.create_oval(21,27,31,37,fill="#d8ff5b",outline="")
+        self.create_text(48,22,text=self.title,anchor="w",fill="#f7f8ff",font=("Segoe UI Semibold",10))
+        self.create_text(48,48,text=self.description,anchor="w",fill="#b8bfd9",font=("Segoe UI",8))
+        if self.recommended:
+            self.create_text(width-18,22,text="PREDEFINITA",anchor="e",fill="#d8ff5b",font=("Segoe UI Semibold",8))
 
 
 class ProgressBar(tk.Canvas):
@@ -390,6 +439,7 @@ class BridgeApp:
         self.focus_requested = threading.Event()
         self.widgets: dict[str, Any] = {}
         self._last_package_id = ""
+        self._destination_explicit = os.environ.get("RAMBLA_BRIDGE_DESTINATION_EXPLICIT") == "1"
         self._brand_images: list[Any] = []
         if build_ui:
             self._build_ui()
@@ -444,12 +494,12 @@ class BridgeApp:
         tk.Label(card.body, text="TIMELINE ATTIVA", bg="#202746", fg="#9299bc", font=("Segoe UI Semibold", 8), anchor="w").pack(fill="x")
         self.widgets["timeline"] = tk.Label(card.body, text="Timeline in attesa…", bg="#202746", fg="#f1f3ff", font=("Segoe UI", 10), justify="left", anchor="w"); self.widgets["timeline"].pack(fill="x", pady=(5, 0))
 
-        options_card = RoundedPanel(shell, fill="#181d39", outline="#343c65", height=296, radius=20, padding=16); options_card.pack(fill="x", pady=(0, 12))
+        options_card = RoundedPanel(shell, fill="#181d39", outline="#343c65", height=410, radius=20, padding=16); options_card.pack(fill="x", pady=(0, 12))
         options = options_card.body
         self.detect_videos = tk.BooleanVar(value=os.environ.get('RAMBLA_BRIDGE_DETECT', '1') == '1'); self.include_v1 = tk.BooleanVar(value=os.environ.get('RAMBLA_BRIDGE_V1', '0') == '1')
-        check_style = dict(bg="#181d39", fg="#eef0ff", activebackground="#181d39", activeforeground="#ffffff", selectcolor="#302d55", font=("Segoe UI", 10), bd=0, highlightthickness=0)
-        tk.Checkbutton(options, text="Rileva i video già presenti", variable=self.detect_videos, **check_style).pack(anchor="w", pady=(0, 5))
-        tk.Checkbutton(options, text="Considera anche la traccia principale V1", variable=self.include_v1, **check_style).pack(anchor="w", pady=(0, 10))
+        tk.Label(options,text="ANALISI DELLA TIMELINE",bg="#181d39",fg="#9299bc",font=("Segoe UI Semibold",8),anchor="w").pack(fill="x",pady=(0,6))
+        ToggleCard(options,title="Rileva i video già presenti",description="Analizza le tracce video superiori e segnala le frasi già coperte",variable=self.detect_videos).pack(fill="x",pady=(0,7))
+        ToggleCard(options,title="Considera anche la traccia principale V1",description="Include il montato principale nel controllo delle coperture esistenti",variable=self.include_v1).pack(fill="x",pady=(0,12))
         self.widgets["capture"] = RoundedButton(options, text="USA AUDIO IN RMBL B ROLL", command=self.capture_audio); self.widgets["capture"].pack(fill="x", pady=(0, 7))
         self.widgets["recalculate"] = RoundedButton(options, text="RICALCOLA AUDIO · IN → OUT", command=lambda: self.capture_audio(force_recalculate=True)); self.widgets["recalculate"].pack(fill="x", pady=(0, 7))
         self.widgets['open'] = RoundedButton(options, text='APRI RMBL B ROLL · PROGETTO SALVATO', command=self.open_rambla); self.widgets['open'].pack(fill='x')
@@ -458,17 +508,21 @@ class BridgeApp:
         tk.Label(shell, text="PACCHETTO DA RMBL B ROLL", bg="#11152b", fg="#aeb6df", font=("Segoe UI Semibold", 9), anchor="w").pack(fill="x", pady=(6, 7))
         package_card = RoundedPanel(shell, height=132, radius=18, padding=16); package_card.pack(fill="x")
         self.widgets["package"] = tk.Label(package_card.body, text="Nessun pacchetto ricevuto", bg="#202746", fg="#f1f3ff", font=("Segoe UI", 10), justify="left", anchor="w", wraplength=690); self.widgets["package"].pack(fill="both", expand=True)
-        self.destination = tk.StringVar(value=os.environ.get('RAMBLA_BRIDGE_DESTINATION', 'new'))
+        self.destination = tk.StringVar(value=default_destination())
         destinations = tk.Frame(shell, bg="#11152b"); destinations.pack(fill="x", pady=(12, 5))
-        radio_style = dict(bg="#11152b", fg="#eef0ff", activebackground="#11152b", activeforeground="#ffffff", selectcolor="#302d55", font=("Segoe UI", 10), bd=0, highlightthickness=0)
-        tk.Radiobutton(destinations, text="CREA NUOVA TIMELINE · TEMP", value="new", variable=self.destination, **radio_style).pack(anchor="w", pady=3)
-        tk.Radiobutton(destinations, text="IMPORTA SULLA TIMELINE ATTIVA · con copia TEMP", value="active", variable=self.destination, **radio_style).pack(anchor="w", pady=3)
+        tk.Label(destinations,text="DESTINAZIONE",bg="#11152b",fg="#9299bc",font=("Segoe UI Semibold",8),anchor="w").pack(fill="x",pady=(0,6))
+        DestinationCard(destinations,title="IMPORTA SULLA TIMELINE ATTIVA",description="Crea prima una copia TEMP. Non sposta né modifica le clip già presenti",value="active",variable=self.destination,recommended=True,on_select=self._select_destination).pack(fill="x",pady=(0,7))
+        DestinationCard(destinations,title="CREA UNA NUOVA TIMELINE TEMP",description="Genera una timeline separata contenente soltanto il nuovo montaggio",value="new",variable=self.destination,on_select=self._select_destination).pack(fill="x")
         self.widgets["progress"] = ProgressBar(shell); self.widgets["progress"].pack(fill="x", pady=(12, 8))
         self.widgets["message"] = tk.Label(shell, text="L'applicazione parte soltanto quando premi APPLICA.", bg="#11152b", fg="#b9c1e0", font=("Segoe UI", 9), wraplength=690, justify="left", anchor="w"); self.widgets["message"].pack(fill="x", pady=(0, 10))
         actions = tk.Frame(shell, bg="#11152b"); actions.pack(fill="x", pady=(0, 8))
         self.widgets["apply"] = RoundedButton(actions, text="APPLICA", command=self.apply, accent=True, state="disabled"); self.widgets["apply"].pack(side="left", fill="x", expand=True, padx=(0, 6))
         self.widgets["discard"] = RoundedButton(actions, text="SCARTA", command=self.discard, state="disabled"); self.widgets["discard"].pack(side="left", fill="x", expand=True, padx=(6, 0))
         self._fit_window(package_visible=False)
+
+    def _select_destination(self, value: str) -> None:
+        self._destination_explicit = True
+        self.destination.set(value)
 
     def _fit_window(self, *, package_visible: bool) -> None:
         if not hasattr(self.root, "winfo_screenheight"):
@@ -515,6 +569,7 @@ class BridgeApp:
                 env[key] = '1' if getattr(self, attribute).get() else '0'
         if hasattr(self, 'destination'):
             env['RAMBLA_BRIDGE_DESTINATION'] = self.destination.get()
+            env['RAMBLA_BRIDGE_DESTINATION_EXPLICIT'] = '1' if self._destination_explicit else '0'
         self.close()
         subprocess.Popen([sys.executable, str(Path(__file__).resolve())], cwd=str(APP_ROOT), env=env,
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

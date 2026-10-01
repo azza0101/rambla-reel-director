@@ -284,7 +284,7 @@ def test_api_first_product_keeps_curation_identity_without_v2_branding():
     from backend.app.curation_ui_v2 import render_curation_page_v2
 
     html = render_curation_page_v2("v5-brand")
-    assert '<span class="brandProductV41">RMBL B ROLL</span><span class="releaseVersionV35">v0031</span>' in html
+    assert '<span class="brandProductV41">RMBL B ROLL</span><span class="releaseVersionV35">v0032</span>' in html
     assert "RAMBLA Curation V2" not in html
     assert "CURATION V2" not in html
     assert "Choose the editorial engine" in html
@@ -340,4 +340,5 @@ def test_product_ui_exposes_clickable_envato_search_shelf():
     assert "installEnvatoDownloadV29" in html
     assert "/envato/download/start" in html
     assert "SCARICA DA ENVATO" in html
+
 

@@ -10,6 +10,36 @@ from tools.resolve_bridge.standalone_bridge import (
 )
 
 
+def test_active_timeline_is_the_default_destination(monkeypatch):
+    from tools.resolve_bridge.standalone_bridge import default_destination
+    monkeypatch.delenv("RAMBLA_BRIDGE_DESTINATION", raising=False)
+    monkeypatch.delenv("RAMBLA_BRIDGE_DESTINATION_EXPLICIT", raising=False)
+    assert default_destination() == "active"
+
+
+def test_destination_survives_bridge_auto_update(monkeypatch):
+    from tools.resolve_bridge.standalone_bridge import default_destination
+    monkeypatch.setenv("RAMBLA_BRIDGE_DESTINATION", "new")
+    monkeypatch.setenv("RAMBLA_BRIDGE_DESTINATION_EXPLICIT", "1")
+    assert default_destination() == "new"
+
+
+def test_old_implicit_new_default_is_migrated_to_active(monkeypatch):
+    from tools.resolve_bridge.standalone_bridge import default_destination
+    monkeypatch.setenv("RAMBLA_BRIDGE_DESTINATION", "new")
+    monkeypatch.delenv("RAMBLA_BRIDGE_DESTINATION_EXPLICIT", raising=False)
+    assert default_destination() == "active"
+
+
+def test_bridge_uses_modern_cards_for_capture_and_destination_controls():
+    from pathlib import Path
+    source = Path("tools/resolve_bridge/standalone_bridge.py").read_text(encoding="utf-8")
+    assert "ToggleCard" in source
+    assert "DestinationCard" in source
+    assert "Non sposta né modifica le clip già presenti" in source
+    assert "Analizza le tracce video superiori" in source
+
+
 def test_window_expands_for_a_received_package_and_stays_on_screen():
     assert window_geometry(1920, 1080, requested_height=700, package_visible=False) == "720x760"
     assert window_geometry(1920, 1080, requested_height=820, package_visible=True) == "820x930"
