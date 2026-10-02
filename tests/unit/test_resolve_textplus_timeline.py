@@ -358,14 +358,27 @@ def test_plan_uses_target_timeline_fps_and_every_start_end_boundary():
     ]
 
 
-def test_boundary_operations_attach_text_only_to_requested_starts():
+def test_boundary_operations_prime_resolve_before_nonzero_first_title():
     plan = build_textplus_timeline_plan(payload(), target_fps=30)
 
     assert boundary_operations(plan) == [
+        {"frame": 0, "text": None},
         {"frame": 15, "text": "due tre"},
         {"frame": 45, "text": None},
         {"frame": 120, "text": "Otto"},
         {"frame": 135, "text": None},
+    ]
+
+
+def test_boundary_operations_do_not_duplicate_zero_when_first_title_starts_at_origin():
+    plan = build_textplus_timeline_plan(
+        {"items": [{"text": "zero", "start_seconds": 0, "end_seconds": 1}]},
+        target_fps=30,
+    )
+
+    assert boundary_operations(plan) == [
+        {"frame": 0, "text": "zero"},
+        {"frame": 30, "text": None},
     ]
 
 
@@ -388,6 +401,19 @@ def test_materialized_segments_keep_only_exact_requested_ranges():
 
     assert [(row["id"], row["text"]) for row in keep] == [("a", "due tre"), ("b", "Otto")]
     assert [row["id"] for row in remove] == ["gap", "tail"]
+
+
+def test_materialized_segments_remove_resolve_priming_lead_in():
+    materialized = [
+        {"id": "prime", "start_frame": 0, "end_frame": 15},
+        {"id": "wanted", "start_frame": 15, "end_frame": 45},
+    ]
+    requested = [{"text": "due tre", "start_frame": 15, "end_frame": 45}]
+
+    keep, remove = select_exact_segments(materialized, requested)
+
+    assert [(row["id"], row["text"]) for row in keep] == [("wanted", "due tre")]
+    assert [row["id"] for row in remove] == ["prime"]
 
 
 def test_materialized_segments_reject_wrong_physical_duration():

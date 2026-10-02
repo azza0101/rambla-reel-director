@@ -305,11 +305,21 @@ def generated_fusion_items(timeline: Any, existing_ids: set[str]) -> list[Any]:
 
 
 def boundary_operations(plan: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return boundary insertions, attaching content while a new title is writable."""
+    """Return boundary insertions, priming Resolve before a non-zero first title.
+
+    Resolve 21 can ignore the first non-zero playhead position on a newly
+    reserved Fusion-title track and create that first title at the timeline
+    origin instead. A blank boundary at frame 0 makes that behavior explicit:
+    the real first boundary then splits the priming title at the requested
+    frame, and select_exact_segments() removes the blank lead-in fragment.
+    """
     text_by_start = {int(row["start_frame"]): row["text"] for row in plan["segments"]}
+    boundaries = [int(frame) for frame in plan["boundaries"]]
+    if boundaries and boundaries[0] > 0:
+        boundaries.insert(0, 0)
     return [
-        {"frame": int(frame), "text": text_by_start.get(int(frame))}
-        for frame in plan["boundaries"]
+        {"frame": frame, "text": text_by_start.get(frame)}
+        for frame in boundaries
     ]
 
 

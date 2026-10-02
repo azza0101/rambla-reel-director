@@ -1,6 +1,6 @@
 # RMBL B ROLL — handoff tecnico
 
-Aggiornato: 2026-10-02  Versione: `v0037`  Branch di consegna: `feat/api-first-text-first-v1`
+Aggiornato: 2026-10-02  Versione: `v0038`  Branch di consegna: `feat/api-first-text-first-v1`
 
 ## Avvio rapido
 
@@ -97,3 +97,12 @@ I test focalizzati sulla disposizione dei comandi di modifica testo, UI, tema e 
 
 
 
+
+
+### Correzione primo Text+ v0038
+
+- Resolve 21 può ignorare il primo posizionamento non-zero su una traccia Fusion Title appena riservata e creare il primo titolo dall'origine relativa della timeline.
+- La materializzazione ora inserisce un boundary di priming vuoto a frame 0 quando la prima parola evidenziata parte più avanti.
+- Il primo boundary reale spezza il titolo di priming esattamente nel punto richiesto; il frammento vuoto iniziale viene poi eliminato dalla selezione dei range esatti.
+- Il comportamento non cambia quando il primo titolo parte già da frame 0.
+- Aggiunti test di regressione per priming, assenza di doppio zero e rimozione del lead-in.
