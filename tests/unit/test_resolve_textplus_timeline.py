@@ -185,14 +185,33 @@ def test_timeline_markers_must_remain_byte_for_byte_equivalent():
 def test_timeline_markers_are_restored_to_their_original_frames_and_metadata():
     markers = {10.0: {"color":"Blue","name":"A","note":"note","duration":2.0,"customData":"id"}}
     class Timeline:
-        def __init__(self): self.markers={99.0:{"color":"Red","name":"moved","note":"","duration":1,"customData":""}}
+        def __init__(self):
+            self.markers={99.0:{"color":"Red","name":"moved","note":"","duration":1,"customData":""}}
+            self.deleted=[]; self.added=[]
         def GetMarkers(self): return dict(self.markers)
-        def DeleteMarkerAtFrame(self, frame): self.markers.pop(frame, None); return True
+        def DeleteMarkerAtFrame(self, frame):
+            self.deleted.append(frame); self.markers.pop(frame, None); return True
         def AddMarker(self, frame, color, name, note, duration, custom):
+            self.added.append(frame)
             self.markers[frame]={"color":color,"name":name,"note":note,"duration":duration,"customData":custom}; return True
     timeline=Timeline()
-    restore_timeline_markers(timeline, markers)
+    assert restore_timeline_markers(timeline, markers) is True
     assert timeline.markers == markers
+    assert timeline.deleted == [99.0] and timeline.added == [10.0]
+
+
+def test_marker_preservation_does_not_rewrite_markers_when_they_are_already_exact():
+    markers = {10.0: {"color":"Blue","name":"A","note":"note","duration":2.0,"customData":"id"}}
+    class Timeline:
+        def __init__(self): self.deleted=[]; self.added=[]
+        def GetMarkers(self): return markers
+        def DeleteMarkerAtFrame(self, frame): self.deleted.append(frame); return True
+        def AddMarker(self, *args): self.added.append(args); return True
+    timeline=Timeline()
+
+    assert restore_timeline_markers(timeline, markers) is False
+    assert timeline.deleted == []
+    assert timeline.added == []
 
 
 def test_highlight_track_is_always_above_every_broll_track():

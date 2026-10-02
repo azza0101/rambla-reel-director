@@ -1,6 +1,6 @@
 # RMBL B ROLL — handoff tecnico
 
-Aggiornato: 2026-10-02  Versione: `v0040`  Branch di consegna: `feat/api-first-text-first-v1`
+Aggiornato: 2026-10-02  Versione: `v0041`  Branch di consegna: `feat/api-first-text-first-v1`
 
 ## Avvio rapido
 
@@ -125,3 +125,11 @@ I test focalizzati sulla disposizione dei comandi di modifica testo, UI, tema e 
 - **SOLO SUBS** non tocca media/B-roll: disabilita i precedenti Subtitle item riconosciuti come RMBL e crea una nuova Subtitle track `RMBL SUBS vN`.
 - L'inserimento selettivo dei subs verifica esplicitamente che Resolve abbia materializzato il nuovo SRT sulla track richiesta; se non lo fa, il job fallisce e il ripristino automatico dal backup protegge la timeline attiva.
 - Il bridge conserva la modalità selezionata durante il proprio auto-restart.
+
+
+### Preservazione marker Resolve v0041
+
+- Correzione regressione: i marker della timeline non vengono più cancellati e ricreati ad ogni Apply.
+- Se il dizionario marker dopo l'operazione è già identico allo snapshot iniziale, RMBL non esegue alcuna chiamata `DeleteMarkerAtFrame` / `AddMarker`.
+- Il restore via API viene usato solo come fallback quando Resolve ha realmente modificato i marker; dopo il restore viene verificata nuovamente l'equivalenza completa di frame e metadati.
+- Il risultato del job espone `markers_restored` per distinguere il caso normale (nessun rewrite) dal fallback.

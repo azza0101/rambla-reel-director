@@ -125,8 +125,18 @@ def verify_timeline_markers(timeline: Any, expected: dict[Any, Any]) -> None:
         raise RuntimeError("RAMBLA safety check: timeline markers moved or changed")
 
 
-def restore_timeline_markers(timeline: Any, expected: dict[Any, Any]) -> None:
-    for frame in list((timeline.GetMarkers() or {}).keys()):
+def restore_timeline_markers(timeline: Any, expected: dict[Any, Any]) -> bool:
+    """Restore markers only when Resolve actually changed them.
+
+    Rewriting an already-correct marker set is unnecessary and can itself make
+    Resolve 21 re-materialize markers at a different visual position. Keep the
+    timeline completely untouched in the normal case; only fall back to the API
+    rewrite when the live marker dictionary differs from the pre-apply snapshot.
+    """
+    current = copy.deepcopy(dict(timeline.GetMarkers() or {}))
+    if current == expected:
+        return False
+    for frame in list(current.keys()):
         if timeline.DeleteMarkerAtFrame(frame) is False:
             raise RuntimeError(f"Resolve could not clear moved marker at frame {frame}")
     for frame, row in expected.items():
@@ -139,6 +149,8 @@ def restore_timeline_markers(timeline: Any, expected: dict[Any, Any]) -> None:
             str(row.get("customData") or ""),
         ) is False:
             raise RuntimeError(f"Resolve could not restore marker at frame {frame}")
+    verify_timeline_markers(timeline, expected)
+    return True
 
 
 def active_track_layout(
@@ -872,6 +884,7 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
     subtitle_target_track = None
     muted_title_count = 0
     muted_subtitle_count = 0
+    markers_restored = False
     original_folder = media_pool.GetCurrentFolder()
     try:
         backup_folder = ensure_media_pool_folder(media_pool, "BCK")
@@ -991,7 +1004,7 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
             report_handoff_progress(payload,"broll",88,"Media e B-roll lasciati invariati")
         if protected_items is not None:
             verify_existing_timeline_items(generated, protected_items)
-            restore_timeline_markers(generated, original_markers)
+            markers_restored = restore_timeline_markers(generated, original_markers)
             verify_timeline_markers(generated, original_markers)
             restore_track_locks(generated, protected_track_states)
         if destination_mode == "new" and _timeline_signature(original) != original_signature:
@@ -1028,6 +1041,7 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
             "apply_scope": apply_scope,
             "muted_title_count": muted_title_count,
             "muted_subtitle_count": muted_subtitle_count,
+            "markers_restored": markers_restored,
             "backup_timeline_name": str(backup.GetName()) if backup else None,
         }
     except Exception:
