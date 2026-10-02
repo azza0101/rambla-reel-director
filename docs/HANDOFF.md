@@ -1,6 +1,6 @@
 # RMBL B ROLL — handoff tecnico
 
-Aggiornato: 2026-10-02  Versione: `v0042`  Branch di consegna: `feat/api-first-text-first-v1`
+Aggiornato: 2026-10-02  Versione: `v0043`  Branch di consegna: `feat/api-first-text-first-v1`
 
 ## Avvio rapido
 
@@ -144,3 +144,13 @@ I test focalizzati sulla disposizione dei comandi di modifica testo, UI, tema e 
 - Se non esistono ancora tracce media RMBL riutilizzabili, vengono create soltanto le nuove video track necessarie.
 - Gli handoff completati possono rientrare nello stato `applying`; `application_count` registra quante applicazioni sono state eseguite dallo stesso pacchetto.
 - I pacchetti completati della stessa sessione Bridge restano discoverable anche dopo l'auto-restart del Bridge.
+
+
+### Fallback Subtitle track Resolve 21.1 v0043
+
+- Test reale: Resolve 21.1 può ignorare `trackIndex` quando un SRT nativo viene passato a `MediaPool.AppendToTimeline`, materializzando correttamente i nuovi caption su ST1 invece che sulla Subtitle track superiore richiesta.
+- `SOLO SUBS` tenta ancora la traccia superiore, ma non considera più il fallback di Resolve un errore se i nuovi subtitle item sono stati creati correttamente.
+- La verifica finale viene eseguita sugli item appena creati (testo + frame assoluti), non sull'intera traccia, così i precedenti subs RMBL disattivati non causano falsi mismatch.
+- Se la traccia superiore appena creata resta vuota a causa del fallback, viene rimossa.
+- Il risultato espone `subtitle_track_index` e `subtitle_track_fallback`; il Bridge segnala il fallback all'utente.
+- Il backup BCK resta obbligatorio prima di ogni Apply.
