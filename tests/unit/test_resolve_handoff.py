@@ -119,3 +119,20 @@ def test_completed_handoff_remains_discoverable_for_same_bridge_session_and_can_
         assert row["status"] == "applying" and row["apply_scope"] == "subtitles"
     finally:
         shutil.rmtree(root,ignore_errors=True)
+
+
+def test_cancelled_handoff_stays_discoverable_and_can_be_reapplied():
+    root=_root()
+    try:
+        store=ResolveHandoffStore(root.parent)
+        package=store.prepare(root,_payload(bridge_session_id="session-cancel"))
+        store.mark_received(root,package["package_id"],bridge_session_id="session-cancel")
+        store.transition(root,package["package_id"],"applying")
+        cancelled=store.transition(root,package["package_id"],"cancelled")
+        assert cancelled["status"]=="cancelled"
+        rows=store.pending(resolve_project="Egitto2",timeline_id="tl-1",bridge_session_id="session-cancel")
+        assert [row["package_id"] for row in rows] == [package["package_id"]]
+        reapplied=store.transition(root,package["package_id"],"applying",apply_scope="media")
+        assert reapplied["status"]=="applying"
+    finally:
+        shutil.rmtree(root,ignore_errors=True)
