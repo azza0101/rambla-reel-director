@@ -61,7 +61,17 @@ def build_broll_timeline_plan(
                 unavailable.append({"beat_id": str(beat_id), "asset_id": asset_id, "reason": "clip file is not available locally"})
                 continue
             available = _frame(float(asset.get("duration_seconds") or 0), fps)
-            source_start = _frame(float(asset.get("source_offset_seconds") or 0), fps)
+            source_start_seconds = float(
+                asset.get("source_start_seconds")
+                if asset.get("source_start_seconds") is not None
+                else asset.get("source_offset_seconds") or 0
+            )
+            source_end_seconds = (
+                float(asset["source_end_seconds"])
+                if asset.get("source_end_seconds") is not None
+                else None
+            )
+            source_start = _frame(source_start_seconds, fps)
             if available - source_start < required:
                 unavailable.append({"beat_id": str(beat_id), "asset_id": asset_id, "reason": "clip is shorter than phrase and cannot preserve exact timing"})
                 continue
@@ -74,6 +84,8 @@ def build_broll_timeline_plan(
                 "record_start_frame": record_start, "record_end_frame": record_end,
                 "source_start_frame": source_start, "source_end_frame": source_start + required,
                 "duration_frames": required,
+                "preview_source_start_seconds": source_start_seconds,
+                "preview_source_end_seconds": source_end_seconds,
             })
     clips.sort(key=lambda row: (row["record_start_frame"], row["track_index"], row["asset_id"]))
     duration = max([_frame(float(row.get("end") or 0), fps) for row in beats.values()] + [1])
