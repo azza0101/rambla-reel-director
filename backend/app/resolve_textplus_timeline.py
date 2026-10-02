@@ -1040,6 +1040,11 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
                 and subtitle_actual_track is not None
                 and subtitle_actual_track != subtitle_target_track
             )
+            if subtitle_track_fallback and subtitle_target_track is not None:
+                target_items = list(generated.GetItemListInTrack("subtitle", subtitle_target_track) or [])
+                delete_track = getattr(generated, "DeleteTrack", None)
+                if not target_items and delete_track is not None:
+                    delete_track("subtitle", subtitle_target_track)
             verify_native_subtitles(
                 generated, subtitles, fps=fps, base_frame=base_frame,
                 items=inserted_subtitles,
