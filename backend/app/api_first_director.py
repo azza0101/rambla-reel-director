@@ -3,13 +3,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import re
 from typing import Any, Protocol
 
 from .editorial_import import VERSION, validate_import
 from .gemini_interactions import GeminiJSONReply
 
 
-DIRECTOR_SCHEMA_VERSION = "rambla-api-first-director-1"
+DIRECTOR_SCHEMA_VERSION = "rambla-api-first-director-2"
 
 DIRECTOR_INSTRUCTIONS = """You are the editorial B-roll director for a fast-paced short-form reel.
 
@@ -49,8 +50,21 @@ Do not use abstract search phrases such as "greenwashing tourism", "sustainable 
 "ethical tourism", "responsible tourism", "sustainability explained", "criteria", "how to",
 or "tips" unless those exact words/signs are themselves the physical subject being shown.
 Produce 1-3 image queries and 1-3 video queries per shot. When using multiple queries,
-make them a retrieval ladder for the SAME visible scene: (1) precise subject+action,
-(2) shorter/broader subject+action, (3) a natural synonym or phone-native phrasing.
+make them a retrieval ladder for the SAME visible evidence: (1) precise subject, place,
+period and event, (2) shorter subject+place, (3) a simple broad query people really use.
+For example: "Minya Egypt 1990s jihadist attacks archive", then
+"jihadist violence Egypt", then "jihad Egypt". The broad query must remain faithful to
+the spoken claim; it is not permission to replace it with generic street or town footage.
+When speech makes a factual historical, political, violent or archival claim, search for
+literal documentary evidence, contemporary news/archive material, named people, places,
+events or institutions. Do not neutralize that claim into calm ambience. Avoid may exclude
+graphic injury, reenactments, unrelated wars and wrong geography, but must never ban the
+central spoken subject or all news/archive evidence needed to show it.
+For location-dependent scenes, retain the place established by the transcript, not
+only the current sentence: tourist police in Egypt means "tourist police Egypt",
+never American police. A newly spoken location overrides the previous location.
+Use short catalog queries with a concrete subject/action and geographic name,
+preferably 2-5 words. Never use a country match as a substitute for the subject.
 Do not introduce a new concept in query 2 or 3. Put likely false positives and unwanted
 shortcuts in avoid. Output only the structured object requested by the schema.
 """
@@ -117,6 +131,17 @@ def _compact_chunk_ledger(package: dict[str, Any]) -> str:
 
 
 def build_director_prompt(package: dict[str, Any]) -> str:
+    coverage = package.get("coverage_selected_chunk_ids")
+    coverage_rule = ""
+    if coverage is not None:
+        coverage_rule = (
+            "Only selected chunk IDs may use BROLL or CONTINUE_PREVIOUS_VISUAL. "
+            "Every selected chunk must use BROLL so it remains independently searchable in the UI. "
+            "Every unselected chunk must use KEEP_TALKING_HEAD with no shots.\n"
+            "COVERAGE_SELECTED_CHUNK_IDS="
+            + json.dumps([str(value) for value in coverage], ensure_ascii=False, separators=(",", ":"))
+            + "\n"
+        )
     return (
         DIRECTOR_INSTRUCTIONS
         + "\nRead all chronological chunks before deciding. "
@@ -124,6 +149,7 @@ def build_director_prompt(package: dict[str, Any]) -> str:
         + "Use chunk_id to identify that chunk. Never merge chunks. "
         + "For BROLL: single means exactly 1 shot; sequence/juxtaposition means 2-3 shots. "
         + "For KEEP_TALKING_HEAD and CONTINUE_PREVIOUS_VISUAL: shots must be empty.\n"
+        + coverage_rule
         + "TRANSCRIPT_CHUNKS="
         + _compact_chunk_ledger(package)
     )
@@ -153,6 +179,131 @@ def _queries(values: Any, path: str) -> list[str]:
     return out
 
 
+_HISTORICAL_CLAIM_MARKERS = {
+    "anni 90", "1990", "90s", "archiv", "attacc", "conflict", "guerra", "history",
+    "jihad", "militant", "storia", "terror", "violence", "violent", "violenza",
+}
+_HISTORICAL_EVIDENCE_MARKERS = {
+    "1990", "90s", "archiv", "attack", "conflict", "document", "history", "jihad",
+    "militant", "news", "terror", "violence", "violent", "war",
+}
+_SAFE_AVOID_QUALIFIERS = {"graphic", "unrelated", "wrong", "fictional", "reenact"}
+
+
+def _contains_marker(text: str, markers: set[str]) -> bool:
+    value = text.casefold()
+    return any(marker in value for marker in markers)
+
+
+def _ensure_findable_historical_queries(
+    *,
+    spoken_text: str,
+    core_meaning: str,
+    shot: dict[str, Any],
+) -> None:
+    """Add a short catalog query without asking the Director for a repair turn."""
+    claim = f"{spoken_text} {core_meaning}"
+    if not _contains_marker(claim, _HISTORICAL_CLAIM_MARKERS):
+        return
+    all_queries = [
+        query
+        for field in ("image_queries", "video_queries")
+        for query in shot[field]
+    ]
+    query_text = " ".join(all_queries)
+    folded = f"{query_text} {claim}".casefold()
+    event = next((
+        label
+        for marker, label in (
+            ("jihad", "jihad"), ("terror", "terrorism"), ("violen", "violence"),
+            ("attack", "attacks"), ("conflict", "conflict"), ("war", "war"),
+            ("history", "history"), ("archiv", "archive"),
+        )
+        if marker in folded
+    ), "archive")
+    ignored = {
+        "archival", "archive", "documentary", "news", "historical", "history",
+        "jihad", "jihadist", "terror", "terrorism", "violence", "violent",
+        "attacks", "attack", "conflict", "war",
+    }
+    locations: list[str] = []
+    for query in all_queries:
+        for token in re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ'-]+", query):
+            if token[:1].isupper() and token.casefold() not in ignored:
+                locations.append(token)
+    aliases = {
+        "egypt": "Egypt", "egyptian": "Egypt", "thailand": "Thailand", "thai": "Thailand",
+        "italy": "Italy", "italian": "Italy", "france": "France", "french": "France",
+        "spain": "Spain", "spanish": "Spain", "japan": "Japan", "japanese": "Japan",
+        "china": "China", "chinese": "China", "india": "India", "indian": "India",
+    }
+    country = next((aliases[token.casefold()] for token in locations if token.casefold() in aliases), "")
+    specific = next((token for token in locations if token.casefold() not in aliases), "")
+    place = " ".join(dict.fromkeys(value for value in (specific, country) if value)) or "archive"
+    broad_place = country or specific or "archive"
+    broad = f"{event} {broad_place}"
+    period = "1990s" if any(marker in claim.casefold() for marker in ("anni 90", "1990", "90s")) else ""
+    precise = " ".join(value for value in (place, period, event, "archive") if value)
+    middle = f"{event} {broad_place} archive"
+    has_literal_evidence = _contains_marker(query_text, _HISTORICAL_EVIDENCE_MARKERS)
+    for field in ("image_queries", "video_queries"):
+        queries = shot[field]
+        if not has_literal_evidence:
+            shot[field] = [precise, middle, broad]
+            continue
+        if any(len(query.split()) <= 2 for query in queries):
+            continue
+        if len(queries) < 3:
+            queries.append(broad)
+        else:
+            queries[-1] = broad
+
+
+def _validate_historical_evidence(
+    *,
+    spoken_text: str,
+    core_meaning: str,
+    shots: list[dict[str, Any]],
+    avoid: list[str],
+    path: str,
+) -> None:
+    claim = f"{spoken_text} {core_meaning}"
+    if not shots or not _contains_marker(claim, _HISTORICAL_CLAIM_MARKERS):
+        return
+    query_text = " ".join(
+        query
+        for shot in shots
+        for field in ("image_queries", "video_queries")
+        for query in shot[field]
+    )
+    if not _contains_marker(query_text, _HISTORICAL_EVIDENCE_MARKERS):
+        raise ValueError(
+            f"{path}: historical evidence query required; generic ambience is not faithful to the spoken claim"
+        )
+    for shot_index, shot in enumerate(shots):
+        for field in ("image_queries", "video_queries"):
+            if not any(len(query.split()) <= 2 for query in shot[field]):
+                raise ValueError(
+                    f"{path}.shots[{shot_index}].{field}: add a findable broad query of 2 words "
+                    "after the precise historical query (example: 'jihad Egypt')"
+                )
+    claim_folded = claim.casefold()
+    central_markers = {"archive", "news"}
+    if any(marker in claim_folded for marker in ("jihad", "terror", "violen", "conflict", "guerra")):
+        central_markers |= {
+            "jihad", "terror", "militant", "violence", "violent", "violenza",
+            "conflict", "gunfire", "war", "wars", "rebel",
+        }
+    retained_avoid: list[str] = []
+    for item in avoid:
+        folded = item.casefold()
+        erases_subject = any(marker in folded for marker in central_markers)
+        safe_narrowing = any(qualifier in folded for qualifier in _SAFE_AVOID_QUALIFIERS)
+        if not erases_subject or safe_narrowing:
+            retained_avoid.append(item)
+    avoid[:] = retained_avoid
+
+
 def compile_director_decisions(
     package: dict[str, Any],
     decisions: dict[str, Any],
@@ -178,6 +329,11 @@ def compile_director_decisions(
         )
 
     canonical: list[dict[str, Any]] = []
+    used_queries: dict[str, dict[str, str]] = {"image_queries": {}, "video_queries": {}}
+    selected_raw = package.get("coverage_selected_chunk_ids")
+    selected = None if selected_raw is None else {str(value) for value in selected_raw}
+    if selected is not None and not selected.issubset(positions):
+        raise ValueError("coverage selection contains unknown chunk ids")
     for index, (raw, chunk) in enumerate(zip(raw_beats, chunks), start=1):
         path = f"$.beats[{index - 1}]"
         if not isinstance(raw, dict):
@@ -191,6 +347,8 @@ def compile_director_decisions(
         action = _clean_text(raw.get("action"))
         if action not in {"BROLL", "KEEP_TALKING_HEAD", "CONTINUE_PREVIOUS_VISUAL"}:
             raise ValueError(f"{path}: unsupported action")
+        if selected is not None and expected_id not in selected and action != "KEEP_TALKING_HEAD":
+            raise ValueError(f"{path}: chunk {expected_id} is not selected for Coverage")
         visual_mode = _clean_text(raw.get("visual_mode"))
         if visual_mode not in {"single", "sequence", "juxtaposition"}:
             raise ValueError(f"{path}: unsupported visual_mode")
@@ -198,6 +356,28 @@ def compile_director_decisions(
         raw_shots = raw.get("shots")
         if not isinstance(raw_shots, list):
             raise ValueError(f"{path}.shots: expected array")
+        # A provider can incorrectly continue across an unselected talking-head
+        # chunk. The selected phrase still needs coverage, so turn that orphaned
+        # continuation into a searchable single shot instead of invalidating the
+        # complete plan after both provider attempts.
+        orphaned_continuation = (
+            action == "CONTINUE_PREVIOUS_VISUAL"
+            and (not canonical or canonical[-1]["action"] == "KEEP_TALKING_HEAD")
+        )
+        selected_needs_visual = selected is not None and expected_id in selected and action != "BROLL"
+        if (orphaned_continuation or selected_needs_visual) and selected is not None and expected_id in selected:
+            action = "BROLL"
+            visual_mode = "single"
+            meaning = _clean_text(raw.get("core_meaning"), allow_empty=True) or str(chunk["text"])
+            query_words = meaning.split()[:10]
+            if len(query_words) < 2:
+                query_words.append("video")
+            query = " ".join(query_words)
+            raw_shots = [{
+                "description": meaning,
+                "image_queries": [query],
+                "video_queries": [query],
+            }]
         beat_id = f"beat_{index:03d}"
         shots: list[dict[str, Any]] = []
         if action == "BROLL":
@@ -208,8 +388,7 @@ def compile_director_decisions(
             for shot_index, shot in enumerate(raw_shots, start=1):
                 if not isinstance(shot, dict):
                     raise ValueError(f"{path}.shots[{shot_index - 1}]: expected object")
-                shots.append(
-                    {
+                compiled_shot = {
                         "shot_id": f"{beat_id}_shot_{shot_index:02d}",
                         "description": _clean_text(shot.get("description")),
                         "image_queries": _queries(
@@ -221,7 +400,21 @@ def compile_director_decisions(
                             f"{path}.shots[{shot_index - 1}].video_queries",
                         ),
                     }
+                _ensure_findable_historical_queries(
+                    spoken_text=str(chunk["text"]),
+                    core_meaning=_clean_text(raw.get("core_meaning")),
+                    shot=compiled_shot,
                 )
+                for field in ("image_queries", "video_queries"):
+                    for query in compiled_shot[field]:
+                        key = query.casefold()
+                        previous_beat = used_queries[field].get(key)
+                        if previous_beat and previous_beat != beat_id:
+                            raise ValueError(
+                                f"{path}.{field}: query {query!r} reused by another visual beat {previous_beat}"
+                            )
+                        used_queries[field][key] = beat_id
+                shots.append(compiled_shot)
         elif raw_shots:
             raise ValueError(f"{path}: only BROLL may contain shots")
 
@@ -236,6 +429,14 @@ def compile_director_decisions(
             if key not in seen_avoid:
                 seen_avoid.add(key)
                 avoid.append(clean)
+
+        _validate_historical_evidence(
+            spoken_text=str(chunk["text"]),
+            core_meaning=_clean_text(raw.get("core_meaning")),
+            shots=shots,
+            avoid=avoid,
+            path=path,
+        )
 
         beat: dict[str, Any] = {
             "id": beat_id,
@@ -324,11 +525,21 @@ def generate_director_plan(
     requested_model = str(getattr(provider, "model", "unknown"))
     fallback_used = False
     transport_attempts = 0
+    # Exact array cardinality on a large nested schema exhausts provider decoder
+    # complexity (Gemini HTTP 400 / Groq json_validate_failed). Keep the count in
+    # instructions and enforce it deterministically in compile_director_decisions.
+    wire_schema = director_schema(len(package.get("chunks") or []))
+    beats_schema = wire_schema["properties"]["beats"]
+    beats_schema.pop("minItems", None)
+    beats_schema.pop("maxItems", None)
+    beats_schema["description"] = (
+        f"Exactly {len(package.get('chunks') or [])} decisions, one per supplied chunk, in order."
+    )
     for attempt in range(1, max_attempts + 1):
         request = prompt if attempt == 1 else build_repair_prompt(ValueError(errors[-1]))
         reply = provider.generate_json(
             request,
-            director_schema(len(package.get("chunks") or [])),
+            wire_schema,
             previous_interaction_id=previous_id,
         )
         previous_id = reply.interaction_id or previous_id

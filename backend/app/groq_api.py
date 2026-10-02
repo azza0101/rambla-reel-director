@@ -230,7 +230,21 @@ class GroqDirectorClient:
                     if truncated and model_index < len(model_chain) - 1:
                         self._emit('output_truncated', model=active_model, status=status, detail='Structured JSON exceeded output budget; switching to configured fallback')
                         break
-                    retryable = isinstance(status, int) and status in RETRYABLE_HTTP_STATUSES
+                    # Generation failures are recoverable; malformed requests and
+                    # authentication failures are not. Never use failed_generation
+                    # as a partial plan: ask a configured fallback for a full result.
+                    generation_failed = status == 400 and any(
+                        marker in detail.casefold() for marker in (
+                            "failed to generate json",
+                            "generated json does not match the expected schema",
+                        )
+                    )
+                    if generation_failed and model_index < len(model_chain) - 1:
+                        self._emit("model_exhausted", model=active_model, status=status, detail=detail)
+                        break
+                    retryable = generation_failed or (
+                        isinstance(status, int) and status in RETRYABLE_HTTP_STATUSES
+                    )
                     if status == 429 and model_index < len(model_chain) - 1:
                         self._emit(
                             "quota_exhausted",

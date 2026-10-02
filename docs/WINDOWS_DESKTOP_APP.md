@@ -39,3 +39,36 @@ produces a new build token, so the launcher will not attach to the prior build.
 
 Secrets remain local and untracked. Never commit `.env.local`, API keys, browser
 profiles, project media, caches, logs or `rambla-data`.
+
+## Resolve Fusion Title templates
+
+The highlighted-word workspace includes a local Resolve title library. New and
+existing projects select the bundled `KURA_paper_title_v8.drfx` by default.
+Choose another installed title from the selector or drag a compatible `.drfx`
+package into the drop zone. RAMBLA validates the archive before storing it and
+never silently substitutes a different title.
+
+Use **INSTALLA IN RESOLVE** when a selected package is missing from the current
+Windows user's Resolve templates. If RAMBLA reports **Riavvia Resolve**, close
+and reopen Resolve before creating the title timeline. The JSON Text+ exports
+remain available even when Resolve or the selected title is unavailable.
+
+The generated timeline contains only Edit-page Fusion Title clips at the exact
+source timecodes. RAMBLA writes into the title's exposed `Template` Text+ control
+when present, preserves the source timeline, and removes an incomplete generated
+timeline if insertion or verification fails.
+
+## Animation and Editing exports
+
+Transcript exports are grouped under **ANIMATION** and **EDITING**. The complete
+subtitle export remains a normal SRT and always includes highlighted words.
+**Crea timeline parole + subs** creates one Resolve timeline where highlighted
+words use the selected Fusion Title and every remaining caption is a native
+Subtitle clip, grouped into at most three words. Highlighted words create hard
+gaps in this combined Subtitle track.
+
+**Esporta timeline parole + subs · DRT** creates the same verified timeline and
+downloads a native Resolve `.drt`. Resolve cannot reliably export a DRT directly
+to a mapped drive such as `Z:`. RAMBLA therefore exports to a local temporary
+file through the official Resolve API, verifies it is non-empty, and then copies
+it to the project/download destination.

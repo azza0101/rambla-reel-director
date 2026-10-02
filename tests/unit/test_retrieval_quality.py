@@ -109,6 +109,17 @@ def test_pending_video_cannot_be_selected(tmp_path):
         store.set_chunk_selection('b',['v'],no_broll=False)
 
 
+def test_real_provider_source_can_be_selected_before_clip_download():
+    from types import SimpleNamespace
+    from backend.app.debug_server import _candidate_can_be_selected
+
+    source = SimpleNamespace(kind="video", source_page="https://www.pexels.com/video/123", preview_status="pending", clip_verified=False)
+    missing = SimpleNamespace(kind="video", source_page="", preview_status="pending", clip_verified=False)
+
+    assert _candidate_can_be_selected(source) is True
+    assert _candidate_can_be_selected(missing) is False
+
+
 def test_old_imported_retrieval_is_flagged_and_hidden(tmp_path):
     from tests.unit.test_editorial_import import fixture
     from backend.app.editorial_import import import_plan,retrieval_bundle

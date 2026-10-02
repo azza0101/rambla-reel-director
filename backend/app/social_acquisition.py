@@ -25,11 +25,21 @@ def browser_cookie_specs(profile_dir: Path) -> tuple[str, ...]:
     # RAMBLA login prefers Edge, then Chrome, then bundled Chromium. Try the
     # corresponding yt-dlp cookie backends in the same order without exposing
     # the path outside this helper.
-    return (
+    specs = [
         f"edge:{directory}",
         f"chrome:{directory}",
         f"chromium:{directory}",
-    )
+    ]
+    # Login buttons intentionally open the user's normal Chrome profile. Try
+    # that same profile as the final authenticated acquisition source.
+    try:
+        from .browser_profiles import normal_chrome_profile
+        normal = normal_chrome_profile()
+        if normal:
+            specs.insert(0, f"chrome:{normal[1]}")
+    except Exception:
+        pass
+    return tuple(dict.fromkeys(specs))
 
 
 def redact_sensitive_command(command: list[str]) -> str:
@@ -105,7 +115,12 @@ def download_authenticated_section(
             if output_path.is_file() and output_path.stat().st_size:return output_path
             raise SocialAcquisitionError('provider did not supply a clip')
         except Exception:
-            raise SocialAcquisitionError('live-session clip acquisition failed') from None
+            # The visible login may live in normal Chrome rather than in the
+            # Playwright session. Continue with --cookies-from-browser below.
+            try:
+                output_path.unlink(missing_ok=True)
+            except OSError:
+                pass
         finally:
             if cookie_path:cookie_path.unlink(missing_ok=True)
     profile_dir = Path(profile_root or profile_root_from_env()) / clean

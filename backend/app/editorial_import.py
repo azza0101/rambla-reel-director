@@ -19,7 +19,12 @@ KEEP_TALKING_HEAD is a deliberate exception for intro, CTA, punchline or deliver
 moments; prefer continuing a strong previous visual over leaving avoidable visual gaps.
 Do not invent filler merely to reach the coverage target.
 Current spoken meaning is authoritative. Neighbors only clarify references; never
-import future or unrelated objects. Global theme is not a source of shot nouns.
+import future or unrelated objects. Global theme is not a source of shot nouns. Preserve explicit geography: inherit the
+place established in the transcript when the current beat has no new location.
+For example tourist police in a reel about Egypt must use tourist police Egypt,
+never American police. Include the actual place in every search query for a
+location-dependent scene. Use short catalog queries (2-5 words when possible),
+with a concrete subject/action and place; avoid cinematic prose and invented details.
 Never turn suspicion into fact or contradict explicit speech, including negations.
 Prefer ONE physical, retrievable shot. Use 2-3 only for an explicitly justified
 sequence/juxtaposition. No staged composites, invented props, symbolic filler or
@@ -88,11 +93,35 @@ def transcript_package(run, project_id, duration):
     raw = read(run/'transcript-raw.json')
     marker = read(run/'analysis-signature.json') if (run/'analysis-signature.json').exists() else {}
     signature = digest({'chunks':chunks,'analysis_signature':marker.get('analysis_signature')})
-    return {'schema_version':'rambla-editorial-input-1','project_id':project_id,
+    package = {'schema_version':'rambla-editorial-input-1','project_id':project_id,
         'duration':duration,'language':raw.get('language','und'),'transcript_signature':signature,
         'chunks':chunks,'full_transcript':' '.join(c['text'].strip() for c in chunks),
         'word_timestamps':[] if (run/'transcript-corrections.json').exists() else [w for s in raw.get('segments',[]) for w in s.get('words',[])],
         'instructions':INSTRUCTIONS,'visual_plan_schema':contract_schema()}
+    intent_path = run/'phrase-intents.json'
+    if intent_path.is_file():
+        try:
+            intent_document = read(intent_path)
+            intent_signature = digest([
+                {'id':str(row['id']),'start':float(row['start']),'end':float(row['end']),'text':str(row['text'])}
+                for row in chunks
+            ])
+            intents = intent_document.get('phrases', {}) if intent_document.get('transcript_signature') == intent_signature else {}
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            intents = {}
+        from .transcript_intents import planning_chunks_for_coverage, selected_word_ranges
+        planning_chunks = planning_chunks_for_coverage(run)
+        package['chunks'] = planning_chunks
+        package['coverage_selected_chunk_ids'] = [str(row['id']) for row in planning_chunks if row.get('coverage_selected') is True]
+        package['coverage_selected_ranges'] = selected_word_ranges(run, 'coverage')
+        package['instructions'] = INSTRUCTIONS + '''
+Coverage selection is authoritative. Only chunk IDs listed in
+coverage_selected_chunk_ids may use BROLL or CONTINUE_PREVIOUS_VISUAL.
+Every unselected chunk must use KEEP_TALKING_HEAD and have no shots.
+coverage_selected_ranges contains the exact user-chosen words and timestamps.
+Use those ranges as the spoken coverage boundaries and editorial focus; do not
+expand the visible meaning to unrelated words from the surrounding chunk.'''
+    return package
 
 
 def contract_schema():
@@ -143,6 +172,8 @@ def validate_import(value, package):
     for key in ('project_id','transcript_signature'):
         if value[key] != package[key]: raise ValueError(f'$.{key}: does not match this transcript; export editorial input again')
     expected=package['chunks']; cursor=0; ids=set(); previous=None
+    selected_raw=package.get('coverage_selected_chunk_ids')
+    selected=None if selected_raw is None else {str(chunk_id) for chunk_id in selected_raw}
     for i,b in enumerate(value['visual_beats']):
         path=f'$.visual_beats[{i}]'
         def fail(message): raise ValueError(path+': '+message)
@@ -154,6 +185,11 @@ def validate_import(value, package):
         if b['end']<=b['start'] or b['end']>package['duration']+0.001: fail('time range outside reel')
         if previous and b['start']<previous['end']-0.001: fail('overlapping beats')
         if ' '.join(b['original_text'].split())!=' '.join(' '.join(c['text'] for c in covered).split()): fail('original_text must match covered speech')
+        if selected is not None and b['action']!='KEEP_TALKING_HEAD' and any(str(c['id']) not in selected for c in covered):
+            fail('visual action includes a chunk not selected for Coverage')
+        selected_covered=[c for c in covered if str(c['id']) in selected] if selected is not None else []
+        if selected_covered and (len(covered)!=1 or b['action']!='BROLL'):
+            fail('each selected Coverage chunk must be its own BROLL beat')
         if b['action']=='BROLL':
             if not 1<=len(b['shots'])<=3: fail('BROLL requires 1–3 shots')
             if b['visual_mode']=='single' and len(b['shots'])!=1: fail('single mode requires one shot')

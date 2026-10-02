@@ -14,6 +14,11 @@ GENERIC_PROPS={
     'hotel': re.compile(r'\b(hotel room|guesthouse|guest house|lodging|accommodation options?|booking|hotel comparison)\b',re.I),
     'tutorial': re.compile(r'\b(tutorial|tips|how to|guide to|text on screen|presentation|slide)\b',re.I),
 }
+SCENE_KEYWORDS={
+    'airport','bathroom','bedroom','kitchen','garden','market','restaurant','hotel','guesthouse',
+    'office','street','beach','forest','farm','station','terminal','harbor','harbour','boat','ferry',
+    'bus','train','airplane','plane','car','shop','store','school','hospital','museum','temple',
+}
 
 
 def terms(text):
@@ -68,6 +73,62 @@ def expand_queries(queries,kind):
         variant=' '.join(variant.split())
         if len(variant.split())>=2 and variant not in out:out.append(variant)
     return out[:max(len(queries),6)]
+
+
+def provider_video_variants(queries, target, round_no=0, override=''):
+    """Rotate into simpler catalog wording on incremental stock searches.
+
+    The physical nouns and conditions remain authoritative; only cinematic,
+    actor and fine-action wording is removed. This gives stock catalogs a new
+    query without inventing a different scene.
+    """
+    base = [re.sub(r'\s+', ' ', str(value)).strip() for value in queries if str(value).strip()]
+    if str(override).strip():
+        base = [re.sub(r'\s+', ' ', str(override)).strip()]
+    if not base:
+        return []
+    round_no = max(0, int(round_no or 0))
+    if round_no == 0:
+        return expand_queries(base, 'video')
+    removable = {
+        'a','an','the','on','in','at','near','beside','by','with','while','from','to','of','side',
+        'person','people','someone','man','woman','traveler','travelers',
+        'candid','casual','phone','native','real','small','slightly','visible','everyday',
+        'checking','check','inspecting','inspect','looking','look','looks','rubbing','rub','rubs',
+        'holding','hold','holds','watching','watch','touching','touch','touches',
+        'opening','open','opens','walking','walk','walks','entering','enter','enters','into',
+    }
+    keyword_noise = removable | {
+        'door','doors','shot','home','view','room','scene','clip','interior','exterior',
+    }
+    simplified = []
+    target_terms = terms(str(target or ''))
+    keyword_counts = {}
+    keyword_order = []
+    for value in base:
+        words = [word.lower() for word in re.findall(r"[A-Za-z]+", value)]
+        for word in dict.fromkeys(words):
+            if word not in keyword_noise and word in target_terms:
+                keyword_counts[word] = keyword_counts.get(word, 0) + 1
+                if word not in keyword_order:
+                    keyword_order.append(word)
+        compact = ' '.join(word for word in words if word not in removable)[:120].strip()
+        compact = ' '.join(compact.split()[:6])
+        if len(compact.split()) >= 2 and terms(compact) & target_terms and compact not in simplified:
+            simplified.append(compact)
+    pool = list(dict.fromkeys([*simplified, *expand_queries(base, 'video')]))
+    if not pool:
+        return base
+    if round_no >= 3 and keyword_counts:
+        scene_words = [word for word in keyword_order if word in SCENE_KEYWORDS]
+        candidates = scene_words or keyword_order
+        primary = max(candidates, key=lambda word: (keyword_counts[word], -keyword_order.index(word)))
+        keyword_pool = [primary] + ([f'{primary} interior'] if 'interior' in str(target).lower() else [])
+        keyword_offset = (round_no - 3) % len(keyword_pool)
+        keywords = keyword_pool[keyword_offset:] + keyword_pool[:keyword_offset]
+        return list(dict.fromkeys([*keywords, *pool]))[:6]
+    offset = (round_no - 1) % len(pool)
+    return (pool[offset:] + pool[:offset])[:6]
 
 
 def metadata_quality(intent,text):

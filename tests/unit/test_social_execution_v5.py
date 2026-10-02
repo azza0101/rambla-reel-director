@@ -76,5 +76,5 @@ def test_workflow_controls_are_unique_and_grouped():
  assert len(parser.ids)==len(set(parser.ids))
  media=page[page.index('id="mediaWorkflowV5"'):page.index('<div class="grid">')]
  assert all('id="'+id+'"' in media for id in ['findSocial','findVideos','findImages','socialConnectionsV5'])
- assert '1 · Source &amp; analysis' in page and '2 · Editorial plan' in page
+ assert '1 · Source &amp; analysis' in page and '2 · Transcript review' in page and '3 · Editorial plan' in page
  assert 'THIS BEAT' in html

@@ -18,8 +18,12 @@ async def discover_shot(engine, queries, expanded, budgets, minimum, maximum, or
 
     async def search(source, query):
         provider = str(getattr(source, 'provider_name', '') or type(source).__name__)
+        try:
+            variation_round = max(0, int(__import__('json').loads(os.environ.get('RAMBLA_SOCIAL_SEARCH_OPTIONS','{}') or '{}').get('variation_round') or 0))
+        except (TypeError, ValueError):
+            variation_round = 0
         key = [provider, query, orientation, minimum, maximum, getattr(engine,'max_results_per_query',8),
-               [getattr(s,'provider_name','') for s in (getattr(source,'vertical_sources',None) or [])]]
+               [getattr(s,'provider_name','') for s in (getattr(source,'vertical_sources',None) or [])], variation_round]
         social = provider in {'tiktok', 'instagram'}
         cached = cache.get(key, 3600) if cache and not social else None
         if cached is not None:
@@ -55,8 +59,8 @@ async def discover_shot(engine, queries, expanded, budgets, minimum, maximum, or
 async def cached_source_video_beat(engine, **kwargs):
     from .quality_video import source_video_beat
     root=getattr(engine.cache,'root',None)
-    cache=JsonCache(Path(root)/'verified-shots','verified-shot-v6') if root else None
-    key=[kwargs,os.environ.get('RAMBLA_SOCIAL_EXCLUDED_KEYS','[]'),os.environ.get('RAMBLA_SOCIAL_SEARCH_OPTIONS','{}'),os.environ.get('RAMBLA_RETRIEVAL_RANKING','auto'),[(getattr(s,'provider_name',type(s).__name__),
+    cache=JsonCache(Path(root)/'verified-shots','verified-shot-v7') if root else None
+    key=[kwargs,getattr(engine,'beat_context',{}),os.environ.get('RAMBLA_SOCIAL_EXCLUDED_KEYS','[]'),os.environ.get('RAMBLA_SOCIAL_SEARCH_OPTIONS','{}'),os.environ.get('RAMBLA_RETRIEVAL_RANKING','auto'),[(getattr(s,'provider_name',type(s).__name__),
                   [getattr(v,'provider_name','') for v in (getattr(s,'vertical_sources',None) or [])]) for s in engine.sources]]
     started=time.perf_counter()
     social = any(getattr(s,'provider_name','') in {'tiktok','instagram'} for s in engine.sources)

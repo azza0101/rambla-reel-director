@@ -7,7 +7,8 @@ def test_login_crash_is_not_reported_started(monkeypatch,tmp_path):
  class Process:
   pid=99
   def wait(self,timeout):return 21
- monkeypatch.setattr(m,'_installed_browser',lambda:'chrome')
+ monkeypatch.setattr(m,'_installed_chrome',lambda:'chrome')
+ monkeypatch.setattr(m,'normal_chrome_profile',lambda:(tmp_path,'Default'))
  monkeypatch.setattr(m.subprocess,'Popen',lambda *a,**kw:Process())
  with pytest.raises(m.BrowserUnavailableError,match='21'):
   m._default_login_launcher('tiktok',tmp_path,'https://www.tiktok.com/')

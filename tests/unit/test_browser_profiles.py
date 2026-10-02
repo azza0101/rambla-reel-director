@@ -69,7 +69,12 @@ def test_open_login_uses_dedicated_profile_without_credentials(tmp_path):
     assert "token" not in serialized
 
 
-def test_default_login_opens_real_browser_profile_without_playwright(monkeypatch, tmp_path):
+@pytest.mark.parametrize("provider,url", [
+    ("tiktok", "https://www.tiktok.com/"),
+    ("instagram", "https://www.instagram.com/"),
+    ("envato", "https://elements.envato.com/"),
+])
+def test_default_external_login_opens_new_window_in_active_chrome_profile(monkeypatch, provider, url):
     import backend.app.browser_profiles as profiles
 
     launched = []
@@ -77,27 +82,29 @@ def test_default_login_opens_real_browser_profile_without_playwright(monkeypatch
     class FakeProcess:
         pid = 987
         def wait(self, timeout):
-            import subprocess
-            raise subprocess.TimeoutExpired("browser", timeout)
-
-    def fake_which(name):
-        return r"C:\Program Files\Microsoft\Edge\Application\msedge.exe" if name in {"msedge", "msedge.exe"} else None
+            return 0
 
     def fake_popen(command, **kwargs):
         launched.append((command, kwargs))
         return FakeProcess()
 
-    monkeypatch.setattr(profiles.shutil, "which", fake_which)
+    monkeypatch.setattr(profiles, "_installed_chrome", lambda: r"C:\Program Files\Google\Chrome\Application\chrome.exe")
+    monkeypatch.setattr(profiles, "normal_chrome_profile", lambda: (Path("C:/Chrome/User Data"), "Profile 4"))
     monkeypatch.setattr(profiles.subprocess, "Popen", fake_popen)
 
-    pid = profiles._default_login_launcher("tiktok", tmp_path / "tiktok", "https://www.tiktok.com/")
+    pid = profiles._default_login_launcher(provider, Path("C:/RMBL") / provider, url)
 
     assert pid == 987
     command = launched[0][0]
-    assert command[0].lower().endswith("msedge.exe")
-    assert f"--user-data-dir={tmp_path / 'tiktok'}" in command
-    assert "https://www.tiktok.com/" in command
+    assert command == [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        "--profile-directory=Profile 4",
+        "--new-window",
+        url,
+    ]
     joined = " ".join(command).casefold()
+    assert "msedge" not in joined
+    assert "--user-data-dir" not in joined
     assert "playwright" not in joined
     assert "social_browser_login" not in joined
     assert "password" not in joined
@@ -193,11 +200,18 @@ def test_default_envato_login_opens_normal_chrome_without_custom_user_data(monke
 
     class FakeProcess:
         pid = 4321
+        def wait(self, timeout):
+            return 0
 
     monkeypatch.setattr(
         profiles,
         "_installed_chrome",
         lambda: r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    )
+    monkeypatch.setattr(
+        profiles,
+        "normal_chrome_profile",
+        lambda: (tmp_path / "Chrome" / "User Data", "Profile 7"),
     )
     monkeypatch.setattr(
         profiles.subprocess,
@@ -213,6 +227,8 @@ def test_default_envato_login_opens_normal_chrome_without_custom_user_data(monke
     command = launched[0][0]
     assert command == [
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        "--profile-directory=Profile 7",
+        "--new-window",
         "https://elements.envato.com/",
     ]
     assert not any(str(part).startswith("--user-data-dir=") for part in command)

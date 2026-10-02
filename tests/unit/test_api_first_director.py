@@ -78,6 +78,87 @@ def test_director_prompt_uses_whole_chunk_ledger_without_video_or_word_timestamp
     assert "NEVER_SEND_WORD_TIMESTAMPS" not in prompt
 
 
+def test_director_cache_signature_includes_planner_contract_version(monkeypatch):
+    import backend.app.api_first_director_cli as cli
+
+    first = cli._request_signature(package_fixture(), "test", "model", "high")
+    monkeypatch.setattr(cli, "DIRECTOR_SCHEMA_VERSION", "rambla-api-first-director-test-next")
+    second = cli._request_signature(package_fixture(), "test", "model", "high")
+
+    assert first != second
+
+
+def test_director_prompt_keeps_full_context_and_names_coverage_allowlist():
+    from backend.app.api_first_director import build_director_prompt
+
+    package = package_fixture()
+    package["coverage_selected_chunk_ids"] = ["c1"]
+    prompt = build_director_prompt(package)
+
+    assert all(row["text"] in prompt for row in package["chunks"])
+    assert 'COVERAGE_SELECTED_CHUNK_IDS=["c1"]' in prompt
+    assert "Only selected chunk IDs may use BROLL" in prompt
+
+
+def test_compile_rejects_visual_action_for_unselected_chunk():
+    from backend.app.api_first_director import compile_director_decisions
+
+    package = package_fixture()
+    package["coverage_selected_chunk_ids"] = ["c0"]
+    decisions = valid_decisions()
+
+    with pytest.raises(ValueError, match="not selected for Coverage"):
+        compile_director_decisions(package, decisions)
+
+
+def test_selected_orphaned_continuation_becomes_searchable_broll():
+    from backend.app.api_first_director import compile_director_decisions
+
+    package = package_fixture()
+    package["coverage_selected_chunk_ids"] = ["c1"]
+    decisions = valid_decisions()
+    decisions["beats"][0].update(action="KEEP_TALKING_HEAD", shots=[])
+    decisions["beats"][2].update(action="KEEP_TALKING_HEAD", shots=[])
+
+    plan = compile_director_decisions(package, decisions)
+
+    beat = plan["visual_beats"][1]
+    assert beat["action"] == "BROLL"
+    assert beat["visual_mode"] == "single"
+    assert len(beat["shots"]) == 1
+    assert beat["shots"][0]["video_queries"] == ["Passengers board the ferry"]
+
+
+def test_selected_talking_head_is_forced_to_searchable_broll():
+    from backend.app.api_first_director import compile_director_decisions
+
+    package = package_fixture()
+    package["coverage_selected_chunk_ids"] = ["c0"]
+    decisions = valid_decisions()
+    decisions["beats"][0].update(action="KEEP_TALKING_HEAD", shots=[])
+    decisions["beats"][1].update(action="KEEP_TALKING_HEAD", shots=[])
+    decisions["beats"][2].update(action="KEEP_TALKING_HEAD", shots=[])
+
+    beat = compile_director_decisions(package, decisions)["visual_beats"][0]
+
+    assert beat["action"] == "BROLL"
+    assert beat["original_text"] == "Arriviamo al porto"
+    assert beat["shots"][0]["video_queries"] == ["Passengers arrive at the ferry"]
+
+
+def test_manual_import_validation_rejects_visual_action_for_unselected_chunk():
+    from backend.app.api_first_director import compile_director_decisions
+    from backend.app.editorial_import import validate_import
+
+    legacy = package_fixture()
+    plan = compile_director_decisions(legacy, valid_decisions())
+    selected = package_fixture()
+    selected["coverage_selected_chunk_ids"] = ["c0"]
+
+    with pytest.raises(ValueError, match="not selected for Coverage"):
+        validate_import(plan, selected)
+
+
 def test_compile_director_decisions_reconstructs_canonical_timeline_and_ids():
     from backend.app.api_first_director import compile_director_decisions
 
@@ -105,6 +186,166 @@ def test_compile_rejects_wrong_chunk_order():
 
     with pytest.raises(ValueError, match="chunk_id must be c0"):
         compile_director_decisions(package_fixture(), decisions)
+
+
+def test_compile_rejects_query_reused_by_another_visual_beat():
+    from backend.app.api_first_director import compile_director_decisions
+
+    decisions = valid_decisions()
+    decisions["beats"][1].update(
+        action="BROLL",
+        visual_mode="single",
+        shots=[{
+            "description": "A second view of passengers approaching the ferry",
+            "image_queries": ["passengers approaching ferry"],
+            "video_queries": ["passengers approaching ferry"],
+        }],
+    )
+
+    with pytest.raises(ValueError, match="reused by another visual beat"):
+        compile_director_decisions(package_fixture(), decisions)
+
+
+def test_compile_rewrites_generic_ambience_as_historical_evidence_queries():
+    from backend.app.api_first_director import compile_director_decisions
+
+    package = package_fixture()
+    package["chunks"] = [{
+        "id": "history", "start": 0.0, "end": 3.0,
+        "text": "Negli anni 90 questa zona fu colpita dalla violenza dei gruppi jihadisti",
+    }]
+    decisions = {"global_topic": "Minya history", "beats": [{
+        "chunk_id": "history", "action": "BROLL",
+        "editorial_function": "Show the historical context",
+        "core_meaning": "Minya was affected by jihadist violence in the 1990s",
+        "subtext": "The past explains the present security",
+        "visual_mode": "single",
+        "shots": [{
+            "description": "A quiet Minya public road",
+            "image_queries": ["Minya Egypt town street", "quiet Minya public area"],
+            "video_queries": ["Minya Egypt street life", "Minya Egypt town road"],
+        }],
+        "avoid": ["graphic injury"],
+    }]}
+
+    plan = compile_director_decisions(package, decisions)
+
+    shot = plan["visual_beats"][0]["shots"][0]
+    assert shot["video_queries"] == [
+        "Minya Egypt 1990s jihad archive",
+        "jihad Egypt archive",
+        "jihad Egypt",
+    ]
+
+
+def test_compile_accepts_precise_to_broad_historical_query_ladder():
+    from backend.app.api_first_director import compile_director_decisions
+
+    package = package_fixture()
+    package["chunks"] = [{
+        "id": "history", "start": 0.0, "end": 3.0,
+        "text": "Negli anni 90 questa zona fu colpita dalla violenza dei gruppi jihadisti",
+    }]
+    decisions = {"global_topic": "Minya history", "beats": [{
+        "chunk_id": "history", "action": "BROLL",
+        "editorial_function": "Show literal historical evidence",
+        "core_meaning": "Minya was affected by jihadist violence in the 1990s",
+        "subtext": "The past explains the present security",
+        "visual_mode": "single",
+        "shots": [{
+            "description": "Archival news imagery about jihadist violence in 1990s Minya",
+            "image_queries": ["Minya 1990s jihadist attacks archive", "jihadist violence Egypt", "jihad Egypt"],
+            "video_queries": ["Minya 1990s jihadist news", "Egypt jihadist violence archive", "jihad Egypt"],
+        }],
+        "avoid": ["graphic injury", "unrelated wars", "wrong country footage"],
+    }]}
+
+    plan = compile_director_decisions(package, decisions)
+
+    assert plan["visual_beats"][0]["shots"][0]["video_queries"][-1] == "jihad Egypt"
+
+
+def test_compile_adds_findable_broad_variant_to_historical_queries():
+    from backend.app.api_first_director import compile_director_decisions
+
+    package = package_fixture()
+    package["chunks"] = [{
+        "id": "history", "start": 0.0, "end": 3.0,
+        "text": "Negli anni 90 questa zona fu colpita dalla violenza dei gruppi jihadisti",
+    }]
+    decisions = {"global_topic": "Minya history", "beats": [{
+        "chunk_id": "history", "action": "BROLL",
+        "editorial_function": "Show literal historical evidence",
+        "core_meaning": "Minya was affected by jihadist violence in the 1990s",
+        "subtext": "The past explains the present security",
+        "visual_mode": "single",
+        "shots": [{
+            "description": "Archival news imagery about jihadist violence in 1990s Minya",
+            "image_queries": ["Minya Egypt 1990s jihadist attacks archive"],
+            "video_queries": ["Minya Egypt 1990s jihadist news archive"],
+        }],
+        "avoid": ["graphic injury", "unrelated wars"],
+    }]}
+
+    plan = compile_director_decisions(package, decisions)
+
+    shot = plan["visual_beats"][0]["shots"][0]
+    assert shot["image_queries"][-1] == "jihad Egypt"
+    assert shot["video_queries"][-1] == "jihad Egypt"
+
+
+def test_compile_allows_unselected_historical_talking_head_without_queries():
+    from backend.app.api_first_director import compile_director_decisions
+
+    package = package_fixture()
+    package["chunks"] = [{
+        "id": "history", "start": 0.0, "end": 3.0,
+        "text": "Negli anni 90 questa zona fu colpita dalla violenza dei gruppi jihadisti",
+    }]
+    package["coverage_selected_chunk_ids"] = []
+    decisions = {"global_topic": "Minya history", "beats": [{
+        "chunk_id": "history", "action": "KEEP_TALKING_HEAD",
+        "editorial_function": "Keep the presenter visible",
+        "core_meaning": "Minya was affected by jihadist violence in the 1990s",
+        "subtext": "",
+        "visual_mode": "single",
+        "shots": [],
+        "avoid": [],
+    }]}
+
+    plan = compile_director_decisions(package, decisions)
+
+    assert plan["visual_beats"][0]["action"] == "KEEP_TALKING_HEAD"
+
+
+def test_compile_removes_avoid_items_that_erase_spoken_historical_subject():
+    from backend.app.api_first_director import compile_director_decisions
+
+    package = package_fixture()
+    package["chunks"] = [{
+        "id": "history", "start": 0.0, "end": 3.0,
+        "text": "La zona fu colpita dalle attività dei gruppi jihadisti",
+    }]
+    decisions = {"global_topic": "Minya history", "beats": [{
+        "chunk_id": "history", "action": "BROLL",
+        "editorial_function": "Show historical evidence",
+        "core_meaning": "The area was affected by jihadist activity",
+        "subtext": "Historical context",
+        "visual_mode": "single",
+        "shots": [{
+            "description": "Archival report about jihadist activity in Egypt",
+            "image_queries": ["jihadist activity Egypt archive", "jihad Egypt"],
+            "video_queries": ["jihadist activity Egypt news", "jihad Egypt"],
+        }],
+        "avoid": [
+            "jihadist footage", "terrorism archive", "news footage",
+            "violent conflict footage", "gunfire", "wars or rebel activities", "graphic injury",
+        ],
+    }]}
+
+    plan = compile_director_decisions(package, decisions)
+
+    assert plan["visual_beats"][0]["avoid"] == ["graphic injury"]
 
 
 def test_director_uses_stateful_second_call_only_for_validation_repair():
@@ -450,12 +691,15 @@ def test_gemini_read_timeout_moves_directly_to_fallback():
 def test_director_prompt_explicitly_targets_short_fast_cut_beats():
     from backend.app.api_first_director import build_director_prompt
 
-    prompt = build_director_prompt(package_fixture())
+    package=package_fixture()
+    package["coverage_selected_chunk_ids"]=["c0"]
+    prompt = build_director_prompt(package)
     normalized = " ".join(prompt.split())
     assert "one transcript chunk equals one visual beat" in normalized
     assert "Never merge chunks" in normalized
     assert "Return exactly one decision per transcript chunk" in normalized
     assert "BROLL is NOT a topical explainer search" in normalized
+    assert "Every selected chunk must use BROLL so it remains independently searchable" in normalized
 
 
 def test_cli_configures_utf8_stdio_without_crashing_on_windows_style_streams(monkeypatch):
@@ -805,3 +1049,68 @@ def test_groq_rejects_length_finish_even_when_partial_json_parses():
         def post(self,*args,**kwargs):return Response()
     client=GroqDirectorClient('placeholder',http_client=HTTP(),fallback_models=())
     with pytest.raises(GroqAPIError,match='truncated'):client.generate_json('prompt',{'type':'object'})
+
+
+@pytest.mark.parametrize("failure", [
+    {"code": "json_validate_failed", "message": "Failed to generate JSON. Please adjust your prompt."},
+    {"message": "Generated JSON does not match the expected schema. Please adjust your prompt."},
+])
+def test_groq_json_generation_failure_uses_fallback(failure):
+    from backend.app.groq_api import GroqDirectorClient
+    class Response:
+        headers = {}
+        def __init__(self, failed): self.status_code = 400 if failed else 200
+        def raise_for_status(self):
+            if self.status_code == 400: raise RuntimeError('HTTP400')
+        def json(self):
+            if self.status_code == 400: return {'error': failure}
+            return {'id': 'ok', 'choices': [{'message': {'content': '{"ok":true}'}}]}
+    class HTTP:
+        def __init__(self): self.calls = []
+        def post(self, url, **kwargs):
+            self.calls.append(kwargs['json'])
+            return Response(len(self.calls) == 1)
+    http = HTTP()
+    reply = GroqDirectorClient('placeholder', http_client=http).generate_json('FULL TRANSCRIPT', {'type': 'object'})
+    assert reply.data == {'ok': True}
+    assert reply.fallback_used and reply.transport_attempts == 2
+    assert http.calls[-1]['model'] == 'openai/gpt-oss-120b'
+    assert http.calls[-1]['messages'][0]['content'] == 'FULL TRANSCRIPT'
+
+
+def test_director_wire_schema_avoids_large_exact_array_decoder_constraint():
+    from backend.app.api_first_director import generate_director_plan
+    from backend.app.gemini_interactions import GeminiJSONReply
+    class Provider:
+        model = 'fake'
+        provider_name = 'test'
+        def generate_json(self, prompt, schema, **kwargs):
+            beats = schema['properties']['beats']
+            assert 'minItems' not in beats and 'maxItems' not in beats
+            assert '3' in beats['description']
+            assert 'Arriviamo al porto' in prompt
+            return GeminiJSONReply(valid_decisions(), 'ok', self.model)
+    assert len(generate_director_plan(package_fixture(), Provider()).plan['visual_beats']) == 3
+
+
+@pytest.mark.parametrize("message, expected_calls", [
+    ("Invalid API Key", 1),
+    ("Request contains an invalid argument", 1),
+    ("Failed to generate JSON. Please adjust your prompt.", 3),
+])
+def test_groq_recovery_is_bounded_and_does_not_retry_bad_requests(message, expected_calls):
+    from backend.app.groq_api import GroqDirectorClient, GroqAPIError
+    class Response:
+        headers = {}
+        status_code = 400
+        def raise_for_status(self): raise RuntimeError('HTTP400')
+        def json(self): return {'error': {'message': message}}
+    class HTTP:
+        calls = 0
+        def post(self, *args, **kwargs):
+            self.calls += 1
+            return Response()
+    http = HTTP()
+    client = GroqDirectorClient('placeholder', http_client=http, fallback_models=(), retry_delays=(0,), max_retries_per_model=2)
+    with pytest.raises(GroqAPIError): client.generate_json('prompt', {'type':'object'})
+    assert http.calls == expected_calls

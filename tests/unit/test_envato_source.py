@@ -66,3 +66,25 @@ def test_envato_source_background_search_is_profile_independent():
     source = module.EnvatoSource(discover=lambda *_args: [])
     assert source.profile_dir is None
     assert source._context is None
+
+
+def test_envato_incremental_research_rotates_through_larger_result_window(monkeypatch):
+    from backend.app.envato_source import EnvatoSource
+
+    rows = [{
+        "source_page": f"https://elements.envato.com/bathroom-video-{index:02d}-ABC{index:05d}",
+        "title": f"Bathroom {index}",
+        "preview_url": f"https://assets.example/{index}.jpg",
+    } for index in range(20)]
+    requested = []
+    async def discover(_query, limit):
+        requested.append(limit)
+        return rows[:limit]
+
+    monkeypatch.setenv("RAMBLA_SOCIAL_SEARCH_OPTIONS", '{"variation_round": 2}')
+    found = asyncio.run(EnvatoSource(discover=discover).search(
+        "bathroom", orientation=None, min_duration=1, max_duration=240, limit=5,
+    ))
+
+    assert requested == [20]
+    assert [row.title for row in found] == [f"Bathroom {index}" for index in range(5, 10)]

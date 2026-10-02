@@ -12,7 +12,7 @@ import re
 import httpx
 from functools import lru_cache
 from .range_media import range_media
-from .retrieval_quality import metadata_quality,expand_queries,terms
+from .retrieval_quality import metadata_quality,expand_queries,provider_video_variants,terms
 from .video_preview import materialize_clip,probe_preview
 from .media_quality import perceptual_hash,diverse_candidates
 from .social_acquisition import download_authenticated_section, fallback_acquisition_state, profile_root_from_env
@@ -350,6 +350,9 @@ def _discovery_relevant(candidate,intent):
     if candidate.provider in {'envato','web_video'}:
         shared=_canonical_term_set(_visual_target(intent)) & _canonical_term_set(candidate.title+' '+candidate.description)
         if len(shared)>=2:return True
+    if candidate.provider=='pexels' and query_meta>=.30:
+        shared_query=_canonical_term_set(getattr(candidate,'query','')) & _canonical_term_set(candidate.title+' '+candidate.description)
+        if shared_query-{'person','people','video','footage'}:return True
     # Strong agreement with the physical shot target can rescue a provider whose
     # stored search query is noisy/aliased. Conversely, one generic query noun
     # alone is not enough.
@@ -498,15 +501,26 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
     visual_target=_visual_target(intent)
     import os
     options=json.loads(os.environ.get('RAMBLA_SOCIAL_SEARCH_OPTIONS','{}'))
-    if options and all(_provider_name(s) in VERTICAL_PROVIDERS for s in engine.sources):
-        from .social_variations import search_variants
+    override=''
+    if options:
         shot_id=beat_id.split(':shot:')[-1]
-        queries=search_variants(queries,visual_target,options.get('variation_round',0),options.get('query_overrides',{}).get(shot_id,''))
-    clean_queries=[q for q in queries if _query_matches_target(q,visual_target)]
+        override=options.get('query_overrides',{}).get(shot_id,options.get('query_overrides',{}).get('*',''))
+        if all(_provider_name(s) in VERTICAL_PROVIDERS for s in engine.sources):
+            from .social_variations import search_variants
+            queries=search_variants(queries,visual_target,options.get('variation_round',0),override)
+        else:
+            queries=provider_video_variants(queries,visual_target,options.get('variation_round',0),override)
+    clean_queries=[override.strip()] if override.strip() else [q for q in queries if _query_matches_target(q,visual_target)]
     if not clean_queries:
         derived=_query_from_target(visual_target)
         clean_queries=[derived] if derived else list(queries[:1])
-    output={'beat_id':beat_id,'queries':clean_queries,'candidates':[],'rejected_candidates':[],'errors':[],'search_attempts':[],'preview_cache_hits':0,'selected_cache_hit':False,'proposals':{'proposal_A':None,'proposal_B':None,'proposal_C':None},'quality_version':QUALITY_VERSION}
+    from .geographic_context import anchor_queries, conflicting_place, missing_subject
+    context=getattr(engine,'beat_context',{}).get(beat_id.split(':')[0],{})
+    places=[] if override.strip() else context.get('places',[])
+    clean_queries=anchor_queries(clean_queries,places)
+    if override.strip():
+        intent=override.strip();visual_target=intent
+    output={'beat_id':beat_id,'geographic_context':places,'manual_query':bool(override.strip()),'queries':clean_queries,'candidates':[],'rejected_candidates':[],'errors':[],'search_attempts':[],'preview_cache_hits':0,'selected_cache_hit':False,'proposals':{'proposal_A':None,'proposal_B':None,'proposal_C':None},'quality_version':QUALITY_VERSION}
     def emit(message,**data):
         callback=getattr(engine,'event_callback',None)
         if callback:callback('online_search',None,message,slot_id=beat_id,**data)
@@ -514,7 +528,7 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
         emit('Dropped stale/mismatched search queries',original_queries=list(queries),active_queries=list(clean_queries),visual_target=visual_target)
     priority={'pexels':0,'envato':1,'youtube_shorts':2,'tiktok':3,'instagram':4,'web_video':5,'youtube':6}
     query_budget={'envato':1,'web_video':1,'youtube':2,'pexels':2,'youtube_shorts':1,'tiktok':2,'instagram':1}
-    expanded_all=expand_queries(clean_queries,'video')
+    expanded_all=[override.strip()] if override.strip() else anchor_queries(expand_queries(clean_queries,'video'),places)
     from .funnel_runtime import discover_shot
     discovered=await discover_shot(engine,clean_queries,expanded_all,query_budget,min_duration,max_duration,orientation)
     timings['search_seconds']=time.perf_counter()-started
@@ -548,16 +562,25 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
                 key=(row.provider,row.provider_id)
                 if key not in seen:pool.append(row);seen.add(key)
             if len(pool)>=6 and query_index>=1:break
+        relevant_pool=[]
+        for candidate in pool:
+            metadata=candidate.title+' '+candidate.description
+            if conflicting_place(metadata,places) or missing_subject(visual_target,metadata):
+                output['rejected_candidates'].append({'id':f'{candidate.provider}:{candidate.provider_id}',
+                    'source':candidate.provider,'source_url':candidate.source_page,'matched_query':candidate.query,
+                    'score':0,'quality_reasons':['wrong geography or missing requested subject']})
+            else: relevant_pool.append(candidate)
+        pool=relevant_pool
         social_shelf = provider_key in {"tiktok", "instagram", "youtube_shorts"}
-        card_limit = 6 if social_shelf else 3
-        if social_shelf:
+        card_limit = 6 if social_shelf or options else 3
+        if options:
             import os
             from .beat_research import unseen_video_candidates
             known=json.loads(os.environ.get('RAMBLA_SOCIAL_EXCLUDED_KEYS','[]'))
             previous_count=len(pool)
             pool=unseen_video_candidates(pool,known)
             output['previously_seen_skipped']=output.get('previously_seen_skipped',0)+previous_count-len(pool)
-        pool=_balanced_discovery_pool(pool,intent,limit=12 if social_shelf else 4)
+        pool=_balanced_discovery_pool(pool,intent,limit=12 if social_shelf or options else 4)
         if social_shelf and options.get("visual_verify", False):
             pool=await _rank_social_discovery(engine,[c for c in pool if _discovery_relevant(c,intent)],intent,output,timings,client_id=client_id)
         accepted=[];pending=[]
@@ -570,6 +593,15 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
             timings['metadata_filter_seconds']+=time.perf_counter()-filter_started
             if not discovery_relevant:
                 output['rejected_candidates'].append({'id':asset_id,'source':candidate.provider,'source_url':candidate.source_page,'matched_query':candidate.query,'score':0,'quality_reasons':['metadata/title does not match concrete visual target']})
+                # Provider searches can return useful footage whose short title
+                # does not repeat the full editorial sentence. When visual
+                # verification is unavailable, keep a bounded manual-review
+                # fallback instead of presenting an empty Pexels/Shorts shelf.
+                if (social_shelf or candidate.provider == 'pexels') and len(pending) < card_limit:
+                    pending.append(_manual_discovery_base(
+                        candidate, asset_id, client_id, meta,
+                        reason='Provider result; weak metadata match — review manually',
+                    ))
                 continue
             counters['filtered_hits']+=1
             if social_shelf and not options.get('visual_verify', False):

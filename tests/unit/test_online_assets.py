@@ -116,6 +116,19 @@ async def test_pexels_search_normalizes_vertical_video() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pexels_incremental_research_requests_a_new_provider_page(monkeypatch) -> None:
+    monkeypatch.setenv("RAMBLA_SOCIAL_SEARCH_OPTIONS", '{"variation_round": 4}')
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["page"] == "5"
+        return httpx.Response(200, json=_payload(), request=request)
+
+    source = PexelsSource(api_key="SECRET", transport=httpx.MockTransport(handler))
+    rows = await source.search("bathroom", orientation=None, min_duration=1, max_duration=20, limit=5)
+    assert rows
+
+
+@pytest.mark.asyncio
 async def test_pexels_mixed_aspect_search_omits_orientation_filter() -> None:
     source = PexelsSource(
         api_key="SECRET",

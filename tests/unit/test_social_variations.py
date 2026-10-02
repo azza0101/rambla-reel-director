@@ -42,6 +42,26 @@ def test_curation_surfaces_more_than_four_pages_of_accumulated_social_results():
     run=load_curation_run(MemoryPath())
     assert len([row for row in run.chunks[0].video_candidates if row.provider=='tiktok'])==30
 
+
+def test_curation_surfaces_accumulated_stock_pages_instead_of_first_three_only():
+    import json
+    from backend.app.curation_artifacts import load_curation_run
+    discoveries=[{
+        'id':f'pexels-{i}','provider_id':str(i),'source':'pexels','source_page':f'https://pexels.com/video/{i}',
+        'title':f'Bathroom {i}','orientation':'landscape','thumbnail_url':f'https://img/{i}.jpg'
+    } for i in range(12)]
+    files={
+        'semantic-chunks.json':json.dumps([{'id':'beat','text':'bathroom'}]),
+        'online-candidates.json':json.dumps([{'beat_id':'beat:shot','parent_beat_id':'beat','discovery_sources':discoveries}]),
+    }
+    class MemoryPath:
+        def __init__(self,name=''):self.name=name
+        def __truediv__(self,name):return MemoryPath(name)
+        def is_file(self):return self.name in files
+        def read_text(self,encoding='utf-8'):return files[self.name]
+    run=load_curation_run(MemoryPath())
+    assert len([row for row in run.chunks[0].video_candidates if row.provider=='pexels'])==12
+
 def test_gallery_keeps_order_and_counts_only_successful_variations():
     import subprocess,shutil
     import pytest

@@ -299,6 +299,7 @@ class ProjectStore:
         self._save(project)
         self._write_source_input(project_id, {
             "kind": "audio",
+            "input_kind": "video_audio" if Path(safe).suffix.casefold() in {".mp4", ".mov", ".m4v", ".mkv", ".webm"} else "audio",
             "filename": safe,
             "original_path": str(source),
             "duration": duration,

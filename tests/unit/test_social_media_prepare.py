@@ -19,6 +19,8 @@ def test_preview_is_bounded_full_is_explicit_and_cookie_file_removed(tmp_path):
     preview=prepare_media(source,'tiktok',tmp_path,'preview',cookies=cookies,runner=run,python='python')
     assert preview.is_file()
     assert '*0-3.5' in calls[0]
+    selected_format = calls[0][calls[0].index('-f') + 1]
+    assert 'bv*' in selected_format and '+ba' in selected_format
     assert not list(tmp_path.rglob('*.cookies'))
     calls.clear()
     prepare_media(source,'tiktok',tmp_path,'preview',cookies=cookies,runner=run,python='python')

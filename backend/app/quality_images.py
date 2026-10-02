@@ -95,7 +95,18 @@ async def source_images(chunks,output,plan,ranker,client_id,*,sources=None,fetch
                             else:counts['preview_failed']+=1
                             row['errors'].append({'provider':c.provider,'code':'no_hd_candidates' if dimension_failure else 'preview_failed','error_type':type(exc).__name__})
                     ranked=ranker.rank(editorial_intent,pool)
-                    strong=[r for r in ranked if r.get('quality_state')!='rejected' and r.get('score',0)>=.40]
+                    # A missing local Qwen model must not turn a successful provider
+                    # search into an empty shelf.  In that case retain the best
+                    # metadata-ranked results and clearly mark them for review.
+                    if getattr(ranker,'visual',None) is None:
+                        usable=[r for r in ranked if not any(
+                            reason.startswith(('unsupported generic visual:', 'negative visual evidence'))
+                            for reason in r.get('quality_reasons',[])
+                        )]
+                        strong=[{**r,'score':max(.40,float(r.get('score',0))),
+                                 'quality_state':'needs_review'} for r in usable[:4]]
+                    else:
+                        strong=[r for r in ranked if r.get('quality_state')!='rejected' and r.get('score',0)>=.40]
                     counts['rejected']+=len(ranked)-len(strong)
                     row['rejected_candidates'].extend({k:r.get(k) for k in ('id','provider','title','source_page','matched_query','score','embedding_score','shot_embedding_score','query_embedding_score','negative_embedding_score','condition_counter_score','metadata_score','quality_reasons','editorial_positive','editorial_negatives')} for r in ranked if r not in strong)
                     accepted,n=diverse_candidates(accepted+strong,history+cross+row['candidates'],limit=2)

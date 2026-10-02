@@ -14,6 +14,8 @@ from html.parser import HTMLParser
 from pathlib import Path
 import shutil
 import subprocess
+import sqlite3
+import tempfile
 from typing import Any, Awaitable, Callable
 from urllib.parse import urljoin
 
@@ -31,6 +33,34 @@ LoginLauncher = Callable[[str, Path, str], int]
 
 class BrowserUnavailableError(RuntimeError):
     pass
+
+
+def normal_chrome_has_provider_session(provider: str) -> bool:
+    """Detect provider cookies in the same Chrome profile opened by LOGIN."""
+    resolved = normal_chrome_profile()
+    if not resolved:
+        return False
+    cookie_db = resolved[0] / resolved[1] / "Network" / "Cookies"
+    if not cookie_db.is_file():
+        cookie_db = resolved[0] / resolved[1] / "Cookies"
+    if not cookie_db.is_file():
+        return False
+    copied = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as handle:
+            copied = Path(handle.name)
+        shutil.copyfile(cookie_db, copied)
+        with sqlite3.connect(copied) as db:
+            row = db.execute(
+                "SELECT 1 FROM cookies WHERE host_key LIKE ? AND (length(value)>0 OR length(encrypted_value)>0) LIMIT 1",
+                (f"%{provider}.com",),
+            ).fetchone()
+        return bool(row)
+    except (OSError, sqlite3.Error):
+        return False
+    finally:
+        if copied:
+            copied.unlink(missing_ok=True)
 
 
 def normal_chrome_profile() -> tuple[Path, str] | None:
@@ -312,59 +342,55 @@ def _installed_browser() -> str | None:
         if found:
             return found
     if os.name == "nt":
-        candidates = []
-        for root in (os.environ.get("PROGRAMFILES"), os.environ.get("PROGRAMFILES(X86)"), os.environ.get("LOCALAPPDATA")):
-            if not root:
-                continue
-            candidates.extend((
-                Path(root) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
-                Path(root) / "Google" / "Chrome" / "Application" / "chrome.exe",
-            ))
+        roots = [
+            Path(root) for root in (
+                os.environ.get("PROGRAMFILES"),
+                os.environ.get("PROGRAMFILES(X86)"),
+                os.environ.get("LOCALAPPDATA"),
+            ) if root
+        ]
+        # Keep the browser preference global.  Interleaving candidates per
+        # installation root could return Chrome from Program Files before the
+        # preferred Edge installation in Program Files (x86).
+        candidates = [root / "Microsoft" / "Edge" / "Application" / "msedge.exe" for root in roots]
+        candidates += [root / "Google" / "Chrome" / "Application" / "chrome.exe" for root in roots]
         for candidate in candidates:
             if candidate.is_file():
                 return str(candidate)
     return None
 
 
-def _default_login_launcher(provider: str, profile_dir: Path, start_url: str) -> int:
-    """Open provider login. Envato deliberately uses the user's normal Chrome."""
-    if provider == "envato":
-        browser = _installed_chrome()
-        if not browser:
-            raise BrowserUnavailableError("Google Chrome not found")
-        command = [browser, start_url]
-    else:
-        profile_dir.mkdir(parents=True, exist_ok=True)
-        browser = _installed_browser()
-        if not browser:
-            raise BrowserUnavailableError("No supported Edge/Chrome browser found")
-        command = [
-            browser,
-            f"--user-data-dir={profile_dir}",
-            "--no-first-run",
-            "--no-default-browser-check",
-            start_url,
-        ]
+def open_url_in_normal_chrome(start_url: str) -> int:
+    """Open a new window in the user's active Chrome profile.
+
+    Omitting ``--user-data-dir`` is intentional: Chrome routes the request to
+    its existing ProcessSingleton, while ``--profile-directory`` selects the
+    profile that already owns the user's provider sessions.
+    """
+    browser = _installed_chrome()
+    if not browser:
+        raise BrowserUnavailableError("Google Chrome not found")
+    resolved = normal_chrome_profile()
+    profile = resolved[1] if resolved is not None else "Default"
+    command = [browser, f"--profile-directory={profile}", "--new-window", start_url]
     kwargs: dict[str, Any] = {"stdin": subprocess.DEVNULL}
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     else:
         kwargs["start_new_session"] = True
     process = subprocess.Popen(command, **kwargs)
-    # Popen success only means process creation. Chrome can immediately fail
-    # with a locked profile or denied IPC; do not present that as a login window.
-    if provider in {"tiktok", "instagram"}:
-        try:
-            code = process.wait(timeout=6)
-        except subprocess.TimeoutExpired:
-            code = None
-        if code not in {None, 0}:
-            raise BrowserUnavailableError(
-                f"{provider}: browser exited with code {code}. "
-                "Close the RAMBLA login window if already open. If no window opens, "
-                "start RAMBLA from its local launcher outside the restricted agent runtime."
-            )
+    try:
+        code = process.wait(timeout=6)
+    except subprocess.TimeoutExpired:
+        code = None
+    if code not in {None, 0}:
+        raise BrowserUnavailableError(f"Google Chrome exited with code {code}")
     return int(process.pid)
+
+
+def _default_login_launcher(provider: str, profile_dir: Path, start_url: str) -> int:
+    """Open every external provider in the user's current Chrome session."""
+    return open_url_in_normal_chrome(start_url)
 
 
 class BrowserProfileManager:
@@ -379,24 +405,23 @@ class BrowserProfileManager:
         self.root = Path(root)
         self.owns_live_session = owns_live_session
         self.connection_ready = {}
+        self.personal_chrome_sessions: set[str] = set()
         from .live_social_sessions import LiveSocialSessions
         self._runner = playwright_runner or LiveSocialSessions()
         self._login_launcher = login_launcher or _default_login_launcher
         self._locks = {provider: asyncio.Lock() for provider in SUPPORTED_SOCIAL_PROVIDERS}
 
     async def open_login_async(self, provider: str) -> dict[str, Any]:
-        if provider == "envato" or self._login_launcher is not _default_login_launcher:
-            return await asyncio.to_thread(self.open_login, provider)
-        focus = getattr(self._runner, 'focus_existing', None)
+        focus = getattr(self._runner, "focus_existing", None)
         if focus and await focus(self.profile_dir(provider)):
             return {"provider": provider, "status": "focused", "session": "visible_persistent"}
-        async def show(page, _context):
-            await page.bring_to_front()
-            return {"provider": provider, "status": "started", "session": "visible_persistent"}
         connected = getattr(self._runner, "is_connected", lambda _p: False)(self.profile_dir(provider))
-        # OPEN must only focus an existing session, preserving login/challenge
-        # forms and the current search instead of navigating back to the feed.
-        return await self.run_in_profile(provider, show, start_url=None if connected else DEFAULT_START_URLS[provider])
+        if connected:
+            async def show(page, _context):
+                await page.bring_to_front()
+                return {"provider": provider, "status": "focused", "session": "visible_persistent"}
+            return await self.run_in_profile(provider, show, start_url=None)
+        return await asyncio.to_thread(self.open_login, provider)
 
     async def close(self):
         closer = getattr(self._runner, "close", None)
@@ -432,7 +457,11 @@ class BrowserProfileManager:
         directory.mkdir(parents=True, exist_ok=True)
         url = start_url or DEFAULT_START_URLS[clean]
         pid = self._login_launcher(clean, directory, url)
-        return {"provider": clean, "status": "started", "pid": int(pid)}
+        result = {"provider": clean, "status": "started", "pid": int(pid)}
+        if self._login_launcher is _default_login_launcher:
+            result["session"] = "normal_chrome"
+            self.personal_chrome_sessions.add(clean)
+        return result
 
     async def check_search(self, provider: str) -> dict[str, Any]:
         """Read the open page only: no test query, navigation, or new browser."""
@@ -440,8 +469,9 @@ class BrowserProfileManager:
         from urllib.parse import urlparse
         if provider not in {'tiktok','instagram'}:raise ValueError('unsupported social provider')
         if not getattr(self._runner,'is_connected',lambda p:False)(self.profile_dir(provider)):
-            self.connection_ready[provider]=False
-            return {'provider':provider,'ready':False,'login_state':'unknown','browser_state':'browser_closed','detail':'Open the RAMBLA browser and sign in; no test search was performed.'}
+            personal = provider in self.personal_chrome_sessions or normal_chrome_has_provider_session(provider)
+            self.connection_ready[provider]=personal
+            return {'provider':provider,'ready':personal,'login_state':'verified' if personal else 'unknown','browser_state':'personal_chrome' if personal else 'browser_closed','detail':'Personal Chrome session detected.' if personal else 'Open Chrome and sign in, then verify again.'}
         async def inspect(page,context):
             html=await page.content()
             evidence=inspect_search_html(html)
@@ -483,6 +513,8 @@ class BrowserProfileManager:
                 "search_backend": search_backend,
                 "connection_ready": bool(self.connection_ready.get(provider)) and bool(
                     getattr(self._runner, "is_connected", lambda _p: False)(self.profile_dir(provider))
+                    or provider in self.personal_chrome_sessions
+                    or normal_chrome_has_provider_session(provider)
                 ),
             }
             for provider in SUPPORTED_SOCIAL_PROVIDERS

@@ -7,17 +7,19 @@ without coupling those operations to Analyze/ASR.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import json
 import os
 from pathlib import Path
 import shlex
 import sys
+import time
 import uuid
 from typing import Any, Awaitable, Callable
 
 from fastapi import HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import debug_server as debug
@@ -27,6 +29,13 @@ from .curation_ui_v2 import render_curation_page_v2
 from .editorial_import import active_retrieval_root
 from .project_maintenance import clean_beat_media, clean_project_media, delete_project_tree, project_library_rows, rename_project
 from .debug_research_cli import research_stage_type
+from .theme_preferences import ThemePreferences, load_theme_preferences, save_theme_preferences, validate_theme_preferences
+
+
+class BeatSplitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    cut: int = Field(gt=0)
+    revision: str
 
 
 class PhraseCorrectionRequest(BaseModel):
@@ -63,6 +72,53 @@ class BeatResearchRequest(BaseModel):
 class DirectorRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     provider: str = "auto"
+
+
+class FullTranscriptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(min_length=1, max_length=500_000)
+    expected_revision: str = Field(min_length=1, max_length=128)
+
+
+class PhraseIntentsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    changes: dict[str, dict[str, Any]] = Field(max_length=10_000)
+    expected_signature: str = Field(min_length=1, max_length=128)
+
+
+class ResolveTitleTemplateSelectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    template_id: str = Field(min_length=8, max_length=100)
+
+
+class EnvatoDownloadRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    asset_id: str = Field(min_length=8, max_length=300)
+
+
+class ResolveBridgeCaptureRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project_id: str | None = None
+    detect_videos: bool = True
+    include_v1: bool = False
+    force_recalculate: bool = False
+
+
+class ResolveBridgeSessionRequest(BaseModel):
+    bridge_session_id: str | None = Field(default=None, max_length=128)
+
+
+class ResolveHandoffApplyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    destination_mode: str = "new"
+    current_project: str
+    current_timeline_id: str
+    current_mark_in: int | None = None
+
+
+class GenericCoverageSelectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    provider_ids: list[str] = Field(default_factory=list, max_length=12)
 
 
 ResearchRunner = Callable[[debug.RunState, str, str], Awaitable[Any] | Any]
@@ -400,6 +456,10 @@ def create_app(
     audio_command_runner: Any = None,
     research_runner: ResearchRunner | None = None,
     browser_profile_manager: Any = None,
+    review_bridge_client: Any = None,
+    resolve_template_library_root: Path | None = None,
+    resolve_template_bundled_root: Path | None = None,
+    resolve_template_install_root: Path | None = None,
 ):
     root = Path(project_root or _default_project_root())
     app = debug.create_app(
@@ -424,8 +484,225 @@ def create_app(
         })
 
     store = ProjectStore(root, probe_runner=probe_runner or debug._probe_source_video, audio_probe_runner=audio_probe_runner)
+    from .resolve_handoff import ResolveHandoffStore
+    from .resolve_handoff_jobs import ResolveHandoffJobs
+    from .resolve_textplus_timeline import run_resolve_helper as resolve_handoff_runner
+    handoff_store = ResolveHandoffStore(root)
+    handoff_jobs = ResolveHandoffJobs(handoff_store, resolve_handoff_runner)
+    from .resolve_prepare_jobs import ResolvePrepareJobs
+    prepare_jobs = ResolvePrepareJobs()
     social_profiles = browser_profile_manager or BrowserProfileManager(_default_browser_profile_root(root), owns_live_session=True)
     app.state.social_profiles = social_profiles
+    envato_download_sessions: dict[str, dict[str, Any]] = {}
+    bridge_session_path = root.parent / "bridge-session.json"
+    theme_preferences_path = root.parent / "theme-preferences.json"
+    bridge_session_state = _read_json(bridge_session_path, {})
+    active_bridge_session_id = str(bridge_session_state.get("bridge_session_id") or "")
+    bridge_last_seen = 0.0
+
+    @app.post("/api/curation/resolve-bridge/session")
+    async def start_resolve_bridge_session(request: ResolveBridgeSessionRequest | None = None) -> dict[str, Any]:
+        nonlocal active_bridge_session_id, bridge_last_seen
+        requested = str(request.bridge_session_id or "").strip() if request else ""
+        active_bridge_session_id = requested or uuid.uuid4().hex
+        bridge_last_seen = time.time()
+        from .atomic_io import write_json
+        write_json(bridge_session_path, {"bridge_session_id": active_bridge_session_id, "last_seen": bridge_last_seen})
+        return {"bridge_session_id": active_bridge_session_id, "connected": True, "last_seen": bridge_last_seen}
+
+    @app.get("/api/curation/resolve-bridge/session")
+    async def resolve_bridge_session_status() -> dict[str, Any]:
+        age = max(0.0, time.time() - bridge_last_seen) if bridge_last_seen else None
+        return {"bridge_session_id": active_bridge_session_id, "connected": age is not None and age <= 6.0,
+                "last_seen": bridge_last_seen or None, "age_seconds": age}
+
+    @app.get("/api/curation/desktop-target")
+    async def desktop_target() -> dict[str, Any]:
+        target = _read_json(root.parent / "desktop-target.json", {})
+        return {"project_id": str(target.get("project_id") or ""),
+                "url": str(target.get("url") or ""),
+                "revision": int(target.get("revision") or 0)}
+
+    @app.get("/api/curation/theme-preferences")
+    async def get_theme_preferences() -> dict[str, Any]:
+        return {"theme": load_theme_preferences(theme_preferences_path), "resolve_calls": 0}
+
+    @app.put("/api/curation/theme-preferences")
+    async def put_theme_preferences(request: ThemePreferences) -> dict[str, Any]:
+        try:
+            validated = validate_theme_preferences(request)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"theme": save_theme_preferences(theme_preferences_path, validated), "resolve_calls": 0}
+
+    @app.post("/api/curation/projects/{project_id}/workspace-backup")
+    async def create_workspace_backup(project_id: str) -> dict[str, Any]:
+        load_project(project_id)
+        from .workspace_backup import backup_project_state
+        archive = await asyncio.to_thread(
+            backup_project_state, root / project_id, root.parent / "backups"
+        )
+        return {"status": "saved", "project_id": project_id, "backup": archive.name}
+
+    @app.get("/api/curation/resolve-bridge/status")
+    async def resolve_bridge_status() -> dict[str, Any]:
+        from .resolve_bridge import connect_resolve, timeline_range
+        try:
+            resolve = await asyncio.to_thread(connect_resolve)
+            project = resolve.GetProjectManager().GetCurrentProject()
+            timeline = project.GetCurrentTimeline() if project else None
+            if not project or not timeline:
+                raise RuntimeError("Apri un progetto e una timeline DaVinci Resolve")
+            mark_in, mark_out, source = timeline_range(timeline)
+            return {"connected": True, "bridge_api_version": 2,
+                    "project": project.GetName(), "timeline": timeline.GetName(),
+                    "timeline_id": str(timeline.GetUniqueId()),
+                    "mark_in": mark_in, "mark_out": mark_out, "range_source": source}
+        except Exception as exc:
+            return {"connected": False, "bridge_api_version": 2, "detail": str(exc)}
+
+    @app.post("/api/curation/resolve-bridge/install")
+    async def resolve_bridge_install() -> dict[str, Any]:
+        import shutil
+        source = Path(__file__).resolve().parents[2] / "tools" / "resolve_bridge" / "RAMBLA_B_ROLL.py"
+        target = Path(os.environ.get("APPDATA", str(Path.home() / "AppData/Roaming"))) / (
+            "Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/RAMBLA_B_ROLL.py"
+        )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        return {"status": "installed", "path": str(target), "menu": "Workspace > Scripts > RAMBLA_B_ROLL"}
+
+    @app.get("/api/curation/resolve-bridge/plugin.py")
+    async def resolve_bridge_plugin_source() -> PlainTextResponse:
+        source = Path(__file__).resolve().parents[2] / "tools" / "resolve_bridge" / "RAMBLA_B_ROLL.py"
+        payload = source.read_bytes()
+        return PlainTextResponse(
+            payload.decode("utf-8"), media_type="text/x-python",
+            headers={"X-RAMBLA-Bridge-SHA256": hashlib.sha256(payload).hexdigest()},
+        )
+
+    @app.post('/api/curation/resolve-bridge/open')
+    async def resolve_bridge_open() -> dict[str, Any]:
+        from .resolve_project_links import saved_project_to_open
+        try:
+            status = await asyncio.wait_for(resolve_bridge_status(), timeout=5)
+        except asyncio.TimeoutError:
+            status = {}
+        project_id, opened_from = saved_project_to_open(root, status.get('timeline_id', ''))
+        if not project_id:
+            raise HTTPException(status_code=409, detail='Nessun progetto salvato da riaprire. Usa USA AUDIO IN RMBL B ROLL una prima volta.')
+        project = store.load(project_id)
+        return {'project_id': project_id, 'name': project.name, 'url': f'/curation?project={project_id}',
+                'opened_from': opened_from}
+
+    @app.post("/api/curation/resolve-bridge/capture")
+    async def resolve_bridge_capture(request: ResolveBridgeCaptureRequest) -> dict[str, Any]:
+        import tempfile
+        from .atomic_io import write_json
+        from .resolve_bridge import can_reuse_audio_capture, capture_active_timeline, inspect_active_timeline, require_explicit_capture_range
+        inspection = await asyncio.to_thread(
+            inspect_active_timeline, detect_videos=request.detect_videos, include_v1=request.include_v1
+        )
+        if request.force_recalculate:
+            try:
+                require_explicit_capture_range(inspection.get("range_source", "timeline"))
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+        from .resolve_project_links import linked_project
+        saved_id = linked_project(root, inspection['resolve_timeline_id'])
+        saved_manifest = _read_json(root / saved_id / 'resolve-bridge.json', {}) if saved_id else {}
+        if (saved_id and not request.project_id
+                and saved_manifest.get('resolve_timeline_id') != inspection['resolve_timeline_id']
+                and (root / saved_id / 'run' / 'phrase-intents.json').is_file()):
+            raise HTTPException(status_code=409, detail=(
+                'Questa è una timeline generata da RAMBLA. Premi APRI RAMBLA per ritrovare le selezioni salvate. '
+                'Per aggiornare la guida audio, seleziona la timeline sorgente: '
+                + str(saved_manifest.get('resolve_timeline') or 'originale')
+            ))
+        linked: list[tuple[int, str, dict[str, Any]]] = []
+        for path in root.glob("*/resolve-bridge.json"):
+            manifest = _read_json(path, {})
+            try:
+                row=(path.stat().st_mtime_ns,path.parent.name,manifest)
+                if str(manifest.get("resolve_timeline_id") or "") == inspection["resolve_timeline_id"]: linked.append(row)
+            except OSError: pass
+        linked.sort(reverse=True)
+        from .resolve_project_links import linked_project
+        preferred = linked_project(root, inspection['resolve_timeline_id'])
+        # Capture updates only a project bound to this exact source timeline.
+        # Opening a generated copy uses /open and its persistent lineage.
+        exact_preferred = preferred if any(row[1] == preferred for row in linked) else ''
+        project_id = str(request.project_id or "").strip() or exact_preferred or (linked[0][1] if linked else "")
+        if project_id:
+            project = store.load(project_id)
+            manifest = _read_json(root / project_id / "resolve-bridge.json", {})
+            guide_ready = bool(project.guide_audio and Path(project.guide_audio.path).is_file())
+            if can_reuse_audio_capture(
+                manifest, inspection, guide_ready=guide_ready,
+                force_recalculate=request.force_recalculate,
+            ):
+                reused = {**manifest, **inspection, "schema_version": "rambla-resolve-bridge-1",
+                          "project_id": project_id, "reused_audio": True,
+                          "reused_audio_reason": "unchanged_audio"}
+                write_json(root / project_id / "resolve-bridge.json", reused)
+                return {"status": "reused", "project_id": project_id,
+                        "url": f"/curation?project={project_id}", **reused}
+        try:
+            capture = await asyncio.to_thread(
+                capture_active_timeline, Path(tempfile.gettempdir()) / "RAMBLA-BROLL-Bridge",
+                detect_videos=request.detect_videos, include_v1=request.include_v1,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if project_id:
+            project = store.load(project_id)
+            from .workspace_backup import backup_project_state
+            await asyncio.to_thread(backup_project_state, root / project_id, root.parent / 'backups')
+        else:
+            project = store.create(f"{capture['resolve_project']} · {capture['resolve_timeline']}")
+            project_id = project.project_id
+        audio_path = Path(capture["audio_path"])
+        project = await asyncio.to_thread(
+            store.write_primary_audio, project_id, audio_path.name, [audio_path.read_bytes()]
+        )
+        manifest = {"schema_version": "rambla-resolve-bridge-1", **capture, "project_id": project_id}
+        write_json(root / project_id / "resolve-bridge.json", manifest)
+        from .resolve_project_links import link_project
+        link_project(root, project_id, capture.get('resolve_timeline_id'))
+        audio_path.unlink(missing_ok=True)
+        return {"status": "captured", "project_id": project_id,
+                "url": f"/curation?project={project_id}", **capture}
+
+    @app.get("/api/curation/projects/{project_id}/resolve-bridge")
+    async def project_resolve_bridge(project_id: str) -> dict[str, Any]:
+        load_project(project_id)
+        manifest = _read_json(root / project_id / "resolve-bridge.json", {})
+        if not manifest:
+            return {"received": False, "detect_videos": False, "existing_video_count": 0}
+        return {
+            "received": True,
+            "resolve_project": manifest.get("resolve_project"),
+            "resolve_timeline": manifest.get("resolve_timeline"),
+            "duration": manifest.get("duration"),
+            "detect_videos": bool(manifest.get("detect_videos")),
+            "include_v1": bool(manifest.get("include_v1")),
+            "existing_video_count": len(manifest.get("existing_video_ranges") or []),
+            "audio_capture_format": manifest.get("audio_capture_format"),
+        }
+    if review_bridge_client is None:
+        from .review_bridge import ReviewBridgeClient
+        review_bridge_client = ReviewBridgeClient.from_environment()
+    app.state.review_bridge = review_bridge_client
+    title_library_root = Path(resolve_template_library_root or root.parent / "resolve-title-templates")
+    title_bundled_root = Path(
+        resolve_template_bundled_root
+        or Path(__file__).resolve().parents[1] / "assets" / "resolve_titles"
+    )
+    title_install_root = Path(
+        resolve_template_install_root
+        or Path(os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming")))
+        / "Blackmagic Design" / "DaVinci Resolve" / "Support" / "Fusion" / "Templates"
+    )
 
     from contextlib import asynccontextmanager
     previous_lifespan = app.router.lifespan_context
@@ -481,6 +758,90 @@ def create_app(
     def run_root(project_id: str) -> Path:
         load_project(project_id)
         return root / project_id / "run"
+
+    def title_templates():
+        from .resolve_title_templates import template_library
+        return template_library(title_library_root, title_bundled_root)
+
+    def title_row(template) -> dict[str, Any]:
+        from .resolve_title_templates import template_install_status
+        return {
+            "template_id": template.template_id,
+            "display_name": template.display_name,
+            "resolve_name": template.resolve_name,
+            "original_filename": template.original_filename,
+            "size_bytes": template.size_bytes,
+            "sha256": template.sha256,
+            "bundled": template.bundled,
+            "install_status": template_install_status(template, title_install_root),
+        }
+
+    def selected_title(project_id: str):
+        load_project(project_id)
+        rows = title_templates()
+        selection_path = root / project_id / "resolve-title-template.json"
+        selected_id = None
+        if selection_path.is_file():
+            selected_id = str(_read_json(selection_path, {}).get("template_id") or "")
+        if selected_id:
+            chosen = next((row for row in rows if row.template_id == selected_id), None)
+            if chosen is None:
+                raise HTTPException(status_code=409, detail="Selected Resolve title template file is missing")
+            return chosen
+        chosen = next((row for row in rows if row.resolve_name == "KURA_paper_title_v8"), None)
+        if chosen is None:
+            raise HTTPException(status_code=409, detail="Bundled KURA_paper_title_v8 template is missing")
+        return chosen
+
+    @app.get("/api/curation/resolve-title-templates")
+    async def list_resolve_title_templates() -> dict[str, Any]:
+        return {"templates": [title_row(row) for row in title_templates()]}
+
+    @app.post("/api/curation/resolve-title-templates")
+    async def upload_resolve_title_template(request: Request) -> dict[str, Any]:
+        from .resolve_title_templates import TemplateValidationError, store_uploaded_drfx
+        from io import BytesIO
+        try:
+            payload = bytearray()
+            async for block in request.stream():
+                payload.extend(block)
+                if len(payload) > 64 * 1024 * 1024:
+                    raise TemplateValidationError("DRFX upload is too large")
+            filename = request.headers.get("X-Rambla-Filename", "template.drfx")
+            template = store_uploaded_drfx(BytesIO(payload), filename, title_library_root)
+            return {"template": title_row(template)}
+        except TemplateValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/curation/resolve-title-templates/{template_id}/install")
+    async def install_resolve_title_template(template_id: str) -> dict[str, Any]:
+        from .resolve_title_templates import TemplateValidationError, install_template
+        template = next((row for row in title_templates() if row.template_id == template_id), None)
+        if template is None:
+            raise HTTPException(status_code=404, detail="Resolve title template not found")
+        try:
+            result = install_template(template, title_install_root)
+            return {"status": result.status, "template": title_row(template)}
+        except (OSError, TemplateValidationError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/api/curation/projects/{project_id}/resolve-title-template")
+    async def get_project_resolve_title_template(project_id: str) -> dict[str, Any]:
+        return {"template": title_row(selected_title(project_id))}
+
+    @app.put("/api/curation/projects/{project_id}/resolve-title-template")
+    async def set_project_resolve_title_template(
+        project_id: str, request: ResolveTitleTemplateSelectionRequest
+    ) -> dict[str, Any]:
+        load_project(project_id)
+        template = next((row for row in title_templates() if row.template_id == request.template_id), None)
+        if template is None:
+            raise HTTPException(status_code=404, detail="Resolve title template not found")
+        selection_path = root / project_id / "resolve-title-template.json"
+        temporary = selection_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps({"template_id": template.template_id}), encoding="utf-8")
+        os.replace(temporary, selection_path)
+        return {"template": title_row(template)}
 
     @app.get("/api/curation/ai/status")
     async def ai_status() -> dict[str, Any]:
@@ -548,6 +909,12 @@ def create_app(
         for required in ("transcript-raw.json", "semantic-chunks.json", "analysis-signature.json"):
             if not (run / required).is_file():
                 raise HTTPException(status_code=422, detail="analyze transcript before running the API Director")
+        from .transcript_intents import load_phrase_intents
+        intent_state = load_phrase_intents(run)
+        if intent_state["explicit"] and not any(
+            row.get("coverage") for row in intent_state["phrases"].values()
+        ):
+            raise HTTPException(status_code=422, detail="Select at least one Coverage phrase before generating the plan")
         if project.source_video is None:
             raise HTTPException(status_code=422, detail="source video required for the project timeline")
         if _active_run_for(run):
@@ -594,6 +961,60 @@ def create_app(
             raise HTTPException(status_code=404, detail="unsupported social provider")
         return {**await social_profiles.check_search(clean), "resolve_calls": 0}
 
+    @app.post("/api/curation/projects/{project_id}/envato/download/start")
+    async def start_envato_download(project_id: str, request: EnvatoDownloadRequest) -> dict[str, Any]:
+        from .browser_profiles import BrowserUnavailableError
+        from .curation_artifacts import load_curation_run
+        from .envato_download_bridge import capture_snapshot, default_downloads_dir
+        run = run_root(project_id)
+        candidate = load_curation_run(run).candidate_index.get(request.asset_id)
+        if candidate is None or candidate.provider != "envato":
+            raise HTTPException(status_code=404, detail="Envato asset not found")
+        downloads = default_downloads_dir()
+        downloads.mkdir(parents=True, exist_ok=True)
+        token = uuid.uuid4().hex
+        envato_download_sessions[token] = {
+            "project_id": project_id,
+            "asset_id": request.asset_id,
+            "downloads": downloads,
+            "baseline": capture_snapshot(downloads),
+        }
+        try:
+            await asyncio.to_thread(
+                social_profiles.open_login,
+                "envato",
+                start_url=candidate.source_page,
+            )
+        except (BrowserUnavailableError, OSError, RuntimeError, ValueError) as exc:
+            envato_download_sessions.pop(token, None)
+            raise HTTPException(status_code=503, detail=f"Google Chrome non disponibile: {exc}") from exc
+        return {
+            "status": "waiting",
+            "token": token,
+            "asset_id": request.asset_id,
+            "open_url": candidate.source_page,
+            "opened_in_chrome": True,
+            "detail": "Complete the official Envato download in Chrome; RAMBLA will attach the completed file.",
+            "resolve_calls": 0,
+        }
+
+    @app.get("/api/curation/projects/{project_id}/envato/download/{token}")
+    async def envato_download_status(project_id: str, token: str) -> dict[str, Any]:
+        from .envato_download_bridge import adopt_new_download
+        session = envato_download_sessions.get(token)
+        if session is None or session.get("project_id") != project_id:
+            raise HTTPException(status_code=404, detail="Envato download session not found")
+        result = await asyncio.to_thread(
+            adopt_new_download,
+            session["downloads"],
+            session["baseline"],
+            run_root(project_id),
+            session["asset_id"],
+        )
+        if result.get("status") == "ready":
+            envato_download_sessions.pop(token, None)
+        return {**result, "resolve_calls": 0}
+
     @app.get("/api/curation/projects")
     async def list_projects() -> dict[str, Any]:
         return {"projects": project_library_rows(store), "resolve_calls": 0}
@@ -622,6 +1043,556 @@ def create_app(
         beat=next((b for b in plan.get('visual_beats',[]) if b['id']==beat_id),None)
         if not beat: raise HTTPException(status_code=404,detail='Frase non trovata')
         return {'text':beat['original_text'],'chunks':[c for c in normalized_chunks(run) if c['id'] in beat['covered_chunk_ids']]}
+
+    @app.get("/api/curation/projects/{project_id}/transcript/full")
+    async def full_transcript(project_id: str):
+        from .transcript_intents import transcript_document
+        try:
+            run = run_root(project_id)
+            document = transcript_document(run)
+            bridge = _read_json(root / project_id / "resolve-bridge.json", {})
+            document["existing_video_ranges"] = bridge.get("existing_video_ranges", [])
+            document["detect_videos"] = bool(bridge.get("detect_videos", False))
+            return document
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.put("/api/curation/projects/{project_id}/transcript/full")
+    async def save_full_transcript(project_id: str, request: FullTranscriptRequest):
+        from .transcript_intents import save_transcript_document
+        run = run_root(project_id)
+        if _active_run_for(run):
+            raise HTTPException(status_code=409, detail="Wait for the running project stage")
+        try:
+            return save_transcript_document(run, request.text, request.expected_revision)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/api/curation/projects/{project_id}/phrase-intents")
+    async def phrase_intents(project_id: str):
+        from .transcript_intents import load_phrase_intents
+        try:
+            return load_phrase_intents(run_root(project_id))
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.put("/api/curation/projects/{project_id}/phrase-intents")
+    async def save_intents(project_id: str, request: PhraseIntentsRequest):
+        from .transcript_intents import save_phrase_intents
+        run = run_root(project_id)
+        if _active_run_for(run):
+            raise HTTPException(status_code=409, detail="Wait for the running project stage")
+        try:
+            return save_phrase_intents(run, request.changes, request.expected_signature)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/api/curation/projects/{project_id}/review/status")
+    async def review_status(project_id: str):
+        from .review_bridge import load_review_state
+        run = run_root(project_id)
+        state = load_review_state(run)
+        return {
+            "configured": bool(getattr(review_bridge_client, "configured", False)),
+            "review_id": state.get("review_id"),
+            "review_url": state.get("review_url"),
+            "last_applied_revision": int(state.get("last_applied_revision", 0) or 0),
+        }
+
+    @app.post("/api/curation/projects/{project_id}/review/publish")
+    async def publish_review(project_id: str):
+        from .review_bridge import build_review_payload, save_review_state
+        project = load_project(project_id)
+        run = run_root(project_id)
+        if _active_run_for(run):
+            raise HTTPException(status_code=409, detail="Wait for the running project stage")
+        if not getattr(review_bridge_client, "configured", False):
+            raise HTTPException(status_code=422, detail="Configure RAMBLA_REVIEW_WEBAPP_URL and RAMBLA_REVIEW_OWNER_SECRET in .env.local")
+        try:
+            published = await review_bridge_client.publish(build_review_payload(run, project_id, project.name))
+            state = {**published, "last_applied_revision": 0}
+            save_review_state(run, state)
+            return {"configured": True, **state}
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.post("/api/curation/projects/{project_id}/review/pull")
+    async def pull_review(project_id: str):
+        from .review_bridge import apply_review_submission, load_review_state, save_review_state
+        run = run_root(project_id)
+        if _active_run_for(run):
+            raise HTTPException(status_code=409, detail="Wait for the running project stage")
+        state = load_review_state(run)
+        if not state.get("review_id"):
+            raise HTTPException(status_code=409, detail="Create a review link first")
+        try:
+            remote = await review_bridge_client.pull(str(state["review_id"]))
+            revision = int(remote.get("submitted_revision", 0) or 0)
+            if not remote.get("submission") or revision <= int(state.get("last_applied_revision", 0) or 0):
+                return {**state, "updated": False, "submitted_revision": revision}
+            intents = apply_review_submission(run, remote["submission"])
+            state["last_applied_revision"] = revision
+            save_review_state(run, state)
+            return {**state, "updated": True, "submitted_revision": revision, "intents": intents}
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (OSError, RuntimeError) as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.get("/api/curation/projects/{project_id}/exports/captions.srt")
+    async def export_semantic_captions(project_id: str):
+        from .captions import render_semantic_srt
+        from .editorial_import import normalized_chunks
+        try:
+            body = render_semantic_srt(normalized_chunks(run_root(project_id)))
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return PlainTextResponse(body, media_type="application/x-subrip", headers={"Content-Disposition": f'attachment; filename="captions-{project_id}.srt"'})
+
+    @app.get("/api/curation/projects/{project_id}/exports/animation.json")
+    async def export_animation_phrases(project_id: str):
+        from .animation_context import build_animation_context
+        from .transcript_intents import build_animation_export
+        plan = _read_json(run_root(project_id) / "visual-plan.json", {})
+        try:
+            payload = build_animation_export(run_root(project_id), project_id, build_animation_context(plan or None))
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return JSONResponse(payload, headers={"Content-Disposition": f'attachment; filename="animation-{project_id}.json"'})
+
+    def project_export_fps(project_id: str, project: Any) -> int:
+        bridge = _read_json(root / project_id / 'resolve-bridge.json', {})
+        source_fps = getattr(project.source_video, 'fps', 25) if project.source_video else 25
+        return int(round(float(bridge.get('fps') or source_fps or 25)))
+
+    @app.get("/api/curation/projects/{project_id}/exports/highlights.json")
+    async def export_highlight_textplus(project_id: str):
+        from .transcript_intents import build_textplus_export
+        project = load_project(project_id)
+        fps = project_export_fps(project_id, project)
+        try:
+            payload = build_textplus_export(run_root(project_id), project_id, fps=fps)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return JSONResponse(payload, headers={"Content-Disposition": f'attachment; filename="resolve-textplus-{project_id}.json"'})
+
+    @app.post("/api/curation/projects/{project_id}/resolve/textplus-timeline")
+    async def create_resolve_textplus_timeline(project_id: str):
+        from .resolve_textplus_timeline import run_resolve_helper
+        from .transcript_intents import build_textplus_export
+        project = load_project(project_id)
+        fps = project_export_fps(project_id, project)
+        try:
+            payload = build_textplus_export(run_root(project_id), project_id, fps=fps)
+            payload["title_name"] = selected_title(project_id).resolve_name
+            return await asyncio.to_thread(run_resolve_helper, payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except (OSError, RuntimeError) as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    def combined_resolve_payload(project_id: str) -> dict[str, Any]:
+        from .transcript_intents import build_combined_resolve_export
+        project = load_project(project_id)
+        fps = project_export_fps(project_id, project)
+        payload = build_combined_resolve_export(run_root(project_id), project_id, fps=fps)
+        subtitle_key = hashlib.sha256(
+            json.dumps(payload["subtitles"], ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()[:10]
+        subtitle_path = run_root(project_id) / "exports" / (
+            f"RAMBLA_{payload['subtitle_count']}_NATIVE_SUBS_{subtitle_key}_{uuid.uuid4().hex[:8]}.srt"
+        )
+        payload.update(
+            mode="combined",
+            project_name=project.name,
+            timeline_name=f"{project.name} - SUBS + KEYWORDS TIMELINE v1",
+            media_bin_name="TEMP",
+            title_name=selected_title(project_id).resolve_name,
+            subtitle_srt_path=str(subtitle_path),
+        )
+        return payload
+
+    def broll_timeline_payload(project_id: str) -> dict[str, Any]:
+        from .broll_timeline_export import build_broll_timeline_plan
+        from .curation_artifacts import load_curation_run
+        from .video_preview import probe_preview
+        project = load_project(project_id)
+        run = run_root(project_id)
+        fps = project_export_fps(project_id, project)
+        view = load_curation_run(run)
+        selection = _read_json(active_retrieval_root(run) / "selection-plan.json", {"chunks": {}})
+        visual_plan = _read_json(run / "visual-plan.json", {})
+        assets = {}
+        for asset_id, candidate in view.candidate_index.items():
+            path = str(candidate.local_asset_path or "").strip()
+            if candidate.provider == 'pexels':
+                from .stock_export_media import stock_media_path
+                stock_path = stock_media_path(run, asset_id.rsplit(':', 1)[-1])
+                if stock_path.is_file():
+                    path = str(stock_path)
+            if not path and candidate.provider in {"tiktok", "instagram", "youtube_shorts"}:
+                from .social_media import media_path
+                social_path = media_path(candidate.source_page, candidate.provider, run, "full")
+                path = str(social_path) if social_path.is_file() else ""
+            facts = probe_preview(path) if path else {"playable": False}
+            assets[asset_id] = {
+                "media_path": path if path and Path(path).is_file() and float(facts.get("duration") or 0) > 0 else None,
+                "duration_seconds": facts.get("duration", 0),
+                "source_offset_seconds": 0,
+                "title": candidate.title,
+                "source_page": candidate.source_page,
+                "provider": candidate.provider,
+            }
+        plan = build_broll_timeline_plan(visual_plan, selection, assets, fps=fps)
+        if plan["selected_beat_count"] == 0:
+            raise ValueError("Select at least one B-roll clip before exporting the timeline")
+        if plan["unavailable"] and not plan["clips"]:
+            rows = ", ".join(f"{row['beat_id']} · {row['asset_id']}: {row['reason']}" for row in plan["unavailable"][:8])
+            raise ValueError("No selected clip is ready for timeline export. Download or replace them: " + rows)
+        return plan
+
+    async def prepare_selected_timeline_media(project_id: str, report=None) -> list[str]:
+        from .curation_artifacts import load_curation_run
+        from .social_media import media_path, prepare_media
+        from .transcript_intents import has_selected_intent
+        run = run_root(project_id)
+        if not has_selected_intent(run, "coverage"):
+            if report:
+                report(60, "Nessun B-roll selezionato · salto download media")
+            return []
+        view = load_curation_run(run)
+        selection = _read_json(active_retrieval_root(run) / "selection-plan.json", {"chunks": {}})
+        wanted = [str(row.get("asset_id")) for choice in (selection.get("chunks") or {}).values() for row in (choice.get("selected_assets") or [])]
+        failures = []
+        for index, asset_id in enumerate(wanted):
+            candidate = view.candidate_index.get(asset_id)
+            if report:
+                report(5 + int(60 * index / max(1, len(wanted))), f'Coperture: {index}/{len(wanted)} pronte · controllo {candidate.title if candidate else asset_id}')
+            if candidate and candidate.provider == 'pexels':
+                from .stock_export_media import prepare_pexels_video
+                try:
+                    def download_progress(received, total):
+                        fraction = received / total if total else 0
+                        report(5 + int(60 * (index + min(1, fraction)) / max(1, len(wanted))),
+                               f'Scarico {candidate.title} · {received/1048576:.1f}' + (f'/{total/1048576:.1f}' if total else '') + ' MB')
+                    await prepare_pexels_video(run, asset_id.rsplit(':', 1)[-1], progress=download_progress if report else None)
+                except Exception as exc:
+                    failures.append(f'{asset_id}: {exc}')
+                continue
+            if not candidate or candidate.provider not in {"tiktok", "instagram", "youtube_shorts"}:
+                continue
+            if candidate.local_asset_path or media_path(candidate.source_page, candidate.provider, run, "full").is_file():
+                continue
+            cookies = []
+            if candidate.provider in {"tiktok", "instagram"} and social_profiles.status().get(candidate.provider, {}).get("connection_ready"):
+                async def read_session(page, context, source=candidate.source_page):
+                    return await context.cookies([source])
+                cookies = await social_profiles.run_in_profile(candidate.provider, read_session)
+            try:
+                await asyncio.to_thread(prepare_media, candidate.source_page, candidate.provider, run, "full", cookies=cookies)
+            except (ValueError, RuntimeError) as exc:
+                failures.append(f"{asset_id}: {exc}")
+        if failures:
+            raise ValueError('Download delle clip selezionate non completato: ' + ' · '.join(failures))
+        return failures
+
+    def editing_resolve_payload(project_id: str) -> dict[str, Any]:
+        from .transcript_intents import has_selected_intent
+        payload = combined_resolve_payload(project_id)
+        if has_selected_intent(run_root(project_id), "coverage"):
+            broll = broll_timeline_payload(project_id)
+        else:
+            broll = {"clips": [], "clip_count": 0, "unavailable": []}
+        project = load_project(project_id)
+        bridge = _read_json(root / project_id / "resolve-bridge.json", {})
+        generic = _read_json(run_root(project_id) / "generic-coverage.json", {"items": [], "selected": []})
+        chosen = set(generic.get("selected") or [])
+        generic_clips = [row for row in generic.get("items") or [] if str(row.get("provider_id")) in chosen]
+        payload.update(
+            mode="editing", broll_clips=broll["clips"], broll_count=broll["clip_count"], broll_unavailable=broll["unavailable"],
+            timeline_name=f"{project.name} - SUBS + KEYWORDS + B-ROLL TIMELINE v1",
+            media_staging_root=str(run_root(project_id) / "resolve-media"),
+            source_timeline_id=bridge.get("resolve_timeline_id"),
+            source_project_name=bridge.get("resolve_project"),
+            source_timeline_name=bridge.get("resolve_timeline"),
+            bridge_mark_in=bridge.get("mark_in"),
+            duration_seconds=bridge.get("duration") or 0,
+            generic_broll_clips=generic_clips,
+            generic_tail_gap_seconds=2.0,
+        )
+        return payload
+
+    async def prepare_generic_media(project_id: str, report=None) -> None:
+        import httpx
+        from .atomic_io import write_json
+        path = run_root(project_id) / "generic-coverage.json"
+        data = _read_json(path, {"items": [], "selected": []})
+        from .stock_export_media import prepare_pexels_video
+        by_id = {str(row['provider_id']): row for row in data.get('items') or []}
+        errors = []
+        selected = list(map(str, data.get('selected') or []))
+        for index, provider_id in enumerate(selected):
+            if report:
+                report(65 + int(15 * index / max(1, len(selected))), f'Video finali: {index}/{len(selected)} pronti · controllo Pexels {provider_id}')
+            try:
+                def download_progress(received, total):
+                    fraction = received / total if total else 0
+                    report(65 + int(15 * (index + min(1, fraction)) / max(1, len(selected))),
+                           f'Scarico video finale Pexels {provider_id} · {received/1048576:.1f}' + (f'/{total/1048576:.1f}' if total else '') + ' MB')
+                by_id[provider_id] = {**by_id.get(provider_id, {}), **await prepare_pexels_video(run_root(project_id), provider_id, progress=download_progress if report else None)}
+            except Exception as exc:
+                errors.append(f'Pexels {provider_id}: {exc}')
+        data['items'] = list(by_id.values())
+        write_json(path, data)
+        if errors:
+            raise ValueError('Download coperture generiche non completato: ' + ' · '.join(errors))
+        return
+    @app.get("/api/curation/projects/{project_id}/generic-coverage")
+    async def generic_coverage(project_id: str, refresh: bool = False, scope: str = "topic"):
+        from .atomic_io import write_json
+        from .generic_coverage import candidate_dict, derive_topic_queries, merge_unique
+        from .online_assets import PexelsSource
+        run = run_root(project_id)
+        path = run / "generic-coverage.json"
+        existing = _read_json(path, {})
+        if existing.get("items") and not refresh and scope == "topic":
+            return existing
+        visual = _read_json(run / "visual-plan.json", {})
+        transcript = _read_json(run / "transcript-raw.json", {})
+        topic = str(visual.get("global_topic") or visual.get("summary") or "")
+        raw_text = str(transcript.get("text") or " ".join(str(x.get("text") or "") for x in transcript.get("segments", []) if isinstance(x, dict)))
+        from .geographic_context import places_in, conflicting_place
+        from .stock_export_media import preserve_selected_generics
+        if scope not in {"topic", "places"}: raise HTTPException(status_code=422, detail="Tipo di copertura sconosciuto")
+        source=PexelsSource(os.environ.get("PEXELS_API_KEY"))
+        errors=[]; items=[]; places=places_in(raw_text) or places_in(topic)
+        query_groups = [(place, [place + " landscape", place + " city", place]) for place in places] if scope == "places" else [("", derive_topic_queries(topic, raw_text))]
+        if scope == 'places' and not places:
+            errors.append('Nessun luogo riconosciuto nel testo. Specifica il luogo nella trascrizione o usa una query manuale sulla scena.')
+        for place, queries in query_groups:
+            groups=[]
+            for query in queries:
+                try:
+                    rows=await source.search(query, orientation="landscape", min_duration=2, max_duration=180, limit=12)
+                    group=[{**candidate_dict(row), "coverage_group": scope, "place": place} for row in rows if not place or not conflicting_place(row.title+' '+row.description,[place])]
+                    groups.append(group)
+                    if len(merge_unique(groups,limit=12)["items"])>=12: break
+                except Exception as exc: errors.append(str(exc))
+            items.extend(merge_unique(groups,limit=12)['items'])
+        retained=[row for row in existing.get('items',[]) if row.get('coverage_group','topic')!=scope]
+        merged=merge_unique([items,retained],limit=max(12,len(retained)+len(items)))
+        existing = _read_json(path, existing)
+        payload={**merged,"items":preserve_selected_generics(existing, merged['items']),"selected":existing.get("selected",[]),"topic":topic or raw_text[:160],"places":places,"errors":errors}
+        if scope == 'places':
+            locations={str(row['provider_id']):row['place'] for row in items}
+            for row in payload['items']:
+                if str(row['provider_id']) in locations:
+                    row.update(coverage_group='places',place=locations[str(row['provider_id'])])
+        write_json(path,payload)
+        return payload
+
+    @app.put("/api/curation/projects/{project_id}/generic-coverage/selection")
+    async def select_generic_coverage(project_id: str, request: GenericCoverageSelectionRequest):
+        from .atomic_io import write_json
+        path=run_root(project_id)/"generic-coverage.json"; data=_read_json(path,{"items":[]})
+        available={str(row.get("provider_id")) for row in data.get("items") or []}
+        if not set(request.provider_ids)<=available: raise HTTPException(status_code=422,detail="Copertura generica sconosciuta")
+        data["selected"]=list(dict.fromkeys(request.provider_ids)); write_json(path,data); return data
+
+    def handoff_project_root(project_id: str) -> Path:
+        load_project(project_id)
+        return root / project_id
+
+    def find_handoff(package_id: str) -> tuple[Path, dict[str, Any]]:
+        matches = list(root.glob(f"*/resolve-outbox/{package_id}/package.json"))
+        if not matches:
+            raise HTTPException(status_code=404, detail="Pacchetto Resolve non trovato")
+        project_root = matches[0].parents[2]
+        return project_root, handoff_store.read(project_root, package_id)
+
+    @app.post("/api/curation/projects/{project_id}/resolve-handoffs")
+    async def prepare_resolve_handoff(project_id: str):
+        try:
+            await prepare_selected_timeline_media(project_id)
+            await prepare_generic_media(project_id)
+            payload = editing_resolve_payload(project_id)
+            payload["project_id"] = project_id
+            payload["bridge_session_id"] = active_bridge_session_id
+            package = handoff_store.prepare(handoff_project_root(project_id), payload)
+            return {key: value for key, value in package.items() if key != "payload"}
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post('/api/curation/projects/{project_id}/resolve-preparation')
+    async def start_resolve_preparation(project_id: str):
+        load_project(project_id)
+        session_id = active_bridge_session_id
+        async def prepare(report):
+            await prepare_selected_timeline_media(project_id, report)
+            report(65, 'Coperture pronte · controllo video finali')
+            await prepare_generic_media(project_id, report)
+            report(80, 'Media pronti · preparo sottotitoli, frasi e tempi')
+            payload = await asyncio.to_thread(editing_resolve_payload, project_id)
+            payload.update(project_id=project_id, bridge_session_id=session_id)
+            report(85, 'Salvo il pacchetto per il bridge')
+            package = await asyncio.to_thread(handoff_store.prepare, handoff_project_root(project_id), payload)
+            return {k:v for k,v in package.items() if k != 'payload'}
+        return prepare_jobs.start(project_id, prepare)
+
+    @app.get('/api/curation/resolve-preparation/{job_id}')
+    async def resolve_preparation_status(job_id: str):
+        try:
+            return prepare_jobs.status(job_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail='Preparazione non disponibile: il server è stato riavviato. Ripeti INVIA A RESOLVE.') from None
+
+    @app.get("/api/curation/resolve-handoffs/pending")
+    async def pending_resolve_handoffs(resolve_project: str = "", timeline_id: str = "", bridge_session_id: str = ""):
+        rows = handoff_store.pending(resolve_project=resolve_project, timeline_id=timeline_id,
+                                     bridge_session_id=bridge_session_id)
+        return {"packages": [{key: value for key, value in row.items() if key != "payload"} for row in rows]}
+
+    @app.get("/api/curation/resolve-handoffs/{package_id}")
+    async def get_resolve_handoff(package_id: str):
+        _, package = find_handoff(package_id)
+        return {key: value for key, value in package.items() if key != "payload"}
+
+    @app.post("/api/curation/resolve-handoffs/{package_id}/discard")
+    async def discard_resolve_handoff(package_id: str):
+        project_root, _ = find_handoff(package_id)
+        try:
+            return handoff_store.transition(project_root, package_id, "discarded")
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/curation/resolve-handoffs/{package_id}/received")
+    async def receive_resolve_handoff(package_id: str, request: ResolveBridgeSessionRequest) -> dict[str, Any]:
+        project_root, _ = find_handoff(package_id)
+        try:
+            return handoff_store.mark_received(
+                project_root, package_id, bridge_session_id=str(request.bridge_session_id or "")
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/curation/resolve-handoffs/{package_id}/apply")
+    async def apply_resolve_handoff(package_id: str, request: ResolveHandoffApplyRequest):
+        project_root, _ = find_handoff(package_id)
+        try:
+            return handoff_jobs.apply(project_root, package_id, request.destination_mode,
+                                      current_project=request.current_project,
+                                      current_timeline_id=request.current_timeline_id,
+                                      current_mark_in=request.current_mark_in)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=423, detail=str(exc)) from exc
+
+    @app.get("/api/curation/resolve-handoffs/{package_id}/status")
+    async def resolve_handoff_status(package_id: str):
+        _, package = find_handoff(package_id)
+        return {key: value for key, value in package.items() if key != "payload"}
+
+    @app.get('/api/curation/resolve-handoffs/{package_id}/diagnostics')
+    async def resolve_handoff_diagnostics(package_id: str):
+        _, package = find_handoff(package_id)
+        version=(Path(__file__).resolve().parents[2]/'RAMBLA_VERSION').read_text(encoding='utf-8').strip()
+        return {'version':version,'build':os.environ.get('RAMBLA_BUILD_TOKEN',''),
+                'bridge':await resolve_bridge_session_status(),
+                **{k:package.get(k) for k in ('package_id','project_id','status','created_at','updated_at','summary','destination_mode','destination_timeline_id','bridge_received_at','progress','error','diagnostics','result')}}
+
+    @app.get('/api/curation/projects/{project_id}/resolve-handoffs/latest')
+    async def latest_resolve_handoff(project_id: str):
+        load_project(project_id)
+        rows = [_read_json(p, {}) for p in (root/project_id/'resolve-outbox').glob('*/package.json')]
+        latest = max(rows, key=lambda row:row.get('created_at',''), default={})
+        return {k:v for k,v in latest.items() if k != 'payload'}
+
+    @app.get("/api/curation/projects/{project_id}/exports/broll-timeline.xml")
+    async def export_broll_timeline_xml(project_id: str):
+        from .broll_timeline_export import render_fcp7_xml
+        try:
+            await prepare_selected_timeline_media(project_id)
+            plan = broll_timeline_payload(project_id)
+            project = load_project(project_id)
+            body = render_fcp7_xml(plan, sequence_name=f"{project.name} - B-ROLL TIMELINE v1")
+            return PlainTextResponse(body, media_type="application/xml", headers={"Content-Disposition": f'attachment; filename="{project.name}-broll-timeline-v1.xml"'})
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/curation/projects/{project_id}/resolve/broll-timeline")
+    async def create_resolve_broll_timeline(project_id: str):
+        from .resolve_textplus_timeline import run_resolve_helper
+        try:
+            await prepare_selected_timeline_media(project_id)
+            return await asyncio.to_thread(run_resolve_helper, editing_resolve_payload(project_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except (OSError, RuntimeError) as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.post("/api/curation/projects/{project_id}/resolve/broll-timeline.dra")
+    async def export_resolve_broll_timeline_dra(project_id: str):
+        from .resolve_textplus_timeline import run_resolve_helper
+        target = run_root(project_id) / "exports" / f"{load_project(project_id).name}-broll-v{uuid.uuid4().hex[:6]}.dra"
+        try:
+            await prepare_selected_timeline_media(project_id)
+            payload = editing_resolve_payload(project_id)
+            payload["dra_output_path"] = str(target)
+            result = await asyncio.to_thread(run_resolve_helper, payload, timeout=300)
+            exported = Path(str(result.get("dra_path") or ""))
+            if not exported.is_file() or exported.stat().st_size <= 0:
+                raise RuntimeError("Resolve reported success but created no DRA package")
+            return FileResponse(exported, media_type="application/zip", filename=exported.name)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except (OSError, RuntimeError) as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.post("/api/curation/projects/{project_id}/resolve/combined-timeline")
+    async def create_resolve_combined_timeline(project_id: str):
+        from .resolve_textplus_timeline import run_resolve_helper
+        try:
+            return await asyncio.to_thread(run_resolve_helper, combined_resolve_payload(project_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except (OSError, RuntimeError) as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.post("/api/curation/projects/{project_id}/resolve/combined-timeline.drt")
+    async def export_resolve_combined_timeline(project_id: str):
+        from .resolve_textplus_timeline import run_resolve_helper
+        target = run_root(project_id) / "exports" / f"rambla-words-subs-{project_id}-{uuid.uuid4().hex[:8]}.drt"
+        try:
+            payload = combined_resolve_payload(project_id)
+            payload["drt_output_path"] = str(target)
+            result = await asyncio.to_thread(run_resolve_helper, payload)
+            exported = Path(str(result.get("drt_path") or target))
+            if not exported.is_file() or exported.stat().st_size <= 0:
+                raise RuntimeError("Resolve reported success but created no DRT file")
+            return FileResponse(
+                exported,
+                media_type="application/octet-stream",
+                filename=exported.name,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except (OSError, RuntimeError) as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.get("/api/curation/projects/{project_id}/beats/{beat_id}/split")
+    async def preview_beat_split(project_id: str, beat_id: str):
+        from .beat_split import split_preview
+        try: return split_preview(run_root(project_id), beat_id)
+        except ValueError as exc: raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/curation/projects/{project_id}/beats/{beat_id}/split")
+    async def apply_beat_split(project_id: str, beat_id: str, request: BeatSplitRequest):
+        from .beat_split import split_beat
+        run = run_root(project_id)
+        if _active_run_for(run): raise HTTPException(status_code=409, detail='Attendi la ricerca in corso')
+        try: return split_beat(run, beat_id, request.cut, request.revision)
+        except ValueError as exc: raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.put("/api/curation/projects/{project_id}/beats/{beat_id}/transcript")
     async def save_phrase_transcript(project_id: str, beat_id: str, request: PhraseCorrectionRequest):

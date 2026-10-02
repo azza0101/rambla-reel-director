@@ -655,6 +655,15 @@ def main() -> None:
         max_candidates=args.max_candidates,
         providers=set(args.providers or ()),
     )
+    from .geographic_context import beat_places
+    context_plan=json.loads((args.output_dir / 'imported-plan.json').read_text(encoding='utf-8'))
+    topic=str(context_plan.get('global_topic') or '') + ' ' + ' '.join(str(b.get('original_text') or '') for b in context_plan.get('visual_beats',[]))
+    engine.beat_context={}
+    preceding=''
+    for beat in context_plan.get('visual_beats',[]):
+        speech=str(beat.get('original_text') or '')
+        engine.beat_context[beat['id']]={'places':beat_places(speech,topic,preceding),'text':speech}
+        preceding += ' ' + speech
     engine.retrieval_output = args.output_dir
     engine.query_intents = {q: shot['description'] for beat in visual_plan['chunks'].values() for shot in beat['shots'] for q in shot['video_queries']}
     plan = run_online_from_artifacts(

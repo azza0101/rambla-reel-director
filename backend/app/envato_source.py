@@ -298,7 +298,12 @@ class EnvatoSource:
         if not clean or limit <= 0:
             return []
         try:
-            raw = self.discover(clean, max(limit * 2, limit))
+            variation_round = max(0, int(json.loads(os.environ.get("RAMBLA_SOCIAL_SEARCH_OPTIONS", "{}") or "{}").get("variation_round") or 0))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            variation_round = 0
+        discovery_limit = min(20, max(limit * 2, limit)) if not variation_round else 20
+        try:
+            raw = self.discover(clean, discovery_limit)
             rows = await raw if inspect.isawaitable(raw) else raw
         except Exception as exc:
             self.last_attempt = {
@@ -313,6 +318,9 @@ class EnvatoSource:
             return []
         if not isinstance(rows, list):
             rows = []
+        if variation_round and rows:
+            offset = ((variation_round - 1) * limit) % len(rows)
+            rows = rows[offset:] + rows[:offset]
         output: list[EnvatoRemoteCandidate] = []
         seen: set[str] = set()
         duration_hint = max(float(min_duration), min(float(max_duration), 20.0))

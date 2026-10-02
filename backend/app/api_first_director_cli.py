@@ -11,7 +11,7 @@ import sys
 import time
 from typing import Any
 
-from .api_first_director import DirectorProvider, build_director_prompt, director_schema, generate_director_plan
+from .api_first_director import DIRECTOR_SCHEMA_VERSION, DirectorProvider, build_director_prompt, director_schema, generate_director_plan
 from .atomic_io import write_json
 from .editorial_import import import_plan, normalized_chunks, transcript_package
 from .director_provider import FailoverDirectorProvider
@@ -39,6 +39,7 @@ def _request_signature(
     thinking_level: str,
 ) -> str:
     payload = {
+        "planner_contract": DIRECTOR_SCHEMA_VERSION,
         "provider": provider_name,
         "model": model,
         "thinking_level": thinking_level,
@@ -65,6 +66,14 @@ def _gemini_progress(event: str, data: dict[str, Any]) -> None:
     stamp = time.strftime("%H:%M:%S")
     provider = str(data.get("provider") or "ai").casefold()
     label = {"gemini": "Gemini", "groq": "Groq", "auto": "AUTO"}.get(provider, provider.upper())
+    progress = 12.0
+    if event == "waiting":
+        progress = min(82.0, 12.0 + 70.0 * float(data.get("elapsed_seconds") or 0) / max(1.0, float(data.get("timeout_seconds") or 1)))
+    elif event in {"retry", "transport_error", "quota_exhausted", "model_skipped", "model_exhausted"}:
+        progress = 18.0
+    print("RAMBLA_EVENT " + json.dumps({"stage":"visual_planning", "progress":progress,
+        "message": f"{label} · " + ("in attesa della risposta" if event=="waiting" else "richiesta piano in corso"),
+        "data": {"provider":provider, "event":event, **data}}, ensure_ascii=False), flush=True)
     if event == "request_start":
         print(
             f"[{stamp}] {label} · {data.get('model')} · attempt "

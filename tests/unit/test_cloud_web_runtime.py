@@ -98,6 +98,35 @@ def test_groq_verbose_json_normalizes_word_timestamps():
     assert transcript["source_duration_seconds"] == 1.0
 
 
+def test_groq_asr_multipart_form_encodes_repeated_timestamp_fields_as_bytes():
+    import httpx
+
+    from backend.app.cloud_analyze_cli import _groq_asr_form
+
+    request = httpx.Request(
+        "POST",
+        "https://api.groq.com/openai/v1/audio/transcriptions",
+        data=_groq_asr_form("whisper-large-v3-turbo", language="it"),
+        files={"file": ("voice.flac", b"audio", "audio/flac")},
+    )
+
+    body = b"".join(request.stream)
+    assert body.count(b'name="timestamp_granularities[]"') == 2
+    assert b"word" in body
+    assert b"segment" in body
+    assert b'name="language"' in body
+
+
+def test_cloud_analysis_provenance_matches_analysis_reuse_contract():
+    from backend.app.cloud_analyze_cli import _analysis_provenance
+    from backend.app.debug_run_cli import analysis_input_signature
+
+    video = Path(__file__)
+    guide = Path(__file__).parents[2] / "backend" / "app" / "cloud_analyze_cli.py"
+
+    assert _analysis_provenance(video, guide) == analysis_input_signature(video, guide)
+
+
 def test_cloud_worker_command_never_points_at_local_model_runtime(tmp_path, monkeypatch):
     from backend.app.debug_server import RunState, _command
 
@@ -127,6 +156,15 @@ def test_cloud_ui_offers_video_audio_text_and_disables_local_gpu(monkeypatch):
 
     assert 'id="choose">VIDEO<' in html
     assert 'id="chooseAudio">AUDIO<' in html
+    assert 'id="audioSourceFile" type="file" accept="audio/*,video/*"' in html
+    assert "VIDEO USATO COME AUDIO" in html
+    assert "encodeURIComponent(g?.signature||Date.now())" in html
+    assert "$('audioSource').load()" in html
+    assert "sorgente attiva per l'analisi" in html
+    assert 'id="originalGuide"' not in html
+    assert 'id="replaceGuide"' not in html
+    assert 'id="guideFile"' not in html
+    assert 'class="sourcePreview"' in html
     assert 'id="pasteText">TEXT<' in html
     assert 'id="sourceText"' in html
     assert "CLOUD · GPU FREE" in html

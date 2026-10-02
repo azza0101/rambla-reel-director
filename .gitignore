@@ -45,6 +45,29 @@ outputs/
 .curation-logs/
 .user-launch.json
 rambla-data/
+dist/
+build/
+.bridge-install-backups/
+.bridge-auto-update-test.json
+.runtime-temp/
+.test-*/
+.verification-*/
+.funnel-tests/
+.launcher-direct-check/
+.superpowers/
+.install_bridge_via_resolve.py
+.publish-windows-desktop.py
+.verify_resolve_media.py
+.ui-syntax-check.js
+.envato-ui-check.js
+.final-ui-check.js
+.probe_*.py
+.pexels-*.json
+.pexels-*.txt
+.recovery-*.json
+.resolve-original-*.json
+.timing-audit-*/
+REAL_SELECTED_BROLL_TEST.*
 
 # AI models and weights
 models/

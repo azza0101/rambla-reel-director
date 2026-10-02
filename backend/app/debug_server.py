@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import uuid
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -23,6 +24,7 @@ from .curation_ui import render_curation_page
 from .project_config import load_project_credentials,provider_status
 from .editorial_import import transcript_package, validate_import, import_plan, load_import, active_retrieval_root, contract_schema, parse_plan
 from .project_lock import project_stage_lock
+from .atomic_io import write_json
 
 DEFAULT_VIDEO = r"Z:\APP REEL TEST\VIDEO BASE\KURA_Finto etico_draft 1.mp4"
 DEFAULT_OUTPUT = r"Z:\APP REEL TEST\qwen-embedding-smoke\kura-finto-etico-smoke\run"
@@ -142,6 +144,11 @@ class ProjectSelectionRequest(BaseModel):
     no_broll: bool = False
 
 
+class WorkspaceSessionRequest(BaseModel):
+    project_id: str
+    active_chunk_id: str | None = None
+
+
 @dataclass(slots=True)
 class RunState:
     run_id: str
@@ -238,6 +245,20 @@ def _curation_payload(output_dir: Path) -> dict[str, Any]:
 
 def _selection_path(output_dir: Path) -> Path:
     return output_dir / "curation-selection.json"
+
+
+def _candidate_can_be_selected(item: Any) -> bool:
+    """A surfaced provider source is an editorial choice even before download.
+
+    Clip verification remains visible as a separate truth state; it must not
+    prevent the editor from saving a discovery-only Pexels/Envato/social card.
+    """
+    if getattr(item, "kind", None) != "video":
+        return True
+    if getattr(item, "preview_status", None) == "ready" and bool(getattr(item, "clip_verified", False)):
+        return True
+    source = str(getattr(item, "source_page", "") or "").strip()
+    return source.startswith(("https://", "http://"))
 
 
 def _write_selection(output_dir: Path, selections: dict[str, str]) -> None:
@@ -589,6 +610,39 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
             raise HTTPException(status_code=403, detail="source fuori dalle root autorizzate") from None
         return resolved
 
+    workspace_session_path = project_root.parent / "workspace-session.json"
+
+    def workspace_session() -> dict[str, Any]:
+        saved = _read_json(workspace_session_path, {})
+        project_id = str(saved.get("project_id") or "")
+        try:
+            if project_id:
+                projects.load(project_id)
+                return saved
+        except (FileNotFoundError, ValueError, OSError, json.JSONDecodeError):
+            pass
+        recent = projects.list_recent(limit=1)
+        return {
+            "project_id": str(recent[0].get("project_id") or "") if recent else None,
+            "active_chunk_id": None,
+            "updated_at": None,
+        }
+
+    @app.get("/api/curation/workspace-session")
+    async def get_workspace_session() -> dict[str, Any]:
+        return workspace_session()
+
+    @app.put("/api/curation/workspace-session")
+    async def put_workspace_session(request: WorkspaceSessionRequest) -> dict[str, Any]:
+        load_project(request.project_id)
+        payload = {
+            "project_id": request.project_id,
+            "active_chunk_id": request.active_chunk_id,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        write_json(workspace_session_path, payload)
+        return payload
+
     def project_run_root(project_id: str) -> Path:
         load_project(project_id)
         return project_root / project_id / "run"
@@ -603,7 +657,7 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
         run = project_run(project_id)
         return SelectionStore(
             active_retrieval_root(project_run_root(project_id)),
-            {asset_id: {"chunk_id": item.chunk_id,"selectable":item.kind!="video" or (item.preview_status=="ready" and item.clip_verified)} for asset_id, item in run.candidate_index.items()},
+            {asset_id: {"chunk_id": item.chunk_id,"selectable":_candidate_can_be_selected(item)} for asset_id, item in run.candidate_index.items()},
             [item.chunk_id for item in run.chunks],
         )
 
@@ -664,16 +718,38 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
         from .animation_context import build_animation_context
         from .transcript_corrections import needs_editorial_refresh
         flags = {'transcript_needs_plan':needs_editorial_refresh(project_run_root(project_id)), 'animation_context':build_animation_context({**editorial_plan,'global_topic':''} if editorial_plan and needs_editorial_refresh(project_run_root(project_id)) else editorial_plan), 'provider_status':provider_status(),'analysis_ready':analysis_ready,'editorial_plan_ready':editorial_plan is not None,'editorial_error':editorial_error}
+        def transcript_rows() -> list[dict[str, Any]]:
+            if not analysis_ready:
+                return []
+            rows = _read_json(project_run_root(project_id)/'semantic-chunks.json', [])
+            return [
+                {"id": str(row.get("id")), "start": row.get("start", row.get("start_seconds")),
+                 "end": row.get("end", row.get("end_seconds")), "text": row.get("text", ""),
+                 "action": "TRANSCRIPT", "covered_chunk_ids": [str(row.get("id"))],
+                 "assets": [], "retrieval_diagnostics": {}}
+                for row in rows if isinstance(row, dict) and row.get("id") is not None
+            ]
         existing = _read_json(project_run_root(project_id)/'visual-plan.json',{})
         if not editorial_plan and existing.get('schema_version')=='rambla-visual-plan-1':
-            return {**flags,'project_id':project_id,'chunks':[],'selection_plan':{'chunks':{}},'resolve_calls':0}
+            return {**flags,'project_id':project_id,'chunks':transcript_rows(),'selection_plan':{'chunks':{}},'resolve_calls':0}
         try:
             run = project_run(project_id)
         except HTTPException as exc:
             if exc.status_code == 404:
-                return {**flags, "project_id": project_id, "chunks": [], "selection_plan": {"chunks": {}}, "resolve_calls": 0}
+                return {**flags, "project_id": project_id, "chunks": transcript_rows(), "selection_plan": {"chunks": {}}, "resolve_calls": 0}
             raise
         saved = project_selection_store(project_id).load()
+        from .transcript_intents import planning_chunks_for_coverage
+        intent_segment_index = {
+            str(segment.get("id")): {
+                "id": str(segment.get("id")),
+                "source_chunk_id": str(segment.get("source_chunk_id")),
+                "source_word_start_index": int(segment.get("source_word_start_index", 0)),
+                "source_word_end_index": int(segment.get("source_word_end_index", 0)),
+            }
+            for segment in planning_chunks_for_coverage(project_run_root(project_id))
+            if isinstance(segment, dict) and segment.get("id") is not None
+        }
         retrieval_root = active_retrieval_root(project_run_root(project_id))
         imported_beats = {b['id']:b for b in editorial_plan['visual_beats']} if editorial_plan else {}
         for bid, beat in imported_beats.items():
@@ -698,6 +774,8 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
                 'video_attempts':[a for r in rows for a in r.get('search_attempts',[])],
                 'video_errors':[e for r in rows for e in r.get('errors',[])],
                 'video_rejections':[a for r in rows for a in r.get('rejected_candidates',[])]}
+        def research_round(cid):
+            return max((int(row.get('research_round') or 0) for row in video_rows if row.get('parent_beat_id')==cid),default=0)
         visual_artifact = _read_json(project_run_root(project_id) / "visual-plan.json", {"chunks": {}})
         visual_plans = visual_artifact.get("chunks", {}) if isinstance(visual_artifact, dict) else {}
         visual_plans.update(imported_beats)
@@ -722,6 +800,7 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
                 "start": imported_beats.get(row.chunk_id, {}).get('start'),
                 "end": imported_beats.get(row.chunk_id, {}).get('end'),
                 "covered_chunk_ids": imported_beats.get(row.chunk_id, {}).get('covered_chunk_ids', [row.chunk_id]),
+                "intent_segments": [intent_segment_index[covered_id] for covered_id in imported_beats.get(row.chunk_id, {}).get('covered_chunk_ids', [row.chunk_id]) if covered_id in intent_segment_index],
                 "action": imported_beats.get(row.chunk_id, {}).get('action'),
                 "visual_plan": visual_plans.get(row.chunk_id),
                 "error": any(item.preview_error for item in (*row.video_candidates, *row.image_candidates)),
@@ -729,13 +808,14 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
                 "stock_reason":media_diagnostics(row.chunk_id)['stock']['message'],
                 "image_reason": None if row.image_candidates else media_diagnostics(row.chunk_id)['image']['message'],
                 "retrieval_diagnostics":media_diagnostics(row.chunk_id),
+                "research_round":research_round(row.chunk_id),
                 "assets": [
                 {"asset_id": item.asset_id, "chunk_id": item.chunk_id, "kind": item.kind,
                  "provider": item.provider, "title": item.title, "rights_state": item.rights_state,
                  "orientation": item.orientation, "source_page":item.source_page, "preview_status":item.preview_status, "license_name":item.license_name,"license_url":item.license_url,"attribution":item.attribution,"shot_id":item.shot_id,"matched_query":item.matched_query,"score":item.score,"source_url":item.source_page,
                  "source_start_seconds":item.source_start_seconds,"source_end_seconds":item.source_end_seconds,
                  "quality_state":item.quality_state,"quality_reasons":list(item.quality_reasons),
-                 "selectable":item.kind!="video" or (item.preview_status=="ready" and item.clip_verified),
+                 "selectable":_candidate_can_be_selected(item),
                  "download_url": f"/api/curation/projects/{project_id}/media/{item.asset_id}/download" if item.kind=="video" and item.preview_status=="ready" and item.clip_verified and item.preview_path and Path(item.preview_path).is_file() else None,
                  "preview_url": item.preview_url or f"/api/curation/projects/{project_id}/media/{item.asset_id}/preview",
                  "poster_url": f"/api/curation/projects/{project_id}/media/{item.asset_id}/poster"}
@@ -764,7 +844,9 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
 
     @app.get("/api/curation/projects/{project_id}")
     async def get_project(project_id: str) -> dict[str, Any]:
-        return _project_payload(load_project(project_id))
+        payload = _project_payload(load_project(project_id))
+        payload["audio_input_kind"] = projects.source_input(project_id).get("input_kind")
+        return payload
 
     @app.post("/api/curation/projects/{project_id}/source/local")
     async def register_project_source(project_id: str, request: LocalSourceRequest) -> dict[str, Any]:
@@ -795,7 +877,9 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
             raise HTTPException(status_code=413, detail=str(exc)) from exc
         except (RuntimeError, subprocess.CalledProcessError) as exc:
             raise HTTPException(status_code=422, detail=f"audio source preparation failed: {exc}") from exc
-        return _project_payload(project)
+        payload = _project_payload(project)
+        payload["audio_input_kind"] = projects.source_input(project_id).get("input_kind")
+        return payload
 
     @app.put("/api/curation/projects/{project_id}/source/text")
     async def upload_text_source(project_id: str, request: TextSourceRequest) -> dict[str, Any]:
@@ -1071,6 +1155,7 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
             "runtime_mode": os.environ.get("RAMBLA_RUNTIME_MODE", "local"),
             "local_gpu_required": not uses_api_runtime(),
             "build_token": os.environ.get("RAMBLA_BUILD_TOKEN", "development"),
+            "server_pid": os.getpid(),
             "resolve_calls": 0,
         }
 

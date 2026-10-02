@@ -88,7 +88,7 @@ def _segment_words(segment: dict[str, Any]) -> list[dict[str, Any]]:
                 start, end = float(row["start"]), float(row["end"])
             except (KeyError, TypeError, ValueError):
                 continue
-            if end <= start:
+            if end < start:
                 continue
             output.append({"start": start, "end": end, "text": text})
         if output:
@@ -107,9 +107,30 @@ def _segment_words(segment: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _normalize_groq(payload: dict[str, Any], *, fps: int = 25) -> dict[str, Any]:
-    raw_segments = payload.get("segments")
+    raw_segments = [s for s in (payload.get("segments") or []) if isinstance(s, dict)]
     segments: list[dict[str, Any]] = []
-    if isinstance(raw_segments, list):
+    # verbose_json returns word timestamps at the top level, not nested in
+    # segments. Never replace measured word times with equal subdivisions.
+    measured = _segment_words({'words': payload['words']}) if payload.get('words') else []
+    if measured:
+        for index, word in enumerate(measured):
+            if index:
+                word['start'] = max(word['start'], measured[index-1]['start'] + 1 / fps)
+            word['end'] = max(word['end'], word['start'] + 1 / fps)
+        for previous, current in zip(measured, measured[1:]):
+            previous['end'] = min(previous['end'], current['start'])
+        remaining = list(measured)
+        for raw in raw_segments or []:
+            end = float(raw.get('end') or 0)
+            words = [w for w in remaining if float(w['start']) < end]
+            remaining = [w for w in remaining if float(w['start']) >= end]
+            if words:
+                segments.append({'start': words[0]['start'], 'end': words[-1]['end'],
+                                 'text': ' '.join(w['text'] for w in words), 'words': words})
+        if remaining:
+            segments.append({'start': remaining[0]['start'], 'end': remaining[-1]['end'],
+                             'text': ' '.join(w['text'] for w in remaining), 'words': remaining})
+    elif isinstance(raw_segments, list):
         for raw in raw_segments:
             if not isinstance(raw, dict):
                 continue
@@ -135,8 +156,8 @@ def _normalize_groq(payload: dict[str, Any], *, fps: int = 25) -> dict[str, Any]
         "timeline_fps": int(fps),
         "segments": segments,
         "text": " ".join(row["text"] for row in segments),
-        "source_duration_seconds": duration,
-        "timing_basis": "cloud_asr_word_timestamps",
+        "source_duration_seconds": float(payload.get('duration') or duration),
+        "timing_basis": "cloud_asr_word_timestamps" if measured or (raw_segments and all(s.get('words') for s in raw_segments)) else "estimated_segment_word_timing",
     }
 
 
@@ -149,6 +170,24 @@ def _compressed_audio(source: Path, output: Path) -> Path:
     return target
 
 
+def _groq_asr_form(model: str, *, language: str = "") -> dict[str, str | list[str]]:
+    form: dict[str, str | list[str]] = {
+        "model": model,
+        "response_format": "verbose_json",
+        "temperature": "0",
+        "timestamp_granularities[]": ["word", "segment"],
+    }
+    if language:
+        form["language"] = language
+    return form
+
+
+def _analysis_provenance(video: Path, guide_audio: Path | None) -> dict[str, Any]:
+    from .debug_run_cli import analysis_input_signature
+
+    return analysis_input_signature(video, guide_audio or video)
+
+
 def transcribe_groq(source: Path, output: Path) -> dict[str, Any]:
     api_key = os.environ.get("GROQ_API_KEY", "").strip()
     if not api_key:
@@ -157,16 +196,8 @@ def transcribe_groq(source: Path, output: Path) -> dict[str, Any]:
     if audio.stat().st_size > 95 * 1024 * 1024:
         raise RuntimeError("Audio exceeds the 100 MB Groq transcription limit after compression; split the source first")
     model = os.environ.get("RAMBLA_CLOUD_ASR_MODEL", DEFAULT_GROQ_ASR_MODEL).strip() or DEFAULT_GROQ_ASR_MODEL
-    data: list[tuple[str, str]] = [
-        ("model", model),
-        ("response_format", "verbose_json"),
-        ("temperature", "0"),
-        ("timestamp_granularities[]", "word"),
-        ("timestamp_granularities[]", "segment"),
-    ]
     language = os.environ.get("RAMBLA_ASR_LANGUAGE", "").strip()
-    if language:
-        data.append(("language", language))
+    data = _groq_asr_form(model, language=language)
     started = time.perf_counter()
     with audio.open("rb") as handle:
         files = {"file": (audio.name, handle, "audio/flac")}
@@ -230,11 +261,7 @@ def run_cloud_analysis(
     outline, chunks = build_short_outline(transcript)
     write_json(output / "semantic-beats.json", outline)
     write_json(output / "semantic-chunks.json", chunks)
-    write_json(output / "run-input.json", {
-        "source_kind": kind,
-        "source_video": str(video.resolve()),
-        "guide_audio": str(guide_audio.resolve()) if guide_audio else None,
-    })
+    write_json(output / "run-input.json", _analysis_provenance(video, guide_audio))
     write_json(output / "analysis-signature.json", {"analysis_signature": analysis_signature})
     _event("semantic_chunking", 100, "Semantic chunks ready", chunks=len(chunks))
     _event("analysis", 100, "Cloud analysis complete", chunks=len(chunks), local_gpu=False)
