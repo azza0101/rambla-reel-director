@@ -153,8 +153,22 @@ def test_selective_apply_forces_active_timeline_and_bridge_exposes_scope_control
 
     from pathlib import Path
     source=Path("tools/resolve_bridge/standalone_bridge.py").read_text(encoding="utf-8")
-    assert "SOLO TESTI" in source and "SOLO SUBS" in source
-    assert "RAMBLA_BRIDGE_APPLY_SCOPE" in source
+    assert "INVIA TUTTO" in source
+    assert "SOLO SUBS" in source and "SOLO FRASI" in source and "SOLO MEDIA" in source
+
+
+def test_media_only_apply_forces_active_timeline():
+    calls=[]
+    responses={
+        "/api/curation/resolve-bridge/status":{"connected":True,"project":"P","timeline":"T","timeline_id":"tl-9","mark_in":99},
+        "/api/curation/resolve-handoffs/pkg/apply":{"status":"applying"},
+    }
+    def request(path,method="GET",payload=None): calls.append((path,method,payload)); return responses[path]
+    client=BridgeClient(request_json=request,session_id="s")
+    client.current_package={"package_id":"pkg","bridge_received_at":"now"}
+    client.apply("new", "media")
+    assert calls[-1][2]["destination_mode"] == "active"
+    assert calls[-1][2]["apply_scope"] == "media"
 
 
 def test_apply_is_gated_until_bridge_received_at_exists():
