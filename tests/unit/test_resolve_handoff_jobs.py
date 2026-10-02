@@ -1,4 +1,4 @@
-import shutil, time, uuid
+import shutil, time, uuid, threading
 from pathlib import Path
 
 from backend.app.resolve_handoff import ResolveHandoffStore
@@ -54,6 +54,38 @@ def test_completed_package_can_be_applied_again_without_repreparing_handoff():
         assert result["status"] == "completed" and result["application_count"] == 2
         assert [row["apply_scope"] for row in calls] == ["all", "media"]
     finally: shutil.rmtree(root, ignore_errors=True)
+
+
+def test_running_apply_can_be_cancelled_cooperatively_and_package_remains_reusable():
+    root = Path('.test-resolve-jobs') / uuid.uuid4().hex
+    root.mkdir(parents=True)
+    try:
+        store=ResolveHandoffStore(root.parent)
+        package=store.prepare(root,{"project_id":"p","source_project_name":"P","source_timeline_id":"T"})
+        started=threading.Event()
+        def runner(payload):
+            started.set()
+            cancel=Path(payload["handoff_cancel_path"])
+            for _ in range(200):
+                if cancel.is_file():
+                    raise RuntimeError("cancelled by user")
+                time.sleep(.005)
+            return {}
+        jobs=ResolveHandoffJobs(store,runner)
+        jobs.apply(root,package["package_id"],"active",current_project="P",current_timeline_id="T")
+        assert started.wait(1)
+        cancelling=jobs.cancel(root,package["package_id"])
+        assert cancelling["status"]=="applying"
+        assert cancelling["cancel_requested"] is True
+        for _ in range(200):
+            row=store.read(root,package["package_id"])
+            if row["status"]!="applying": break
+            time.sleep(.005)
+        assert row["status"]=="cancelled"
+        assert "ripristinata" in row["progress"]["message"]
+        assert jobs.apply(root,package["package_id"],"active","titles",current_project="P",current_timeline_id="T")["status"]=="applying"
+    finally:
+        shutil.rmtree(root,ignore_errors=True)
 
 
 def test_active_destination_uses_the_timeline_focused_at_apply_time():
