@@ -62,7 +62,7 @@ def default_destination() -> str:
 
 def default_apply_scope() -> str:
     value = os.environ.get("RAMBLA_BRIDGE_APPLY_SCOPE", "all")
-    return value if value in {"all", "titles", "subtitles"} else "all"
+    return value if value in {"all", "titles", "subtitles", "media"} else "all"
 
 
 def window_geometry(screen_width: int, screen_height: int, *, requested_height: int, package_visible: bool) -> str:
