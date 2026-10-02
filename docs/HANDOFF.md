@@ -1,6 +1,6 @@
 # RMBL B ROLL — handoff tecnico
 
-Aggiornato: 2026-10-02  Versione: `v0041`  Branch di consegna: `feat/api-first-text-first-v1`
+Aggiornato: 2026-10-02  Versione: `v0042`  Branch di consegna: `feat/api-first-text-first-v1`
 
 ## Avvio rapido
 
@@ -133,3 +133,14 @@ I test focalizzati sulla disposizione dei comandi di modifica testo, UI, tema e 
 - Se il dizionario marker dopo l'operazione è già identico allo snapshot iniziale, RMBL non esegue alcuna chiamata `DeleteMarkerAtFrame` / `AddMarker`.
 - Il restore via API viene usato solo come fallback quando Resolve ha realmente modificato i marker; dopo il restore viene verificata nuovamente l'equivalenza completa di frame e metadati.
 - Il risultato del job espone `markers_restored` per distinguere il caso normale (nessun rewrite) dal fallback.
+
+
+### Bridge riutilizzabile e SOLO MEDIA v0042
+
+- Il pacchetto ricevuto dal Bridge non viene più consumato dopo il primo Apply: dopo un invio completato resta disponibile per ulteriori invii selettivi.
+- L'interfaccia usa un pulsante grande **INVIA TUTTO** e, sotto, tre azioni compatte orizzontali: **SOLO SUBS**, **SOLO FRASI**, **SOLO MEDIA**.
+- **SOLO FRASI** e **SOLO SUBS** mantengono la logica non distruttiva già introdotta: i precedenti elementi RMBL vengono disattivati e le nuove versioni vengono create su tracce superiori dedicate.
+- **SOLO MEDIA** non tocca frasi, sottotitoli o clip utente. Rimuove soltanto i precedenti B-roll identificati come RMBL (il backup BCK resta la rete di sicurezza) e riusa preferibilmente le stesse tracce media, così il nuovo B-roll non sale sopra ai Text+.
+- Se non esistono ancora tracce media RMBL riutilizzabili, vengono create soltanto le nuove video track necessarie.
+- Gli handoff completati possono rientrare nello stato `applying`; `application_count` registra quante applicazioni sono state eseguite dallo stesso pacchetto.
+- I pacchetti completati della stessa sessione Bridge restano discoverable anche dopo l'auto-restart del Bridge.
