@@ -221,23 +221,22 @@ def _is_rambla_broll_item(item: Any) -> bool:
     return "RAMBLA" in keywords.upper() and str(item.GetClipColor() or "") in {"Purple", "Beige"}
 
 
-def mute_prior_rambla_broll(timeline: Any) -> tuple[int, list[int]]:
-    """Disable prior RMBL B-roll and return reusable video track indices."""
-    muted = 0
+def remove_prior_rambla_broll(timeline: Any) -> tuple[int, list[int]]:
+    """Remove only prior RMBL B-roll and return the tracks that can be reused."""
+    remove: list[Any] = []
     tracks: list[int] = []
     for track in range(1, int(timeline.GetTrackCount("video") or 0) + 1):
         found = False
         for item in timeline.GetItemListInTrack("video", track) or []:
             if not _is_rambla_broll_item(item):
                 continue
-            setter = getattr(item, "SetClipEnabled", None)
-            if setter is None or setter(False) is False:
-                raise RuntimeError("Resolve could not mute a previous RMBL B-roll clip")
-            muted += 1
+            remove.append(item)
             found = True
         if found:
             tracks.append(track)
-    return muted, tracks
+    if remove and timeline.DeleteClips(remove, False) is False:
+        raise RuntimeError("Resolve could not remove previous RMBL B-roll clips")
+    return len(remove), tracks
 
 
 def remap_broll_for_selective_refresh(timeline: Any, clips: list[dict[str, Any]], reusable_tracks: list[int]) -> list[dict[str, Any]]:
@@ -923,7 +922,7 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
     subtitle_target_track = None
     muted_title_count = 0
     muted_subtitle_count = 0
-    muted_broll_count = 0
+    removed_broll_count = 0
     reusable_broll_tracks: list[int] = []
     markers_restored = False
     original_folder = media_pool.GetCurrentFolder()
@@ -963,7 +962,7 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
             elif apply_scope == "subtitles":
                 muted_subtitle_count = mute_prior_rambla_subtitles(generated)
             elif apply_scope == "media":
-                muted_broll_count, reusable_broll_tracks = mute_prior_rambla_broll(generated)
+                removed_broll_count, reusable_broll_tracks = remove_prior_rambla_broll(generated)
             protected_items = snapshot_existing_timeline_items(generated)
             if include_broll and apply_scope == "media":
                 prepared_broll_clips = remap_broll_for_selective_refresh(
@@ -1088,7 +1087,7 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
             "apply_scope": apply_scope,
             "muted_title_count": muted_title_count,
             "muted_subtitle_count": muted_subtitle_count,
-            "muted_broll_count": muted_broll_count,
+            "removed_broll_count": removed_broll_count,
             "markers_restored": markers_restored,
             "backup_timeline_name": str(backup.GetName()) if backup else None,
         }
