@@ -77,6 +77,8 @@ from backend.app.resolve_textplus_timeline import (
     remove_prior_rambla_broll,
     remap_broll_for_selective_refresh,
     next_rambla_track_name,
+    raise_if_cancelled,
+    ResolveApplyCancelled,
 )
 
 
@@ -298,6 +300,31 @@ def test_conformed_broll_keeps_equal_duration_handles_when_source_allows(monkeyp
         assert rows[0]["handle_before_frames"] == 90
         assert rows[0]["handle_after_frames"] == 90
         assert commands[0][commands[0].index("-frames:v") + 1] == "270"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_conformed_broll_keeps_the_selected_preview_as_the_visible_anchor(monkeypatch):
+    root = Path.cwd() / (".test-broll-preview-anchor-" + uuid.uuid4().hex)
+    root.mkdir()
+    source = root / "source.mp4"
+    source.write_bytes(b"source")
+    try:
+        monkeypatch.setattr("backend.app.resolve_textplus_timeline.probe_preview", lambda _: {"duration":30.0})
+        def run(command, **kwargs):
+            Path(command[-1]).write_bytes(b"conformed")
+            return SimpleNamespace(returncode=0)
+        monkeypatch.setattr("backend.app.resolve_textplus_timeline.subprocess.run", run)
+
+        row = conform_broll_media([{
+            "media_path":str(source), "record_start_frame":0, "record_end_frame":60,
+            "source_start_frame":360, "source_end_frame":420,
+        }], 30)[0]
+
+        assert row["selected_source_start_frame_absolute"] == 360
+        assert row["selected_source_end_frame_absolute"] == 420
+        assert row["conformed_cut_start_frame_absolute"] + row["source_start_frame"] == 360
+        assert row["source_end_frame"] - row["source_start_frame"] == 60
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -870,3 +897,13 @@ def test_progress_file_lock_cannot_abort_timeline_build(monkeypatch):
     def locked(*args):raise PermissionError('file in use')
     monkeypatch.setattr(atomic_io,'write_json',locked)
     report_handoff_progress({'handoff_progress_path':'test-progress.json'},'broll',82,'Clip 5/13')
+
+
+def test_resolve_helper_cancellation_checkpoint_raises_when_cancel_file_exists(tmp_path):
+    cancel = tmp_path / "cancel.request"
+    cancel.write_text("cancel\n", encoding="utf-8")
+    with pytest.raises(ResolveApplyCancelled, match="annullata"):
+        raise_if_cancelled({"handoff_cancel_path": str(cancel)})
+
+    cancel.unlink()
+    raise_if_cancelled({"handoff_cancel_path": str(cancel)})
