@@ -48,6 +48,34 @@ def test_selected_clips_start_with_their_phrase_and_use_separate_tracks():
     shutil.rmtree(tmp_path)
 
 
+def test_selected_full_media_starts_at_the_exact_preview_window_not_at_source_zero():
+    from backend.app.broll_timeline_export import build_broll_timeline_plan
+
+    tmp_path = _workspace()
+    media = tmp_path / "full-source.mp4"
+    media.write_bytes(b"x")
+    selection = {"chunks": {"b1": {"selected_assets": [
+        {"asset_id": "windowed", "order": 0, "track": "V2"},
+    ]}}}
+    assets = {
+        "windowed": {
+            "media_path": str(media),
+            "duration_seconds": 30.0,
+            "source_start_seconds": 12.0,
+            "source_end_seconds": 15.5,
+        }
+    }
+
+    result = build_broll_timeline_plan(_plan(), selection, assets, fps=25)
+    clip = result["clips"][0]
+
+    assert clip["source_start_frame"] == 300
+    assert clip["source_end_frame"] == 350
+    assert clip["preview_source_start_seconds"] == 12.0
+    assert clip["preview_source_end_seconds"] == 15.5
+    shutil.rmtree(tmp_path)
+
+
 def test_unselected_beats_are_allowed_and_unavailable_selected_media_is_reported():
     from backend.app.broll_timeline_export import build_broll_timeline_plan
 
