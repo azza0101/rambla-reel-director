@@ -35,6 +35,8 @@ class ResolveHandoffJobs:
             if self._active:
                 raise RuntimeError("Another Resolve apply is already running")
             self._active = package_id
+            cancel_path = Path(project_root) / "resolve-outbox" / package_id / "cancel.request"
+            cancel_path.unlink(missing_ok=True)
             started = self.store.transition(
                 project_root, package_id, "applying",
                 application_count=int(package.get("application_count") or 0) + 1,
@@ -47,9 +49,26 @@ class ResolveHandoffJobs:
             self._executor.submit(self._run, Path(project_root), package_id, destination_mode, apply_scope)
             return started
 
+    def cancel(self, project_root: Path, package_id: str) -> dict[str, Any]:
+        project_root = Path(project_root)
+        with self._lock:
+            package = self.store.read(project_root, package_id)
+            if package.get("status") != "applying":
+                return package
+            cancel_path = project_root / "resolve-outbox" / package_id / "cancel.request"
+            cancel_path.parent.mkdir(parents=True, exist_ok=True)
+            cancel_path.write_text("cancel\n", encoding="utf-8")
+            percent = int((package.get("progress") or {}).get("percent") or 0)
+            return self.store.transition(
+                project_root, package_id, "applying",
+                cancel_requested=True,
+                progress={"phase":"cancelling","percent":percent,"message":"Interruzione richiesta · ripristino sicuro in corso"},
+            )
+
     def _run(self, project_root: Path, package_id: str, destination_mode: str, apply_scope: str) -> None:
         stop=threading.Event()
         progress_path=project_root / "resolve-outbox" / package_id / "progress.json"
+        cancel_path=project_root / "resolve-outbox" / package_id / "cancel.request"
         watcher=None
         started_at = time.time()
         phases = []
@@ -57,7 +76,10 @@ class ResolveHandoffJobs:
         try:
             package = self.store.read(project_root, package_id)
             payload = dict(package["payload"])
-            payload.update(destination_mode=destination_mode, apply_scope=apply_scope, package_id=package_id, handoff_progress_path=str(progress_path))
+            payload.update(
+                destination_mode=destination_mode, apply_scope=apply_scope, package_id=package_id,
+                handoff_progress_path=str(progress_path), handoff_cancel_path=str(cancel_path),
+            )
             if destination_mode == "active":
                 payload["source_timeline_id"] = str(package.get("destination_timeline_id") or "")
                 if package.get("destination_mark_in") is not None:
@@ -73,7 +95,9 @@ class ResolveHandoffJobs:
                         if marker!=last:
                             last_progress = progress
                             phases.append({**progress, 'elapsed_seconds': round(time.time()-started_at, 1)})
-                            self.store.transition(project_root,package_id,"applying",progress=progress); last=marker
+                            if not cancel_path.is_file():
+                                self.store.transition(project_root,package_id,"applying",progress=progress)
+                            last=marker
                     except (OSError,json.JSONDecodeError): pass
             watcher=threading.Thread(target=watch_progress,daemon=True); watcher.start()
             result = self.runner(payload)
@@ -89,12 +113,21 @@ class ResolveHandoffJobs:
         except Exception as exc:
             stop.set()
             if watcher: watcher.join(timeout=1)
-            self.store.transition(project_root, package_id, "failed", error=str(exc),
-                                  diagnostics={'elapsed_seconds':round(time.time()-started_at,1), 'last_progress':last_progress, 'phases':phases, 'traceback':traceback.format_exc(), 'helper_traceback':getattr(exc,'helper_traceback',None)},
-                                  progress={"phase":"failed", "percent":last_progress.get('percent',0), "message":str(exc)})
+            cancelled = cancel_path.is_file()
+            if cancelled:
+                self.store.transition(
+                    project_root, package_id, "cancelled", error=None, cancel_requested=False,
+                    diagnostics={'elapsed_seconds':round(time.time()-started_at,1), 'last_progress':last_progress, 'phases':phases, 'traceback':traceback.format_exc(), 'helper_traceback':getattr(exc,'helper_traceback',None)},
+                    progress={"phase":"cancelled", "percent":last_progress.get('percent',0), "message":"Operazione interrotta · timeline ripristinata"},
+                )
+            else:
+                self.store.transition(project_root, package_id, "failed", error=str(exc),
+                                      diagnostics={'elapsed_seconds':round(time.time()-started_at,1), 'last_progress':last_progress, 'phases':phases, 'traceback':traceback.format_exc(), 'helper_traceback':getattr(exc,'helper_traceback',None)},
+                                      progress={"phase":"failed", "percent":last_progress.get('percent',0), "message":str(exc)})
         finally:
             stop.set()
             if watcher: watcher.join(timeout=.2)
+            cancel_path.unlink(missing_ok=True)
             # Keep the last helper checkpoint for diagnosing partial TEMP builds.
             with self._lock:
                 if self._active == package_id: self._active = None
