@@ -67,6 +67,30 @@ def test_active_destination_uses_the_timeline_focused_at_apply_time():
     finally: shutil.rmtree(root, ignore_errors=True)
 
 
+def test_selective_apply_scope_reaches_resolve_runner_and_requires_active_destination():
+    root=Path('.test-resolve-jobs')/uuid.uuid4().hex; root.mkdir(parents=True)
+    try:
+        store=ResolveHandoffStore(root.parent)
+        package=store.prepare(root,{"project_id":"p","source_project_name":"P","source_timeline_id":"T"})
+        calls=[]
+        jobs=ResolveHandoffJobs(store,lambda payload:calls.append(payload) or {})
+        try:
+            jobs.apply(root,package["package_id"],"new","titles",current_project="P",current_timeline_id="T")
+        except ValueError as exc:
+            assert "active timeline" in str(exc)
+        else:
+            raise AssertionError("selective apply must reject new destination")
+        jobs.apply(root,package["package_id"],"active","titles",current_project="P",current_timeline_id="T")
+        for _ in range(100):
+            row=store.read(root,package["package_id"])
+            if row["status"] != "applying": break
+            time.sleep(.01)
+        assert row["status"] == "completed"
+        assert calls[0]["apply_scope"] == "titles"
+        assert row["apply_scope"] == "titles"
+    finally: shutil.rmtree(root,ignore_errors=True)
+
+
 def test_new_destination_can_be_applied_while_a_generated_timeline_is_open():
     root=Path('.test-resolve-jobs')/uuid.uuid4().hex; root.mkdir(parents=True)
     try:

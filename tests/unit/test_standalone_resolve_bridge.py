@@ -133,9 +133,28 @@ def test_apply_requires_received_package_and_uses_current_timeline():
     def request(path,method="GET",payload=None): calls.append((path,method,payload)); return responses[path]
     client=BridgeClient(request_json=request,session_id="s")
     client.current_package={"package_id":"pkg","bridge_received_at":"now"}
-    row=client.apply("active")
+    row=client.apply("active", "titles")
     assert row["status"] == "applying"
-    assert calls[-1][2] == {"destination_mode":"active","current_project":"P","current_timeline_id":"tl-2","current_mark_in":4321}
+    assert calls[-1][2] == {"destination_mode":"active","apply_scope":"titles","current_project":"P","current_timeline_id":"tl-2","current_mark_in":4321}
+
+
+def test_selective_apply_forces_active_timeline_and_bridge_exposes_scope_controls():
+    calls=[]
+    responses={
+        "/api/curation/resolve-bridge/status":{"connected":True,"project":"P","timeline":"T","timeline_id":"tl-2","mark_in":12},
+        "/api/curation/resolve-handoffs/pkg/apply":{"status":"applying"},
+    }
+    def request(path,method="GET",payload=None): calls.append((path,method,payload)); return responses[path]
+    client=BridgeClient(request_json=request,session_id="s")
+    client.current_package={"package_id":"pkg","bridge_received_at":"now"}
+    client.apply("new", "subtitles")
+    assert calls[-1][2]["destination_mode"] == "active"
+    assert calls[-1][2]["apply_scope"] == "subtitles"
+
+    from pathlib import Path
+    source=Path("tools/resolve_bridge/standalone_bridge.py").read_text(encoding="utf-8")
+    assert "SOLO TESTI" in source and "SOLO SUBS" in source
+    assert "RAMBLA_BRIDGE_APPLY_SCOPE" in source
 
 
 def test_apply_is_gated_until_bridge_received_at_exists():

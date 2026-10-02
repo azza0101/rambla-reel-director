@@ -72,6 +72,9 @@ from backend.app.resolve_textplus_timeline import (
     active_track_layout,
     create_active_backup,
     conform_broll_media,
+    mute_prior_rambla_titles,
+    mute_prior_rambla_subtitles,
+    next_rambla_track_name,
 )
 
 
@@ -91,6 +94,50 @@ def test_textplus_plan_stores_wrapped_copy_used_for_resolve_verification():
         target_fps=30,
     )
     assert plan["segments"][0]["text"] == "turismo\nsostenibile"
+
+
+def test_selective_title_refresh_mutes_prior_rmbl_titles_only():
+    class Item:
+        def __init__(self, name, color, fusion):
+            self.name,self.color,self.fusion=name,color,fusion
+            self.enabled=True
+        def GetFusionCompCount(self): return self.fusion
+        def GetName(self): return self.name
+        def GetClipColor(self): return self.color
+        def SetClipEnabled(self,value): self.enabled=bool(value); return True
+    rmbl=Item("KURA_paper_title_v8","Yellow",1)
+    user=Item("My title","Yellow",1)
+    class Timeline:
+        def GetTrackCount(self,kind): return 1 if kind=="video" else 0
+        def GetItemListInTrack(self,kind,track): return [rmbl,user]
+    assert mute_prior_rambla_titles(Timeline(),title_name="KURA_paper_title_v8")==1
+    assert rmbl.enabled is False and user.enabled is True
+
+
+def test_selective_subtitle_refresh_mutes_only_rmbl_sources():
+    class Media:
+        def __init__(self,name): self.name=name
+        def GetName(self): return self.name
+        def GetClipProperty(self,key): return ""
+    class Item:
+        def __init__(self,media): self.media=media; self.enabled=True
+        def GetMediaPoolItem(self): return self.media
+        def SetClipEnabled(self,value): self.enabled=bool(value); return True
+    rmbl=Item(Media("RAMBLA · 20 sottotitoli nativi · sorgente interna"))
+    user=Item(Media("Client subtitles"))
+    class Timeline:
+        def GetTrackCount(self,kind): return 1 if kind=="subtitle" else 0
+        def GetTrackName(self,kind,track): return "Subtitle 1"
+        def GetItemListInTrack(self,kind,track): return [rmbl,user]
+    assert mute_prior_rambla_subtitles(Timeline())==1
+    assert rmbl.enabled is False and user.enabled is True
+
+
+def test_rambla_track_versions_increment_without_touching_other_track_names():
+    class Timeline:
+        def GetTrackCount(self,kind): return 3
+        def GetTrackName(self,kind,track): return ["V1","RMBL TEXT v1","RMBL TEXT v3"][track-1]
+    assert next_rambla_track_name(Timeline(),"video","RMBL TEXT")=="RMBL TEXT v4"
 
 
 def test_active_rambla_timeline_is_rebuilt_after_backup_instead_of_duplicating_generated_items():

@@ -1,6 +1,6 @@
 # RMBL B ROLL — handoff tecnico
 
-Aggiornato: 2026-10-02  Versione: `v0039`  Branch di consegna: `feat/api-first-text-first-v1`
+Aggiornato: 2026-10-02  Versione: `v0040`  Branch di consegna: `feat/api-first-text-first-v1`
 
 ## Avvio rapido
 
@@ -115,3 +115,13 @@ I test focalizzati sulla disposizione dei comandi di modifica testo, UI, tema e 
 - Le parole non vengono mai spezzate a metà; una singola parola oltre 11 caratteri resta intera.
 - Lo stesso testo wrappato viene usato anche nella verifica finale di Resolve, evitando falsi mismatch.
 - Aggiunti test per wrapping, parole lunghe e integrazione nel piano Text+.
+
+
+### Aggiornamento selettivo Resolve v0040
+
+- Il bridge espone tre modalità di Apply: **TUTTO**, **SOLO TESTI** e **SOLO SUBS**.
+- Le modalità selettive lavorano esclusivamente sulla timeline attiva e creano comunque il backup numerato in `BCK` prima di ogni mutazione.
+- **SOLO TESTI** non prepara, conforma o reinserisce alcun B-roll: disabilita i precedenti Text+ RMBL e crea la nuova versione su una video track superiore, nominata `RMBL TEXT vN`.
+- **SOLO SUBS** non tocca media/B-roll: disabilita i precedenti Subtitle item riconosciuti come RMBL e crea una nuova Subtitle track `RMBL SUBS vN`.
+- L'inserimento selettivo dei subs verifica esplicitamente che Resolve abbia materializzato il nuovo SRT sulla track richiesta; se non lo fa, il job fallisce e il ripristino automatico dal backup protegge la timeline attiva.
+- Il bridge conserva la modalità selezionata durante il proprio auto-restart.

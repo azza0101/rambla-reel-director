@@ -183,6 +183,51 @@ def test_insert_native_subtitles_temporarily_unlocks_first_subtitle_track():
     assert timeline.locked is True
 
 
+def test_selective_subtitles_target_a_new_upper_track_with_clipinfo():
+    class MultiTrackTimeline:
+        def __init__(self):
+            self.tracks=[[], []]
+            self.locks={1:True,2:False}
+        def GetTrackCount(self, kind): assert kind=="subtitle"; return len(self.tracks)
+        def AddTrack(self, kind): assert kind=="subtitle"; self.tracks.append([]); return True
+        def GetItemListInTrack(self, kind, track): assert kind=="subtitle"; return self.tracks[track-1]
+        def GetIsTrackLocked(self, kind, track): return self.locks.get(track,False)
+        def SetTrackLock(self, kind, track, value): self.locks[track]=bool(value); return True
+        def DeleteClips(self, items, _ripple):
+            for row in self.tracks:
+                row[:] = [item for item in row if item not in items]
+            return True
+    timeline=MultiTrackTimeline()
+
+    class Clip:
+        def GetClipProperty(self, key): return "Subtitle" if key=="Type" else ""
+    clip=Clip()
+    class Folder:
+        def GetName(self): return "TEMP"
+        def GetSubFolderList(self): return []
+        def GetClipList(self): return []
+    class Pool:
+        def __init__(self): self.folder=Folder(); self.appended=None
+        def GetRootFolder(self): return self.folder
+        def AddSubFolder(self, parent, name): return self.folder
+        def GetCurrentFolder(self): return self.folder
+        def SetCurrentFolder(self, folder): return True
+        def ImportMedia(self, paths): return [clip]
+        def AppendToTimeline(self, rows):
+            self.appended=rows
+            assert rows[0]["trackIndex"] == 2
+            timeline.tracks[1]=[NativeItem("Uno due",108000,108030),NativeItem("tre",108033,108060)]
+            return timeline.tracks[1]
+    pool=Pool()
+    class Project:
+        def GetMediaPool(self): return pool
+
+    inserted=insert_native_subtitles(None,Project(),timeline,ROWS,fps=30,base_frame=108000,target_track=2)
+    assert len(inserted)==2
+    assert pool.appended[0]["trackIndex"]==2
+    verify_native_subtitles(timeline,ROWS,fps=30,base_frame=108000,track_index=2)
+
+
 def test_insert_native_subtitles_is_a_noop_for_empty_rows():
     timeline = Timeline()
     assert insert_native_subtitles(None, object(), timeline, [], fps=30, base_frame=108000) == []
