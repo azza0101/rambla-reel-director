@@ -74,6 +74,8 @@ from backend.app.resolve_textplus_timeline import (
     conform_broll_media,
     mute_prior_rambla_titles,
     mute_prior_rambla_subtitles,
+    remove_prior_rambla_broll,
+    remap_broll_for_selective_refresh,
     next_rambla_track_name,
 )
 
@@ -131,6 +133,53 @@ def test_selective_subtitle_refresh_mutes_only_rmbl_sources():
         def GetItemListInTrack(self,kind,track): return [rmbl,user]
     assert mute_prior_rambla_subtitles(Timeline())==1
     assert rmbl.enabled is False and user.enabled is True
+
+
+def test_media_refresh_removes_only_rmbl_broll_and_reuses_its_tracks():
+    class Media:
+        def __init__(self, keywords): self.keywords=keywords
+        def GetMetadata(self): return {"Keywords": self.keywords}
+    class Item:
+        def __init__(self, keywords, color):
+            self.media=Media(keywords); self.color=color
+        def GetMediaPoolItem(self): return self.media
+        def GetClipColor(self): return self.color
+    rmbl=Item("RAMBLA, pexels, beat_1","Purple")
+    user=Item("client footage","Purple")
+    class Timeline:
+        def __init__(self): self.tracks=[[user],[rmbl],[]]; self.deleted=[]
+        def GetTrackCount(self,kind): return len(self.tracks) if kind=="video" else 0
+        def GetItemListInTrack(self,kind,track): return self.tracks[track-1]
+        def DeleteClips(self,items,_ripple):
+            self.deleted.extend(items)
+            for row in self.tracks:
+                row[:] = [item for item in row if item not in items]
+            return True
+        def AddTrack(self,kind): self.tracks.append([]); return True
+    timeline=Timeline()
+    removed,tracks=remove_prior_rambla_broll(timeline)
+    assert removed == 1 and tracks == [2]
+    assert timeline.deleted == [rmbl] and user in timeline.tracks[0]
+
+    rows=remap_broll_for_selective_refresh(timeline,[
+        {"asset_id":"a","track_index":2},
+        {"asset_id":"b","track_index":2},
+    ],tracks)
+    assert [row["track_index"] for row in rows] == [2,2]
+
+
+def test_media_refresh_adds_only_missing_media_tracks_when_no_reusable_track_exists():
+    class Timeline:
+        def __init__(self): self.count=3
+        def GetTrackCount(self,kind): return self.count
+        def AddTrack(self,kind): self.count+=1; return True
+    timeline=Timeline()
+    rows=remap_broll_for_selective_refresh(timeline,[
+        {"asset_id":"a","track_index":2},
+        {"asset_id":"b","track_index":3},
+    ],[])
+    assert [row["track_index"] for row in rows] == [4,5]
+    assert timeline.count == 5
 
 
 def test_rambla_track_versions_increment_without_touching_other_track_names():
