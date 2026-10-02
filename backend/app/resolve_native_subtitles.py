@@ -132,6 +132,46 @@ def cleanup_stale_subtitle_media(pool: Any, *, keep: Any | None = None) -> int:
     return len(stale)
 
 
+def reserve_subtitle_track_at_start(timeline: Any) -> int:
+    """Reserve an empty ST1 before the caller snapshots/protects source tracks.
+
+    Native SRT append can ignore clipInfo.trackIndex. Insert a track at index 1
+    instead of unlocking an occupied ST1: existing subtitle clips retain their
+    IDs, timing and track content, with only their track numbers increasing.
+    The caller must already have created its BCK backup.
+    """
+    count = int(timeline.GetTrackCount("subtitle") or 0)
+    before = {
+        _identity(item): (track, int(item.GetStart()), int(item.GetEnd()), str(item.GetName()))
+        for track in range(1, count + 1)
+        for item in (timeline.GetItemListInTrack("subtitle", track) or [])
+    }
+    locks = [bool(timeline.GetIsTrackLocked("subtitle", track)) for track in range(1, count + 1)]
+    added = timeline.AddTrack("subtitle", {"index": 1}) if count else timeline.AddTrack("subtitle")
+    if added is False or int(timeline.GetTrackCount("subtitle") or 0) != count + 1:
+        raise RuntimeError("Resolve could not reserve a new empty native Subtitle track at ST1")
+    if timeline.GetItemListInTrack("subtitle", 1):
+        raise RuntimeError("Resolve ignored the new ST1 position; existing subtitles were not overwritten")
+    after = {
+        _identity(item): (track, int(item.GetStart()), int(item.GetEnd()), str(item.GetName()))
+        for track in range(2, count + 2)
+        for item in (timeline.GetItemListInTrack("subtitle", track) or [])
+    }
+    expected = {identity: (track + 1, start, end, text)
+                for identity, (track, start, end, text) in before.items()}
+    if after != expected:
+        raise RuntimeError("Resolve changed existing subtitles while reserving ST1")
+    for track, locked in enumerate(locks, start=2):
+        if timeline.SetTrackLock("subtitle", track, locked) is False:
+            raise RuntimeError("Resolve could not preserve an existing Subtitle track lock")
+    if timeline.SetTrackLock("subtitle", 1, False) is False:
+        raise RuntimeError("Resolve could not unlock the empty new ST1")
+    enable = getattr(timeline, "SetTrackEnable", None)
+    if callable(enable) and enable("subtitle", 1, True) is False:
+        raise RuntimeError("Resolve could not enable the new Subtitle track")
+    return 1
+
+
 def insert_native_subtitles(
     resolve: Any,
     project: Any,
@@ -143,9 +183,19 @@ def insert_native_subtitles(
     target_track: int | None = None,
 ) -> list[Any]:
     """Import relative SRT and append it as genuine Resolve Subtitle items."""
-    del resolve, fps, base_frame  # SRT is relative; Resolve anchors it to the timeline start.
+    del resolve
     if not rows:
         return []
+    if fps <= 0:
+        raise ValueError("subtitle fps must be positive")
+    start_getter = getattr(timeline, "GetStartFrame", None)
+    timeline_start = int(start_getter()) if callable(start_getter) else int(base_frame)
+    offset = (int(base_frame) - timeline_start) / fps
+    if offset < 0:
+        raise ValueError("Subtitle IN is before the start of the timeline")
+    # SRT import is anchored to timeline start, not the playhead/current IN.
+    srt_rows = [{**row, "start_seconds": float(row["start_seconds"]) + offset,
+                 "end_seconds": float(row["end_seconds"]) + offset} for row in rows]
     wanted_track = int(target_track or 1)
     if wanted_track < 1:
         raise ValueError("target subtitle track must be >= 1")
@@ -154,16 +204,18 @@ def insert_native_subtitles(
         added = timeline.AddTrack("subtitle")
         if added is False:
             raise RuntimeError("Resolve could not create the requested native Subtitle track")
+    if target_track == 1 and _subtitle_items(timeline, 1):
+        raise RuntimeError("Selective native subtitle import requires a reserved empty ST1")
     before = {_identity(item) for item in _subtitle_items(timeline)}
     if srt_path is None:
         handle, raw_path = tempfile.mkstemp(prefix="rambla-filtered-subs-", suffix=".srt")
         path = Path(raw_path)
         with os.fdopen(handle, "w", encoding="utf-8-sig", newline="\n") as stream:
-            stream.write(render_filtered_srt(rows))
+            stream.write(render_filtered_srt(srt_rows))
     else:
         path = Path(srt_path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(render_filtered_srt(rows), encoding="utf-8-sig", newline="\n")
+        path.write_text(render_filtered_srt(srt_rows), encoding="utf-8-sig", newline="\n")
     try:
         pool = project.GetMediaPool()
         target_folder = ensure_media_pool_folder(pool, "TEMP")
@@ -195,7 +247,7 @@ def insert_native_subtitles(
         try:
             appended = (
                 pool.AppendToTimeline(imported)
-                if target_track is None
+                if target_track is None or wanted_track == 1
                 else pool.AppendToTimeline([{"mediaPoolItem": imported[0], "trackIndex": wanted_track}])
             )
             if not appended:

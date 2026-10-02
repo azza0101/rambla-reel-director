@@ -26,6 +26,7 @@ from backend.app.resolve_native_subtitles import (
     find_subtitle_media,
     insert_native_subtitles,
     normalize_subtitle_rows,
+    reserve_subtitle_track_at_start,
     subtitle_track_for_items,
     verify_native_subtitles,
 )
@@ -981,7 +982,12 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
             elif apply_scope == "titles":
                 muted_title_count = mute_prior_rambla_titles(generated, title_name=title_name)
             elif apply_scope == "subtitles":
+                if not payload.get("subtitles"):
+                    raise ValueError("Nessun sottotitolo nel pacchetto: seleziona i sottotitoli in RMBL")
                 muted_subtitle_count = mute_prior_rambla_subtitles(generated)
+                # Reserve ST1 BEFORE snapshotting item tracks and lock states.
+                # The SRT importer uses ST1 regardless of clipInfo.trackIndex.
+                subtitle_target_track = reserve_subtitle_track_at_start(generated)
             elif apply_scope == "media":
                 removed_broll_count, reusable_broll_tracks = remove_prior_rambla_broll(generated)
             protected_items = snapshot_existing_timeline_items(generated)
@@ -995,11 +1001,9 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
                 )
             elif include_titles:
                 title_track_index = int(generated.GetTrackCount("video") or 0) + 1
-            if apply_scope == "subtitles":
-                subtitle_target_track = int(generated.GetTrackCount("subtitle") or 0) + 1
             protected_track_states, source_video_tracks = protect_existing_tracks(
                 generated,
-                reserve_subtitle_track=bool(payload.get("subtitles")) and mode in {"combined", "editing"} and include_subtitles,
+                reserve_subtitle_track=bool(payload.get("subtitles")) and mode in {"combined", "editing"} and include_subtitles and apply_scope != "subtitles",
                 title_track_index=title_track_index,
                 reserve_title_track=include_titles,
             )

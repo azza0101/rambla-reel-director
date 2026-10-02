@@ -1,6 +1,6 @@
 # RMBL B ROLL — handoff tecnico
 
-Aggiornato: 2026-10-02  Versione: `v0045`  Branch di consegna: `feat/api-first-text-first-v1`
+Aggiornato: 2026-10-02  Versione: `v0046`  Branch di consegna: `feat/api-first-text-first-v1`
 
 ## Avvio rapido
 
@@ -171,3 +171,24 @@ I test focalizzati sulla disposizione dei comandi di modifica testo, UI, tema e 
 - Sotto il pulsante grande **INVIA TUTTO** il Bridge mostra esattamente tre pulsanti orizzontali della stessa larghezza: **SOLO SUBS**, **SOLO FRASI**, **SOLO MEDIA**.
 - Le tre colonne usano una griglia Tk uniforme per garantire dimensioni identiche indipendentemente dalla lunghezza dell'etichetta.
 - **SOLO MEDIA** chiama esplicitamente lo scope `media`: aggiorna soltanto i B-roll, senza reinserire frasi o sottotitoli.
+
+
+### SOLO SUBS: conflitto tra destinazione e lock ST1 — v0046
+
+- Root cause nel percorso v0040-v0045: protect_existing_tracks bloccava ST1,
+  mentre insert_native_subtitles sbloccava soltanto ST2 richiesta. L'importatore
+  SRT nativo poteva restituire un valore truthy ma non inserire alcun caption.
+- SOLO SUBS ora riserva una nuova ST1 vuota con AddTrack("subtitle", {"index": 1})
+  PRIMA degli snapshot e dei lock. Le vecchie tracce sottotitoli passano a ST2,
+  ST3, ecc.; identità, testi, frame e lock vengono verificati e conservati.
+- I vecchi subs RMBL rimangono disattivati, non eliminati. La nuova ST1 riceve
+  un normale AppendToTimeline([subtitle_media]), senza il trackIndex ignorato.
+- Se Resolve ignora l'inserimento indicizzato della traccia, non viene eseguito
+  l'append su una ST1 occupata. Il percorso di errore conserva il backup BCK.
+- Il file SRT include la differenza fra IN corrente e inizio timeline: non si
+  basa sulla posizione del playhead e non modifica marker o tracce video/audio.
+- La modifica non tocca il layout del Bridge, SOLO MEDIA o le maniglie B-roll.
+- Regressioni testate nel simulatore dell'importatore nativo: ST1 bloccata,
+  trackIndex ignorato, invii consecutivi, vecchi caption conservati, IN non-zero,
+  marker invariati, lock ripristinati e rifiuto delle destinazioni non sicure.
+- Verifica su Resolve reale richiesta: i test automatici non aprono Resolve.
