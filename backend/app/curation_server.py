@@ -1226,20 +1226,32 @@ def create_app(
         assets = {}
         for asset_id, candidate in view.candidate_index.items():
             path = str(candidate.local_asset_path or "").strip()
+            full_source = False
             if candidate.provider == 'pexels':
                 from .stock_export_media import stock_media_path
                 stock_path = stock_media_path(run, asset_id.rsplit(':', 1)[-1])
                 if stock_path.is_file():
                     path = str(stock_path)
-            if not path and candidate.provider in {"tiktok", "instagram", "youtube_shorts"}:
+                    full_source = True
+            if candidate.provider in {"tiktok", "instagram", "youtube_shorts"}:
                 from .social_media import media_path
                 social_path = media_path(candidate.source_page, candidate.provider, run, "full")
-                path = str(social_path) if social_path.is_file() else ""
+                if social_path.is_file():
+                    path = str(social_path)
+                    full_source = True
             facts = probe_preview(path) if path else {"playable": False}
+            selected_start = float(candidate.source_start_seconds or 0) if full_source else 0.0
+            selected_end = (
+                float(candidate.source_end_seconds)
+                if full_source and candidate.source_end_seconds is not None
+                else None
+            )
             assets[asset_id] = {
                 "media_path": path if path and Path(path).is_file() and float(facts.get("duration") or 0) > 0 else None,
                 "duration_seconds": facts.get("duration", 0),
-                "source_offset_seconds": 0,
+                "source_start_seconds": selected_start,
+                "source_end_seconds": selected_end,
+                "source_offset_seconds": selected_start,
                 "title": candidate.title,
                 "source_page": candidate.source_page,
                 "provider": candidate.provider,
@@ -1282,7 +1294,7 @@ def create_app(
                 continue
             if not candidate or candidate.provider not in {"tiktok", "instagram", "youtube_shorts"}:
                 continue
-            if candidate.local_asset_path or media_path(candidate.source_page, candidate.provider, run, "full").is_file():
+            if media_path(candidate.source_page, candidate.provider, run, "full").is_file():
                 continue
             cookies = []
             if candidate.provider in {"tiktok", "instagram"} and social_profiles.status().get(candidate.provider, {}).get("connection_ready"):
