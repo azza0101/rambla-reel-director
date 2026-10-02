@@ -28,7 +28,7 @@ def test_failure_preserves_last_checkpoint_and_traceback():
     finally:shutil.rmtree(root,ignore_errors=True)
 
 
-def test_apply_is_async_persists_progress_and_is_idempotent():
+def test_completed_package_can_be_applied_again_without_repreparing_handoff():
     root = Path('.test-resolve-jobs') / uuid.uuid4().hex
     root.mkdir(parents=True)
     try:
@@ -42,9 +42,17 @@ def test_apply_is_async_persists_progress_and_is_idempotent():
             result=store.read(root, package["package_id"])
             if result["status"] != "applying": break
             time.sleep(.01)
-        assert result["status"] == "completed" and result["progress"]["percent"] == 100
-        assert jobs.apply(root, package["package_id"], "new", current_project="P", current_timeline_id="T")["status"] == "completed"
-        assert len(calls) == 1 and calls[0]["destination_mode"] == "new"
+        assert result["status"] == "completed" and result["application_count"] == 1
+
+        restarted=jobs.apply(root, package["package_id"], "active", "media", current_project="P", current_timeline_id="T")
+        assert restarted["status"] == "applying"
+        for _ in range(100):
+            result=store.read(root, package["package_id"])
+            if result["status"] != "applying": break
+            time.sleep(.01)
+
+        assert result["status"] == "completed" and result["application_count"] == 2
+        assert [row["apply_scope"] for row in calls] == ["all", "media"]
     finally: shutil.rmtree(root, ignore_errors=True)
 
 
