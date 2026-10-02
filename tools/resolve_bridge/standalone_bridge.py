@@ -341,7 +341,7 @@ class BridgeClient:
             package = max(rows, key=lambda row: row.get("created_at", ""), default=None)
             previous = self.current_package
             if previous and (not package or previous.get('created_at','') >= package.get('created_at','')):
-                if previous.get('status') in {'applying','completed','failed'}:
+                if previous.get('status') in {'applying','completed','failed','cancelled'}:
                     package = self.request_json(f"/api/curation/resolve-handoffs/{previous['package_id']}/status")
             if package and not package.get("bridge_received_at"):
                 package = self.request_json(f"/api/curation/resolve-handoffs/{package['package_id']}/received", "POST", {"bridge_session_id": self.session_id})
@@ -365,6 +365,14 @@ class BridgeClient:
             "current_timeline_id": status.get("timeline_id", ""),
             "current_mark_in": status.get("mark_in"),
         })
+
+    def cancel_apply(self) -> dict[str, Any]:
+        if not self.current_package:
+            raise RuntimeError("Nessun pacchetto")
+        return self.request_json(
+            f"/api/curation/resolve-handoffs/{self.current_package['package_id']}/cancel",
+            "POST",
+        )
 
     def package_status(self) -> dict[str, Any]:
         if not self.current_package:
@@ -537,6 +545,8 @@ class BridgeApp:
         self.widgets["apply_titles"].pack(side="left", fill="x", expand=True, padx=4)
         self.widgets["apply_media"] = RoundedButton(selective, text="SOLO MEDIA", command=lambda: self.apply("media"), state="disabled")
         self.widgets["apply_media"].pack(side="left", fill="x", expand=True, padx=(4, 0))
+        self.widgets["cancel_apply"] = RoundedButton(shell, text="INTERROMPI OPERAZIONE", command=self.cancel_apply, state="disabled")
+        self.widgets["cancel_apply"].pack(fill="x", pady=(0, 7))
         self.widgets["discard"] = RoundedButton(shell, text="SCARTA PACCHETTO", command=self.discard, state="disabled")
         self.widgets["discard"].pack(fill="x", pady=(0, 8))
         self._fit_window(package_visible=False)
@@ -637,7 +647,7 @@ class BridgeApp:
                 self.root.after_idle(lambda: self._fit_window(package_visible=True))
         else:
             self.widgets["package"].configure(text="Nessun pacchetto ricevuto\nInvia il montaggio dalla sezione EXPORT TIMELINE di RMBL B ROLL.")
-            self._set_apply_buttons("disabled"); self.widgets["discard"].configure(state="disabled"); self.widgets["progress"].configure(value=0)
+            self._set_apply_buttons("disabled"); self.widgets["cancel_apply"].configure(state="disabled"); self.widgets["discard"].configure(state="disabled"); self.widgets["progress"].configure(value=0)
             if self._last_package_id:
                 self._last_package_id = ""
                 self.root.after_idle(lambda: self._fit_window(package_visible=False))
@@ -652,6 +662,15 @@ class BridgeApp:
         try:
             row = self.client.apply(self.destination.get(), scope)
             self.applying = row.get("status") == "applying"
+            self._render_job(row)
+        except Exception as exc:
+            self._show_error(str(exc))
+
+    def cancel_apply(self) -> None:
+        try:
+            row = self.client.cancel_apply()
+            self.widgets["cancel_apply"].configure(state="disabled")
+            self.widgets["message"].configure(text="Interruzione richiesta · attendo il ripristino sicuro della timeline…")
             self._render_job(row)
         except Exception as exc:
             self._show_error(str(exc))
@@ -673,9 +692,21 @@ class BridgeApp:
                 track = result.get("subtitle_track_index")
                 message += f" · Resolve ha usato ST{track}" if track else " · fallback Subtitle track"
             self._set_apply_buttons("normal")
+            self.widgets["cancel_apply"].configure(state="disabled")
+        elif status == "cancelled":
+            message = "✓ OPERAZIONE INTERROTTA · timeline ripristinata · pacchetto ancora disponibile"
+            self._set_apply_buttons("normal")
+            self.widgets["cancel_apply"].configure(state="disabled")
         elif status == "failed":
-            message = "Errore: " + str(row.get("error") or message); self._set_apply_buttons("normal")
-        else: self._set_apply_buttons("disabled")
+            message = "Errore: " + str(row.get("error") or message)
+            self._set_apply_buttons("normal")
+            self.widgets["cancel_apply"].configure(state="disabled")
+        elif status == "applying":
+            self._set_apply_buttons("disabled")
+            self.widgets["cancel_apply"].configure(state="normal")
+        else:
+            self._set_apply_buttons("disabled")
+            self.widgets["cancel_apply"].configure(state="disabled")
         self.widgets["message"].configure(text=message)
 
     def discard(self) -> None:
