@@ -155,6 +155,8 @@ def test_selective_apply_forces_active_timeline_and_bridge_exposes_scope_control
     source=Path("tools/resolve_bridge/standalone_bridge.py").read_text(encoding="utf-8")
     assert "INVIA TUTTO" in source
     assert "SOLO SUBS" in source and "SOLO FRASI" in source and "SOLO MEDIA" in source
+    assert 'uniform="selective-actions"' in source
+    assert 'command=lambda: self.apply("media")' in source
 
 
 def test_media_only_apply_forces_active_timeline():
