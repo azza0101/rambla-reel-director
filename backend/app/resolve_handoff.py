@@ -18,7 +18,7 @@ _TRANSITIONS = {
     "pending": {"applying", "discarded"},
     "applying": {"completed", "failed"},
     "failed": {"applying", "discarded"},
-    "completed": set(),
+    "completed": {"applying", "discarded"},
     "discarded": set(),
 }
 
@@ -120,7 +120,7 @@ class ResolveHandoffStore:
                 row = _read_json(path)
             except (OSError, json.JSONDecodeError):
                 continue
-            if row.get("status") not in {"pending", "applying", "failed"}:
+            if row.get("status") not in {"pending", "applying", "failed", "completed"}:
                 continue
             if resolve_project and row.get("resolve_project") != resolve_project:
                 continue
