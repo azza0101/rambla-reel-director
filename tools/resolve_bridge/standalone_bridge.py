@@ -667,7 +667,12 @@ class BridgeApp:
         progress = row.get("progress") or {}; self.widgets["progress"].configure(value=int(progress.get("percent") or 0))
         status = row.get("status") or ""; message = progress.get("message") or status
         if status == "completed":
-            message = "✓ INVIO COMPLETATO · il pacchetto resta disponibile per altri invii"; self._set_apply_buttons("normal")
+            result = row.get("result") or {}
+            message = "✓ INVIO COMPLETATO · il pacchetto resta disponibile per altri invii"
+            if result.get("subtitle_track_fallback"):
+                track = result.get("subtitle_track_index")
+                message += f" · Resolve ha usato ST{track}" if track else " · fallback Subtitle track"
+            self._set_apply_buttons("normal")
         elif status == "failed":
             message = "Errore: " + str(row.get("error") or message); self._set_apply_buttons("normal")
         else: self._set_apply_buttons("disabled")
