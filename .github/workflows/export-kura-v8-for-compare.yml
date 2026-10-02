@@ -1,0 +1,21 @@
+name: Export KURA v8 for compare
+
+on:
+  push:
+    branches:
+      - feat/api-first-text-first-v1
+    paths:
+      - .github/workflows/export-kura-v8-for-compare.yml
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/api-first-text-first-v1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KURA_paper_title_v8_compare
+          path: backend/assets/resolve_titles/KURA_paper_title_v8.drfx
+          if-no-files-found: error
