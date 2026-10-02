@@ -56,6 +56,18 @@ def _identity(item: Any) -> Any:
     return getter() if getter else id(item)
 
 
+def subtitle_track_for_items(timeline: Any, items: list[Any]) -> int | None:
+    wanted = {_identity(item) for item in items}
+    if not wanted:
+        return None
+    matched = []
+    for track in range(1, int(timeline.GetTrackCount("subtitle") or 0) + 1):
+        track_ids = {_identity(item) for item in (timeline.GetItemListInTrack("subtitle", track) or [])}
+        if wanted & track_ids:
+            matched.append(track)
+    return matched[0] if len(matched) == 1 else None
+
+
 def find_subtitle_media(pool: Any, path: Path) -> Any | None:
     root_getter = getattr(pool, "GetRootFolder", None)
     if not root_getter:
@@ -137,6 +149,7 @@ def insert_native_subtitles(
     wanted_track = int(target_track or 1)
     if wanted_track < 1:
         raise ValueError("target subtitle track must be >= 1")
+    initial_track_count = int(timeline.GetTrackCount("subtitle") or 0)
     while int(timeline.GetTrackCount("subtitle") or 0) < wanted_track:
         added = timeline.AddTrack("subtitle")
         if added is False:
@@ -190,12 +203,23 @@ def insert_native_subtitles(
         finally:
             if was_locked and set_lock("subtitle", wanted_track, True) is False:
                 raise RuntimeError(f"Resolve could not restore Subtitle track {wanted_track} lock")
-        inserted = [item for item in _subtitle_items(timeline, wanted_track) if _identity(item) not in before]
-        if not inserted:
-            misplaced = [item for item in _subtitle_items(timeline) if _identity(item) not in before]
-            if misplaced:
-                timeline.DeleteClips(misplaced, False)
-            raise RuntimeError(f"Resolve did not place the refreshed native subtitles on requested track {wanted_track}")
+        inserted_on_target = [item for item in _subtitle_items(timeline, wanted_track) if _identity(item) not in before]
+        inserted_anywhere = [item for item in _subtitle_items(timeline) if _identity(item) not in before]
+        if not inserted_anywhere:
+            raise RuntimeError("Resolve imported the SRT but created no native Subtitle clips")
+
+        inserted = inserted_on_target or inserted_anywhere
+
+        # Resolve 21.1 can ignore clipInfo.trackIndex for native subtitle media
+        # and still create the captions correctly on ST1. Keep those valid new
+        # items instead of deleting them and failing the whole Apply. If we had
+        # created a brand-new upper target track that remained empty, remove it
+        # so the user's timeline is not left with a useless blank subtitle track.
+        if not inserted_on_target and target_track is not None and wanted_track > initial_track_count:
+            target_items = list(timeline.GetItemListInTrack("subtitle", wanted_track) or [])
+            delete_track = getattr(timeline, "DeleteTrack", None)
+            if not target_items and delete_track is not None:
+                delete_track("subtitle", wanted_track)
         return inserted
     except Exception:
         path.unlink(missing_ok=True)
@@ -208,11 +232,13 @@ def verify_native_subtitles(
     fps: int,
     base_frame: int,
     track_index: int | None = None,
+    items: list[Any] | None = None,
 ) -> None:
     del fps
+    source_items = list(items) if items is not None else _subtitle_items(timeline, track_index)
     actual = sorted(
         (str(item.GetName()).strip(), int(item.GetStart()), int(item.GetEnd()))
-        for item in _subtitle_items(timeline, track_index)
+        for item in source_items
     )
     expected = sorted(
         (
