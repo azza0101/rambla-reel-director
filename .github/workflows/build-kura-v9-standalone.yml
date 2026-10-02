@@ -1,0 +1,125 @@
+name: Build KURA v9 standalone
+
+on:
+  push:
+    branches:
+      - feat/api-first-text-first-v1
+    paths:
+      - .github/workflows/build-kura-v9-standalone.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/api-first-text-first-v1
+          fetch-depth: 0
+
+      - name: Rebuild v9 from v8 without changing the Fusion graph
+        shell: python
+        run: |
+          import os
+          import shutil
+          import tempfile
+          import zipfile
+          from pathlib import Path
+
+          src = Path("backend/assets/resolve_titles/KURA_paper_title_v8.drfx")
+          dst = Path("backend/assets/resolve_titles/KURA_paper_title_v9.drfx")
+
+          if not src.exists():
+              raise SystemExit(f"Missing source: {src}")
+
+          old = "KURA_paper_title_v8"
+          new = "KURA_paper_title_v9"
+
+          with tempfile.TemporaryDirectory() as td:
+              root = Path(td)
+              with zipfile.ZipFile(src, "r") as z:
+                  bad = z.testzip()
+                  if bad:
+                      raise SystemExit(f"Corrupt v8 archive member: {bad}")
+                  z.extractall(root)
+
+              # Preserve the v8 package exactly; only rename the title package/version token.
+              old_dir = root / "Edit" / "Titles" / old
+              if not old_dir.exists():
+                  candidates = list((root / "Edit" / "Titles").glob("*")) if (root / "Edit" / "Titles").exists() else []
+                  if len(candidates) != 1:
+                      raise SystemExit(f"Unexpected v8 package layout: {candidates}")
+                  old_dir = candidates[0]
+
+              new_dir = old_dir.with_name(new)
+              old_dir.rename(new_dir)
+
+              # Rename the .setting file, keeping its contents/graph unchanged except version-name references.
+              settings = list(new_dir.glob("*.setting"))
+              if len(settings) != 1:
+                  raise SystemExit(f"Expected exactly one .setting, found: {settings}")
+              setting = settings[0]
+              new_setting = setting.with_name(new + ".setting")
+              setting.rename(new_setting)
+
+              # Only replace literal v8 package-name references in text files.
+              # Do NOT reconstruct nodes, loaders, masks, animation, modifiers, or media.
+              text_exts = {".setting", ".txt", ".json", ".xml", ".lua", ".py"}
+              for p in new_dir.rglob("*"):
+                  if p.is_file() and p.suffix.lower() in text_exts:
+                      try:
+                          s = p.read_text(encoding="utf-8")
+                      except UnicodeDecodeError:
+                          continue
+                      s2 = s.replace(old, new)
+                      if s2 != s:
+                          p.write_text(s2, encoding="utf-8", newline="")
+
+              dst.parent.mkdir(parents=True, exist_ok=True)
+              tmp = dst.with_suffix(".drfx.tmp")
+              if tmp.exists():
+                  tmp.unlink()
+
+              with zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+                  for p in sorted(root.rglob("*")):
+                      if p.is_file():
+                          z.write(p, p.relative_to(root).as_posix())
+
+              with zipfile.ZipFile(tmp, "r") as z:
+                  bad = z.testzip()
+                  if bad:
+                      raise SystemExit(f"Corrupt rebuilt archive member: {bad}")
+                  names = z.namelist()
+                  expected_setting = f"Edit/Titles/{new}/{new}.setting"
+                  if expected_setting not in names:
+                      raise SystemExit(f"Missing {expected_setting}")
+                  if not any(n.startswith(f"Edit/Titles/{new}/") and n != expected_setting for n in names):
+                      raise SystemExit("v9 package contains no bundled assets")
+
+              tmp.replace(dst)
+
+          print(f"Built {dst} from the original v8 package.")
+          print(f"Size: {dst.stat().st_size} bytes")
+
+      - name: Commit rebuilt standalone v9
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/assets/resolve_titles/KURA_paper_title_v9.drfx
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "fix: rebuild KURA v9 standalone from v8"
+            git push origin HEAD:feat/api-first-text-first-v1
+          fi
+
+      - name: Upload v9 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KURA_paper_title_v9_standalone
+          path: backend/assets/resolve_titles/KURA_paper_title_v9.drfx
+          if-no-files-found: error
