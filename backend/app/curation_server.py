@@ -1501,6 +1501,16 @@ def create_app(
         except RuntimeError as exc:
             raise HTTPException(status_code=423, detail=str(exc)) from exc
 
+    @app.post("/api/curation/resolve-handoffs/{package_id}/cancel")
+    async def cancel_resolve_handoff(package_id: str):
+        project_root, _ = find_handoff(package_id)
+        try:
+            return handoff_jobs.cancel(project_root, package_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=423, detail=str(exc)) from exc
+
     @app.get("/api/curation/resolve-handoffs/{package_id}/status")
     async def resolve_handoff_status(package_id: str):
         _, package = find_handoff(package_id)
