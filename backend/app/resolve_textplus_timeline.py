@@ -187,6 +187,67 @@ def remove_prior_rambla_items(timeline: Any, *, title_name: str) -> dict[str, in
     return {"video": len(video_remove), "subtitle": len(subtitle_remove)}
 
 
+def mute_prior_rambla_titles(timeline: Any, *, title_name: str) -> int:
+    """Disable prior generated keyword clips without touching any media layer."""
+    muted = 0
+    for track in range(1, int(timeline.GetTrackCount("video") or 0) + 1):
+        for item in timeline.GetItemListInTrack("video", track) or []:
+            generated = bool(item.GetFusionCompCount()) and str(item.GetName() or "") == title_name and str(item.GetClipColor() or "") == "Yellow"
+            if not generated:
+                continue
+            setter = getattr(item, "SetClipEnabled", None)
+            if setter is None or setter(False) is False:
+                raise RuntimeError("Resolve could not mute a previous RMBL Text+ clip")
+            muted += 1
+    return muted
+
+
+def _rambla_subtitle_item(item: Any) -> bool:
+    media = item.GetMediaPoolItem() if hasattr(item, "GetMediaPoolItem") else None
+    if not media:
+        return False
+    name = str(media.GetName() or "").casefold() if hasattr(media, "GetName") else ""
+    path = str(media.GetClipProperty("File Path") or "").casefold() if hasattr(media, "GetClipProperty") else ""
+    return "rambla" in name or "rambla" in path
+
+
+def mute_prior_rambla_subtitles(timeline: Any) -> int:
+    """Disable only subtitle clips that can be identified as RAMBLA-generated."""
+    muted = 0
+    get_track_name = getattr(timeline, "GetTrackName", None)
+    for track in range(1, int(timeline.GetTrackCount("subtitle") or 0) + 1):
+        track_name = str(get_track_name("subtitle", track) or "") if get_track_name else ""
+        named_rambla = track_name.casefold().startswith("rmbl subs ")
+        for item in timeline.GetItemListInTrack("subtitle", track) or []:
+            if not named_rambla and not _rambla_subtitle_item(item):
+                continue
+            setter = getattr(item, "SetClipEnabled", None)
+            if setter is None or setter(False) is False:
+                raise RuntimeError("Resolve could not mute a previous RMBL Subtitle clip")
+            muted += 1
+    return muted
+
+
+def next_rambla_track_name(timeline: Any, kind: str, prefix: str) -> str:
+    getter = getattr(timeline, "GetTrackName", None)
+    pattern = re.compile(rf"^{re.escape(prefix)} v(\d+)$", re.I)
+    versions = []
+    if getter:
+        for track in range(1, int(timeline.GetTrackCount(kind) or 0) + 1):
+            match = pattern.match(str(getter(kind, track) or ""))
+            if match:
+                versions.append(int(match.group(1)))
+    return f"{prefix} v{max(versions, default=0) + 1}"
+
+
+def name_rambla_track(timeline: Any, kind: str, track: int, prefix: str) -> str:
+    name = next_rambla_track_name(timeline, kind, prefix)
+    setter = getattr(timeline, "SetTrackName", None)
+    if setter is not None and setter(kind, int(track), name) is False:
+        raise RuntimeError(f"Resolve could not name the new {kind} track")
+    return name
+
+
 def canonical_timeline_name(payload: dict[str, Any]) -> str:
     project_name = re.sub(r'[\\/:*?"<>|]+', " ", str(payload.get("project_name") or "RAMBLA")).strip()
     project_name = re.sub(r"\s+", " ", project_name)[:80] or "RAMBLA"
@@ -437,7 +498,8 @@ def verify_existing_timeline_items(timeline: Any, expected: dict[str, tuple[Any,
 
 
 def protect_existing_tracks(
-    timeline: Any, *, reserve_subtitle_track: bool, title_track_index: int | None = None
+    timeline: Any, *, reserve_subtitle_track: bool, title_track_index: int | None = None,
+    reserve_title_track: bool = True,
 ) -> tuple[list[tuple[str, int, bool]], int]:
     """Lock source tracks and reserve empty upper tracks for RAMBLA additions."""
     states = []
@@ -449,15 +511,16 @@ def protect_existing_tracks(
             states.append((kind, track, locked))
             if timeline.SetTrackLock(kind, track, True) is False:
                 raise RuntimeError(f"Resolve could not protect existing {kind} track {track}")
-    target_title_track = int(title_track_index or (original_video_tracks + 1))
-    while int(timeline.GetTrackCount("video") or 0) < target_title_track:
-        if timeline.AddTrack("video") is False:
-            raise RuntimeError("Resolve could not create the dedicated RAMBLA video tracks")
-    # Keep every newly reserved B-roll track protected while Fusion titles are
-    # inserted. The only writable video track is the last/highest title track.
-    for track in range(original_video_tracks + 1, target_title_track):
-        if timeline.SetTrackLock("video", track, True) is False:
-            raise RuntimeError(f"Resolve could not reserve B-roll track {track}")
+    target_title_track = int(title_track_index or (original_video_tracks + 1)) if reserve_title_track else original_video_tracks
+    if reserve_title_track:
+        while int(timeline.GetTrackCount("video") or 0) < target_title_track:
+            if timeline.AddTrack("video") is False:
+                raise RuntimeError("Resolve could not create the dedicated RAMBLA video tracks")
+        # Keep every newly reserved B-roll track protected while Fusion titles are
+        # inserted. The only writable video track is the last/highest title track.
+        for track in range(original_video_tracks + 1, target_title_track):
+            if timeline.SetTrackLock("video", track, True) is False:
+                raise RuntimeError(f"Resolve could not reserve B-roll track {track}")
     if reserve_subtitle_track and timeline.AddTrack("subtitle") is False:
         raise RuntimeError("Resolve could not create the dedicated RAMBLA subtitle track")
     return states, original_video_tracks
@@ -749,9 +812,15 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
     if fps <= 0 or abs(fps_value - fps) > 0.001:
         raise RuntimeError(f"The first release supports integer timeline frame rates; Resolve reports {fps_value:g} fps")
     mode = mode_from_payload(payload)
+    apply_scope = str(payload.get("apply_scope") or "all").strip().casefold()
+    if apply_scope not in {"all", "titles", "subtitles"}:
+        raise ValueError("apply_scope must be 'all', 'titles' or 'subtitles'")
+    include_titles = apply_scope in {"all", "titles"}
+    include_subtitles = apply_scope in {"all", "subtitles"}
+    include_broll = apply_scope == "all"
     title_payload = {**payload, "items": payload.get("titles") or payload.get("items") or []}
-    plan = build_textplus_timeline_plan(title_payload, target_fps=fps)
-    title_name = title_name_from_payload(payload)
+    plan = build_textplus_timeline_plan(title_payload, target_fps=fps) if include_titles else {"segments": [], "boundaries": []}
+    title_name = title_name_from_payload(payload) if include_titles else str(payload.get("title_name") or "")
     original_signature = _timeline_signature(original)
     original_markers = snapshot_timeline_markers(original)
     media_pool = project.GetMediaPool()
@@ -760,31 +829,35 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
     destination_mode = str(payload.get("destination_mode") or "new")
     if destination_mode not in {"new", "active"}:
         raise ValueError("destination_mode must be 'new' or 'active'")
+    if apply_scope != "all" and destination_mode != "active":
+        raise ValueError("Selective Resolve updates require the active timeline")
     generic_rows = []
-    tail_frame = int(round(float(payload.get("duration_seconds") or 0) * fps)) + int(round(float(payload.get("generic_tail_gap_seconds") or 2) * fps))
-    if destination_mode == 'active':
-        origin = int(payload.get('bridge_mark_in') if payload.get('bridge_mark_in') is not None else original.GetStartFrame())
-        tail_frame = max(tail_frame, int(original.GetEndFrame()) - origin + int(round(float(payload.get('generic_tail_gap_seconds') or 2) * fps)))
-    for index, row in enumerate(payload.get("generic_broll_clips") or []):
-        duration_frames = max(1, int(round(min(4.0, float(row.get("duration") or 4.0)) * fps)))
-        generic_rows.append({**row, "asset_id": str(row.get("provider_id") or f"generic-{index}"), "beat_id": "generic-tail",
-                             "track_index": 2, "record_start_frame": tail_frame, "record_end_frame": tail_frame + duration_frames,
-                             "source_start_frame": 0, "source_end_frame": duration_frames, "role": "generic"})
-        tail_frame += duration_frames
-    source_payload_fps = float(payload.get("fps") or fps)
-    coverage_rows = rescale_broll_frames(
-        [{**row, "role": "coverage"} for row in payload.get("broll_clips") or []],
-        source_fps=source_payload_fps, target_fps=fps,
-    )
-    all_broll_rows = coverage_rows + generic_rows
-    prepared_broll_clips = prepare_broll_media_files(
-        [{**row, "rambla_project": str(payload.get("project_name") or "RAMBLA"), "rambla_timeline": name}
-         for row in all_broll_rows if row.get("media_path") and Path(str(row.get("media_path"))).is_file()],
-        Path(str(payload.get("media_staging_root") or Path.cwd() / "resolve-media")),
-        media_folder_name,
-    )
-    prepared_broll_clips = conform_broll_media(prepared_broll_clips, fps,
-        progress=lambda index,total: report_handoff_progress(payload,'conform',5+int(12*index/max(1,total)),f'Preparo estratti video: {index}/{total}'))
+    prepared_broll_clips = []
+    if include_broll:
+        tail_frame = int(round(float(payload.get("duration_seconds") or 0) * fps)) + int(round(float(payload.get("generic_tail_gap_seconds") or 2) * fps))
+        if destination_mode == 'active':
+            origin = int(payload.get('bridge_mark_in') if payload.get('bridge_mark_in') is not None else original.GetStartFrame())
+            tail_frame = max(tail_frame, int(original.GetEndFrame()) - origin + int(round(float(payload.get('generic_tail_gap_seconds') or 2) * fps)))
+        for index, row in enumerate(payload.get("generic_broll_clips") or []):
+            duration_frames = max(1, int(round(min(4.0, float(row.get("duration") or 4.0)) * fps)))
+            generic_rows.append({**row, "asset_id": str(row.get("provider_id") or f"generic-{index}"), "beat_id": "generic-tail",
+                                 "track_index": 2, "record_start_frame": tail_frame, "record_end_frame": tail_frame + duration_frames,
+                                 "source_start_frame": 0, "source_end_frame": duration_frames, "role": "generic"})
+            tail_frame += duration_frames
+        source_payload_fps = float(payload.get("fps") or fps)
+        coverage_rows = rescale_broll_frames(
+            [{**row, "role": "coverage"} for row in payload.get("broll_clips") or []],
+            source_fps=source_payload_fps, target_fps=fps,
+        )
+        all_broll_rows = coverage_rows + generic_rows
+        prepared_broll_clips = prepare_broll_media_files(
+            [{**row, "rambla_project": str(payload.get("project_name") or "RAMBLA"), "rambla_timeline": name}
+             for row in all_broll_rows if row.get("media_path") and Path(str(row.get("media_path"))).is_file()],
+            Path(str(payload.get("media_staging_root") or Path.cwd() / "resolve-media")),
+            media_folder_name,
+        )
+        prepared_broll_clips = conform_broll_media(prepared_broll_clips, fps,
+            progress=lambda index,total: report_handoff_progress(payload,'conform',5+int(12*index/max(1,total)),f'Preparo estratti video: {index}/{total}'))
     build_name = f"__RAMBLA_BUILD_{int(time.time() * 1000)}"
     generated = None
     backup = None
@@ -793,17 +866,24 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
     protected_track_states = []
     active_mutated = False
     backup_folder = None
+    target_folder = None
+    media_folder = None
+    title_track_index = None
+    subtitle_target_track = None
+    muted_title_count = 0
+    muted_subtitle_count = 0
     original_folder = media_pool.GetCurrentFolder()
     try:
-        target_folder = ensure_media_pool_folder(media_pool, "B-ROLL MEDIA")
         backup_folder = ensure_media_pool_folder(media_pool, "BCK")
-        raw_children = target_folder.GetSubFolderList() or []
-        children = list(raw_children.values()) if isinstance(raw_children, dict) else list(raw_children)
-        media_folder = next((folder for folder in children if str(folder.GetName()).casefold() == media_folder_name.casefold()), None)
-        if media_folder is None:
-            media_folder = media_pool.AddSubFolder(target_folder, media_folder_name)
-        if not media_folder:
-            raise RuntimeError(f"Resolve could not create the Media Pool bin '{media_folder_name}'")
+        if include_broll:
+            target_folder = ensure_media_pool_folder(media_pool, "B-ROLL MEDIA")
+            raw_children = target_folder.GetSubFolderList() or []
+            children = list(raw_children.values()) if isinstance(raw_children, dict) else list(raw_children)
+            media_folder = next((folder for folder in children if str(folder.GetName()).casefold() == media_folder_name.casefold()), None)
+            if media_folder is None:
+                media_folder = media_pool.AddSubFolder(target_folder, media_folder_name)
+            if not media_folder:
+                raise RuntimeError(f"Resolve could not create the Media Pool bin '{media_folder_name}'")
         if destination_mode == "active":
             generated, backup = create_active_backup(
                 original, next_backup_name(project, original_name)
@@ -822,77 +902,93 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
             clear_generated_timeline(generated)
         else:
             active_mutated = True
-            remove_prior_rambla_items(generated, title_name=title_name)
+            if apply_scope == "all":
+                remove_prior_rambla_items(generated, title_name=title_name)
+            elif apply_scope == "titles":
+                muted_title_count = mute_prior_rambla_titles(generated, title_name=title_name)
+            elif apply_scope == "subtitles":
+                muted_subtitle_count = mute_prior_rambla_subtitles(generated)
             protected_items = snapshot_existing_timeline_items(generated)
-            prepared_broll_clips, title_track_index = active_track_layout(
-                int(generated.GetTrackCount("video") or 0), prepared_broll_clips
-            )
+            if include_broll:
+                prepared_broll_clips, title_track_index = active_track_layout(
+                    int(generated.GetTrackCount("video") or 0), prepared_broll_clips
+                )
+            elif include_titles:
+                title_track_index = int(generated.GetTrackCount("video") or 0) + 1
+            if apply_scope == "subtitles":
+                subtitle_target_track = int(generated.GetTrackCount("subtitle") or 0) + 1
             protected_track_states, source_video_tracks = protect_existing_tracks(
                 generated,
-                reserve_subtitle_track=bool(payload.get("subtitles")) and mode in {"combined", "editing"},
+                reserve_subtitle_track=bool(payload.get("subtitles")) and mode in {"combined", "editing"} and include_subtitles,
                 title_track_index=title_track_index,
+                reserve_title_track=include_titles,
             )
+            if include_titles and title_track_index is not None:
+                name_rambla_track(generated, "video", title_track_index, "RMBL TEXT")
+            if subtitle_target_track is not None:
+                name_rambla_track(generated, "subtitle", subtitle_target_track, "RMBL SUBS")
         base_frame = int(payload.get("bridge_mark_in") if payload.get("bridge_mark_in") is not None else generated.GetStartFrame())
-        existing_title_ids = {str(item.GetUniqueId()) for item in _timeline_items(generated)}
-        inserted_title_ids = set()
-        for operation in boundary_operations(plan):
-            boundary = operation["frame"]
-            move_to_boundary(generated, boundary=boundary, base_frame=base_frame, fps=fps)
-            inserted = insert_fusion_title_with_retry(
-                generated, title_name,
-                on_retry=lambda: activate_timeline(resolve, project, generated),
-            )
-            if not inserted:
-                raise RuntimeError(
-                    f"Resolve Fusion Title '{title_name}' is unavailable. Install it and restart Resolve"
+        keep = []
+        if include_titles:
+            existing_title_ids = {str(item.GetUniqueId()) for item in _timeline_items(generated)}
+            for operation in boundary_operations(plan):
+                boundary = operation["frame"]
+                move_to_boundary(generated, boundary=boundary, base_frame=base_frame, fps=fps)
+                inserted = insert_fusion_title_with_retry(
+                    generated, title_name,
+                    on_retry=lambda: activate_timeline(resolve, project, generated),
                 )
-            inserted_title_ids.add(str(inserted.GetUniqueId()))
-            color_setter = getattr(inserted, "SetClipColor", None)
-            if color_setter:
-                color_setter("Yellow")
-            # Resolve makes trimmed Fusion titles read-only through scripting. Set
-            # their content immediately, while the freshly inserted title is whole.
-            if operation["text"] is not None:
-                set_textplus_content(inserted, operation["text"])
-        report_handoff_progress(payload,"titles",66,"Parole evidenziate inserite")
-        time.sleep(0.15)
-        materialized = []
-        for item in generated_fusion_items(generated, existing_title_ids):
-            if item.GetFusionCompCount():
-                materialized.append({
-                    "id": str(item.GetUniqueId()), "item": item,
-                    "start_frame": int(item.GetStart()) - base_frame,
-                    "end_frame": int(item.GetEnd()) - base_frame,
-                })
-        keep, remove = select_exact_segments(materialized, plan["segments"])
-        if remove:
-            if generated.DeleteClips([row["item"] for row in remove], False) is False:
+                if not inserted:
+                    raise RuntimeError(
+                        f"Resolve Fusion Title '{title_name}' is unavailable. Install it and restart Resolve"
+                    )
+                color_setter = getattr(inserted, "SetClipColor", None)
+                if color_setter:
+                    color_setter("Yellow")
+                if operation["text"] is not None:
+                    set_textplus_content(inserted, operation["text"])
+            report_handoff_progress(payload,"titles",66,"Parole evidenziate inserite")
+            time.sleep(0.15)
+            materialized = []
+            for item in generated_fusion_items(generated, existing_title_ids):
+                if item.GetFusionCompCount():
+                    materialized.append({"id":str(item.GetUniqueId()),"item":item,"start_frame":int(item.GetStart())-base_frame,"end_frame":int(item.GetEnd())-base_frame})
+            keep, remove = select_exact_segments(materialized, plan["segments"])
+            if remove and generated.DeleteClips([row["item"] for row in remove], False) is False:
                 raise RuntimeError('Resolve could not remove Fusion title split fragments')
-        title_items = generated_fusion_items(generated, existing_title_ids)
-        final_ranges = sorted((int(item.GetStart()) - base_frame, int(item.GetEnd()) - base_frame) for item in title_items)
-        expected_ranges = sorted((row["start_frame"], row["end_frame"]) for row in plan["segments"])
-        if final_ranges != expected_ranges:
-            raise RuntimeError("Resolve Text+ verification found unexpected clip ranges")
-        if any(str(item.GetName()) != title_name for item in title_items):
-            raise RuntimeError("Resolve created a different title than the selected template")
-        final_text = [str(_text_tool(row["item"]).GetInput("StyledText", 0)) for row in keep]
-        if final_text != [str(row["text"]) for row in keep]:
-            raise RuntimeError("Resolve title text verification failed")
-        subtitles = normalize_subtitle_rows(
-            list(payload.get("subtitles") or []) if mode in {"combined", "editing"} else [], fps=fps
-        )
-        inserted_subtitles = insert_native_subtitles(
-            resolve, project, generated, subtitles, fps=fps, base_frame=base_frame,
-            srt_path=Path(payload["subtitle_srt_path"]) if payload.get("subtitle_srt_path") else None,
-        )
-        verify_native_subtitles(generated, subtitles, fps=fps, base_frame=base_frame)
-        report_handoff_progress(payload,"subtitles",78,"Sottotitoli inseriti")
-        if destination_mode == "active":
-            unlock_broll_tracks(generated, prepared_broll_clips)
-        media_pool.SetCurrentFolder(media_folder)
-        broll_count = append_broll_clips(media_pool, generated, prepared_broll_clips, base_frame=base_frame, fps=fps,
-            progress=lambda index,total: report_handoff_progress(payload,'broll',78+int(10*index/max(1,total)),f'Inserisco clip: {index}/{total}'))
-        report_handoff_progress(payload,"broll",88,"B-roll posizionati")
+            title_items = generated_fusion_items(generated, existing_title_ids)
+            final_ranges = sorted((int(item.GetStart())-base_frame,int(item.GetEnd())-base_frame) for item in title_items)
+            expected_ranges = sorted((row["start_frame"],row["end_frame"]) for row in plan["segments"])
+            if final_ranges != expected_ranges:
+                raise RuntimeError("Resolve Text+ verification found unexpected clip ranges")
+            if any(str(item.GetName()) != title_name for item in title_items):
+                raise RuntimeError("Resolve created a different title than the selected template")
+            final_text = [str(_text_tool(row["item"]).GetInput("StyledText", 0)) for row in keep]
+            if final_text != [str(row["text"]) for row in keep]:
+                raise RuntimeError("Resolve title text verification failed")
+        else:
+            report_handoff_progress(payload,"titles",66,"Testi RMBL lasciati invariati")
+
+        inserted_subtitles = []
+        if include_subtitles:
+            subtitles = normalize_subtitle_rows(list(payload.get("subtitles") or []) if mode in {"combined","editing"} else [], fps=fps)
+            selective_srt = None if apply_scope == "subtitles" else (Path(payload["subtitle_srt_path"]) if payload.get("subtitle_srt_path") else None)
+            inserted_subtitles = insert_native_subtitles(resolve,project,generated,subtitles,fps=fps,base_frame=base_frame,srt_path=selective_srt,target_track=subtitle_target_track)
+            verify_native_subtitles(generated,subtitles,fps=fps,base_frame=base_frame,track_index=subtitle_target_track)
+            report_handoff_progress(payload,"subtitles",78,"Sottotitoli inseriti")
+        else:
+            report_handoff_progress(payload,"subtitles",78,"Sottotitoli lasciati invariati")
+
+        broll_count = 0
+        if include_broll:
+            if destination_mode == "active":
+                unlock_broll_tracks(generated, prepared_broll_clips)
+            media_pool.SetCurrentFolder(media_folder)
+            broll_count = append_broll_clips(media_pool, generated, prepared_broll_clips, base_frame=base_frame, fps=fps,
+                progress=lambda index,total: report_handoff_progress(payload,'broll',78+int(10*index/max(1,total)),f'Inserisco clip: {index}/{total}'))
+            report_handoff_progress(payload,"broll",88,"B-roll posizionati")
+        else:
+            report_handoff_progress(payload,"broll",88,"Media e B-roll lasciati invariati")
         if protected_items is not None:
             verify_existing_timeline_items(generated, protected_items)
             restore_timeline_markers(generated, original_markers)
@@ -910,7 +1006,7 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
             raise RuntimeError("Resolve could not archive the safety backup in BCK")
         # Prior timelines belong to the editor. A new export never deletes them.
         stale_timelines = []
-        current_subtitle_media = find_subtitle_media(media_pool, Path(payload["subtitle_srt_path"])) if payload.get("subtitle_srt_path") else None
+        current_subtitle_media = find_subtitle_media(media_pool, Path(payload["subtitle_srt_path"])) if include_subtitles and payload.get("subtitle_srt_path") else None
         removed_subtitle_sources = 0
         report_handoff_progress(payload,"save",96,"Salvataggio progetto Resolve")
         save_resolve_project(project_manager)
@@ -921,14 +1017,17 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
             "title_count": len(keep), "subtitle_count": len(inserted_subtitles),
             "fps": fps, "title_name": title_name,
             "source_timeline": original_name, "source_unchanged": destination_mode != "active",
-            "media_bin": target_folder.GetName(),
-            "media_folder": media_folder_name,
+            "media_bin": target_folder.GetName() if target_folder is not None else None,
+            "media_folder": media_folder_name if include_broll else None,
             "removed_timelines": len(stale_timelines),
             "removed_subtitle_sources": removed_subtitle_sources,
             "broll_count": broll_count,
             "generic_broll_count": len(generic_rows),
             "broll_skipped": len(payload.get("broll_unavailable") or []),
             "destination_mode": destination_mode,
+            "apply_scope": apply_scope,
+            "muted_title_count": muted_title_count,
+            "muted_subtitle_count": muted_subtitle_count,
             "backup_timeline_name": str(backup.GetName()) if backup else None,
         }
     except Exception:

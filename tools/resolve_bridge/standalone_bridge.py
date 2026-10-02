@@ -60,6 +60,11 @@ def default_destination() -> str:
     return value if value in {"active", "new"} else "active"
 
 
+def default_apply_scope() -> str:
+    value = os.environ.get("RAMBLA_BRIDGE_APPLY_SCOPE", "all")
+    return value if value in {"all", "titles", "subtitles"} else "all"
+
+
 def window_geometry(screen_width: int, screen_height: int, *, requested_height: int, package_visible: bool) -> str:
     """Return a useful bridge size without extending below the Windows work area."""
     preferred_width = 660 if package_visible and screen_width >= 1600 else 600
@@ -345,12 +350,17 @@ class BridgeClient:
         except Exception as exc:
             return BridgeSnapshot(False, {}, None, str(exc))
 
-    def apply(self, destination_mode: str) -> dict[str, Any]:
+    def apply(self, destination_mode: str, apply_scope: str = "all") -> dict[str, Any]:
         if not self.current_package or not self.current_package.get("bridge_received_at"):
             raise RuntimeError("Package has not been received by this bridge session")
+        if apply_scope not in {"all", "titles", "subtitles"}:
+            raise ValueError("apply_scope non valido")
+        if apply_scope != "all":
+            destination_mode = "active"
         status = self.request_json("/api/curation/resolve-bridge/status")
         return self.request_json(f"/api/curation/resolve-handoffs/{self.current_package['package_id']}/apply", "POST", {
             "destination_mode": destination_mode,
+            "apply_scope": apply_scope,
             "current_project": status.get("project", ""),
             "current_timeline_id": status.get("timeline_id", ""),
             "current_mark_in": status.get("mark_in"),
@@ -514,16 +524,41 @@ class BridgeApp:
         tk.Label(destinations,text="DESTINAZIONE",bg="#11152b",fg="#9299bc",font=("Segoe UI Semibold",8),anchor="w").pack(fill="x",pady=(0,6))
         DestinationCard(destinations,title="APPLICA ALLA TIMELINE ATTIVA",description="Crea prima un backup numerato in BCK, poi aggiorna direttamente la timeline reale dall'IN corrente",value="active",variable=self.destination,recommended=True,on_select=self._select_destination).pack(fill="x",pady=(0,7))
         DestinationCard(destinations,title="CREA UNA NUOVA TIMELINE TEMP",description="Genera una timeline separata contenente soltanto il nuovo montaggio",value="new",variable=self.destination,on_select=self._select_destination).pack(fill="x")
+
+        self.apply_scope = tk.StringVar(value=default_apply_scope())
+        scope = tk.Frame(shell, bg="#11152b"); scope.pack(fill="x", pady=(10, 5))
+        tk.Label(scope,text="COSA AGGIORNARE",bg="#11152b",fg="#9299bc",font=("Segoe UI Semibold",8),anchor="w").pack(fill="x",pady=(0,6))
+        DestinationCard(scope,title="TUTTO",description="Aggiorna testi, sottotitoli e B-roll con il flusso completo",value="all",variable=self.apply_scope,recommended=True,on_select=self._select_apply_scope).pack(fill="x",pady=(0,6))
+        DestinationCard(scope,title="SOLO TESTI",description="Lascia i media intatti, disattiva i testi RMBL precedenti e crea una nuova traccia sopra",value="titles",variable=self.apply_scope,on_select=self._select_apply_scope).pack(fill="x",pady=(0,6))
+        DestinationCard(scope,title="SOLO SUBS",description="Lascia i media intatti, disattiva i subs RMBL precedenti e crea una nuova Subtitle track",value="subtitles",variable=self.apply_scope,on_select=self._select_apply_scope).pack(fill="x")
+
         self.widgets["progress"] = ProgressBar(shell); self.widgets["progress"].pack(fill="x", pady=(12, 8))
         self.widgets["message"] = tk.Label(shell, text="L'applicazione parte soltanto quando premi APPLICA.", bg="#11152b", fg="#b9c1e0", font=("Segoe UI", 9), wraplength=520, justify="left", anchor="w"); self.widgets["message"].pack(fill="x", pady=(0, 8))
         actions = tk.Frame(shell, bg="#11152b"); actions.pack(fill="x", pady=(0, 8))
-        self.widgets["apply"] = RoundedButton(actions, text="APPLICA", command=self.apply, accent=True, state="disabled"); self.widgets["apply"].pack(side="left", fill="x", expand=True, padx=(0, 6))
+        self.widgets["apply"] = RoundedButton(actions, text="APPLICA TUTTO", command=self.apply, accent=True, state="disabled"); self.widgets["apply"].pack(side="left", fill="x", expand=True, padx=(0, 6))
         self.widgets["discard"] = RoundedButton(actions, text="SCARTA", command=self.discard, state="disabled"); self.widgets["discard"].pack(side="left", fill="x", expand=True, padx=(6, 0))
         self._fit_window(package_visible=False)
 
     def _select_destination(self, value: str) -> None:
         self._destination_explicit = True
         self.destination.set(value)
+        if value == "new" and hasattr(self, "apply_scope") and self.apply_scope.get() != "all":
+            self.apply_scope.set("all")
+        self._refresh_apply_label()
+
+    def _select_apply_scope(self, value: str) -> None:
+        self.apply_scope.set(value)
+        if value != "all":
+            self._destination_explicit = True
+            self.destination.set("active")
+        self._refresh_apply_label()
+
+    def _refresh_apply_label(self) -> None:
+        widget = self.widgets.get("apply")
+        if widget is None or not hasattr(self, "apply_scope"):
+            return
+        labels = {"all": "APPLICA TUTTO", "titles": "AGGIORNA SOLO TESTI", "subtitles": "AGGIORNA SOLO SUBS"}
+        widget.configure(text=labels.get(self.apply_scope.get(), "APPLICA TUTTO"))
 
     def _fit_window(self, *, package_visible: bool) -> None:
         if not hasattr(self.root, "winfo_screenheight"):
@@ -571,6 +606,8 @@ class BridgeApp:
         if hasattr(self, 'destination'):
             env['RAMBLA_BRIDGE_DESTINATION'] = self.destination.get()
             env['RAMBLA_BRIDGE_DESTINATION_EXPLICIT'] = '1' if self._destination_explicit else '0'
+        if hasattr(self, 'apply_scope'):
+            env['RAMBLA_BRIDGE_APPLY_SCOPE'] = self.apply_scope.get()
         self.close()
         subprocess.Popen([sys.executable, str(Path(__file__).resolve())], cwd=str(APP_ROOT), env=env,
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -607,7 +644,7 @@ class BridgeApp:
 
     def apply(self) -> None:
         try:
-            row = self.client.apply(self.destination.get()); self.applying = row.get("status") == "applying"; self._render_job(row)
+            row = self.client.apply(self.destination.get(), self.apply_scope.get()); self.applying = row.get("status") == "applying"; self._render_job(row)
         except Exception as exc: self._show_error(str(exc))
 
     def _poll_apply(self) -> None:

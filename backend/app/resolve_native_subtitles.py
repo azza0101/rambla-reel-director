@@ -43,9 +43,10 @@ def normalize_subtitle_rows(rows: list[dict[str, Any]], *, fps: int) -> list[dic
     ]
 
 
-def _subtitle_items(timeline: Any) -> list[Any]:
+def _subtitle_items(timeline: Any, track_index: int | None = None) -> list[Any]:
     items: list[Any] = []
-    for track in range(1, int(timeline.GetTrackCount("subtitle") or 0) + 1):
+    tracks = [int(track_index)] if track_index is not None else range(1, int(timeline.GetTrackCount("subtitle") or 0) + 1)
+    for track in tracks:
         items.extend(timeline.GetItemListInTrack("subtitle", track) or [])
     return items
 
@@ -127,15 +128,19 @@ def insert_native_subtitles(
     fps: int,
     base_frame: int,
     srt_path: Path | None = None,
+    target_track: int | None = None,
 ) -> list[Any]:
     """Import relative SRT and append it as genuine Resolve Subtitle items."""
     del resolve, fps, base_frame  # SRT is relative; Resolve anchors it to the timeline start.
     if not rows:
         return []
-    if int(timeline.GetTrackCount("subtitle") or 0) == 0:
+    wanted_track = int(target_track or 1)
+    if wanted_track < 1:
+        raise ValueError("target subtitle track must be >= 1")
+    while int(timeline.GetTrackCount("subtitle") or 0) < wanted_track:
         added = timeline.AddTrack("subtitle")
-        if added is False or int(timeline.GetTrackCount("subtitle") or 0) == 0:
-            raise RuntimeError("Resolve could not create a native Subtitle track")
+        if added is False:
+            raise RuntimeError("Resolve could not create the requested native Subtitle track")
     before = {_identity(item) for item in _subtitle_items(timeline)}
     if srt_path is None:
         handle, raw_path = tempfile.mkstemp(prefix="rambla-filtered-subs-", suffix=".srt")
@@ -164,28 +169,33 @@ def insert_native_subtitles(
         rename = getattr(imported[0], "SetClipProperty", None)
         if rename:
             rename("Clip Name", f"RAMBLA · {len(rows)} sottotitoli nativi · sorgente interna")
-        # Resolve 21.1 always materializes an appended SRT on subtitle track 1.
-        # It still returns a truthy result when that track is locked, but silently
-        # creates zero timeline items. Active-timeline mode protects every source
-        # track before writing, so unlock track 1 only for this append and restore
-        # its original state immediately afterwards. Existing items are separately
-        # snapshotted and verified by the caller before the generated copy is kept.
+        # Legacy full export uses Resolve's native SRT append behavior on ST1.
+        # Selective subtitle refreshes explicitly request a higher target track
+        # through clipInfo and then verify where Resolve actually materialized it.
         was_locked = False
         get_lock = getattr(timeline, "GetIsTrackLocked", None)
         set_lock = getattr(timeline, "SetTrackLock", None)
         if get_lock is not None and set_lock is not None:
-            was_locked = bool(get_lock("subtitle", 1))
-            if was_locked and set_lock("subtitle", 1, False) is False:
-                raise RuntimeError("Resolve could not temporarily unlock Subtitle track 1")
+            was_locked = bool(get_lock("subtitle", wanted_track))
+            if was_locked and set_lock("subtitle", wanted_track, False) is False:
+                raise RuntimeError(f"Resolve could not temporarily unlock Subtitle track {wanted_track}")
         try:
-            if not pool.AppendToTimeline(imported):
+            appended = (
+                pool.AppendToTimeline(imported)
+                if target_track is None
+                else pool.AppendToTimeline([{"mediaPoolItem": imported[0], "trackIndex": wanted_track}])
+            )
+            if not appended:
                 raise RuntimeError("Resolve could not place the native Subtitle clips on the timeline")
         finally:
-            if was_locked and set_lock("subtitle", 1, True) is False:
-                raise RuntimeError("Resolve could not restore the Subtitle track lock")
-        inserted = [item for item in _subtitle_items(timeline) if _identity(item) not in before]
+            if was_locked and set_lock("subtitle", wanted_track, True) is False:
+                raise RuntimeError(f"Resolve could not restore Subtitle track {wanted_track} lock")
+        inserted = [item for item in _subtitle_items(timeline, wanted_track) if _identity(item) not in before]
         if not inserted:
-            raise RuntimeError("Resolve imported the SRT but created no native Subtitle clips")
+            misplaced = [item for item in _subtitle_items(timeline) if _identity(item) not in before]
+            if misplaced:
+                timeline.DeleteClips(misplaced, False)
+            raise RuntimeError(f"Resolve did not place the refreshed native subtitles on requested track {wanted_track}")
         return inserted
     except Exception:
         path.unlink(missing_ok=True)
@@ -197,11 +207,12 @@ def verify_native_subtitles(
     rows: list[dict[str, Any]],
     fps: int,
     base_frame: int,
+    track_index: int | None = None,
 ) -> None:
     del fps
     actual = sorted(
         (str(item.GetName()).strip(), int(item.GetStart()), int(item.GetEnd()))
-        for item in _subtitle_items(timeline)
+        for item in _subtitle_items(timeline, track_index)
     )
     expected = sorted(
         (

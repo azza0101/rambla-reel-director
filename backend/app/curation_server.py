@@ -111,6 +111,7 @@ class ResolveBridgeSessionRequest(BaseModel):
 class ResolveHandoffApplyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     destination_mode: str = "new"
+    apply_scope: str = "all"
     current_project: str
     current_timeline_id: str
     current_mark_in: int | None = None
@@ -1479,7 +1480,7 @@ def create_app(
     async def apply_resolve_handoff(package_id: str, request: ResolveHandoffApplyRequest):
         project_root, _ = find_handoff(package_id)
         try:
-            return handoff_jobs.apply(project_root, package_id, request.destination_mode,
+            return handoff_jobs.apply(project_root, package_id, request.destination_mode, request.apply_scope,
                                       current_project=request.current_project,
                                       current_timeline_id=request.current_timeline_id,
                                       current_mark_in=request.current_mark_in)
@@ -1499,7 +1500,7 @@ def create_app(
         version=(Path(__file__).resolve().parents[2]/'RAMBLA_VERSION').read_text(encoding='utf-8').strip()
         return {'version':version,'build':os.environ.get('RAMBLA_BUILD_TOKEN',''),
                 'bridge':await resolve_bridge_session_status(),
-                **{k:package.get(k) for k in ('package_id','project_id','status','created_at','updated_at','summary','destination_mode','destination_timeline_id','bridge_received_at','progress','error','diagnostics','result')}}
+                **{k:package.get(k) for k in ('package_id','project_id','status','created_at','updated_at','summary','destination_mode','apply_scope','destination_timeline_id','bridge_received_at','progress','error','diagnostics','result')}}
 
     @app.get('/api/curation/projects/{project_id}/resolve-handoffs/latest')
     async def latest_resolve_handoff(project_id: str):

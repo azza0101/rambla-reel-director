@@ -19,9 +19,13 @@ class ResolveHandoffJobs:
         self._lock = threading.RLock()
         self._active: str | None = None
 
-    def apply(self, project_root: Path, package_id: str, destination_mode: str, *, current_project: str, current_timeline_id: str, current_mark_in: int | None = None) -> dict[str, Any]:
+    def apply(self, project_root: Path, package_id: str, destination_mode: str, apply_scope: str = "all", *, current_project: str, current_timeline_id: str, current_mark_in: int | None = None) -> dict[str, Any]:
         if destination_mode not in {"new", "active"}:
             raise ValueError("destination_mode must be 'new' or 'active'")
+        if apply_scope not in {"all", "titles", "subtitles"}:
+            raise ValueError("apply_scope must be 'all', 'titles' or 'subtitles'")
+        if apply_scope != "all" and destination_mode != "active":
+            raise ValueError("Selective Resolve updates require the active timeline")
         package = self.store.read(project_root, package_id)
         if package["status"] == "completed":
             return package
@@ -36,14 +40,15 @@ class ResolveHandoffJobs:
             started = self.store.transition(
                 project_root, package_id, "applying",
                 destination_mode=destination_mode,
+                apply_scope=apply_scope,
                 destination_timeline_id=current_timeline_id if destination_mode == "active" else None,
                 destination_mark_in=int(current_mark_in) if destination_mode == "active" and current_mark_in is not None else None,
                 progress={"phase":"validate", "percent":5, "message":"Controllo pacchetto"}, error=None,
             )
-            self._executor.submit(self._run, Path(project_root), package_id, destination_mode)
+            self._executor.submit(self._run, Path(project_root), package_id, destination_mode, apply_scope)
             return started
 
-    def _run(self, project_root: Path, package_id: str, destination_mode: str) -> None:
+    def _run(self, project_root: Path, package_id: str, destination_mode: str, apply_scope: str) -> None:
         stop=threading.Event()
         progress_path=project_root / "resolve-outbox" / package_id / "progress.json"
         watcher=None
@@ -53,7 +58,7 @@ class ResolveHandoffJobs:
         try:
             package = self.store.read(project_root, package_id)
             payload = dict(package["payload"])
-            payload.update(destination_mode=destination_mode, package_id=package_id, handoff_progress_path=str(progress_path))
+            payload.update(destination_mode=destination_mode, apply_scope=apply_scope, package_id=package_id, handoff_progress_path=str(progress_path))
             if destination_mode == "active":
                 payload["source_timeline_id"] = str(package.get("destination_timeline_id") or "")
                 if package.get("destination_mark_in") is not None:
