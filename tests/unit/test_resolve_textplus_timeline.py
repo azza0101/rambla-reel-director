@@ -48,6 +48,7 @@ import uuid
 from backend.app.resolve_textplus_timeline import (
     boundary_operations,
     build_textplus_timeline_plan,
+    wrap_textplus_text,
     select_exact_segments,
     set_textplus_content,
     save_resolve_project,
@@ -72,6 +73,24 @@ from backend.app.resolve_textplus_timeline import (
     create_active_backup,
     conform_broll_media,
 )
+
+
+def test_textplus_wraps_at_word_boundaries_to_vertical_safe_lines():
+    assert wrap_textplus_text("turismo sostenibile") == "turismo\nsostenibile"
+    assert wrap_textplus_text("viaggio in treno") == "viaggio in\ntreno"
+    assert wrap_textplus_text("dieci char") == "dieci char"
+
+
+def test_textplus_wrap_keeps_single_long_words_intact():
+    assert wrap_textplus_text("sostenibilissimo") == "sostenibilissimo"
+
+
+def test_textplus_plan_stores_wrapped_copy_used_for_resolve_verification():
+    plan = build_textplus_timeline_plan(
+        {"items": [{"text": "turismo sostenibile", "start_seconds": 0, "end_seconds": 1}]},
+        target_fps=30,
+    )
+    assert plan["segments"][0]["text"] == "turismo\nsostenibile"
 
 
 def test_active_rambla_timeline_is_rebuilt_after_backup_instead_of_duplicating_generated_items():

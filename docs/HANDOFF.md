@@ -1,6 +1,6 @@
 # RMBL B ROLL — handoff tecnico
 
-Aggiornato: 2026-10-02  Versione: `v0038`  Branch di consegna: `feat/api-first-text-first-v1`
+Aggiornato: 2026-10-02  Versione: `v0039`  Branch di consegna: `feat/api-first-text-first-v1`
 
 ## Avvio rapido
 
@@ -106,3 +106,12 @@ I test focalizzati sulla disposizione dei comandi di modifica testo, UI, tema e 
 - Il primo boundary reale spezza il titolo di priming esattamente nel punto richiesto; il frammento vuoto iniziale viene poi eliminato dalla selezione dei range esatti.
 - Il comportamento non cambia quando il primo titolo parte già da frame 0.
 - Aggiunti test di regressione per priming, assenza di doppio zero e rimozione del lead-in.
+
+
+### Wrapping Text+ verticale v0039
+
+- Le frasi evidenziate inviate ai Fusion Title vengono ora mandate a capo automaticamente tra parole.
+- Ogni riga cerca di restare entro 11 caratteri, così i titoli lunghi non sbordano nel formato verticale.
+- Le parole non vengono mai spezzate a metà; una singola parola oltre 11 caratteri resta intera.
+- Lo stesso testo wrappato viene usato anche nella verifica finale di Resolve, evitando falsi mismatch.
+- Aggiunti test per wrapping, parole lunghe e integrazione nel piano Text+.

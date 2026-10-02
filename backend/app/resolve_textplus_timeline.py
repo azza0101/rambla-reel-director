@@ -30,12 +30,32 @@ from backend.app.resolve_native_subtitles import (
 )
 
 
+def wrap_textplus_text(text: str, *, max_chars: int = 11) -> str:
+    """Wrap highlighted Text+ copy at word boundaries for vertical-safe titles."""
+    if max_chars < 1:
+        raise ValueError("max_chars must be positive")
+    words = str(text or "").split()
+    if not words:
+        return ""
+    lines: list[str] = []
+    current = words[0]
+    for word in words[1:]:
+        candidate = current + " " + word
+        if len(candidate) <= max_chars:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    lines.append(current)
+    return "\n".join(lines)
+
+
 def build_textplus_timeline_plan(payload: dict[str, Any], *, target_fps: float) -> dict[str, Any]:
     if target_fps <= 0:
         raise ValueError("target fps must be positive")
     segments: list[dict[str, Any]] = []
     for item in payload.get("items") or []:
-        text = str(item.get("text") or "").strip()
+        text = wrap_textplus_text(str(item.get("text") or "").strip())
         start = round(float(item["start_seconds"]) * target_fps)
         end = round(float(item["end_seconds"]) * target_fps)
         if not text or end <= start:
