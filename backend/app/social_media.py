@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 
 HOSTS = {'tiktok': {'www.tiktok.com', 'tiktok.com'},
          'instagram': {'www.instagram.com', 'instagram.com'},
+         'youtube': {'www.youtube.com', 'youtube.com', 'youtu.be'},
          'youtube_shorts': {'www.youtube.com', 'youtube.com', 'youtu.be'}}
 
 
