@@ -1,6 +1,6 @@
 # RMBL B ROLL — handoff tecnico
 
-Aggiornato: 2026-10-02  Versione: `v0043`  Branch di consegna: `feat/api-first-text-first-v1`
+Aggiornato: 2026-10-02  Versione: `v0044`  Branch di consegna: `feat/api-first-text-first-v1`
 
 ## Avvio rapido
 
@@ -154,3 +154,13 @@ I test focalizzati sulla disposizione dei comandi di modifica testo, UI, tema e 
 - Se la traccia superiore appena creata resta vuota a causa del fallback, viene rimossa.
 - Il risultato espone `subtitle_track_index` e `subtitle_track_fallback`; il Bridge segnala il fallback all'utente.
 - Il backup BCK resta obbligatorio prima di ogni Apply.
+
+
+### B-roll preview anchor + interruzione Bridge v0044
+
+- Correzione B-roll: quando Resolve usa il file sorgente completo, il punto visibile non riparte più da frame 0. Il piano conserva `source_start_seconds/source_end_seconds` del frammento verificato mostrato nell'app e lo usa come ancora assoluta del ritaglio.
+- Il conformed media aggiunge le maniglie attorno a quell'ancora; `source_start_frame` nel file con handles punta quindi allo stesso punto visto nella preview. I campi diagnostici `selected_source_start_frame_absolute`, `selected_source_end_frame_absolute` e `conformed_cut_start_frame_absolute` rendono verificabile l'allineamento.
+- Per i selezionati Pexels, TikTok, Instagram, YouTube Shorts e YouTube normale viene preferito/scaricato il full source quando disponibile; Envato/full locali vengono riconosciuti distinguendoli dal file preview.
+- Il Bridge espone **INTERROMPI OPERAZIONE** durante un Apply. L'interruzione è cooperativa e sicura: viene scritto un cancel request, il helper si ferma al primo checkpoint e, se la timeline attiva era già stata mutata, il normale rollback ripristina il backup `BCK`.
+- Uno stato `cancelled` resta riutilizzabile: lo stesso pacchetto può essere reinviato con TUTTO / SOLO SUBS / SOLO FRASI / SOLO MEDIA.
+- Dopo la pressione di Interrompi il pulsante resta disabilitato mentre compare `Interruzione richiesta · attendo il ripristino sicuro della timeline…`.
