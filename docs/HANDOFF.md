@@ -1,6 +1,6 @@
 # RMBL B ROLL — handoff tecnico
 
-Aggiornato: 2026-10-02  Versione: `v0044`  Branch di consegna: `feat/api-first-text-first-v1`
+Aggiornato: 2026-10-02  Versione: `v0045`  Branch di consegna: `feat/api-first-text-first-v1`
 
 ## Avvio rapido
 
@@ -164,3 +164,10 @@ I test focalizzati sulla disposizione dei comandi di modifica testo, UI, tema e 
 - Il Bridge espone **INTERROMPI OPERAZIONE** durante un Apply. L'interruzione è cooperativa e sicura: viene scritto un cancel request, il helper si ferma al primo checkpoint e, se la timeline attiva era già stata mutata, il normale rollback ripristina il backup `BCK`.
 - Uno stato `cancelled` resta riutilizzabile: lo stesso pacchetto può essere reinviato con TUTTO / SOLO SUBS / SOLO FRASI / SOLO MEDIA.
 - Dopo la pressione di Interrompi il pulsante resta disabilitato mentre compare `Interruzione richiesta · attendo il ripristino sicuro della timeline…`.
+
+
+### Layout azioni selettive Bridge v0045
+
+- Sotto il pulsante grande **INVIA TUTTO** il Bridge mostra esattamente tre pulsanti orizzontali della stessa larghezza: **SOLO SUBS**, **SOLO FRASI**, **SOLO MEDIA**.
+- Le tre colonne usano una griglia Tk uniforme per garantire dimensioni identiche indipendentemente dalla lunghezza dell'etichetta.
+- **SOLO MEDIA** chiama esplicitamente lo scope `media`: aggiorna soltanto i B-roll, senza reinserire frasi o sottotitoli.
