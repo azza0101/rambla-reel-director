@@ -538,13 +538,28 @@ class BridgeApp:
 
         self.widgets["apply_all"] = RoundedButton(shell, text="INVIA TUTTO", command=lambda: self.apply("all"), accent=True, state="disabled")
         self.widgets["apply_all"].pack(fill="x", pady=(0, 7))
-        selective = tk.Frame(shell, bg="#11152b"); selective.pack(fill="x", pady=(0, 8))
-        self.widgets["apply_subtitles"] = RoundedButton(selective, text="SOLO SUBS", command=lambda: self.apply("subtitles"), state="disabled")
-        self.widgets["apply_subtitles"].pack(side="left", fill="x", expand=True, padx=(0, 4))
-        self.widgets["apply_titles"] = RoundedButton(selective, text="SOLO FRASI", command=lambda: self.apply("titles"), state="disabled")
-        self.widgets["apply_titles"].pack(side="left", fill="x", expand=True, padx=4)
-        self.widgets["apply_media"] = RoundedButton(selective, text="SOLO MEDIA", command=lambda: self.apply("media"), state="disabled")
-        self.widgets["apply_media"].pack(side="left", fill="x", expand=True, padx=(4, 0))
+        selective = tk.Frame(shell, bg="#11152b")
+        selective.pack(fill="x", pady=(0, 8))
+        for column in range(3):
+            selective.grid_columnconfigure(column, weight=1, uniform="selective-actions")
+
+        self.widgets["apply_subtitles"] = RoundedButton(
+            selective, text="SOLO SUBS",
+            command=lambda: self.apply("subtitles"), state="disabled"
+        )
+        self.widgets["apply_subtitles"].grid(row=0, column=0, sticky="ew", padx=(0, 4))
+
+        self.widgets["apply_titles"] = RoundedButton(
+            selective, text="SOLO FRASI",
+            command=lambda: self.apply("titles"), state="disabled"
+        )
+        self.widgets["apply_titles"].grid(row=0, column=1, sticky="ew", padx=4)
+
+        self.widgets["apply_media"] = RoundedButton(
+            selective, text="SOLO MEDIA",
+            command=lambda: self.apply("media"), state="disabled"
+        )
+        self.widgets["apply_media"].grid(row=0, column=2, sticky="ew", padx=(4, 0))
         self.widgets["cancel_apply"] = RoundedButton(shell, text="INTERROMPI OPERAZIONE", command=self.cancel_apply, state="disabled")
         self.widgets["cancel_apply"].pack(fill="x", pady=(0, 7))
         self.widgets["discard"] = RoundedButton(shell, text="SCARTA PACCHETTO", command=self.discard, state="disabled")
