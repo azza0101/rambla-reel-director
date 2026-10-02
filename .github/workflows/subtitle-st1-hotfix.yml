@@ -1,0 +1,81 @@
+name: Subtitle ST1 hotfix verification
+on:
+  push:
+    branches: [fix/subtitle-st1-v0046-check]
+    paths: [.github/workflows/subtitle-st1-hotfix.yml, tools/apply_subtitle_st1_hotfix.py, tests/unit/test_resolve_subtitle_st1_regression.py]
+permissions:
+  contents: write
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[dev]'
+      - name: Reproduce, patch and verify
+        env:
+          GIT_AUTHOR_NAME: RMBL hotfix verification
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: RMBL hotfix verification
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: |
+          python - <<'PY'
+          import json, os, re, subprocess, uuid
+          from pathlib import Path
+          base='5f98a5bf6fbba73ada90d60b6522b488ed32ecfd'
+          logs=Path('hotfix-verification');logs.mkdir(exist_ok=True)
+          def run(name, args, timeout=90):
+              try:
+                  result=subprocess.run(args,capture_output=True,text=True,timeout=timeout)
+                  output=result.stdout+result.stderr;code=result.returncode
+              except subprocess.TimeoutExpired as exc:
+                  output=(exc.stdout or b'').decode(errors='replace') if isinstance(exc.stdout,bytes) else (exc.stdout or '')
+                  output+='\nTEST COMMAND TIMEOUT\n';code=124
+              (logs/(name+'.txt')).write_text(output,encoding='utf-8')
+              print(name,code,output[-3000:],flush=True)
+              failures=sorted(set(re.findall(r'^(?:FAILED|ERROR) (\S+)',output,re.M)))
+              return {'exit_code':code,'failures':failures,'tail':output[-4000:]}
+          for path,expected in {
+              'backend/app/resolve_native_subtitles.py':'4c16219cfded7e920a12fa180393cff1b7c74ce6',
+              'backend/app/resolve_textplus_timeline.py':'563be01a7172954edceac89b4182796f5885abee',
+          }.items():
+              actual=subprocess.check_output(['git','hash-object',path],text=True).strip()
+              assert actual==expected,(path,actual)
+          regression='tests/unit/test_resolve_subtitle_st1_regression.py'
+          focused=['tests/unit/test_resolve_native_subtitles.py','tests/unit/test_resolve_textplus_timeline.py',
+                   'tests/unit/test_resolve_handoff.py','tests/unit/test_resolve_handoff_jobs.py','tests/unit/test_standalone_resolve_bridge.py']
+          report={}
+          report['red']=run('red',['python','-m','pytest','-q',regression+'::test_only_subs_works_when_native_importer_ignores_target_and_st1_was_locked'])
+          assert report['red']['exit_code']==1,report['red']
+          assert 'Resolve imported the SRT but created no native Subtitle clips' in (logs/'red.txt').read_text()
+          report['baseline_focused']=run('baseline-focused',['python','-m','pytest','-q',*focused])
+          subprocess.run(['python','tools/apply_subtitle_st1_hotfix.py'],check=True)
+          report['green']=run('green',['python','-m','pytest','-q',regression])
+          assert report['green']['exit_code']==0,report['green']
+          report['patched_focused']=run('patched-focused',['python','-m','pytest','-q',*focused])
+          assert report['patched_focused']['exit_code'] != 124
+          assert not (set(report['patched_focused']['failures'])-set(report['baseline_focused']['failures'])),report
+          report['full_suite']=run('full-suite',['python','-m','pytest','-q'],timeout=90)
+          paths=['backend/app/resolve_native_subtitles.py','backend/app/resolve_textplus_timeline.py',regression,'docs/HANDOFF.md','RAMBLA_VERSION']
+          # Create a clean candidate directly on the backed-up release. The
+          # temporary verification workflow and builder do NOT enter the release.
+          env={**os.environ,'GIT_INDEX_FILE':'/tmp/rmbl-index-'+uuid.uuid4().hex}
+          subprocess.run(['git','read-tree',base],check=True,env=env)
+          subprocess.run(['git','add','--',*paths],check=True,env=env)
+          tree=subprocess.check_output(['git','write-tree'],text=True,env=env).strip()
+          sha=subprocess.check_output(['git','commit-tree',tree,'-p',base,'-m','fix(resolve): reserve empty ST1 for native subtitle refresh (v0046)'],text=True,env=env).strip()
+          report['candidate_sha']=sha
+          (logs/'report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
+          subprocess.run(['git','push','origin',sha+':refs/heads/fix/subtitle-st1-v0046-verified'],check=True)
+          print('CANDIDATE_SHA='+sha,flush=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: subtitle-st1-verification
+          path: hotfix-verification/
