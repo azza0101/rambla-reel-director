@@ -703,7 +703,11 @@ class BridgeApp:
             self.widgets["cancel_apply"].configure(state="disabled")
         elif status == "applying":
             self._set_apply_buttons("disabled")
-            self.widgets["cancel_apply"].configure(state="normal")
+            if row.get("cancel_requested"):
+                message = "Interruzione richiesta · attendo il ripristino sicuro della timeline…"
+                self.widgets["cancel_apply"].configure(state="disabled")
+            else:
+                self.widgets["cancel_apply"].configure(state="normal")
         else:
             self._set_apply_buttons("disabled")
             self.widgets["cancel_apply"].configure(state="disabled")
