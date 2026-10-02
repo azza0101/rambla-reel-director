@@ -32,3 +32,18 @@ def test_rejects_non_provider_url(tmp_path):
     from backend.app.social_media import prepare_media
     with pytest.raises(ValueError):
         prepare_media('http://127.0.0.1/private','tiktok',tmp_path,'full')
+
+
+def test_normal_youtube_is_supported_for_explicit_full_selected_download(tmp_path):
+    from backend.app.social_media import prepare_media
+    calls=[]
+    def run(command, **kwargs):
+        calls.append(command)
+        Path(command[command.index('-o')+1]).write_bytes(b'media')
+        return SimpleNamespace(returncode=0)
+
+    source='https://www.youtube.com/watch?v=abc123'
+    output=prepare_media(source,'youtube',tmp_path,'full',runner=run,python='python')
+
+    assert output.is_file()
+    assert '--download-sections' not in calls[0]
