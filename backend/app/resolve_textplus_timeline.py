@@ -26,6 +26,7 @@ from backend.app.resolve_native_subtitles import (
     find_subtitle_media,
     insert_native_subtitles,
     normalize_subtitle_rows,
+    subtitle_track_for_items,
     verify_native_subtitles,
 )
 
@@ -920,6 +921,8 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
     media_folder = None
     title_track_index = None
     subtitle_target_track = None
+    subtitle_actual_track = None
+    subtitle_track_fallback = False
     muted_title_count = 0
     muted_subtitle_count = 0
     removed_broll_count = 0
@@ -984,8 +987,6 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
             )
             if include_titles and title_track_index is not None:
                 name_rambla_track(generated, "video", title_track_index, "RMBL TEXT")
-            if subtitle_target_track is not None:
-                name_rambla_track(generated, "subtitle", subtitle_target_track, "RMBL SUBS")
         base_frame = int(payload.get("bridge_mark_in") if payload.get("bridge_mark_in") is not None else generated.GetStartFrame())
         keep = []
         if include_titles:
@@ -1033,8 +1034,24 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
             subtitles = normalize_subtitle_rows(list(payload.get("subtitles") or []) if mode in {"combined","editing"} else [], fps=fps)
             selective_srt = None if apply_scope == "subtitles" else (Path(payload["subtitle_srt_path"]) if payload.get("subtitle_srt_path") else None)
             inserted_subtitles = insert_native_subtitles(resolve,project,generated,subtitles,fps=fps,base_frame=base_frame,srt_path=selective_srt,target_track=subtitle_target_track)
-            verify_native_subtitles(generated,subtitles,fps=fps,base_frame=base_frame,track_index=subtitle_target_track)
-            report_handoff_progress(payload,"subtitles",78,"Sottotitoli inseriti")
+            subtitle_actual_track = subtitle_track_for_items(generated, inserted_subtitles)
+            subtitle_track_fallback = bool(
+                subtitle_target_track is not None
+                and subtitle_actual_track is not None
+                and subtitle_actual_track != subtitle_target_track
+            )
+            verify_native_subtitles(
+                generated, subtitles, fps=fps, base_frame=base_frame,
+                items=inserted_subtitles,
+            )
+            if subtitle_target_track is not None and subtitle_actual_track == subtitle_target_track:
+                name_rambla_track(generated, "subtitle", subtitle_actual_track, "RMBL SUBS")
+            report_handoff_progress(
+                payload, "subtitles", 78,
+                "Sottotitoli inseriti" + (
+                    f" · fallback ST{subtitle_actual_track}" if subtitle_track_fallback and subtitle_actual_track else ""
+                ),
+            )
         else:
             report_handoff_progress(payload,"subtitles",78,"Sottotitoli lasciati invariati")
 
@@ -1088,6 +1105,8 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
             "muted_title_count": muted_title_count,
             "muted_subtitle_count": muted_subtitle_count,
             "removed_broll_count": removed_broll_count,
+            "subtitle_track_index": subtitle_actual_track,
+            "subtitle_track_fallback": subtitle_track_fallback,
             "markers_restored": markers_restored,
             "backup_timeline_name": str(backup.GetName()) if backup else None,
         }
