@@ -1,0 +1,44 @@
+name: Inspect KURA v8 archive
+on:
+  push:
+    branches: [analysis/kura-v8-performance-20261002]
+    paths: [.github/workflows/kura-v8-inspect.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect archive read-only
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib, json, shutil, zipfile
+          from pathlib import Path
+          source=Path('backend/assets/resolve_titles/KURA_paper_title_v8.drfx')
+          out=Path('kura-inspection');out.mkdir()
+          data=source.read_bytes()
+          report={'source_commit':'67a037d7f48fd2d5a53fa51baca915def42419f4','file':str(source),'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest(),'magic_hex':data[:64].hex(),'is_zip':zipfile.is_zipfile(source)}
+          shutil.copyfile(source,out/source.name)
+          try:
+              with zipfile.ZipFile(source) as archive:
+                  report['entries']=[{'name':i.filename,'size':i.file_size,'compressed':i.compress_size} for i in archive.infolist()]
+                  report['bad_crc']=archive.testzip()
+                  for index, info in enumerate(archive.infolist()):
+                      if info.filename.lower().endswith(('.setting','.lua','.fuse','.json')):
+                          text=archive.read(info).decode('utf-8-sig')
+                          (out/(str(index)+'-'+Path(info.filename).name)).write_text(text,encoding='utf-8')
+                          print('TEXT FILE:',info.filename)
+                          print(text)
+          except Exception as exc:
+              report['archive_error']=repr(exc)
+          (out/'archive-report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
+          print(json.dumps(report,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kura-v8-inspection
+          path: kura-inspection/
+          retention-days: 7
