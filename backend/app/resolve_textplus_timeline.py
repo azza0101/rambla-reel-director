@@ -753,10 +753,17 @@ def conform_broll_media(clips: list[dict[str, Any]], fps: float, progress=None) 
                 os.replace(temporary, target)
             finally:
                 temporary.unlink(missing_ok=True)
-        result.append({**row, 'media_path': str(target), 'source_start_frame': handle_before,
-                       'source_end_frame': handle_before + duration,
-                       'handle_before_frames': handle_before,
-                       'handle_after_frames': handle_after})
+        result.append({
+            **row,
+            'media_path': str(target),
+            'source_start_frame': handle_before,
+            'source_end_frame': handle_before + duration,
+            'handle_before_frames': handle_before,
+            'handle_after_frames': handle_after,
+            'selected_source_start_frame_absolute': start,
+            'selected_source_end_frame_absolute': selected_end,
+            'conformed_cut_start_frame_absolute': cut_start,
+        })
     return result
 
 
@@ -818,7 +825,18 @@ def activate_timeline(resolve: Any, project: Any, timeline: Any) -> bool:
     return False
 
 
+class ResolveApplyCancelled(RuntimeError):
+    pass
+
+
+def raise_if_cancelled(payload: dict[str, Any]) -> None:
+    raw = str(payload.get("handoff_cancel_path") or "").strip()
+    if raw and Path(raw).is_file():
+        raise ResolveApplyCancelled("Operazione Resolve annullata dall'utente")
+
+
 def report_handoff_progress(payload: dict[str, Any], phase: str, percent: int, message: str) -> None:
+    raise_if_cancelled(payload)
     raw=str(payload.get("handoff_progress_path") or "").strip()
     if not raw: return
     from .atomic_io import write_json
@@ -992,6 +1010,7 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
         if include_titles:
             existing_title_ids = {str(item.GetUniqueId()) for item in _timeline_items(generated)}
             for operation in boundary_operations(plan):
+                raise_if_cancelled(payload)
                 boundary = operation["frame"]
                 move_to_boundary(generated, boundary=boundary, base_frame=base_frame, fps=fps)
                 inserted = insert_fusion_title_with_retry(
@@ -1030,6 +1049,7 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
             report_handoff_progress(payload,"titles",66,"Testi RMBL lasciati invariati")
 
         inserted_subtitles = []
+        raise_if_cancelled(payload)
         if include_subtitles:
             subtitles = normalize_subtitle_rows(list(payload.get("subtitles") or []) if mode in {"combined","editing"} else [], fps=fps)
             selective_srt = None if apply_scope == "subtitles" else (Path(payload["subtitle_srt_path"]) if payload.get("subtitle_srt_path") else None)
@@ -1061,6 +1081,7 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
             report_handoff_progress(payload,"subtitles",78,"Sottotitoli lasciati invariati")
 
         broll_count = 0
+        raise_if_cancelled(payload)
         if include_broll:
             if destination_mode == "active":
                 unlock_broll_tracks(generated, prepared_broll_clips)
