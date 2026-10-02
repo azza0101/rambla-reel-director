@@ -16,9 +16,10 @@ from typing import Any
 SCHEMA = "rambla-resolve-handoff-1"
 _TRANSITIONS = {
     "pending": {"applying", "discarded"},
-    "applying": {"completed", "failed"},
+    "applying": {"completed", "failed", "cancelled"},
     "failed": {"applying", "discarded"},
     "completed": {"applying", "discarded"},
+    "cancelled": {"applying", "discarded"},
     "discarded": set(),
 }
 
@@ -120,7 +121,7 @@ class ResolveHandoffStore:
                 row = _read_json(path)
             except (OSError, json.JSONDecodeError):
                 continue
-            if row.get("status") not in {"pending", "applying", "failed", "completed"}:
+            if row.get("status") not in {"pending", "applying", "failed", "completed", "cancelled"}:
                 continue
             if resolve_project and row.get("resolve_project") != resolve_project:
                 continue
