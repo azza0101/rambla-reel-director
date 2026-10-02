@@ -103,3 +103,19 @@ def test_new_package_describes_revision_against_last_completed_package():
         assert second["change_summary"]["broll_added"] == 1
         assert second["change_summary"]["broll_removed"] == 1
     finally: shutil.rmtree(root,ignore_errors=True)
+
+
+def test_completed_handoff_remains_discoverable_for_same_bridge_session_and_can_reenter_apply():
+    root=_root()
+    try:
+        store=ResolveHandoffStore(root.parent)
+        package=store.prepare(root,_payload(bridge_session_id="session-1"))
+        store.mark_received(root,package["package_id"],bridge_session_id="session-1")
+        store.transition(root,package["package_id"],"applying")
+        store.transition(root,package["package_id"],"completed")
+        rows=store.pending(resolve_project="Egitto2",timeline_id="tl-1",bridge_session_id="session-1")
+        assert [row["package_id"] for row in rows] == [package["package_id"]]
+        row=store.transition(root,package["package_id"],"applying",apply_scope="subtitles")
+        assert row["status"] == "applying" and row["apply_scope"] == "subtitles"
+    finally:
+        shutil.rmtree(root,ignore_errors=True)
