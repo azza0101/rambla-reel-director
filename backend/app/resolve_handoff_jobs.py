@@ -22,13 +22,11 @@ class ResolveHandoffJobs:
     def apply(self, project_root: Path, package_id: str, destination_mode: str, apply_scope: str = "all", *, current_project: str, current_timeline_id: str, current_mark_in: int | None = None) -> dict[str, Any]:
         if destination_mode not in {"new", "active"}:
             raise ValueError("destination_mode must be 'new' or 'active'")
-        if apply_scope not in {"all", "titles", "subtitles"}:
-            raise ValueError("apply_scope must be 'all', 'titles' or 'subtitles'")
+        if apply_scope not in {"all", "titles", "subtitles", "media"}:
+            raise ValueError("apply_scope must be 'all', 'titles', 'subtitles' or 'media'")
         if apply_scope != "all" and destination_mode != "active":
             raise ValueError("Selective Resolve updates require the active timeline")
         package = self.store.read(project_root, package_id)
-        if package["status"] == "completed":
-            return package
         if package["status"] == "applying":
             return package
         if package.get("resolve_project") and package["resolve_project"] != current_project:
@@ -39,6 +37,7 @@ class ResolveHandoffJobs:
             self._active = package_id
             started = self.store.transition(
                 project_root, package_id, "applying",
+                application_count=int(package.get("application_count") or 0) + 1,
                 destination_mode=destination_mode,
                 apply_scope=apply_scope,
                 destination_timeline_id=current_timeline_id if destination_mode == "active" else None,
