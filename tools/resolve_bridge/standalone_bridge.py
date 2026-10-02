@@ -353,7 +353,7 @@ class BridgeClient:
     def apply(self, destination_mode: str, apply_scope: str = "all") -> dict[str, Any]:
         if not self.current_package or not self.current_package.get("bridge_received_at"):
             raise RuntimeError("Package has not been received by this bridge session")
-        if apply_scope not in {"all", "titles", "subtitles"}:
+        if apply_scope not in {"all", "titles", "subtitles", "media"}:
             raise ValueError("apply_scope non valido")
         if apply_scope != "all":
             destination_mode = "active"
@@ -525,18 +525,20 @@ class BridgeApp:
         DestinationCard(destinations,title="APPLICA ALLA TIMELINE ATTIVA",description="Crea prima un backup numerato in BCK, poi aggiorna direttamente la timeline reale dall'IN corrente",value="active",variable=self.destination,recommended=True,on_select=self._select_destination).pack(fill="x",pady=(0,7))
         DestinationCard(destinations,title="CREA UNA NUOVA TIMELINE TEMP",description="Genera una timeline separata contenente soltanto il nuovo montaggio",value="new",variable=self.destination,on_select=self._select_destination).pack(fill="x")
 
-        self.apply_scope = tk.StringVar(value=default_apply_scope())
-        scope = tk.Frame(shell, bg="#11152b"); scope.pack(fill="x", pady=(10, 5))
-        tk.Label(scope,text="COSA AGGIORNARE",bg="#11152b",fg="#9299bc",font=("Segoe UI Semibold",8),anchor="w").pack(fill="x",pady=(0,6))
-        DestinationCard(scope,title="TUTTO",description="Aggiorna testi, sottotitoli e B-roll con il flusso completo",value="all",variable=self.apply_scope,recommended=True,on_select=self._select_apply_scope).pack(fill="x",pady=(0,6))
-        DestinationCard(scope,title="SOLO TESTI",description="Lascia i media intatti, disattiva i testi RMBL precedenti e crea una nuova traccia sopra",value="titles",variable=self.apply_scope,on_select=self._select_apply_scope).pack(fill="x",pady=(0,6))
-        DestinationCard(scope,title="SOLO SUBS",description="Lascia i media intatti, disattiva i subs RMBL precedenti e crea una nuova Subtitle track",value="subtitles",variable=self.apply_scope,on_select=self._select_apply_scope).pack(fill="x")
-
         self.widgets["progress"] = ProgressBar(shell); self.widgets["progress"].pack(fill="x", pady=(12, 8))
-        self.widgets["message"] = tk.Label(shell, text="L'applicazione parte soltanto quando premi APPLICA.", bg="#11152b", fg="#b9c1e0", font=("Segoe UI", 9), wraplength=520, justify="left", anchor="w"); self.widgets["message"].pack(fill="x", pady=(0, 8))
-        actions = tk.Frame(shell, bg="#11152b"); actions.pack(fill="x", pady=(0, 8))
-        self.widgets["apply"] = RoundedButton(actions, text="APPLICA TUTTO", command=self.apply, accent=True, state="disabled"); self.widgets["apply"].pack(side="left", fill="x", expand=True, padx=(0, 6))
-        self.widgets["discard"] = RoundedButton(actions, text="SCARTA", command=self.discard, state="disabled"); self.widgets["discard"].pack(side="left", fill="x", expand=True, padx=(6, 0))
+        self.widgets["message"] = tk.Label(shell, text="Il pacchetto resta disponibile: puoi inviare più parti una dopo l'altra.", bg="#11152b", fg="#b9c1e0", font=("Segoe UI", 9), wraplength=520, justify="left", anchor="w"); self.widgets["message"].pack(fill="x", pady=(0, 8))
+
+        self.widgets["apply_all"] = RoundedButton(shell, text="INVIA TUTTO", command=lambda: self.apply("all"), accent=True, state="disabled")
+        self.widgets["apply_all"].pack(fill="x", pady=(0, 7))
+        selective = tk.Frame(shell, bg="#11152b"); selective.pack(fill="x", pady=(0, 8))
+        self.widgets["apply_subtitles"] = RoundedButton(selective, text="SOLO SUBS", command=lambda: self.apply("subtitles"), state="disabled")
+        self.widgets["apply_subtitles"].pack(side="left", fill="x", expand=True, padx=(0, 4))
+        self.widgets["apply_titles"] = RoundedButton(selective, text="SOLO FRASI", command=lambda: self.apply("titles"), state="disabled")
+        self.widgets["apply_titles"].pack(side="left", fill="x", expand=True, padx=4)
+        self.widgets["apply_media"] = RoundedButton(selective, text="SOLO MEDIA", command=lambda: self.apply("media"), state="disabled")
+        self.widgets["apply_media"].pack(side="left", fill="x", expand=True, padx=(4, 0))
+        self.widgets["discard"] = RoundedButton(shell, text="SCARTA PACCHETTO", command=self.discard, state="disabled")
+        self.widgets["discard"].pack(fill="x", pady=(0, 8))
         self._fit_window(package_visible=False)
 
     def _select_destination(self, value: str) -> None:
@@ -606,8 +608,6 @@ class BridgeApp:
         if hasattr(self, 'destination'):
             env['RAMBLA_BRIDGE_DESTINATION'] = self.destination.get()
             env['RAMBLA_BRIDGE_DESTINATION_EXPLICIT'] = '1' if self._destination_explicit else '0'
-        if hasattr(self, 'apply_scope'):
-            env['RAMBLA_BRIDGE_APPLY_SCOPE'] = self.apply_scope.get()
         self.close()
         subprocess.Popen([sys.executable, str(Path(__file__).resolve())], cwd=str(APP_ROOT), env=env,
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -625,7 +625,7 @@ class BridgeApp:
             summary = package.get("summary") or {}; changes = package.get("change_summary") or {}
             self.widgets["package"].configure(text=f"NUOVA REVISIONE · v{package.get('revision',1)}\nDurata {float(summary.get('duration_seconds') or 0):.1f}s\n{summary.get('broll_count',0)} B-roll · {summary.get('subtitle_count',0)} subs · {summary.get('title_count',0)} frasi · {summary.get('generic_broll_count',0)} generiche\nDifferenze: +{changes.get('broll_added',0)} / -{changes.get('broll_removed',0)} B-roll")
             received = bool(package.get("bridge_received_at"))
-            self.widgets["apply"].configure(state="normal" if received else "disabled")
+            self._set_apply_buttons("normal" if received and package.get("status") != "applying" else "disabled")
             self.widgets["discard"].configure(state="normal")
             self.widgets["message"].configure(text="Pacchetto ricevuto. Controlla la destinazione e premi APPLICA.")
             self.widgets["progress"].configure(value=100)
@@ -637,15 +637,24 @@ class BridgeApp:
                 self.root.after_idle(lambda: self._fit_window(package_visible=True))
         else:
             self.widgets["package"].configure(text="Nessun pacchetto ricevuto\nInvia il montaggio dalla sezione EXPORT TIMELINE di RMBL B ROLL.")
-            self.widgets["apply"].configure(state="disabled"); self.widgets["discard"].configure(state="disabled"); self.widgets["progress"].configure(value=0)
+            self._set_apply_buttons("disabled"); self.widgets["discard"].configure(state="disabled"); self.widgets["progress"].configure(value=0)
             if self._last_package_id:
                 self._last_package_id = ""
                 self.root.after_idle(lambda: self._fit_window(package_visible=False))
 
-    def apply(self) -> None:
+    def _set_apply_buttons(self, state: str) -> None:
+        for key in ("apply_all", "apply_subtitles", "apply_titles", "apply_media"):
+            widget = self.widgets.get(key)
+            if widget is not None:
+                widget.configure(state=state)
+
+    def apply(self, scope: str = "all") -> None:
         try:
-            row = self.client.apply(self.destination.get(), self.apply_scope.get()); self.applying = row.get("status") == "applying"; self._render_job(row)
-        except Exception as exc: self._show_error(str(exc))
+            row = self.client.apply(self.destination.get(), scope)
+            self.applying = row.get("status") == "applying"
+            self._render_job(row)
+        except Exception as exc:
+            self._show_error(str(exc))
 
     def _poll_apply(self) -> None:
         try:
@@ -658,10 +667,10 @@ class BridgeApp:
         progress = row.get("progress") or {}; self.widgets["progress"].configure(value=int(progress.get("percent") or 0))
         status = row.get("status") or ""; message = progress.get("message") or status
         if status == "completed":
-            message = "✓ ESPORTATO SU RESOLVE · timeline pronta"; self.widgets["apply"].configure(state="disabled")
+            message = "✓ INVIO COMPLETATO · il pacchetto resta disponibile per altri invii"; self._set_apply_buttons("normal")
         elif status == "failed":
-            message = "Errore: " + str(row.get("error") or message); self.widgets["apply"].configure(state="normal")
-        else: self.widgets["apply"].configure(state="disabled")
+            message = "Errore: " + str(row.get("error") or message); self._set_apply_buttons("normal")
+        else: self._set_apply_buttons("disabled")
         self.widgets["message"].configure(text=message)
 
     def discard(self) -> None:
