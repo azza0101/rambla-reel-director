@@ -179,6 +179,23 @@ def test_apply_is_gated_until_bridge_received_at_exists():
     else: raise AssertionError("apply should be gated")
 
 
+def test_bridge_cancel_posts_to_current_package_and_ui_exposes_interrupt_button():
+    calls=[]
+    def request(path,method="GET",payload=None):
+        calls.append((path,method,payload))
+        return {"package_id":"pkg","status":"applying","progress":{"phase":"cancelling","percent":42}}
+    client=BridgeClient(request_json=request,session_id="s")
+    client.current_package={"package_id":"pkg","bridge_received_at":"now","status":"applying"}
+    row=client.cancel_apply()
+    assert row["status"]=="applying"
+    assert calls == [("/api/curation/resolve-handoffs/pkg/cancel","POST",None)]
+
+    from pathlib import Path
+    source=Path("tools/resolve_bridge/standalone_bridge.py").read_text(encoding="utf-8")
+    assert "INTERROMPI OPERAZIONE" in source
+    assert "def cancel_apply" in source
+
+
 def test_force_audio_recalculation_is_sent_to_the_server():
     calls=[]
     def request(path,method="GET",payload=None):
