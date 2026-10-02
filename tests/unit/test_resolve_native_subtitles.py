@@ -9,6 +9,7 @@ from backend.app.resolve_native_subtitles import (
     verify_native_subtitles,
     ensure_media_pool_folder,
     cleanup_stale_subtitle_media,
+    subtitle_track_for_items,
 )
 
 
@@ -226,6 +227,58 @@ def test_selective_subtitles_target_a_new_upper_track_with_clipinfo():
     assert len(inserted)==2
     assert pool.appended[0]["trackIndex"]==2
     verify_native_subtitles(timeline,ROWS,fps=30,base_frame=108000,track_index=2)
+
+
+def test_selective_subtitles_accept_resolve_21_fallback_to_st1_and_remove_empty_upper_track():
+    class MultiTrackTimeline:
+        def __init__(self):
+            self.tracks=[[]]
+            self.locks={1:False}
+            self.deleted_tracks=[]
+        def GetTrackCount(self, kind): assert kind=="subtitle"; return len(self.tracks)
+        def AddTrack(self, kind): assert kind=="subtitle"; self.tracks.append([]); return True
+        def DeleteTrack(self, kind, track):
+            assert kind=="subtitle"
+            self.deleted_tracks.append(track)
+            self.tracks.pop(track-1)
+            return True
+        def GetItemListInTrack(self, kind, track): assert kind=="subtitle"; return self.tracks[track-1]
+        def GetIsTrackLocked(self, kind, track): return self.locks.get(track,False)
+        def SetTrackLock(self, kind, track, value): self.locks[track]=bool(value); return True
+    timeline=MultiTrackTimeline()
+
+    class Clip:
+        def GetClipProperty(self, key): return "Subtitle" if key=="Type" else ""
+    clip=Clip()
+    class Folder:
+        def GetName(self): return "TEMP"
+        def GetSubFolderList(self): return []
+        def GetClipList(self): return []
+    class Pool:
+        def __init__(self): self.folder=Folder()
+        def GetRootFolder(self): return self.folder
+        def AddSubFolder(self, parent, name): return self.folder
+        def GetCurrentFolder(self): return self.folder
+        def SetCurrentFolder(self, folder): return True
+        def ImportMedia(self, paths): return [clip]
+        def AppendToTimeline(self, rows):
+            # Resolve 21.1 ignores requested ST2 and materializes the imported
+            # native SRT on ST1.
+            timeline.tracks[0]=[
+                NativeItem("Uno due",108000,108030),
+                NativeItem("tre",108033,108060),
+            ]
+            return timeline.tracks[0]
+    pool=Pool()
+    class Project:
+        def GetMediaPool(self): return pool
+
+    inserted=insert_native_subtitles(None,Project(),timeline,ROWS,fps=30,base_frame=108000,target_track=2)
+
+    assert len(inserted)==2
+    assert subtitle_track_for_items(timeline,inserted)==1
+    assert timeline.deleted_tracks == [2]
+    verify_native_subtitles(timeline,ROWS,fps=30,base_frame=108000,items=inserted)
 
 
 def test_insert_native_subtitles_is_a_noop_for_empty_rows():
