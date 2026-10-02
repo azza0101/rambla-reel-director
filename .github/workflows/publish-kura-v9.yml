@@ -1,0 +1,54 @@
+name: Publish KURA paper title v9
+on:
+  push:
+    branches: [build/kura-v9-upload]
+    paths:
+      - tools/build_kura_paper_title_v9.py
+      - .github/workflows/publish-kura-v9.yml
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build and validate v9
+        shell: bash
+        run: |
+          python tools/build_kura_paper_title_v9.py
+          python - <<'PY'
+          from pathlib import Path
+          import zipfile
+          from backend.app.resolve_title_templates import inspect_drfx
+          p=Path('backend/assets/resolve_titles/KURA_paper_title_v9.drfx')
+          row=inspect_drfx(p,bundled=True)
+          assert row.resolve_name=='KURA_paper_title_v9'
+          assert p.stat().st_size < 1_000_000
+          with zipfile.ZipFile(p) as z:
+              names=set(z.namelist())
+              assert names == {
+                  'Edit/Titles/KURA_paper_title_v9/KURA_paper_title_v9.setting',
+                  'Edit/Titles/KURA_paper_title_v9/paper.jpg',
+              }
+              assert z.testzip() is None
+          print(row)
+          PY
+          cp backend/assets/resolve_titles/KURA_paper_title_v9.drfx /tmp/KURA_paper_title_v9.drfx
+      - name: Commit binary to operational branch
+        shell: bash
+        run: |
+          git fetch origin feat/api-first-text-first-v1
+          git checkout -B feat/api-first-text-first-v1 origin/feat/api-first-text-first-v1
+          cp /tmp/KURA_paper_title_v9.drfx backend/assets/resolve_titles/KURA_paper_title_v9.drfx
+          git config user.name "RMBL build"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/assets/resolve_titles/KURA_paper_title_v9.drfx
+          if git diff --cached --quiet; then
+            echo "KURA v9 already published"
+            exit 0
+          fi
+          git commit -m "feat(resolve): add KURA paper title v9"
+          git push origin HEAD:feat/api-first-text-first-v1
