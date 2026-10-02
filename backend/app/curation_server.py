@@ -1226,14 +1226,18 @@ def create_app(
         assets = {}
         for asset_id, candidate in view.candidate_index.items():
             path = str(candidate.local_asset_path or "").strip()
-            full_source = False
+            preview_path = str(candidate.preview_path or "").strip()
+            full_source = bool(
+                path and candidate.source_start_seconds is not None
+                and (not preview_path or os.path.normcase(os.path.abspath(path)) != os.path.normcase(os.path.abspath(preview_path)))
+            )
             if candidate.provider == 'pexels':
                 from .stock_export_media import stock_media_path
                 stock_path = stock_media_path(run, asset_id.rsplit(':', 1)[-1])
                 if stock_path.is_file():
                     path = str(stock_path)
                     full_source = True
-            if candidate.provider in {"tiktok", "instagram", "youtube_shorts"}:
+            if candidate.provider in {"tiktok", "instagram", "youtube", "youtube_shorts"}:
                 from .social_media import media_path
                 social_path = media_path(candidate.source_page, candidate.provider, run, "full")
                 if social_path.is_file():
@@ -1292,7 +1296,7 @@ def create_app(
                 except Exception as exc:
                     failures.append(f'{asset_id}: {exc}')
                 continue
-            if not candidate or candidate.provider not in {"tiktok", "instagram", "youtube_shorts"}:
+            if not candidate or candidate.provider not in {"tiktok", "instagram", "youtube", "youtube_shorts"}:
                 continue
             if media_path(candidate.source_page, candidate.provider, run, "full").is_file():
                 continue
