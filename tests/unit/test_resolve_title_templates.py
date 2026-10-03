@@ -13,10 +13,7 @@ from backend.app.resolve_title_templates import (
 )
 
 
-SUPPLIED_KURA = Path(
-    r"C:\Users\Utente\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support"
-    r"\Fusion\Templates\KURA_paper_title_v8.drfx"
-)
+SUPPLIED_KURA = Path("backend/assets/resolve_titles/KURA_paper_title_v9.drfx")
 
 
 def drfx_bytes(*entries: tuple[str, bytes]) -> bytes:
@@ -35,10 +32,10 @@ def test_inspects_supplied_kura_package_with_stable_identity():
     first = inspect_drfx(SUPPLIED_KURA)
     second = inspect_drfx(SUPPLIED_KURA)
 
-    assert first.resolve_name == "KURA_paper_title_v8"
+    assert first.resolve_name == "KURA_paper_title_v9"
     assert first.template_id == second.template_id
     assert first.template_id.startswith("sha256-")
-    assert first.setting_path.endswith("KURA_paper_title_v8.setting")
+    assert first.setting_path.endswith("KURA_paper_title_v9.setting")
 
 
 @pytest.mark.parametrize(
