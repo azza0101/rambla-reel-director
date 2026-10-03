@@ -112,9 +112,9 @@ def test_selective_title_refresh_mutes_prior_rmbl_titles_across_style_changes():
     rmbl=Item("Legacy_Paper_Style","Yellow",1)
     user=Item("My title","Yellow",1)
     class Timeline:
-        def GetTrackCount(self,kind): return 1 if kind=="video" else 0
-        def GetTrackName(self,kind,track): return "RMBL TEXT v2"
-        def GetItemListInTrack(self,kind,track): return [rmbl,user]
+        def GetTrackCount(self,kind): return 2 if kind=="video" else 0
+        def GetTrackName(self,kind,track): return "RMBL TEXT v2" if track==1 else "CLIENT TITLES"
+        def GetItemListInTrack(self,kind,track): return [rmbl] if track==1 else [user]
     assert mute_prior_rambla_titles(Timeline(),title_name="KURA_paper_title_v9")==1
     assert rmbl.enabled is False and user.enabled is True
 
