@@ -177,12 +177,23 @@ def rescale_broll_frames(clips: list[dict[str, Any]], *, source_fps: float, targ
     return [{**row, **{key: int(round(float(row.get(key) or 0) * ratio)) for key in fields if key in row}} for row in clips]
 
 
+def _is_rambla_generated_title(item: Any, *, title_name: str, track_name: str = "") -> bool:
+    """Recognize RMBL titles independently from the currently selected preset name."""
+    if not bool(item.GetFusionCompCount()) or str(item.GetClipColor() or "") != "Yellow":
+        return False
+    if str(item.GetName() or "") == title_name:
+        return True
+    return str(track_name or "").casefold().startswith("rmbl text ")
+
+
 def remove_prior_rambla_items(timeline: Any, *, title_name: str) -> dict[str, int]:
     """Remove generated RAMBLA layers from a disposable duplicate, preserving the source."""
     video_remove = []
+    get_track_name = getattr(timeline, "GetTrackName", None)
     for track in range(1, int(timeline.GetTrackCount("video") or 0) + 1):
+        track_name = str(get_track_name("video", track) or "") if get_track_name else ""
         for item in timeline.GetItemListInTrack("video", track) or []:
-            generated_title = bool(item.GetFusionCompCount()) and str(item.GetName() or "") == title_name and str(item.GetClipColor() or "") == "Yellow"
+            generated_title = _is_rambla_generated_title(item, title_name=title_name, track_name=track_name)
             media = item.GetMediaPoolItem() if hasattr(item, "GetMediaPoolItem") else None
             metadata = media.GetMetadata() if media and hasattr(media, "GetMetadata") else {}
             keywords = str((metadata or {}).get("Keywords") or "") if isinstance(metadata, dict) else ""
@@ -204,9 +215,11 @@ def remove_prior_rambla_items(timeline: Any, *, title_name: str) -> dict[str, in
 def mute_prior_rambla_titles(timeline: Any, *, title_name: str) -> int:
     """Disable prior generated keyword clips without touching any media layer."""
     muted = 0
+    get_track_name = getattr(timeline, "GetTrackName", None)
     for track in range(1, int(timeline.GetTrackCount("video") or 0) + 1):
+        track_name = str(get_track_name("video", track) or "") if get_track_name else ""
         for item in timeline.GetItemListInTrack("video", track) or []:
-            generated = bool(item.GetFusionCompCount()) and str(item.GetName() or "") == title_name and str(item.GetClipColor() or "") == "Yellow"
+            generated = _is_rambla_generated_title(item, title_name=title_name, track_name=track_name)
             if not generated:
                 continue
             setter = getattr(item, "SetClipEnabled", None)
