@@ -147,6 +147,17 @@ class ResolveHandoffStore:
             _atomic_json(self._path(project_root, package_id), package)
             return deepcopy(package)
 
+    def update_payload(self, project_root: Path, package_id: str, **updates: Any) -> dict[str, Any]:
+        """Refresh mutable execution choices without rebuilding the whole handoff."""
+        with self._lock:
+            package = self.read(project_root, package_id)
+            payload = deepcopy(package.get("payload") or {})
+            payload.update(deepcopy(updates))
+            package["payload"] = payload
+            package["updated_at"] = _now()
+            _atomic_json(self._path(project_root, package_id), package)
+            return deepcopy(package)
+
     def transition(self, project_root: Path, package_id: str, status: str, **updates: Any) -> dict[str, Any]:
         with self._lock:
             package = self.read(project_root, package_id)
