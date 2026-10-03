@@ -22,7 +22,7 @@ def app_fixture(tmp_path):
     library = tmp_path / "library"
     installed = tmp_path / "installed"
     bundled.mkdir()
-    (bundled / "KURA_paper_title_v8.drfx").write_bytes(package("KURA_paper_title_v8"))
+    (bundled / "KURA_paper_title_v9.drfx").write_bytes(package("KURA_paper_title_v9"))
     store = ProjectStore(projects, probe_runner=lambda _: {})
     project = store.create("Template test")
     app = create_app(
@@ -39,7 +39,8 @@ def test_default_selection_is_bundled_kura_and_persists_custom_choice(tmp_path):
 
     initial = client.get(f"/api/curation/projects/{project.project_id}/resolve-title-template")
     assert initial.status_code == 200
-    assert initial.json()["template"]["resolve_name"] == "KURA_paper_title_v8"
+    assert initial.json()["template"]["resolve_name"] == "KURA_paper_title_v9"
+    assert initial.json()["template"]["default"] is True
 
     uploaded = client.post(
         "/api/curation/resolve-title-templates",
@@ -56,6 +57,20 @@ def test_default_selection_is_bundled_kura_and_persists_custom_choice(tmp_path):
     assert selected.status_code == 200
     assert selected.json()["template"]["resolve_name"] == "Custom_Title"
     assert client.get(f"/api/curation/projects/{project.project_id}/resolve-title-template").json()["template"]["template_id"] == custom_id
+
+
+def test_legacy_hash_only_selection_migrates_to_current_default(tmp_path):
+    client, project, _, library, _ = app_fixture(tmp_path)
+    selection_path = library.parent / "projects" / project.project_id / "resolve-title-template.json"
+    selection_path.write_text(json.dumps({"template_id": "sha256-legacy-bundled-title"}), encoding="utf-8")
+
+    response = client.get(f"/api/curation/projects/{project.project_id}/resolve-title-template")
+
+    assert response.status_code == 200
+    assert response.json()["template"]["resolve_name"] == "KURA_paper_title_v9"
+    stored = json.loads(selection_path.read_text(encoding="utf-8"))
+    assert stored["template_id"] == response.json()["template"]["template_id"]
+    assert stored["resolve_name"] == "KURA_paper_title_v9"
 
 
 def test_upload_rejects_invalid_package_and_unknown_selection(tmp_path):
