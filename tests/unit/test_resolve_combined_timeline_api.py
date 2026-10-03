@@ -40,7 +40,7 @@ def test_combined_timeline_route_forwards_titles_subtitles_and_template(tmp_path
     assert captured["mode"] == "combined"
     assert [row["text"] for row in captured["titles"]] == ["Uno"]
     assert [row["text"] for row in captured["subtitles"]] == ["due"]
-    assert captured["title_name"] == "KURA_paper_title_v8"
+    assert captured["title_name"] == "KURA_paper_title_v9"
     assert captured["project_name"] == "Combined"
     assert captured["timeline_name"] == "Combined - SUBS + KEYWORDS TIMELINE v1"
     assert captured["media_bin_name"] == "TEMP"
