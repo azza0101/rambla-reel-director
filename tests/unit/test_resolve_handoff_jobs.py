@@ -56,6 +56,31 @@ def test_completed_package_can_be_applied_again_without_repreparing_handoff():
     finally: shutil.rmtree(root, ignore_errors=True)
 
 
+def test_handoff_payload_title_can_be_refreshed_before_apply():
+    root = Path('.test-resolve-jobs') / uuid.uuid4().hex
+    root.mkdir(parents=True)
+    try:
+        store = ResolveHandoffStore(root.parent)
+        package = store.prepare(root, {
+            "project_id": "p", "source_project_name": "P", "source_timeline_id": "T",
+            "title_name": "Old_Title",
+        })
+        store.update_payload(root, package["package_id"], title_name="KURA_paper_title_v9")
+        calls = []
+        jobs = ResolveHandoffJobs(store, lambda payload: calls.append(payload) or {})
+        jobs.apply(root, package["package_id"], "active", "titles",
+                   current_project="P", current_timeline_id="T")
+        for _ in range(100):
+            row = store.read(root, package["package_id"])
+            if row["status"] != "applying":
+                break
+            time.sleep(.01)
+        assert row["status"] == "completed"
+        assert calls[0]["title_name"] == "KURA_paper_title_v9"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def test_running_apply_can_be_cancelled_cooperatively_and_package_remains_reusable():
     root = Path('.test-resolve-jobs') / uuid.uuid4().hex
     root.mkdir(parents=True)
