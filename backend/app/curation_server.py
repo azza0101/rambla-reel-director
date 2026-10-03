@@ -30,6 +30,7 @@ from .editorial_import import active_retrieval_root
 from .project_maintenance import clean_beat_media, clean_project_media, delete_project_tree, project_library_rows, rename_project
 from .debug_research_cli import research_stage_type
 from .theme_preferences import ThemePreferences, load_theme_preferences, save_theme_preferences, validate_theme_preferences
+from .resolve_title_templates import DEFAULT_RESOLVE_TITLE_NAME
 
 
 class BeatSplitRequest(BaseModel):
@@ -774,24 +775,43 @@ def create_app(
             "size_bytes": template.size_bytes,
             "sha256": template.sha256,
             "bundled": template.bundled,
+            "default": template.resolve_name == DEFAULT_RESOLVE_TITLE_NAME,
             "install_status": template_install_status(template, title_install_root),
         }
+
+    def persist_title_selection(project_id: str, template) -> None:
+        selection_path = root / project_id / "resolve-title-template.json"
+        temporary = selection_path.with_suffix(".tmp")
+        temporary.write_text(
+            json.dumps({"template_id": template.template_id, "resolve_name": template.resolve_name}),
+            encoding="utf-8",
+        )
+        os.replace(temporary, selection_path)
 
     def selected_title(project_id: str):
         load_project(project_id)
         rows = title_templates()
         selection_path = root / project_id / "resolve-title-template.json"
-        selected_id = None
-        if selection_path.is_file():
-            selected_id = str(_read_json(selection_path, {}).get("template_id") or "")
+        selection = _read_json(selection_path, {}) if selection_path.is_file() else {}
+        selected_id = str(selection.get("template_id") or "")
+        selected_name = str(selection.get("resolve_name") or "")
         if selected_id:
             chosen = next((row for row in rows if row.template_id == selected_id), None)
-            if chosen is None:
+            if chosen is not None:
+                return chosen
+            # v0046 and earlier stored only the template hash. If that bundled
+            # preset disappeared (notably v8), migrate the legacy selection to
+            # the single current default instead of carrying a dead name forever.
+            if selected_name:
                 raise HTTPException(status_code=409, detail="Selected Resolve title template file is missing")
-            return chosen
-        chosen = next((row for row in rows if row.resolve_name == "KURA_paper_title_v8"), None)
+        chosen = next((row for row in rows if row.resolve_name == DEFAULT_RESOLVE_TITLE_NAME), None)
         if chosen is None:
-            raise HTTPException(status_code=409, detail="Bundled KURA_paper_title_v8 template is missing")
+            raise HTTPException(
+                status_code=409,
+                detail=f"Bundled {DEFAULT_RESOLVE_TITLE_NAME} template is missing",
+            )
+        if selected_id:
+            persist_title_selection(project_id, chosen)
         return chosen
 
     @app.get("/api/curation/resolve-title-templates")
@@ -838,10 +858,7 @@ def create_app(
         template = next((row for row in title_templates() if row.template_id == request.template_id), None)
         if template is None:
             raise HTTPException(status_code=404, detail="Resolve title template not found")
-        selection_path = root / project_id / "resolve-title-template.json"
-        temporary = selection_path.with_suffix(".tmp")
-        temporary.write_text(json.dumps({"template_id": template.template_id}), encoding="utf-8")
-        os.replace(temporary, selection_path)
+        persist_title_selection(project_id, template)
         return {"template": title_row(template)}
 
     @app.get("/api/curation/ai/status")
@@ -1494,8 +1511,19 @@ def create_app(
 
     @app.post("/api/curation/resolve-handoffs/{package_id}/apply")
     async def apply_resolve_handoff(package_id: str, request: ResolveHandoffApplyRequest):
-        project_root, _ = find_handoff(package_id)
+        project_root, package = find_handoff(package_id)
         try:
+            # The package can stay open in the Resolve bridge while the user
+            # changes the Fusion Title in EDITING. Titles must always use the
+            # project's current selection, never the stale title_name frozen
+            # when INVIA A RESOLVE originally prepared the handoff.
+            if request.apply_scope in {"all", "titles"}:
+                project_id = str(package.get("project_id") or project_root.name)
+                handoff_store.update_payload(
+                    project_root,
+                    package_id,
+                    title_name=selected_title(project_id).resolve_name,
+                )
             return handoff_jobs.apply(project_root, package_id, request.destination_mode, request.apply_scope,
                                       current_project=request.current_project,
                                       current_timeline_id=request.current_timeline_id,
