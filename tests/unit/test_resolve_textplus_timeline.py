@@ -100,7 +100,7 @@ def test_textplus_plan_stores_wrapped_copy_used_for_resolve_verification():
     assert plan["segments"][0]["text"] == "turismo\nsostenibile"
 
 
-def test_selective_title_refresh_mutes_prior_rmbl_titles_only():
+def test_selective_title_refresh_mutes_prior_rmbl_titles_across_style_changes():
     class Item:
         def __init__(self, name, color, fusion):
             self.name,self.color,self.fusion=name,color,fusion
@@ -109,12 +109,13 @@ def test_selective_title_refresh_mutes_prior_rmbl_titles_only():
         def GetName(self): return self.name
         def GetClipColor(self): return self.color
         def SetClipEnabled(self,value): self.enabled=bool(value); return True
-    rmbl=Item("KURA_paper_title_v8","Yellow",1)
+    rmbl=Item("Legacy_Paper_Style","Yellow",1)
     user=Item("My title","Yellow",1)
     class Timeline:
         def GetTrackCount(self,kind): return 1 if kind=="video" else 0
+        def GetTrackName(self,kind,track): return "RMBL TEXT v2"
         def GetItemListInTrack(self,kind,track): return [rmbl,user]
-    assert mute_prior_rambla_titles(Timeline(),title_name="KURA_paper_title_v8")==1
+    assert mute_prior_rambla_titles(Timeline(),title_name="KURA_paper_title_v9")==1
     assert rmbl.enabled is False and user.enabled is True
 
 
@@ -664,7 +665,7 @@ def test_setting_text_prefers_exposed_template_control_in_custom_title():
 
 
 def test_selected_title_name_is_required_and_preserved():
-    assert title_name_from_payload({"title_name": "KURA_paper_title_v8"}) == "KURA_paper_title_v8"
+    assert title_name_from_payload({"title_name": "KURA_paper_title_v9"}) == "KURA_paper_title_v9"
 
     with pytest.raises(ValueError, match="title template"):
         title_name_from_payload({})
