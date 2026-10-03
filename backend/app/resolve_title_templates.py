@@ -14,6 +14,7 @@ import zipfile
 
 
 DEFAULT_MAX_BYTES = 64 * 1024 * 1024
+DEFAULT_RESOLVE_TITLE_NAME = "KURA_paper_title_v9"
 
 
 class TemplateValidationError(ValueError):
