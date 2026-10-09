@@ -53,6 +53,38 @@ def bridge_build_token() -> str:
 LOADED_BUILD = bridge_build_token()
 
 
+def bridge_debug_text(
+    package: dict[str, Any] | None,
+    *,
+    session_id: str,
+    resolve_status: dict[str, Any] | None = None,
+) -> str:
+    """Build a complete, copyable diagnostic report without local secrets."""
+    row = dict(package or {})
+    status = dict(resolve_status or {})
+    report = {
+        "generated_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "version": RELEASE_VERSION,
+        "build": LOADED_BUILD[:12],
+        "bridge_session_id": str(session_id or ""),
+        "resolve": {
+            key: status.get(key)
+            for key in ("connected", "project", "timeline", "timeline_id", "mark_in", "mark_out", "range_source")
+        },
+        "package_id": row.get("package_id"),
+        "revision": row.get("revision"),
+        "status": row.get("status"),
+        "destination_mode": row.get("destination_mode"),
+        "apply_scope": row.get("apply_scope"),
+        "progress": row.get("progress"),
+        "summary": row.get("summary"),
+        "error": row.get("error"),
+        "diagnostics": row.get("diagnostics"),
+        "result": row.get("result"),
+    }
+    return "RMBL BRIDGE DEBUG\n" + json.dumps(report, ensure_ascii=False, indent=2, default=str)
+
+
 def default_destination() -> str:
     if os.environ.get("RAMBLA_BRIDGE_DESTINATION_EXPLICIT") != "1":
         return "active"
@@ -458,6 +490,8 @@ class BridgeApp:
         self.focus_requested = threading.Event()
         self.widgets: dict[str, Any] = {}
         self._last_package_id = ""
+        self._last_status: dict[str, Any] = {}
+        self._debug_row: dict[str, Any] = {}
         self._destination_explicit = os.environ.get("RAMBLA_BRIDGE_DESTINATION_EXPLICIT") == "1"
         self._brand_images: list[Any] = []
         if build_ui:
@@ -535,6 +569,8 @@ class BridgeApp:
 
         self.widgets["progress"] = ProgressBar(shell); self.widgets["progress"].pack(fill="x", pady=(12, 8))
         self.widgets["message"] = tk.Label(shell, text="Il pacchetto resta disponibile: puoi inviare più parti una dopo l'altra.", bg="#11152b", fg="#b9c1e0", font=("Segoe UI", 9), wraplength=520, justify="left", anchor="w"); self.widgets["message"].pack(fill="x", pady=(0, 8))
+        self.widgets["copy_debug"] = RoundedButton(shell, text="COPIA DEBUG", command=self.copy_debug, state="disabled")
+        self.widgets["copy_debug"].pack(fill="x", pady=(0, 8))
 
         self.widgets["apply_all"] = RoundedButton(shell, text="INVIA TUTTO", command=lambda: self.apply("all"), accent=True, state="disabled")
         self.widgets["apply_all"].pack(fill="x", pady=(0, 7))
@@ -640,6 +676,7 @@ class BridgeApp:
 
     def _render(self, snapshot: BridgeSnapshot) -> None:
         if not self.widgets: return
+        self._last_status = dict(snapshot.status or {})
         self.widgets["connection"].configure(text="● RMBL B ROLL CONNECTED" if snapshot.connected else "● BRIDGE OFFLINE", style="Lime.TLabel" if snapshot.connected else "Bad.TLabel")
         if snapshot.status:
             row = snapshot.status
@@ -647,11 +684,14 @@ class BridgeApp:
         elif snapshot.error: self.widgets["timeline"].configure(text=snapshot.error)
         package = snapshot.package
         if package:
+            self._debug_row = dict(package)
             summary = package.get("summary") or {}; changes = package.get("change_summary") or {}
             self.widgets["package"].configure(text=f"NUOVA REVISIONE · v{package.get('revision',1)}\nDurata {float(summary.get('duration_seconds') or 0):.1f}s\n{summary.get('broll_count',0)} B-roll · {summary.get('subtitle_count',0)} subs · {summary.get('title_count',0)} frasi · {summary.get('generic_broll_count',0)} generiche\nDifferenze: +{changes.get('broll_added',0)} / -{changes.get('broll_removed',0)} B-roll")
             received = bool(package.get("bridge_received_at"))
             self._set_apply_buttons("normal" if received and package.get("status") != "applying" else "disabled")
             self.widgets["discard"].configure(state="normal")
+            if self.widgets.get("copy_debug") is not None:
+                self.widgets["copy_debug"].configure(state="normal", text="COPIA DEBUG")
             self.widgets["message"].configure(text="Pacchetto ricevuto. Controlla la destinazione e premi APPLICA.")
             self.widgets["progress"].configure(value=100)
             if package.get('status') in {'failed','applying','completed'}:
@@ -663,6 +703,8 @@ class BridgeApp:
         else:
             self.widgets["package"].configure(text="Nessun pacchetto ricevuto\nInvia il montaggio dalla sezione EXPORT TIMELINE di RMBL B ROLL.")
             self._set_apply_buttons("disabled"); self.widgets["cancel_apply"].configure(state="disabled"); self.widgets["discard"].configure(state="disabled"); self.widgets["progress"].configure(value=0)
+            if self.widgets.get("copy_debug") is not None:
+                self.widgets["copy_debug"].configure(state="disabled", text="COPIA DEBUG")
             if self._last_package_id:
                 self._last_package_id = ""
                 self.root.after_idle(lambda: self._fit_window(package_visible=False))
@@ -698,6 +740,9 @@ class BridgeApp:
 
     def _render_job(self, row: dict[str, Any]) -> None:
         if not self.widgets: return
+        self._debug_row = dict(row or {})
+        if self.widgets.get("copy_debug") is not None:
+            self.widgets["copy_debug"].configure(state="normal", text="COPIA DEBUG")
         progress = row.get("progress") or {}; self.widgets["progress"].configure(value=int(progress.get("percent") or 0))
         status = row.get("status") or ""; message = progress.get("message") or status
         if status == "completed":
@@ -713,7 +758,9 @@ class BridgeApp:
             self._set_apply_buttons("normal")
             self.widgets["cancel_apply"].configure(state="disabled")
         elif status == "failed":
-            message = "Errore: " + str(row.get("error") or message)
+            detail = str(row.get("error") or message)
+            compact = detail if len(detail) <= 320 else detail[:317] + "…"
+            message = "Errore: " + compact + "\nUsa COPIA DEBUG per copiare tutti i dettagli."
             self._set_apply_buttons("normal")
             self.widgets["cancel_apply"].configure(state="disabled")
         elif status == "applying":
@@ -727,6 +774,20 @@ class BridgeApp:
             self._set_apply_buttons("disabled")
             self.widgets["cancel_apply"].configure(state="disabled")
         self.widgets["message"].configure(text=message)
+
+    def copy_debug(self) -> None:
+        text = bridge_debug_text(
+            self._debug_row or self.client.current_package,
+            session_id=self.client.session_id,
+            resolve_status=self._last_status,
+        )
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.root.update_idletasks()
+        button = self.widgets.get("copy_debug")
+        if button is not None:
+            button.configure(text="✓ DEBUG COPIATO")
+            self.root.after(1800, lambda: button.configure(text="COPIA DEBUG"))
 
     def discard(self) -> None:
         try:

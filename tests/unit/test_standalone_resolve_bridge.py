@@ -6,6 +6,7 @@ from tools.resolve_bridge.standalone_bridge import (
     BridgeClient,
     BridgeSnapshot,
     SingleInstance,
+    bridge_debug_text,
     window_geometry,
 )
 
@@ -214,6 +215,36 @@ def test_bridge_exposes_a_force_recalculate_in_out_button():
     source=Path("tools/resolve_bridge/standalone_bridge.py").read_text(encoding="utf-8")
     assert "RICALCOLA AUDIO · IN → OUT" in source
     assert "force_recalculate=True" in source
+
+
+def test_bridge_debug_text_contains_complete_copyable_failure_context():
+    text = bridge_debug_text(
+        {
+            "package_id": "handoff-123",
+            "revision": 4,
+            "status": "failed",
+            "error": "Resolve native Subtitle verification failed",
+            "progress": {"phase": "failed", "percent": 66},
+            "summary": {"subtitle_count": 140},
+            "apply_scope": "all",
+            "destination_mode": "active",
+        },
+        session_id="bridge-session",
+        resolve_status={"project": "KURA parlato", "timeline": "KURA_FOTO BAMBINI_v2"},
+    )
+
+    assert "RMBL BRIDGE DEBUG" in text
+    assert '"version":' in text
+    assert '"package_id": "handoff-123"' in text
+    assert '"error": "Resolve native Subtitle verification failed"' in text
+    assert '"project": "KURA parlato"' in text
+
+
+def test_bridge_ui_exposes_copy_debug_button():
+    from pathlib import Path
+    source = Path("tools/resolve_bridge/standalone_bridge.py").read_text(encoding="utf-8")
+    assert "COPIA DEBUG" in source
+    assert "def copy_debug" in source
 
 
 class FakeRoot:

@@ -143,6 +143,54 @@ def test_insert_native_subtitles_imports_srt_and_appends_native_media():
     assert [item.GetName() for item in inserted] == ["Uno due", "tre"]
 
 
+def test_native_srt_import_is_anchored_to_timeline_start_and_restores_playhead():
+    timeline = Timeline()
+    timeline.playhead = "01:06:42:28"
+    timeline.timecode_calls = []
+    timeline.GetCurrentTimecode = lambda: timeline.playhead
+    timeline.GetStartTimecode = lambda: "01:00:00:00"
+
+    def set_timecode(value):
+        timeline.timecode_calls.append(value)
+        timeline.playhead = value
+        return True
+
+    timeline.SetCurrentTimecode = set_timecode
+
+    class Clip:
+        def GetClipProperty(self, key): return "Subtitle" if key == "Type" else ""
+
+    clip = Clip()
+
+    class Folder:
+        def GetName(self): return "TEMP"
+        def GetSubFolderList(self): return []
+        def GetClipList(self): return []
+
+    class Pool:
+        def __init__(self): self.folder = Folder()
+        def GetRootFolder(self): return self.folder
+        def AddSubFolder(self, parent, name): return self.folder
+        def GetCurrentFolder(self): return self.folder
+        def SetCurrentFolder(self, folder): return True
+        def ImportMedia(self, paths):
+            assert timeline.playhead == "01:00:00:00"
+            return [clip]
+        def AppendToTimeline(self, clips):
+            assert timeline.playhead == "01:00:00:00"
+            timeline.items = [NativeItem("Uno due", 108000, 108030), NativeItem("tre", 108033, 108060)]
+            return timeline.items
+
+    pool = Pool()
+    class Project:
+        def GetMediaPool(self): return pool
+
+    insert_native_subtitles(None, Project(), timeline, ROWS, fps=30, base_frame=108000)
+
+    assert timeline.timecode_calls == ["01:00:00:00", "01:06:42:28"]
+    assert timeline.playhead == "01:06:42:28"
+
+
 def test_insert_native_subtitles_temporarily_unlocks_first_subtitle_track():
     timeline = Timeline()
     timeline.has_track = True
@@ -182,6 +230,61 @@ def test_insert_native_subtitles_temporarily_unlocks_first_subtitle_track():
 
     assert len(inserted) == 2
     assert timeline.locked is True
+
+
+def test_native_srt_isolates_reserved_track_and_restores_existing_subtitle_tracks():
+    existing = NativeItem("client subtitle", 108500, 108530)
+
+    class MultiTrackTimeline:
+        def __init__(self):
+            self.tracks = [[], [existing]]
+            self.locks = {1: False, 2: True}
+            self.enabled = {1: True, 2: True}
+        def GetStartFrame(self): return 108000
+        def GetTrackCount(self, kind): return len(self.tracks)
+        def GetItemListInTrack(self, kind, track): return self.tracks[track - 1]
+        def GetIsTrackLocked(self, kind, track): return self.locks[track]
+        def SetTrackLock(self, kind, track, value): self.locks[track] = bool(value); return True
+        def GetIsTrackEnabled(self, kind, track): return self.enabled[track]
+        def SetTrackEnable(self, kind, track, value): self.enabled[track] = bool(value); return True
+
+    timeline = MultiTrackTimeline()
+
+    class Clip:
+        def GetClipProperty(self, key): return "Subtitle" if key == "Type" else ""
+
+    clip = Clip()
+
+    class Folder:
+        def GetName(self): return "TEMP"
+        def GetSubFolderList(self): return []
+        def GetClipList(self): return []
+
+    class Pool:
+        def __init__(self): self.folder = Folder()
+        def GetRootFolder(self): return self.folder
+        def AddSubFolder(self, parent, name): return self.folder
+        def GetCurrentFolder(self): return self.folder
+        def SetCurrentFolder(self, folder): return True
+        def ImportMedia(self, paths): return [clip]
+        def AppendToTimeline(self, clips):
+            assert timeline.enabled == {1: True, 2: False}
+            assert timeline.locks == {1: False, 2: False}
+            inserted = [NativeItem("Uno due", 108000, 108030), NativeItem("tre", 108033, 108060)]
+            timeline.tracks[0].extend(inserted)
+            return inserted
+
+    pool = Pool()
+    class Project:
+        def GetMediaPool(self): return pool
+
+    inserted = insert_native_subtitles(
+        None, Project(), timeline, ROWS, fps=30, base_frame=108000, target_track=1
+    )
+
+    assert len(inserted) == 2
+    assert timeline.locks == {1: False, 2: True}
+    assert timeline.enabled == {1: True, 2: True}
 
 
 def test_selective_subtitles_target_a_new_upper_track_with_clipinfo():

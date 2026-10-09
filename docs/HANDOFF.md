@@ -1,6 +1,6 @@
 # RMBL B ROLL — handoff tecnico
 
-Aggiornato: 2026-10-09  Versione: `v0049`  Branch di consegna: `feat/api-first-text-first-v1`
+Aggiornato: 2026-10-09  Versione: `v0050`  Branch di consegna: `feat/api-first-text-first-v1`
 
 ## Avvio rapido
 
@@ -22,6 +22,14 @@ Aggiornato: 2026-10-09  Versione: `v0049`  Branch di consegna: `feat/api-first-t
 Il bridge espone anche **RICALCOLA AUDIO · IN → OUT**: invia `force_recalculate=true`, impedisce il riuso della guida precedente e renderizza il range IN/OUT letto dalla timeline focalizzata in quel momento. Resolve 21 restituisce i mark relativi all'inizio timeline e può omettere `in` quando coincide con l'inizio: `timeline_range()` normalizza entrambi i casi in frame assoluti. Il ricalcolo forzato rifiuta di partire se non vede almeno un range esplicito, evitando il fallback silenzioso all'intera timeline. Il riepilogo mostra `mark_in`, `mark_out` e `range_source` realmente acquisiti.
 
 La timeline sorgente resta protetta. Le mutazioni Resolve passano dai job di `resolve_handoff_jobs.py`; i calcoli temporali usano FPS e frame iniziale della timeline acquisita.
+
+### Sottotitoli nativi e debug v0050
+
+- L'import SRT porta temporaneamente il playhead all'inizio prima di creare il media e lo ripristina al termine.
+- Durante l'append viene abilitata soltanto la ST riservata a RMBL: Resolve non può più accodare i nuovi sottotitoli dopo quelli già presenti.
+- Stato di blocco e visibilità di tutte le tracce sottotitoli vengono ripristinati dopo l'operazione.
+- Il bridge espone **COPIA DEBUG**: copia versione, build, sessione, timeline, pacchetto, avanzamento, errore completo e diagnostica.
+- Prova reale su `KURA parlato / KURA_FOTO BAMBINI_v2`: 140 nuovi sottotitoli su ST1 ai frame previsti; 202 sottotitoli preesistenti conservati sulla traccia separata.
 
 ### Fusion Title sicuri v0049
 

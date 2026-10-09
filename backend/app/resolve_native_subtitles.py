@@ -218,6 +218,17 @@ def insert_native_subtitles(
         path.write_text(render_filtered_srt(srt_rows), encoding="utf-8-sig", newline="\n")
     try:
         pool = project.GetMediaPool()
+        get_current_timecode = getattr(timeline, "GetCurrentTimecode", None)
+        get_start_timecode = getattr(timeline, "GetStartTimecode", None)
+        set_current_timecode = getattr(timeline, "SetCurrentTimecode", None)
+        previous_timecode = get_current_timecode() if callable(get_current_timecode) else None
+        start_timecode = get_start_timecode() if callable(get_start_timecode) else None
+        # Resolve 21.1 binds an imported SRT's timeline origin while the media
+        # is created, before AppendToTimeline. Keep the playhead at the timeline
+        # start for both operations, then restore the user's position.
+        if callable(set_current_timecode) and start_timecode:
+            if set_current_timecode(str(start_timecode)) is False:
+                raise RuntimeError("Resolve could not anchor native subtitles to the timeline start")
         target_folder = ensure_media_pool_folder(pool, "TEMP")
         original_folder = pool.GetCurrentFolder()
         existing_media = find_subtitle_media(pool, path)
@@ -237,13 +248,24 @@ def insert_native_subtitles(
         # Legacy full export uses Resolve's native SRT append behavior on ST1.
         # Selective subtitle refreshes explicitly request a higher target track
         # through clipInfo and then verify where Resolve actually materialized it.
-        was_locked = False
         get_lock = getattr(timeline, "GetIsTrackLocked", None)
         set_lock = getattr(timeline, "SetTrackLock", None)
+        get_enabled = getattr(timeline, "GetIsTrackEnabled", None)
+        set_enabled = getattr(timeline, "SetTrackEnable", None)
+        subtitle_lock_states: dict[int, bool] = {}
+        subtitle_enabled_states: dict[int, bool] = {}
         if get_lock is not None and set_lock is not None:
-            was_locked = bool(get_lock("subtitle", wanted_track))
-            if was_locked and set_lock("subtitle", wanted_track, False) is False:
-                raise RuntimeError(f"Resolve could not temporarily unlock Subtitle track {wanted_track}")
+            for track in range(1, int(timeline.GetTrackCount("subtitle") or 0) + 1):
+                subtitle_lock_states[track] = bool(get_lock("subtitle", track))
+                if subtitle_lock_states[track] and set_lock("subtitle", track, False) is False:
+                    raise RuntimeError(f"Resolve could not temporarily unlock Subtitle track {track}")
+        if get_enabled is not None and set_enabled is not None:
+            for track in range(1, int(timeline.GetTrackCount("subtitle") or 0) + 1):
+                subtitle_enabled_states[track] = bool(get_enabled("subtitle", track))
+                should_enable = track == wanted_track
+                if subtitle_enabled_states[track] != should_enable:
+                    if set_enabled("subtitle", track, should_enable) is False:
+                        raise RuntimeError(f"Resolve could not isolate Subtitle track {wanted_track}")
         try:
             appended = (
                 pool.AppendToTimeline(imported)
@@ -253,8 +275,15 @@ def insert_native_subtitles(
             if not appended:
                 raise RuntimeError("Resolve could not place the native Subtitle clips on the timeline")
         finally:
-            if was_locked and set_lock("subtitle", wanted_track, True) is False:
-                raise RuntimeError(f"Resolve could not restore Subtitle track {wanted_track} lock")
+            if set_enabled is not None:
+                for track, was_enabled in subtitle_enabled_states.items():
+                    if bool(get_enabled("subtitle", track)) != was_enabled:
+                        if set_enabled("subtitle", track, was_enabled) is False:
+                            raise RuntimeError(f"Resolve could not restore Subtitle track {track} visibility")
+            if set_lock is not None:
+                for track, was_locked in subtitle_lock_states.items():
+                    if was_locked and set_lock("subtitle", track, True) is False:
+                        raise RuntimeError(f"Resolve could not restore Subtitle track {track} lock")
         inserted_on_target = [item for item in _subtitle_items(timeline, wanted_track) if _identity(item) not in before]
         inserted_anywhere = [item for item in _subtitle_items(timeline) if _identity(item) not in before]
         if not inserted_anywhere:
@@ -276,6 +305,10 @@ def insert_native_subtitles(
     except Exception:
         path.unlink(missing_ok=True)
         raise
+    finally:
+        if "set_current_timecode" in locals() and callable(set_current_timecode) and previous_timecode:
+            if set_current_timecode(str(previous_timecode)) is False:
+                raise RuntimeError("Resolve could not restore the timeline playhead after Subtitle import")
 
 
 def verify_native_subtitles(
