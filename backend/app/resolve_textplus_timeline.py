@@ -233,6 +233,20 @@ def mute_prior_rambla_titles(timeline: Any, *, title_name: str) -> int:
     return muted
 
 
+def remove_prior_rambla_titles(timeline: Any, *, title_name: str) -> int:
+    """Remove only earlier RMBL title clips before a selective title refresh."""
+    remove: list[Any] = []
+    get_track_name = getattr(timeline, "GetTrackName", None)
+    for track in range(1, int(timeline.GetTrackCount("video") or 0) + 1):
+        track_name = str(get_track_name("video", track) or "") if get_track_name else ""
+        for item in timeline.GetItemListInTrack("video", track) or []:
+            if _is_rambla_generated_title(item, title_name=title_name, track_name=track_name):
+                remove.append(item)
+    if remove and timeline.DeleteClips(remove, False) is False:
+        raise RuntimeError("Resolve could not replace previous RMBL title clips")
+    return len(remove)
+
+
 def _is_rambla_broll_item(item: Any) -> bool:
     media = item.GetMediaPoolItem() if hasattr(item, "GetMediaPoolItem") else None
     metadata = media.GetMetadata() if media and hasattr(media, "GetMetadata") else {}
@@ -422,13 +436,101 @@ def append_nested_title_layer(
     return item
 
 
+def find_title_carrier_media(timeline: Any) -> Any:
+    """Return ordinary video media used only as a carrier for separate Fusion clips."""
+    for track in range(1, int(timeline.GetTrackCount("video") or 0) + 1):
+        for item in timeline.GetItemListInTrack("video", track) or []:
+            media = item.GetMediaPoolItem()
+            if media is not None and str(media.GetClipProperty("Type") or "").casefold() == "video":
+                return media
+    raise RuntimeError("Resolve needs at least one source video to create separate RMBL title clips")
+
+
+def append_separate_fusion_titles(
+    media_pool: Any,
+    timeline: Any,
+    source_items: list[Any],
+    *,
+    source_base_frame: int,
+    destination_base_frame: int,
+    track_index: int,
+    title_name: str,
+    composition_root: Path | None = None,
+) -> list[Any]:
+    """Copy isolated Fusion titles back as individual clips on the upper track.
+
+    Resolve cannot append a Fusion Title directly to a chosen video track. A
+    short ordinary clip can, however, be placed precisely and converted into a
+    Fusion Clip. Importing the title composition into each carrier preserves
+    editable, separate title clips without rippling any existing edit.
+    """
+    carrier = find_title_carrier_media(timeline)
+    inserted: list[Any] = []
+    root = Path(composition_root or Path.cwd() / ".rmbl-title-comps")
+    directory = root / uuid.uuid4().hex
+    directory.mkdir(parents=True, exist_ok=False)
+    try:
+        for index, source in enumerate(sorted(source_items, key=lambda item: int(item.GetStart())), start=1):
+            relative_start = int(source.GetStart()) - int(source_base_frame)
+            duration = int(source.GetEnd()) - int(source.GetStart())
+            if duration <= 0:
+                raise RuntimeError("RMBL title source has an invalid duration")
+            comp_path = directory / f"title-{index:04d}.comp"
+            if source.ExportFusionComp(str(comp_path), 1) is False or not comp_path.is_file():
+                raise RuntimeError(f"Resolve could not export RMBL title composition {index}")
+            raw = media_pool.AppendToTimeline([{
+                "mediaPoolItem": carrier,
+                "startFrame": 0,
+                "endFrame": duration,
+                "mediaType": 1,
+                "trackIndex": int(track_index),
+                "recordFrame": int(destination_base_frame) + relative_start,
+            }]) or []
+            if len(raw) != 1:
+                raise RuntimeError(f"Resolve could not place RMBL title carrier {index}")
+            fusion_item = timeline.CreateFusionClip([raw[0]])
+            if not fusion_item:
+                raise RuntimeError(f"Resolve could not create separate RMBL Fusion clip {index}")
+            if not fusion_item.ImportFusionComp(str(comp_path)):
+                raise RuntimeError(f"Resolve could not import RMBL title composition {index}")
+            if fusion_item.SetName(title_name) is False:
+                raise RuntimeError(f"Resolve could not name RMBL title clip {index}")
+            color_setter = getattr(fusion_item, "SetClipColor", None)
+            if color_setter is not None and color_setter("Yellow") is False:
+                raise RuntimeError(f"Resolve could not color RMBL title clip {index}")
+            expected = (
+                int(destination_base_frame) + relative_start,
+                int(destination_base_frame) + relative_start + duration,
+            )
+            actual = (int(fusion_item.GetStart()), int(fusion_item.GetEnd()))
+            if actual != expected or int(fusion_item.GetFusionCompCount() or 0) < 1:
+                raise RuntimeError(f"RMBL separate title timing mismatch: {actual} != {expected}")
+            inserted.append(fusion_item)
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
+    return inserted
+
+
+def backup_drt_path(payload: dict[str, Any], backup_name: str) -> Path:
+    staging = Path(str(payload.get("media_staging_root") or Path.cwd() / "resolve-media"))
+    safe_name = re.sub(r'[<>:"/\\|?*]+', "_", str(backup_name)).strip(" .")
+    return staging.parent / "BCK" / f"{safe_name}.drt"
+
+
+def remove_archived_backup_timeline(media_pool: Any, backup: Any) -> None:
+    """Remove the in-project duplicate after its DRT has been archived.
+
+    Deleting the duplicate also closes the BCK tab that DuplicateTimeline opens
+    in Resolve, while the timestamped DRT remains available for recovery.
+    """
+    if backup is not None and media_pool.DeleteTimelines([backup]) is False:
+        raise RuntimeError("Resolve could not close the temporary BCK timeline")
+
+
 def export_drt(resolve: Any, timeline: Any, output_path: Path) -> Path:
     target = Path(output_path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    handle, raw_path = tempfile.mkstemp(prefix="rambla-timeline-", suffix=".drt")
-    os.close(handle)
-    local_target = Path(raw_path)
-    local_target.unlink(missing_ok=True)
+    local_target = target.parent / f".rambla-timeline-{uuid.uuid4().hex}.drt"
     try:
         result = timeline.Export(str(local_target), resolve.EXPORT_DRT, resolve.EXPORT_NONE)
         if result is False or not local_target.is_file() or local_target.stat().st_size <= 0:
@@ -986,7 +1088,8 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
     build_name = f"__RAMBLA_BUILD_{int(time.time() * 1000)}"
     generated = None
     backup = None
-    backup_media = None
+    backup_name = None
+    backup_drt = None
     protected_items = None
     protected_track_states = []
     active_mutated = False
@@ -1017,12 +1120,9 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
             if not media_folder:
                 raise RuntimeError(f"Resolve could not create the Media Pool bin '{media_folder_name}'")
         if destination_mode == "active":
-            generated, backup = create_active_backup(
-                original, next_backup_name(project, original_name)
-            )
-            backup_media = find_timeline_media_item(media_pool, backup)
-            if backup_media is None:
-                raise RuntimeError("Resolve could not find the safety backup in the Media Pool")
+            backup_name = next_backup_name(project, original_name)
+            generated, backup = create_active_backup(original, backup_name)
+            backup_drt = export_drt(resolve, backup, backup_drt_path(payload, backup_name))
         else:
             generated = original.DuplicateTimeline(build_name)
             if not generated:
@@ -1037,7 +1137,7 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
             if apply_scope == "all":
                 remove_prior_rambla_items(generated, title_name=title_name)
             elif apply_scope == "titles":
-                muted_title_count = mute_prior_rambla_titles(generated, title_name=title_name)
+                muted_title_count = remove_prior_rambla_titles(generated, title_name=title_name)
             elif apply_scope == "subtitles":
                 if not payload.get("subtitles"):
                     raise ValueError("Nessun sottotitolo nel pacchetto: seleziona i sottotitoli in RMBL")
@@ -1127,14 +1227,21 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
             if title_build_timeline is not None:
                 if not activate_timeline(resolve, project, generated):
                     raise RuntimeError("Resolve could not return to the destination timeline")
-                title_layer_item = append_nested_title_layer(
+                separate_titles = append_separate_fusion_titles(
                     media_pool,
                     generated,
-                    title_build_timeline,
-                    base_frame=base_frame,
-                    duration_frames=max(row["end_frame"] for row in plan["segments"]),
+                    title_items,
+                    source_base_frame=title_base_frame,
+                    destination_base_frame=base_frame,
                     track_index=int(title_track_index),
+                    title_name=title_name,
+                    composition_root=Path(str(payload.get("media_staging_root") or Path.cwd() / "resolve-media")) / ".title-comps",
                 )
+                if len(separate_titles) != len(plan["segments"]):
+                    raise RuntimeError("Resolve did not create every separate RMBL title clip")
+                if media_pool.DeleteTimelines([title_build_timeline]) is False:
+                    raise RuntimeError("Resolve could not remove the temporary RMBL title timeline")
+                title_build_timeline = None
         else:
             report_handoff_progress(payload,"titles",66,"Testi RMBL lasciati invariati")
 
@@ -1194,14 +1301,16 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
         )
         if destination_mode == "new" and (generated.SetName(name) is False or str(generated.GetName()) != name):
             raise RuntimeError("Resolve could not assign the final timeline name")
-        if backup_media is not None and media_pool.MoveClips([backup_media], backup_folder) is False:
-            raise RuntimeError("Resolve could not archive the safety backup in BCK")
         # Prior timelines belong to the editor. A new export never deletes them.
         stale_timelines = []
         current_subtitle_media = find_subtitle_media(media_pool, Path(payload["subtitle_srt_path"])) if include_subtitles and payload.get("subtitle_srt_path") else None
         removed_subtitle_sources = 0
         report_handoff_progress(payload,"save",96,"Salvataggio progetto Resolve")
         save_resolve_project(project_manager)
+        if backup is not None:
+            remove_archived_backup_timeline(media_pool, backup)
+            backup = None
+            save_resolve_project(project_manager)
         result = {
             "status": "created", "timeline_name": name, "item_count": len(keep),
             "timeline_id": str(generated.GetUniqueId()),
@@ -1224,15 +1333,16 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
             "subtitle_track_index": subtitle_actual_track,
             "subtitle_track_fallback": subtitle_track_fallback,
             "markers_restored": markers_restored,
-            "backup_timeline_name": str(backup.GetName()) if backup else None,
+            "backup_timeline_name": backup_name,
+            "backup_drt_path": str(backup_drt) if backup_drt else None,
         }
     except Exception:
         media_pool.SetCurrentFolder(original_folder)
         if destination_mode == "active" and active_mutated and backup:
             restored = restore_active_timeline(project, media_pool, original, backup, original_name)
-            if backup_media is not None and backup_folder is not None:
-                media_pool.MoveClips([backup_media], backup_folder)
             project.SetCurrentTimeline(restored)
+            remove_archived_backup_timeline(media_pool, backup)
+            backup = None
             project_manager.SaveProject()
         else:
             project.SetCurrentTimeline(original)

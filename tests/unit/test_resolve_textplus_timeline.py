@@ -73,6 +73,7 @@ from backend.app.resolve_textplus_timeline import (
     create_active_backup,
     conform_broll_media,
     mute_prior_rambla_titles,
+    remove_prior_rambla_titles,
     mute_prior_rambla_subtitles,
     remove_prior_rambla_broll,
     remap_broll_for_selective_refresh,
@@ -80,6 +81,9 @@ from backend.app.resolve_textplus_timeline import (
     raise_if_cancelled,
     ResolveApplyCancelled,
     append_nested_title_layer,
+    append_separate_fusion_titles,
+    backup_drt_path,
+    remove_archived_backup_timeline,
 )
 
 
@@ -161,6 +165,99 @@ def test_append_nested_title_layer_targets_the_dedicated_upper_track(monkeypatch
         "trackIndex": 13,
         "recordFrame": 108000,
     }]
+
+
+def test_separate_fusion_titles_are_individual_clips_on_the_upper_track():
+    media = SimpleNamespace(GetClipProperty=lambda key: "Video" if key == "Type" else "")
+    existing = SimpleNamespace(GetMediaPoolItem=lambda: media)
+
+    class Source:
+        def __init__(self, start, end): self.start, self.end = start, end
+        def GetStart(self): return self.start
+        def GetEnd(self): return self.end
+        def ExportFusionComp(self, path, index):
+            assert index == 1
+            Path(path).write_text("composition", encoding="utf-8")
+            return True
+
+    class FusionItem:
+        def __init__(self, raw): self.raw, self.name, self.color = raw, "", ""
+        def ImportFusionComp(self, path): return Path(path).is_file()
+        def SetName(self, name): self.name = name; return True
+        def SetClipColor(self, color): self.color = color; return True
+        def GetStart(self): return self.raw.GetStart()
+        def GetEnd(self): return self.raw.GetEnd()
+        def GetFusionCompCount(self): return 1
+
+    class Timeline:
+        def __init__(self): self.created = []
+        def GetTrackCount(self, kind): return 1
+        def GetItemListInTrack(self, kind, track): return [existing]
+        def CreateFusionClip(self, items):
+            clip = FusionItem(items[0]); self.created.append(clip); return clip
+
+    class Pool:
+        def __init__(self): self.rows = []
+        def AppendToTimeline(self, rows):
+            self.rows.extend(rows)
+            row = rows[0]
+            return [SimpleNamespace(
+                GetStart=lambda: row["recordFrame"],
+                GetEnd=lambda: row["recordFrame"] + row["endFrame"],
+            )]
+
+    timeline, pool = Timeline(), Pool()
+    clips = append_separate_fusion_titles(
+        pool, timeline, [Source(108010, 108020), Source(108040, 108055)],
+        source_base_frame=108000, destination_base_frame=200000,
+        track_index=8, title_name="KURA_paper_title_v9",
+        composition_root=Path.cwd() / ".unit-title-comps",
+    )
+
+    assert [(row["recordFrame"], row["endFrame"], row["trackIndex"]) for row in pool.rows] == [
+        (200010, 10, 8), (200040, 15, 8),
+    ]
+    assert len(clips) == 2
+    assert [(clip.name, clip.color) for clip in clips] == [
+        ("KURA_paper_title_v9", "Yellow"),
+        ("KURA_paper_title_v9", "Yellow"),
+    ]
+
+
+def test_backup_is_archived_as_drt_and_temporary_timeline_is_removed():
+    backup_root = Path.cwd() / ".unit-backups"
+    path = backup_drt_path(
+        {"media_staging_root": str(backup_root / "resolve-media")},
+        'EGITTO · BCK · 2026-10-09 · 18-00-00 · 001',
+    )
+    assert path.parent == backup_root / "BCK"
+    assert path.suffix == ".drt"
+
+    backup = object()
+    pool = SimpleNamespace(DeleteTimelines=lambda rows: rows == [backup])
+    remove_archived_backup_timeline(pool, backup)
+
+
+def test_selective_title_refresh_removes_only_previous_rmbl_titles():
+    class Item:
+        def __init__(self, name, color, fusion): self.name, self.color, self.fusion = name, color, fusion
+        def GetName(self): return self.name
+        def GetClipColor(self): return self.color
+        def GetFusionCompCount(self): return self.fusion
+
+    old_title = Item("KURA_paper_title_v9", "Yellow", 1)
+    client_clip = Item("Client overlay", "", 0)
+
+    class Timeline:
+        def __init__(self): self.deleted = []
+        def GetTrackCount(self, kind): return 1
+        def GetTrackName(self, kind, track): return "RMBL TEXT v2"
+        def GetItemListInTrack(self, kind, track): return [old_title, client_clip]
+        def DeleteClips(self, rows, ripple): self.deleted = list(rows); return ripple is False
+
+    timeline = Timeline()
+    assert remove_prior_rambla_titles(timeline, title_name="KURA_paper_title_v9") == 1
+    assert timeline.deleted == [old_title]
 
 
 def test_selective_subtitle_refresh_mutes_only_rmbl_sources():

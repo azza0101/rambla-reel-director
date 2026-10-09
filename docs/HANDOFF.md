@@ -1,6 +1,6 @@
 # RMBL B ROLL — handoff tecnico
 
-Aggiornato: 2026-10-09  Versione: `v0050`  Branch di consegna: `feat/api-first-text-first-v1`
+Aggiornato: 2026-10-09  Versione: `v0051`  Branch di consegna: `feat/api-first-text-first-v1`
 
 ## Avvio rapido
 
@@ -31,13 +31,15 @@ La timeline sorgente resta protetta. Le mutazioni Resolve passano dai job di `re
 - Il bridge espone **COPIA DEBUG**: copia versione, build, sessione, timeline, pacchetto, avanzamento, errore completo e diagnostica.
 - Prova reale su `KURA parlato / KURA_FOTO BAMBINI_v2`: 140 nuovi sottotitoli su ST1 ai frame previsti; 202 sottotitoli preesistenti conservati sulla traccia separata.
 
-### Fusion Title sicuri v0049
+### Fusion Title separati v0051
 
 - `KURA_paper_title_v9` è verificato direttamente in Resolve 21.1: il nome registrato è corretto e il preset viene caricato.
 - L'API `InsertFusionTitleIntoTimeline` inserisce sempre su V1: con V1 protetta fallisce, con V1 libera esegue un insert edit e sposta le clip esistenti.
-- RMBL genera quindi le parole evidenziate in una timeline trasparente isolata che eredita FPS e timecode dalla sorgente, poi la annida esplicitamente sulla traccia `RMBL TEXT` più alta.
-- Il livello annidato è giallo, aggiornabile dalle revisioni successive e non modifica clip, audio o marker esistenti.
-- Prova reale su `KURA parlato / KURA_FOTO BAMBINI_v2`: 24 titoli v9, livello su V13, 30 fps, backup BCK creato e verifica di integrità superata.
+- RMBL costruisce i titoli in una timeline isolata che eredita FPS e timecode dalla sorgente, poi copia ogni composizione sulla traccia `RMBL TEXT` più alta come Fusion Clip autonoma.
+- Ogni parola o frase evidenziata resta quindi una clip gialla separata, modificabile e con la propria durata; non viene più creata una lunga timeline compound.
+- Le revisioni selettive eliminano soltanto i precedenti titoli RMBL e lasciano intatti video, audio e marker del montaggio.
+- Il backup viene archiviato come DRT timestampato nella cartella `BCK`; la timeline duplicata e la timeline tecnica dei titoli vengono eliminate alla fine, quindi Resolve non lascia aperte schede temporanee.
+- Prova reale su una copia di `KURA parlato / KURA_FOTO BAMBINI_v2`: 24 titoli v9 separati ai frame previsti, nessuna timeline BCK o `RMBL TEXT LAYER` residua.
 
 ## Branding
 
