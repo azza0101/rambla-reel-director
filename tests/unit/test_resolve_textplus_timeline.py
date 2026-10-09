@@ -79,6 +79,7 @@ from backend.app.resolve_textplus_timeline import (
     next_rambla_track_name,
     raise_if_cancelled,
     ResolveApplyCancelled,
+    append_nested_title_layer,
 )
 
 
@@ -117,6 +118,49 @@ def test_selective_title_refresh_mutes_prior_rmbl_titles_across_style_changes():
         def GetItemListInTrack(self,kind,track): return [rmbl] if track==1 else [user]
     assert mute_prior_rambla_titles(Timeline(),title_name="KURA_paper_title_v9")==1
     assert rmbl.enabled is False and user.enabled is True
+
+
+def test_nested_rmbl_title_layer_is_recognized_on_its_named_track():
+    class Item:
+        def GetFusionCompCount(self): return 0
+        def GetName(self): return "RMBL TEXT LAYER 20261009-173000"
+        def GetClipColor(self): return "Yellow"
+
+    from backend.app.resolve_textplus_timeline import _is_rambla_generated_title
+
+    assert _is_rambla_generated_title(
+        Item(), title_name="KURA_paper_title_v9", track_name="RMBL TEXT v3"
+    ) is True
+
+
+def test_append_nested_title_layer_targets_the_dedicated_upper_track(monkeypatch):
+    title_timeline = SimpleNamespace(GetUniqueId=lambda: "titles")
+    media = object()
+
+    class MediaPool:
+        def AppendToTimeline(self, rows):
+            self.rows = rows
+            return [SimpleNamespace(SetClipColor=lambda color: color == "Yellow")]
+
+    pool = MediaPool()
+    monkeypatch.setattr(
+        "backend.app.resolve_textplus_timeline.find_timeline_media_item",
+        lambda _pool, _timeline: media,
+    )
+    item = append_nested_title_layer(
+        pool, object(), title_timeline,
+        base_frame=108000, duration_frames=900, track_index=13,
+    )
+
+    assert item is not None
+    assert pool.rows == [{
+        "mediaPoolItem": media,
+        "startFrame": 0,
+        "endFrame": 900,
+        "mediaType": 1,
+        "trackIndex": 13,
+        "recordFrame": 108000,
+    }]
 
 
 def test_selective_subtitle_refresh_mutes_only_rmbl_sources():

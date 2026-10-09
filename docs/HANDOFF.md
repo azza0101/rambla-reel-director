@@ -1,6 +1,6 @@
 # RMBL B ROLL — handoff tecnico
 
-Aggiornato: 2026-10-09  Versione: `v0048`  Branch di consegna: `feat/api-first-text-first-v1`
+Aggiornato: 2026-10-09  Versione: `v0049`  Branch di consegna: `feat/api-first-text-first-v1`
 
 ## Avvio rapido
 
@@ -22,6 +22,14 @@ Aggiornato: 2026-10-09  Versione: `v0048`  Branch di consegna: `feat/api-first-t
 Il bridge espone anche **RICALCOLA AUDIO · IN → OUT**: invia `force_recalculate=true`, impedisce il riuso della guida precedente e renderizza il range IN/OUT letto dalla timeline focalizzata in quel momento. Resolve 21 restituisce i mark relativi all'inizio timeline e può omettere `in` quando coincide con l'inizio: `timeline_range()` normalizza entrambi i casi in frame assoluti. Il ricalcolo forzato rifiuta di partire se non vede almeno un range esplicito, evitando il fallback silenzioso all'intera timeline. Il riepilogo mostra `mark_in`, `mark_out` e `range_source` realmente acquisiti.
 
 La timeline sorgente resta protetta. Le mutazioni Resolve passano dai job di `resolve_handoff_jobs.py`; i calcoli temporali usano FPS e frame iniziale della timeline acquisita.
+
+### Fusion Title sicuri v0049
+
+- `KURA_paper_title_v9` è verificato direttamente in Resolve 21.1: il nome registrato è corretto e il preset viene caricato.
+- L'API `InsertFusionTitleIntoTimeline` inserisce sempre su V1: con V1 protetta fallisce, con V1 libera esegue un insert edit e sposta le clip esistenti.
+- RMBL genera quindi le parole evidenziate in una timeline trasparente isolata che eredita FPS e timecode dalla sorgente, poi la annida esplicitamente sulla traccia `RMBL TEXT` più alta.
+- Il livello annidato è giallo, aggiornabile dalle revisioni successive e non modifica clip, audio o marker esistenti.
+- Prova reale su `KURA parlato / KURA_FOTO BAMBINI_v2`: 24 titoli v9, livello su V13, 30 fps, backup BCK creato e verifica di integrità superata.
 
 ## Branding
 

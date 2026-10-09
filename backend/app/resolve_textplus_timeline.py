@@ -179,11 +179,15 @@ def rescale_broll_frames(clips: list[dict[str, Any]], *, source_fps: float, targ
 
 def _is_rambla_generated_title(item: Any, *, title_name: str, track_name: str = "") -> bool:
     """Recognize RMBL titles independently from the currently selected preset name."""
-    if not bool(item.GetFusionCompCount()) or str(item.GetClipColor() or "") != "Yellow":
+    if str(item.GetClipColor() or "") != "Yellow":
+        return False
+    if str(track_name or "").casefold().startswith("rmbl text "):
+        return True
+    if not bool(item.GetFusionCompCount()):
         return False
     if str(item.GetName() or "") == title_name:
         return True
-    return str(track_name or "").casefold().startswith("rmbl text ")
+    return False
 
 
 def remove_prior_rambla_items(timeline: Any, *, title_name: str) -> dict[str, int]:
@@ -378,6 +382,44 @@ def find_timeline_media_item(media_pool: Any, timeline: Any) -> Any | None:
             except Exception:
                 continue
     return None
+
+
+def append_nested_title_layer(
+    media_pool: Any,
+    timeline: Any,
+    title_timeline: Any,
+    *,
+    base_frame: int,
+    duration_frames: int,
+    track_index: int,
+) -> Any:
+    """Place a transparent title-only timeline without rippling source V1.
+
+    Resolve's InsertFusionTitleIntoTimeline always targets V1 through the
+    scripting API.  On an edited timeline that either fails when V1 is locked
+    or performs an insert edit that moves the editor's clips.  Building titles
+    in their own timeline and nesting it with an explicit trackIndex preserves
+    every existing clip while keeping RMBL text above B-roll.
+    """
+    media = find_timeline_media_item(media_pool, title_timeline)
+    if media is None:
+        raise RuntimeError("Resolve could not find the generated RMBL text layer")
+    result = media_pool.AppendToTimeline([{
+        "mediaPoolItem": media,
+        "startFrame": 0,
+        "endFrame": int(duration_frames),
+        "mediaType": 1,
+        "trackIndex": int(track_index),
+        "recordFrame": int(base_frame),
+    }]) or []
+    values = list(result.values()) if isinstance(result, dict) else list(result)
+    if len(values) != 1:
+        raise RuntimeError("Resolve could not place the generated RMBL text layer")
+    item = values[0]
+    setter = getattr(item, "SetClipColor", None)
+    if setter is not None and setter("Yellow") is False:
+        raise RuntimeError("Resolve could not mark the generated RMBL text layer")
+    return item
 
 
 def export_drt(resolve: Any, timeline: Any, output_path: Path) -> Path:
@@ -952,6 +994,8 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
     target_folder = None
     media_folder = None
     title_track_index = None
+    title_build_timeline = None
+    title_layer_item = None
     subtitle_target_track = None
     subtitle_actual_track = None
     subtitle_track_fallback = False
@@ -1025,18 +1069,36 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
         base_frame = int(payload.get("bridge_mark_in") if payload.get("bridge_mark_in") is not None else generated.GetStartFrame())
         keep = []
         if include_titles:
-            existing_title_ids = {str(item.GetUniqueId()) for item in _timeline_items(generated)}
+            title_target = generated
+            title_base_frame = base_frame
+            if destination_mode == "active":
+                media_pool.SetCurrentFolder(backup_folder)
+                # Duplicate the source timeline so the isolated layer inherits
+                # its exact frame rate and start timecode. CreateEmptyTimeline
+                # uses the project default (often 24 fps), which makes valid
+                # 30 fps boundaries fail at SetCurrentTimecode.
+                title_build_timeline = generated.DuplicateTimeline(
+                    f"RMBL TEXT LAYER {datetime.now().strftime('%Y%m%d-%H%M%S')}"
+                )
+                if not title_build_timeline:
+                    raise RuntimeError("Resolve could not create the safe RMBL text layer")
+                title_target = title_build_timeline
+                if not activate_timeline(resolve, project, title_target):
+                    raise RuntimeError("Resolve could not activate the safe RMBL text layer")
+                clear_generated_timeline(title_target)
+                title_base_frame = int(title_target.GetStartFrame())
+            existing_title_ids = {str(item.GetUniqueId()) for item in _timeline_items(title_target)}
             for operation in boundary_operations(plan):
                 raise_if_cancelled(payload)
                 boundary = operation["frame"]
-                move_to_boundary(generated, boundary=boundary, base_frame=base_frame, fps=fps)
+                move_to_boundary(title_target, boundary=boundary, base_frame=title_base_frame, fps=fps)
                 inserted = insert_fusion_title_with_retry(
-                    generated, title_name,
-                    on_retry=lambda: activate_timeline(resolve, project, generated),
+                    title_target, title_name,
+                    on_retry=lambda: activate_timeline(resolve, project, title_target),
                 )
                 if not inserted:
                     raise RuntimeError(
-                        f"Resolve Fusion Title '{title_name}' is unavailable. Install it and restart Resolve"
+                        f"Resolve could not insert Fusion Title '{title_name}' in the RMBL text layer"
                     )
                 color_setter = getattr(inserted, "SetClipColor", None)
                 if color_setter:
@@ -1046,14 +1108,14 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
             report_handoff_progress(payload,"titles",66,"Parole evidenziate inserite")
             time.sleep(0.15)
             materialized = []
-            for item in generated_fusion_items(generated, existing_title_ids):
+            for item in generated_fusion_items(title_target, existing_title_ids):
                 if item.GetFusionCompCount():
-                    materialized.append({"id":str(item.GetUniqueId()),"item":item,"start_frame":int(item.GetStart())-base_frame,"end_frame":int(item.GetEnd())-base_frame})
+                    materialized.append({"id":str(item.GetUniqueId()),"item":item,"start_frame":int(item.GetStart())-title_base_frame,"end_frame":int(item.GetEnd())-title_base_frame})
             keep, remove = select_exact_segments(materialized, plan["segments"])
-            if remove and generated.DeleteClips([row["item"] for row in remove], False) is False:
+            if remove and title_target.DeleteClips([row["item"] for row in remove], False) is False:
                 raise RuntimeError('Resolve could not remove Fusion title split fragments')
-            title_items = generated_fusion_items(generated, existing_title_ids)
-            final_ranges = sorted((int(item.GetStart())-base_frame,int(item.GetEnd())-base_frame) for item in title_items)
+            title_items = generated_fusion_items(title_target, existing_title_ids)
+            final_ranges = sorted((int(item.GetStart())-title_base_frame,int(item.GetEnd())-title_base_frame) for item in title_items)
             expected_ranges = sorted((row["start_frame"],row["end_frame"]) for row in plan["segments"])
             if final_ranges != expected_ranges:
                 raise RuntimeError("Resolve Text+ verification found unexpected clip ranges")
@@ -1062,6 +1124,17 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
             final_text = [str(_text_tool(row["item"]).GetInput("StyledText", 0)) for row in keep]
             if final_text != [str(row["text"]) for row in keep]:
                 raise RuntimeError("Resolve title text verification failed")
+            if title_build_timeline is not None:
+                if not activate_timeline(resolve, project, generated):
+                    raise RuntimeError("Resolve could not return to the destination timeline")
+                title_layer_item = append_nested_title_layer(
+                    media_pool,
+                    generated,
+                    title_build_timeline,
+                    base_frame=base_frame,
+                    duration_frames=max(row["end_frame"] for row in plan["segments"]),
+                    track_index=int(title_track_index),
+                )
         else:
             report_handoff_progress(payload,"titles",66,"Testi RMBL lasciati invariati")
 
@@ -1166,6 +1239,11 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
         if destination_mode == "new" and generated:
             media_pool.DeleteTimelines([generated])
             project_manager.SaveProject()
+        if title_build_timeline is not None:
+            try:
+                media_pool.DeleteTimelines([title_build_timeline])
+            except Exception:
+                pass
         raise
     media_pool.SetCurrentFolder(original_folder)
     drt_output = str(payload.get("drt_output_path") or "").strip()
