@@ -1230,7 +1230,7 @@ def create_app(
         )
         return payload
 
-    def broll_timeline_payload(project_id: str) -> dict[str, Any]:
+    def broll_timeline_payload(project_id: str, *, allow_unavailable: bool = False) -> dict[str, Any]:
         from .broll_timeline_export import build_broll_timeline_plan
         from .curation_artifacts import load_curation_run
         from .video_preview import probe_preview
@@ -1280,13 +1280,14 @@ def create_app(
         plan = build_broll_timeline_plan(visual_plan, selection, assets, fps=fps)
         if plan["selected_beat_count"] == 0:
             raise ValueError("Select at least one B-roll clip before exporting the timeline")
-        if plan["unavailable"] and not plan["clips"]:
+        if plan["unavailable"] and not plan["clips"] and not allow_unavailable:
             rows = ", ".join(f"{row['beat_id']} · {row['asset_id']}: {row['reason']}" for row in plan["unavailable"][:8])
             raise ValueError("No selected clip is ready for timeline export. Download or replace them: " + rows)
         return plan
 
-    async def prepare_selected_timeline_media(project_id: str, report=None) -> list[str]:
+    async def prepare_selected_timeline_media(project_id: str, report=None) -> list[dict[str, str]]:
         from .curation_artifacts import load_curation_run
+        from .resolve_media_issues import download_issue
         from .social_media import media_path, prepare_media
         from .transcript_intents import has_selected_intent
         run = run_root(project_id)
@@ -1311,7 +1312,7 @@ def create_app(
                                f'Scarico {candidate.title} · {received/1048576:.1f}' + (f'/{total/1048576:.1f}' if total else '') + ' MB')
                     await prepare_pexels_video(run, asset_id.rsplit(':', 1)[-1], progress=download_progress if report else None)
                 except Exception as exc:
-                    failures.append(f'{asset_id}: {exc}')
+                    failures.append(download_issue(candidate, exc))
                 continue
             if not candidate or candidate.provider not in {"tiktok", "instagram", "youtube", "youtube_shorts"}:
                 continue
@@ -1325,16 +1326,14 @@ def create_app(
             try:
                 await asyncio.to_thread(prepare_media, candidate.source_page, candidate.provider, run, "full", cookies=cookies)
             except (ValueError, RuntimeError) as exc:
-                failures.append(f"{asset_id}: {exc}")
-        if failures:
-            raise ValueError('Download delle clip selezionate non completato: ' + ' · '.join(failures))
+                failures.append(download_issue(candidate, exc))
         return failures
 
     def editing_resolve_payload(project_id: str) -> dict[str, Any]:
         from .transcript_intents import has_selected_intent
         payload = combined_resolve_payload(project_id)
         if has_selected_intent(run_root(project_id), "coverage"):
-            broll = broll_timeline_payload(project_id)
+            broll = broll_timeline_payload(project_id, allow_unavailable=True)
         else:
             broll = {"clips": [], "clip_count": 0, "unavailable": []}
         project = load_project(project_id)
@@ -1447,11 +1446,12 @@ def create_app(
     @app.post("/api/curation/projects/{project_id}/resolve-handoffs")
     async def prepare_resolve_handoff(project_id: str):
         try:
-            await prepare_selected_timeline_media(project_id)
+            media_issues = await prepare_selected_timeline_media(project_id)
             await prepare_generic_media(project_id)
             payload = editing_resolve_payload(project_id)
             payload["project_id"] = project_id
             payload["bridge_session_id"] = active_bridge_session_id
+            payload["media_issues"] = media_issues
             package = handoff_store.prepare(handoff_project_root(project_id), payload)
             return {key: value for key, value in package.items() if key != "payload"}
         except ValueError as exc:
@@ -1462,12 +1462,13 @@ def create_app(
         load_project(project_id)
         session_id = active_bridge_session_id
         async def prepare(report):
-            await prepare_selected_timeline_media(project_id, report)
+            media_issues = await prepare_selected_timeline_media(project_id, report)
             report(65, 'Coperture pronte · controllo video finali')
             await prepare_generic_media(project_id, report)
             report(80, 'Media pronti · preparo sottotitoli, frasi e tempi')
             payload = await asyncio.to_thread(editing_resolve_payload, project_id)
             payload.update(project_id=project_id, bridge_session_id=session_id)
+            payload["media_issues"] = media_issues
             report(85, 'Salvo il pacchetto per il bridge')
             package = await asyncio.to_thread(handoff_store.prepare, handoff_project_root(project_id), payload)
             return {k:v for k,v in package.items() if k != 'payload'}

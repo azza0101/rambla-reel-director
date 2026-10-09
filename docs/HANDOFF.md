@@ -1,6 +1,6 @@
 # RMBL B ROLL — handoff tecnico
 
-Aggiornato: 2026-10-02  Versione: `v0046`  Branch di consegna: `feat/api-first-text-first-v1`
+Aggiornato: 2026-10-09  Versione: `v0048`  Branch di consegna: `feat/api-first-text-first-v1`
 
 ## Avvio rapido
 

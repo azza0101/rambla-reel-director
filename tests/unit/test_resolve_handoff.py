@@ -43,6 +43,16 @@ def test_prepare_is_versioned_and_summarizes_unavailable_media():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def test_prepare_exposes_media_issues_without_putting_payload_in_api_metadata():
+    root = _root()
+    try:
+        issue = {"beat_id": "beat_003", "source_page": "https://www.youtube.com/shorts/example"}
+        package = ResolveHandoffStore(root.parent).prepare(root, _payload(media_issues=[issue]))
+        assert package["media_issues"] == [issue]
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def test_pending_filters_and_transitions_are_guarded():
     root = _root()
     try:

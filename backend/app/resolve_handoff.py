@@ -99,6 +99,7 @@ class ResolveHandoffStore:
                 "timeline_id": str(payload.get("source_timeline_id") or ""),
                 "timeline_name": str(payload.get("source_timeline_name") or payload.get("source_timeline") or ""),
                 "summary": _summary(payload), "progress": {"phase": "pending", "percent": 0},
+                "media_issues": deepcopy(payload.get("media_issues") or []),
                 "revision": int((prior or {}).get("revision") or 0)+1,
                 "supersedes": (prior or {}).get("package_id"),
                 "change_summary": {"broll_added":len(after-before),"broll_removed":len(before-after),
