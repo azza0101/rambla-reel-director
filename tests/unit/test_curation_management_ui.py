@@ -160,6 +160,15 @@ def test_every_broll_video_provider_has_incremental_search_controls():
     assert "＋ Cerca fino a 6 nuove" in html
 
 
+def test_image_results_use_the_same_ordered_compact_gallery_as_other_sources():
+    from backend.app.curation_ui_v2 import render_curation_page_v2
+
+    html = render_curation_page_v2("ordered-image-gallery")
+    assert "images:'images'" in html
+    assert "#webNewsVideosV2,#images" in html
+    assert ".providerFold #images .card" in html
+
+
 def test_visual_plan_is_collapsed_inside_each_beat():
     from backend.app.curation_ui_v2 import render_curation_page_v2
 

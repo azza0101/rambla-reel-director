@@ -1,6 +1,6 @@
 # RMBL B ROLL — handoff tecnico
 
-Aggiornato: 2026-10-09  Versione: `v0052`  Branch di consegna: `feat/api-first-text-first-v1`
+Aggiornato: 2026-10-09  Versione: `v0053`  Branch di consegna: `feat/api-first-text-first-v1`
 
 ## Avvio rapido
 
@@ -48,6 +48,11 @@ La timeline sorgente resta protetta. Le mutazioni Resolve passano dai job di `re
 - Immagini e video condividono la selezione ordinata `V2`, `V3`, `V4…`; la scelta rimane salvata nel normale `selection-plan.json`.
 - Durante l'export, ogni immagine selezionata viene materializzata localmente come still H.264 alla frequenza della timeline e copre esattamente l'intervallo della frase assegnata.
 - Le immagini Pexels non passano più per il downloader video; l'export usa il file immagine locale verificato.
+
+### Galleria immagini uniforme v0053
+
+- Le immagini di ogni Visual Beat usano la stessa galleria ordinata e paginata delle altre fonti.
+- La griglia mantiene anteprime, card e pulsanti della stessa dimensione anche con immagini di proporzioni diverse.
 
 ## Branding
 
