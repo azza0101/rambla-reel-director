@@ -15,12 +15,12 @@ CSS=r'''<style>
 </style>'''
 
 JS=r'''
-const galleryV9=new Map(),searchesV9=new Map(),galleryProvidersV26=['youtube','youtube_shorts','pexels','envato','web_video','tiktok','instagram'];let gifRequestV9=0;
+const galleryV9=new Map(),searchesV9=new Map(),galleryProvidersV26=['youtube','youtube_shorts','pexels','envato','web_video','tiktok','instagram','images'];let gifRequestV9=0;
 $('lightbox').addEventListener('click',e=>{const b=$('lightbox').getBoundingClientRect();if(e.clientX<b.left||e.clientX>b.right||e.clientY<b.top||e.clientY>b.bottom){$('lightboxVideo').pause();$('lightbox').close()}});
 const stageBaseV9=startStage;startStage=async(path)=>{if(path==='source/videos')beginSearchV9(['youtube_shorts'],'*');try{return await stageBaseV9(path)}catch(e){finishSearchV9({status:'FAILED'});throw e}};
 function galleryKeyV9(provider,beat=state.active){return `${state.pid}:${beat}:${provider}`}
 function galleryStateV9(provider){const key=galleryKeyV9(provider);if(!galleryV9.has(key))galleryV9.set(key,{page:0,round:Math.max(0,Number(localStorage.getItem('round:'+key)||0)),ids:[],overrides:{}});return galleryV9.get(key)}
-function orderedSocialV9(chunk,provider){const g=galleryStateV9(provider),rows=chunk.assets.filter(a=>a.provider===provider&&a.kind==='video'),index=new Map(rows.map(a=>[a.asset_id,a]));g.ids=g.ids.filter(id=>index.has(id));for(const a of rows)if(!g.ids.includes(a.asset_id))g.ids.push(a.asset_id);return g.ids.map(id=>index.get(id))}
+function orderedSocialV9(chunk,provider){const g=galleryStateV9(provider),rows=provider==='images'?chunk.assets.filter(a=>a.kind==='image'):chunk.assets.filter(a=>a.provider===provider&&a.kind==='video'),index=new Map(rows.map(a=>[a.asset_id,a]));g.ids=g.ids.filter(id=>index.has(id));for(const a of rows)if(!g.ids.includes(a.asset_id))g.ids.push(a.asset_id);return g.ids.map(id=>index.get(id))}
 function beginSearchV9(providers,beat,options={}){for(const provider of providers)searchesV9.set(galleryKeyV9(provider,beat),{busy:true,text:'Avvio ricerca…',state:'busy',retryOptions:{...options}});renderSearchStatusV9()}
 async function showChallengeWindowV11(provider,s,button){button.disabled=true;s.windowMessage='Apertura della finestra…';try{await api(`/social/${provider}/login`,{method:'POST'});s.windowMessage='Finestra richiamata. Se resta dietro RAMBLA, selezionala dalla barra delle applicazioni. Risolvi il CAPTCHA, poi premi Rilancia ricerca.'}catch(e){s.windowMessage='Impossibile mostrare la finestra: '+(e.message||String(e))}finally{renderSearchStatusV9()}}
 async function retrySocialV11(provider,s){if(state.run)return;const chunk=activeChunkV2();if(!chunk||chunk.action!=='BROLL')return;const options={...(s.retryOptions||{})};const g=galleryStateV9(provider);if(options.variation_round>0)g.pending={before:orderedSocialV9(chunk,provider).length,round:options.variation_round};await researchBeatV2('append',[provider],options)}

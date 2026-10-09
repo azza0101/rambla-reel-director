@@ -1242,25 +1242,26 @@ def create_app(
         visual_plan = _read_json(run / "visual-plan.json", {})
         assets = {}
         for asset_id, candidate in view.candidate_index.items():
+            kind = str(candidate.kind or "video")
             path = str(candidate.local_asset_path or "").strip()
             preview_path = str(candidate.preview_path or "").strip()
             full_source = bool(
                 path and candidate.source_start_seconds is not None
                 and (not preview_path or os.path.normcase(os.path.abspath(path)) != os.path.normcase(os.path.abspath(preview_path)))
             )
-            if candidate.provider == 'pexels':
+            if kind == "video" and candidate.provider == 'pexels':
                 from .stock_export_media import stock_media_path
                 stock_path = stock_media_path(run, asset_id.rsplit(':', 1)[-1])
                 if stock_path.is_file():
                     path = str(stock_path)
                     full_source = True
-            if candidate.provider in {"tiktok", "instagram", "youtube", "youtube_shorts"}:
+            if kind == "video" and candidate.provider in {"tiktok", "instagram", "youtube", "youtube_shorts"}:
                 from .social_media import media_path
                 social_path = media_path(candidate.source_page, candidate.provider, run, "full")
                 if social_path.is_file():
                     path = str(social_path)
                     full_source = True
-            facts = probe_preview(path) if path else {"playable": False}
+            facts = probe_preview(path) if path and kind == "video" else {"playable": bool(path), "duration": 0}
             selected_start = float(candidate.source_start_seconds or 0) if full_source else 0.0
             selected_end = (
                 float(candidate.source_end_seconds)
@@ -1268,8 +1269,9 @@ def create_app(
                 else None
             )
             assets[asset_id] = {
-                "media_path": path if path and Path(path).is_file() and float(facts.get("duration") or 0) > 0 else None,
+                "media_path": path if path and Path(path).is_file() and (kind == "image" or float(facts.get("duration") or 0) > 0) else None,
                 "duration_seconds": facts.get("duration", 0),
+                "kind": kind,
                 "source_start_seconds": selected_start,
                 "source_end_seconds": selected_end,
                 "source_offset_seconds": selected_start,
@@ -1303,6 +1305,10 @@ def create_app(
             candidate = view.candidate_index.get(asset_id)
             if report:
                 report(5 + int(60 * index / max(1, len(wanted))), f'Coperture: {index}/{len(wanted)} pronte · controllo {candidate.title if candidate else asset_id}')
+            if candidate and candidate.kind == "image":
+                if not candidate.local_asset_path or not Path(candidate.local_asset_path).is_file():
+                    failures.append(download_issue(candidate, RuntimeError("Selected image is not available locally")))
+                continue
             if candidate and candidate.provider == 'pexels':
                 from .stock_export_media import prepare_pexels_video
                 try:
@@ -1722,7 +1728,7 @@ def create_app(
         if request.mode not in {"replace", "append"}:
             raise HTTPException(status_code=422, detail="mode must be replace or append")
         provider_scope = tuple(dict.fromkeys(str(value).casefold().strip() for value in request.providers if str(value).strip()))
-        allowed_providers = {"youtube", "youtube_shorts", "tiktok", "instagram", "web_video", "pexels", "envato"}
+        allowed_providers = {"youtube", "youtube_shorts", "tiktok", "instagram", "web_video", "pexels", "envato", "images"}
         if any(value not in allowed_providers for value in provider_scope):
             raise HTTPException(status_code=422, detail="unsupported research provider")
         _validate_broll_beat(run, beat_id)

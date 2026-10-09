@@ -114,6 +114,51 @@ def test_beat_research_endpoint_starts_dedicated_worker_without_analyze(tmp_path
     import time; time.sleep(.05)
     assert calls == [("research:append:beat-1", "beat-1", "append")]
 
+
+def test_beat_research_endpoint_accepts_image_only_manual_search(tmp_path):
+    calls = []
+
+    async def fake_research(state, beat_id, mode):
+        calls.append((beat_id, mode, state.research_options))
+
+    from backend.app.curation_server import create_app
+    project_root = tmp_path / "projects"
+    allowed = tmp_path / "allowed"; allowed.mkdir()
+    source = allowed / "source.mp4"; source.write_bytes(b"video")
+    client = TestClient(create_app(
+        project_root=project_root, allowed_media_roots=[allowed], research_runner=fake_research,
+        probe_runner=lambda _: {"duration": 12, "fps": 25, "width": 1080, "height": 1920, "has_audio": False},
+    ))
+    pid = client.post("/api/curation/projects", json={"name": "Image research"}).json()["project_id"]
+    client.post(f"/api/curation/projects/{pid}/source/local", json={"path": str(source)})
+    run = project_root / pid / "run"; run.mkdir(parents=True, exist_ok=True)
+    visual = {"schema_version": "rambla-visual-plan-1", "visual_beats": [{
+        "id": "beat-1", "action": "BROLL", "covered_chunk_ids": ["chunk-1"],
+        "start": 0, "end": 2, "original_text": "hello", "editorial_function": "show",
+        "core_meaning": "Egypt history", "subtext": "", "visual_mode": "single", "avoid": [],
+        "shots": [{"shot_id": "s1", "description": "Egypt archive", "image_queries": ["Egypt archive"], "video_queries": []}],
+    }]}
+    for name, payload in {
+        "transcript-raw.json": {"segments": []}, "semantic-chunks.json": [{"id": "chunk-1", "text": "hello"}],
+        "semantic-beats.json": {"beats": []}, "visual-plan.json": visual,
+    }.items(): (run / name).write_text(json.dumps(payload), encoding="utf-8")
+    from backend.app.editorial_import import active_retrieval_root
+    rr = active_retrieval_root(run); rr.mkdir(parents=True, exist_ok=True)
+    (rr / "imported-plan.json").write_text(json.dumps(visual), encoding="utf-8")
+
+    response = client.post(
+        f"/api/curation/projects/{pid}/beats/beat-1/research",
+        json={"mode": "append", "providers": ["images"], "query_overrides": {"*": "Egypt sarcophagus archive"}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["providers"] == ["images"]
+    import time; time.sleep(.05)
+    assert calls == [("beat-1", "append", {
+        "visual_verify": False, "variation_round": 0,
+        "query_overrides": {"*": "Egypt sarcophagus archive"},
+    })]
+
 def test_beat_clean_route_preserves_other_beat_and_rejects_busy(tmp_path):
     import backend.app.debug_server as debug
     client, root, source = _client(tmp_path)

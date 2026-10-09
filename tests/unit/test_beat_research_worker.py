@@ -19,6 +19,14 @@ def test_scoped_image_command_targets_one_beat_and_research_mode():
     assert "analyze" not in command
 
 
+def test_image_only_research_searches_images_without_starting_video_providers():
+    from backend.app.debug_research_cli import research_media_scope
+
+    assert research_media_scope(("images",)) == (True, ())
+    assert research_media_scope(("images", "pexels")) == (True, ("pexels",))
+    assert research_media_scope(()) == (True, ())
+
+
 def test_research_stage_name_encodes_beat_and_mode_without_analyze():
     from backend.app.debug_research_cli import research_stage_type, parse_research_stage
 

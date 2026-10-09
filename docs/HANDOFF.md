@@ -1,6 +1,6 @@
 # RMBL B ROLL — handoff tecnico
 
-Aggiornato: 2026-10-09  Versione: `v0051`  Branch di consegna: `feat/api-first-text-first-v1`
+Aggiornato: 2026-10-09  Versione: `v0052`  Branch di consegna: `feat/api-first-text-first-v1`
 
 ## Avvio rapido
 
@@ -40,6 +40,14 @@ La timeline sorgente resta protetta. Le mutazioni Resolve passano dai job di `re
 - Le revisioni selettive eliminano soltanto i precedenti titoli RMBL e lasciano intatti video, audio e marker del montaggio.
 - Il backup viene archiviato come DRT timestampato nella cartella `BCK`; la timeline duplicata e la timeline tecnica dei titoli vengono eliminate alla fine, quindi Resolve non lascia aperte schede temporanee.
 - Prova reale su una copia di `KURA parlato / KURA_FOTO BAMBINI_v2`: 24 titoli v9 separati ai frame previsti, nessuna timeline BCK o `RMBL TEXT LAYER` residua.
+
+### Immagini per Visual Beat v0052
+
+- Ogni sezione **IMAGE SUGGESTIONS** permette una ricerca aggiuntiva limitata al Visual Beat attivo e una query manuale testuale.
+- La query manuale sostituisce le varianti automatiche per quella ricerca e viene mostrata nella diagnostica del beat.
+- Immagini e video condividono la selezione ordinata `V2`, `V3`, `V4…`; la scelta rimane salvata nel normale `selection-plan.json`.
+- Durante l'export, ogni immagine selezionata viene materializzata localmente come still H.264 alla frequenza della timeline e copre esattamente l'intervallo della frase assegnata.
+- Le immagini Pexels non passano più per il downloader video; l'export usa il file immagine locale verificato.
 
 ## Branding
 

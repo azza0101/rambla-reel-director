@@ -55,12 +55,13 @@ def build_broll_timeline_plan(
         for order, picked in enumerate(chosen):
             asset_id = str(picked.get("asset_id") or "")
             asset = assets.get(asset_id) or {}
+            kind = str(asset.get("kind") or "video")
             raw_path = str(asset.get("media_path") or "").strip()
             path = Path(raw_path) if raw_path else None
             if path is None or not path.is_file():
                 unavailable.append({"beat_id": str(beat_id), "asset_id": asset_id, "reason": "clip file is not available locally"})
                 continue
-            available = _frame(float(asset.get("duration_seconds") or 0), fps)
+            available = required if kind == "image" else _frame(float(asset.get("duration_seconds") or 0), fps)
             source_start_seconds = float(
                 asset.get("source_start_seconds")
                 if asset.get("source_start_seconds") is not None
@@ -80,6 +81,7 @@ def build_broll_timeline_plan(
                 "title": str(asset.get("title") or asset_id),
                 "source_page": str(asset.get("source_page") or ""),
                 "provider": str(asset.get("provider") or "unknown"),
+                "kind": kind,
                 "media_path": str(path.resolve()), "track_index": _track(picked.get("track"), order),
                 "record_start_frame": record_start, "record_end_frame": record_end,
                 "source_start_frame": source_start, "source_end_frame": source_start + required,

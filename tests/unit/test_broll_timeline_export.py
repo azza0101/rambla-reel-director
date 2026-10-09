@@ -76,6 +76,35 @@ def test_selected_full_media_starts_at_the_exact_preview_window_not_at_source_ze
     shutil.rmtree(tmp_path)
 
 
+def test_selected_image_covers_the_exact_phrase_on_its_ordered_track():
+    from backend.app.broll_timeline_export import build_broll_timeline_plan
+
+    tmp_path = _workspace()
+    image = tmp_path / "egypt-archive.jpg"
+    image.write_bytes(b"image")
+    selection = {"chunks": {"b1": {"selected_assets": [
+        {"asset_id": "still-1", "order": 1, "track": "V3"},
+    ]}}}
+    assets = {"still-1": {
+        "media_path": str(image), "duration_seconds": 0, "kind": "image",
+        "title": "Egypt archive", "provider": "wikimedia",
+    }}
+
+    result = build_broll_timeline_plan(_plan(), selection, assets, fps=25)
+
+    assert result["unavailable"] == []
+    assert result["clips"] == [{
+        "beat_id": "b1", "asset_id": "still-1", "title": "Egypt archive",
+        "source_page": "", "provider": "wikimedia", "kind": "image",
+        "media_path": str(image.resolve()), "track_index": 3,
+        "record_start_frame": 25, "record_end_frame": 75,
+        "source_start_frame": 0, "source_end_frame": 50,
+        "duration_frames": 50, "preview_source_start_seconds": 0.0,
+        "preview_source_end_seconds": None,
+    }]
+    shutil.rmtree(tmp_path)
+
+
 def test_unselected_beats_are_allowed_and_unavailable_selected_media_is_reported():
     from backend.app.broll_timeline_export import build_broll_timeline_plan
 

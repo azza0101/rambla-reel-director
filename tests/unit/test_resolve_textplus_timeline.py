@@ -544,6 +544,29 @@ def test_broll_frames_are_rescaled_from_package_fps_to_resolve_fps():
         "source_start_frame":0,"source_end_frame":119,"duration_frames":119}]
 
 
+def test_selected_image_is_materialized_as_a_frame_exact_still_video(tmp_path, monkeypatch):
+    from backend.app.resolve_textplus_timeline import conform_broll_media
+    import backend.app.resolve_textplus_timeline as module
+
+    source = tmp_path / "egypt.jpg"
+    source.write_bytes(b"image")
+    commands = []
+    def run(command, **_kwargs):
+        commands.append(command)
+        Path(command[-1]).write_bytes(b"video")
+    monkeypatch.setattr(module.subprocess, "run", run)
+
+    result = conform_broll_media([{
+        "kind": "image", "media_path": str(source), "record_start_frame": 10,
+        "record_end_frame": 60, "source_start_frame": 0, "source_end_frame": 50,
+    }], 25)
+
+    assert commands and commands[0][commands[0].index("-loop") + 1] == "1"
+    assert commands[0][commands[0].index("-frames:v") + 1] == "50"
+    assert Path(result[0]["media_path"]).suffix == ".mp4"
+    assert (result[0]["source_start_frame"], result[0]["source_end_frame"]) == (0, 50)
+
+
 def test_prior_rambla_layers_are_removed_from_duplicate_only():
     class Media:
         def __init__(self, rambla=False): self.rambla=rambla

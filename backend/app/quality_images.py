@@ -15,6 +15,22 @@ from .retrieval_quality import VERSION,expand_queries,QualityRanker
 from .editorial_relevance import build_retrieval_spec,encode_retrieval_intent
 
 
+def image_queries_for_shot(shot, generated, options=None):
+    options = options or {}
+    overrides = options.get('query_overrides') or {}
+    override = str(overrides.get(str(shot.get('shot_id') or ''), overrides.get('*', '')) or '').strip()
+    return ([override], True) if override else (list(generated), False)
+
+
+def image_variants_for_search(queries, manual, options=None):
+    variants = list(queries) if manual else expand_queries(list(queries), 'image')
+    if manual or len(variants) < 2:
+        return variants
+    round_no = max(0, int((options or {}).get('variation_round') or 0))
+    shift = round_no % len(variants)
+    return variants[shift:] + variants[:shift]
+
+
 def configured_sources():
     load_project_credentials()
     sources=[]
@@ -35,7 +51,9 @@ async def source_images(chunks,output,plan,ranker,client_id,*,sources=None,fetch
     path=output/'image-candidates.json'
     try: cached=json.loads(path.read_text(encoding='utf-8'))
     except (OSError,ValueError): cached={}
-    signature=hashlib.sha256(json.dumps({'plan':plan,'version':VERSION,'providers':result['active_providers'],'ranking':type(ranker).__name__,'visual':bool(getattr(ranker,'visual',None))},sort_keys=True).encode()).hexdigest()
+    try: search_options=json.loads(os.environ.get('RAMBLA_SOCIAL_SEARCH_OPTIONS','{}'))
+    except (TypeError,ValueError): search_options={}
+    signature=hashlib.sha256(json.dumps({'plan':plan,'version':VERSION,'providers':result['active_providers'],'ranking':type(ranker).__name__,'visual':bool(getattr(ranker,'visual',None)),'search_options':search_options},sort_keys=True).encode()).hexdigest()
     result['quality_signature']=signature
     async def fetch(url):
         if fetcher: return await fetcher(url)
@@ -58,15 +76,16 @@ async def source_images(chunks,output,plan,ranker,client_id,*,sources=None,fetch
         for shot in beat['shots']:
             accepted=[];seen=set()
             spec=build_retrieval_spec(beat,shot,'image')
-            row['queries'].extend(q for q in spec['queries'] if q not in row['queries'])
-            variants=expand_queries(spec['queries'],'image')
+            requested_queries,manual_query=image_queries_for_shot(shot,spec['queries'],search_options)
+            row['queries'].extend(q for q in requested_queries if q not in row['queries'])
+            variants=image_variants_for_search(requested_queries,manual_query,search_options)
             editorial_intent=encode_retrieval_intent(beat,shot)
             # Finish the primary source (including expansions) before secondary/fallback.
             for provider in providers:
                 provider_name=getattr(provider,'provider_name',type(provider).__name__)
                 row['active_providers'].append(provider_name)
                 for query in variants:
-                    attempt={'provider':provider_name,'query':query,'shot_id':shot['shot_id'],'expanded':query not in shot['image_queries'],'expanded_from':shot['image_queries'] if query not in shot['image_queries'] else None,
+                    attempt={'provider':provider_name,'query':query,'shot_id':shot['shot_id'],'manual_query':manual_query,'expanded':not manual_query and query not in shot['image_queries'],'expanded_from':shot['image_queries'] if not manual_query and query not in shot['image_queries'] else None,
                         'contextual_fallback':query not in shot['image_queries'] and query in spec['queries'],'generic_shot_demoted':spec['generic_shot_demoted']}
                     row['search_attempts'].append(attempt)
                     if event_callback:event_callback('image_search',100*index/max(1,len(chunks)),'Searching photos',chunk_id=bid,**attempt)

@@ -77,6 +77,12 @@ def image_sourcing_command(output: Path, chunks_path: Path, outline_path: Path, 
     ]
 
 
+def research_media_scope(providers: tuple[str, ...]) -> tuple[bool, tuple[str, ...]]:
+    """Split the UI's image pseudo-provider from real video providers."""
+    normalized = tuple(dict.fromkeys(str(value).casefold().strip() for value in providers if str(value).strip()))
+    return (not normalized or "images" in normalized, tuple(value for value in normalized if value != "images"))
+
+
 def _read_json(path: Path, default):
     try: return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, TypeError): return default
@@ -138,12 +144,14 @@ def run_research(
     _, source_frames = _probe(video)
 
     provider_scope = tuple(dict.fromkeys(str(value).casefold().strip() for value in providers if str(value).strip()))
+    search_images, video_provider_scope = research_media_scope(provider_scope)
+    search_videos = not provider_scope or bool(video_provider_scope)
     _event(
         "research", 1, "Beat media research started",
         beat_id=beat_id, mode=mode, providers=list(provider_scope),
     )
     try:
-        if not provider_scope:
+        if search_images:
             subprocess.run(image_sourcing_command(output, chunks_path, outline, client_id, beat_id=beat_id, research_mode=mode), check=True)
             fresh_images = _read_json(image_artifact, {"chunks": {}})
             merged_images = merge_image_artifact(existing_images, fresh_images, beat_id, mode)
@@ -155,19 +163,22 @@ def run_research(
                 beat_id=beat_id, mode=mode, providers=list(provider_scope),
             )
 
-        from .beat_research import existing_video_keys
-        worker_env={**os.environ,'RAMBLA_SOCIAL_EXCLUDED_KEYS':json.dumps(existing_video_keys(existing_video,beat_id) if mode=='append' else [])}
-        subprocess.run(
-            video_sourcing_command(
-                output, transcript, outline, client_id, source_frames,
-                beat_id=beat_id, research_mode=mode, providers=provider_scope,
-            ),
-            check=True, env=worker_env,
-        )
-        fresh_video = _read_json(video_artifact, [])
-        merged_video = merge_video_rows(existing_video, fresh_video, beat_id, mode)
-        write_json(video_artifact, merged_video)
-        persist_video_diagnostics(retrieval_root)
+        if search_videos:
+            from .beat_research import existing_video_keys
+            worker_env={**os.environ,'RAMBLA_SOCIAL_EXCLUDED_KEYS':json.dumps(existing_video_keys(existing_video,beat_id) if mode=='append' else [])}
+            subprocess.run(
+                video_sourcing_command(
+                    output, transcript, outline, client_id, source_frames,
+                    beat_id=beat_id, research_mode=mode, providers=video_provider_scope,
+                ),
+                check=True, env=worker_env,
+            )
+            fresh_video = _read_json(video_artifact, [])
+            merged_video = merge_video_rows(existing_video, fresh_video, beat_id, mode)
+            write_json(video_artifact, merged_video)
+            persist_video_diagnostics(retrieval_root)
+        else:
+            merged_video = existing_video
         if mode == "replace": _clear_target_selection(selection, beat_id)
         count = sum(len(row.get("candidates") or []) for row in merged_video if str(row.get("parent_beat_id")) == beat_id)
         _event(
@@ -177,7 +188,7 @@ def run_research(
     except Exception:
         _restore(snapshot)
         raise
-    if provider_scope and set(provider_scope) <= {"tiktok", "instagram"}:
+    if video_provider_scope and set(video_provider_scope) <= {"tiktok", "instagram"}:
         from .debug_social_cli import require_completed_social_search
         require_completed_social_search(fresh_video)
     return {"beat_id": beat_id, "mode": mode, "providers": list(provider_scope), "resolve_calls": 0}

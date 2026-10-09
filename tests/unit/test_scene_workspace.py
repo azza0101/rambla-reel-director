@@ -82,6 +82,8 @@ def test_page_renders_complete_numbered_workflow():
     assert '`r`n' not in html
     assert html.index('5 · Visual beats')<html.index('6 · Coperture generiche')<html.index('7 · Export timeline')
     assert 'installCompactSources()' in html and 'openSplitScene' in html
+    assert 'Cerca immagini per questa frase' in html
+    assert 'CERCA ALTRE IMMAGINI' in html
 
 
 @pytest.mark.asyncio
@@ -99,6 +101,64 @@ async def test_manual_query_is_sent_exactly_without_old_shot_filter(monkeypatch)
     result=await source_video_beat(engine,beat_id='b:shot:s1',client_id='test',queries=['Egypt police'],min_duration=1,max_duration=180,orientation=None,retrieval_intent='tourist police Egypt')
     assert sent == ['Thailand beach']
     assert result['manual_query'] and not result['geographic_context']
+
+
+def test_manual_image_query_replaces_generated_variants_for_the_active_shot():
+    from backend.app.quality_images import image_queries_for_shot
+
+    shot = {'shot_id': 'shot_02', 'image_queries': ['tourist police Egypt']}
+    assert image_queries_for_shot(
+        shot,
+        ['tourist police Egypt', 'Egypt security presence'],
+        {'query_overrides': {'shot_02': 'Minya police checkpoint'}},
+    ) == (['Minya police checkpoint'], True)
+    assert image_queries_for_shot(
+        shot,
+        ['tourist police Egypt'],
+        {'query_overrides': {'*': 'Egypt jihad 1990 archive'}},
+    ) == (['Egypt jihad 1990 archive'], True)
+
+
+def test_additional_image_round_starts_from_a_different_automatic_query():
+    from backend.app.quality_images import image_variants_for_search
+
+    original = image_variants_for_search(['Egypt archive', 'Minya history'], False, {'variation_round': 0})
+    next_round = image_variants_for_search(['Egypt archive', 'Minya history'], False, {'variation_round': 1})
+    assert set(next_round) == set(original)
+    assert next_round[0] != original[0]
+    assert image_variants_for_search(['manual exact query'], True, {'variation_round': 8}) == ['manual exact query']
+
+
+@pytest.mark.asyncio
+async def test_manual_image_query_is_the_only_query_sent_to_photo_sources(tmp_path, monkeypatch):
+    from types import SimpleNamespace as NS
+    from backend.app.quality_images import source_images
+    import json
+
+    sent = []
+    class Source:
+        provider_name = 'test-photos'
+        async def search(self, query, limit=12):
+            sent.append(query)
+            return []
+    plan = {'chunks': {'beat-1': {
+        'visual_action': 'BROLL', 'editorial_function': 'show evidence',
+        'core_meaning': 'Egypt history', 'subtext': '', 'visual_mode': 'single', 'avoid': [],
+        'shots': [{'shot_id': 'shot-1', 'description': 'Egypt archive',
+                   'image_queries': ['generic Egypt street'], 'video_queries': []}],
+    }}}
+    monkeypatch.setenv('RAMBLA_SOCIAL_SEARCH_OPTIONS', json.dumps({
+        'query_overrides': {'*': 'Egypt sarcophagus archive'}
+    }))
+
+    result = await source_images(
+        [{'id': 'beat-1', 'text': 'Egypt history'}], tmp_path, plan,
+        NS(visual=None, warning='ranker unavailable', rank=lambda _intent, rows: rows),
+        'test', sources=[Source()],
+    )
+
+    assert sent == ['Egypt sarcophagus archive']
+    assert result['chunks']['beat-1']['queries'] == ['Egypt sarcophagus archive']
 
 
 def test_place_match_does_not_replace_the_requested_subject():

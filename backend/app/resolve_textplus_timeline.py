@@ -884,6 +884,23 @@ def conform_broll_media(clips: list[dict[str, Any]], fps: float, progress=None) 
         start = int(row['source_start_frame'])
         selected_end = start + duration
         source = Path(row['media_path'])
+        if str(row.get('kind') or 'video') == 'image':
+            target = source.with_name(f'{source.stem}_still_{duration}_{fps:g}fps.mp4')
+            if not target.is_file():
+                temporary = target.with_name(target.stem + '.working.mp4')
+                try:
+                    subprocess.run(['ffmpeg', '-v', 'error', '-y', '-loop', '1', '-i', str(source),
+                        '-an', '-vf', f'scale=trunc(iw/2)*2:trunc(ih/2)*2,fps={fps:g}',
+                        '-frames:v', str(duration), '-c:v', 'libx264', '-preset', 'fast',
+                        '-crf', '18', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', str(temporary)],
+                        check=True, capture_output=True, timeout=180,
+                        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+                    os.replace(temporary, target)
+                finally:
+                    temporary.unlink(missing_ok=True)
+            result.append({**row, 'media_path': str(target), 'source_start_frame': 0,
+                'source_end_frame': duration, 'handle_before_frames': 0, 'handle_after_frames': 0})
+            continue
         available = max(selected_end, int(round(float(probe_preview(str(source)).get('duration') or 0) * fps)))
         cut_start = max(0, start - duration)
         cut_end = min(available, selected_end + duration)
