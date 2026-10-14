@@ -1,6 +1,6 @@
 # RMBL B ROLL — handoff tecnico
 
-Aggiornato: 2026-10-14  Versione: `v0055`  Branch di consegna: `feat/api-first-text-first-v1`
+Aggiornato: 2026-10-14  Versione: `v0056`  Branch di consegna: `feat/api-first-text-first-v1`
 
 ## Avvio rapido
 
@@ -23,6 +23,9 @@ Aggiornato: 2026-10-14  Versione: `v0055`  Branch di consegna: `feat/api-first-t
 - Export verso Resolve dei progetti CUT intenzionalmente bloccato in questa prima fase: deve essere implementata l'applicazione della mappa alla timeline originale con backup e alternative disattivate. Il contratto completo è salvato in `cut-origin.json`.
 - Test: motore, confini fra parole, FPS, restituzione take precedente, job/revisioni, render reale con conteggio frame e conferma su progetto indipendente. Prova su `TEST-autocut_v1 / IMG_1545.MOV`: 336 parole fino a 185.282s; proposta iniziale verificata 11.9s con tre gruppi, anteprima generata. La domanda sul peso del passaporto è conservata nella proposta: l'utente può scartare quel gruppo se era una variante abbandonata.
 - v0055: timestamp video ricompattati con contatore intero dopo il filtro FPS e frequenza di output esplicita; elimina una durata video dichiarata più breve di un frame. Il test reale verifica sia conteggio frame sia durata video, oltre alla presenza audio. La revisione render invalida le vecchie anteprime.
+- v0056: anteprima pulita azzera il seek e il callback di ASCOLTA, ricarica anche job successivi con lo stesso esito e mostra il player accanto ai comandi. Audio/video originali vengono messi in pausa durante l'ascolto CUT.
+- `cut_alignment.py` verifica le take scelte e le precedenti su finestre brevi del video originale, conserva il testo, aggiorna i timestamp misurati e i confini degli scarti adiacenti. Trascrizione originale immutabile; allineamento separato in `transcript-aligned.json`. Avvisi espliciti per take non riallineate completamente.
+- Prova reale v0056: la presentazione non tronca più “Cura Viaggi”; proposta riallineata 10.633s. La penultima presentazione ha un avviso per testo non completamente riallineato e richiede ascolto. Il significato editoriale dei tre gruppi rimane una proposta da revisionare.
 
 1. Il bridge mantiene un heartbeat con il backend locale e rileva la timeline focalizzata.
 2. **USA AUDIO IN RMBL B ROLL** invia audio e intervalli video esistenti; l'audio può essere riutilizzato solo se la firma della timeline coincide.

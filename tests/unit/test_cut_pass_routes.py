@@ -31,6 +31,8 @@ def test_cut_jobs_persist_proposal_allow_review_and_reject_stale_source(tmp_path
     monkeypatch.setattr(asr,'transcribe_groq',lambda *a:calls.append(a) or raw)
     monkeypatch.setattr(module,'propose_groups',lambda t:[{'takes':[[0,1],[2,4]],'confidence':.95,'reason':'correzione'}])
     monkeypatch.setattr(module,'choose_complete_takes',lambda raw,groups:groups)
+    import backend.app.cut_alignment as alignment
+    monkeypatch.setattr(alignment,'refine_cut_timing',lambda raw,*a,**kw:(raw,[]))
     app=FastAPI()
     def load(pid):
         if pid!='p':raise HTTPException(404)
