@@ -761,6 +761,24 @@ def create_app(
         load_project(project_id)
         return root / project_id / "run"
 
+    from .cut_pass_routes import install_cut_routes
+    install_cut_routes(app, store, root, load_project, _active_run_for)
+
+    @app.middleware('http')
+    async def protect_cut_resolve_export(request, call_next):
+        parts=request.url.path.split('/')
+        if request.method=='POST' and len(parts)>5 and parts[1:4]==['api','curation','projects']:
+            pid=parts[4]
+            if parts[5] in {'resolve','resolve-handoffs','resolve-preparation'}:
+                try:
+                    load_project(pid)
+                except HTTPException as exc:
+                    return JSONResponse(status_code=exc.status_code,content={'detail':exc.detail})
+                if (root/pid/'cut-origin.json').is_file():
+                    return JSONResponse(status_code=409,content={'detail':
+                        'Progetto CUT: revisione e workflow disponibili nel plugin. L’applicazione dei tagli alla timeline Resolve sarà abilitata nella fase successiva.'})
+        return await call_next(request)
+
     def title_templates():
         from .resolve_title_templates import template_library
         return template_library(title_library_root, title_bundled_root)
