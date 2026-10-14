@@ -146,6 +146,25 @@ def install_cut_routes(app,store,root,load_project,active_run):
 
     def read(path): return json.loads(path.read_text(encoding='utf-8'))
 
+    def timing_read(folder):
+        aligned=folder/'transcript-aligned.json'
+        signature=folder/'alignment-signature.json'
+        if aligned.is_file() and signature.is_file() and (folder/'source-signature.json').is_file():
+            if read(signature)==read(folder/'source-signature.json'):return read(aligned)
+        return read(folder/'transcript-original.json')
+
+    def align_plan(p,folder,plan,progress):
+        from .cut_alignment import refine_cut_timing
+        aligned,warnings=refine_cut_timing(read(folder/'transcript-original.json'),plan,
+            Path(p.source_video.path),folder,progress=lambda done,total:progress(2,f'Riallineo parole e fine frase · take {done+1}/{total}'))
+        write_json(folder/'transcript-aligned.json',aligned)
+        write_json(folder/'alignment-signature.json',{'signature':p.analysis_signature})
+        adjusted=build_cut_plan(aligned,duration=p.source_video.duration,fps=p.source_video.fps,
+            signature=p.analysis_signature,groups=plan['groups'],discards=plan.get('discards',[]),
+            pause_threshold=plan['pause_threshold'],breathing=plan['breathing'])
+        adjusted['warnings']=list(dict.fromkeys([w for w in plan.get('warnings',[]) if not w.startswith('Take ')]+warnings))
+        return adjusted
+
     def current(pid):
         p,folder=paths(pid)
         if not (folder/'plan.json').is_file(): raise HTTPException(404,'Nessuna proposta CUT')
@@ -190,7 +209,7 @@ def install_cut_routes(app,store,root,load_project,active_run):
         payload={'job':state(pid),'plan':None}
         if (folder/'plan.json').is_file():
             _,_,plan=current(pid)
-            payload['plan']=plan; payload['text']=clean_transcript(read(folder/'transcript-original.json'),plan)['text']
+            payload['plan']=plan; payload['text']=clean_transcript(timing_read(folder),plan)['text']
         return payload
 
     @app.post('/api/curation/projects/{pid}/cut/analyze')
@@ -216,6 +235,7 @@ def install_cut_routes(app,store,root,load_project,active_run):
             plan=build_cut_plan(raw,duration=p.source_video.duration,fps=p.source_video.fps,
                 signature=p.analysis_signature,groups=groups,discards=discards)
             plan['warnings']=warnings
+            plan=align_plan(p,folder,plan,progress)
             write_json(folder/'plan.json',plan)
             progress(3,'Proposta salvata · preparo la revisione')
             return {'revision':plan['revision'],'groups':len(plan['groups'])}
@@ -224,7 +244,16 @@ def install_cut_routes(app,store,root,load_project,active_run):
     @app.get('/api/curation/projects/{pid}/cut/words')
     async def original_words(pid:str):
         _,folder,_=current(pid)
-        return {'words':words_of(read(folder/'transcript-original.json'))}
+        return {'words':words_of(timing_read(folder))}
+
+    @app.post('/api/curation/projects/{pid}/cut/realign')
+    async def realign_cut(pid:str):
+        _,_,plan=current(pid)
+        def operation(p,folder,progress):
+            adjusted=align_plan(p,folder,plan,progress)
+            write_json(folder/'plan.json',adjusted)
+            return {'revision':adjusted['revision']}
+        return await launch(pid,'realign',operation)
 
     @app.post('/api/curation/projects/{pid}/cut/rebuild')
     async def rebuild_cut(pid:str):
@@ -265,12 +294,13 @@ def install_cut_routes(app,store,root,load_project,active_run):
                 index=int(key)
                 if not 0<=index<len(discards):raise ValueError('Scarto non valido')
                 discards[index]['keep']=keep
-            new=build_cut_plan(read(folder/'transcript-original.json'),duration=p.source_video.duration,
+            new=build_cut_plan(timing_read(folder),duration=p.source_video.duration,
                 fps=p.source_video.fps,signature=p.analysis_signature,groups=groups,discards=discards,
                 pause_threshold=request.pause_threshold,breathing=request.breathing)
         except (ValueError,IndexError,KeyError) as exc: raise HTTPException(422,str(exc)) from exc
+        new['warnings']=plan.get('warnings',[])
         write_json(folder/'plan.json',new)
-        return {'plan':new,'text':clean_transcript(read(folder/'transcript-original.json'),new)['text']}
+        return {'plan':new,'text':clean_transcript(timing_read(folder),new)['text']}
 
     @app.post('/api/curation/projects/{pid}/cut/preview')
     async def preview_cut(pid:str):
@@ -314,7 +344,7 @@ def install_cut_routes(app,store,root,load_project,active_run):
             store.extract_source_audio(child.project_id)
             child=store.load(child.project_id)
             run=root/child.project_id/'run';run.mkdir(parents=True,exist_ok=True)
-            raw=clean_transcript(read(folder/'transcript-original.json'),plan)
+            raw=clean_transcript(timing_read(folder),plan)
             outline,chunks=build_short_outline(raw)
             write_json(run/'transcript-raw.json',raw);write_json(run/'semantic-chunks.json',chunks)
             write_json(run/'semantic-beats.json',outline)
