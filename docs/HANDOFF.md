@@ -1,6 +1,6 @@
 # RMBL B ROLL — handoff tecnico
 
-Aggiornato: 2026-10-14  Versione: `v0057`  Branch di consegna: `feat/api-first-text-first-v1`
+Aggiornato: 2026-10-14  Versione: `v0058`  Branch di consegna: `feat/api-first-text-first-v1`
 
 ## Avvio rapido
 
@@ -27,6 +27,8 @@ Aggiornato: 2026-10-14  Versione: `v0057`  Branch di consegna: `feat/api-first-t
 - `cut_alignment.py` verifica le take scelte e le precedenti su finestre brevi del video originale, conserva il testo, aggiorna i timestamp misurati e i confini degli scarti adiacenti. Trascrizione originale immutabile; allineamento separato in `transcript-aligned.json`. Avvisi espliciti per take non riallineate completamente.
 - Prova reale v0056: la presentazione non tronca più “Cura Viaggi”; proposta riallineata 10.633s. La penultima presentazione ha un avviso per testo non completamente riallineato e richiede ascolto. Il significato editoriale dei tre gruppi rimane una proposta da revisionare.
 - v0057: `Frasi e take` è una tendina chiusa inizialmente. Ogni gruppo mostra la frase scelta nel riepilogo; le take non scelte sono dentro una sottotendina. Gli scarti fuori scena sono raccolti in una tendina separata. Aperture conservate durante salvataggi e aggiornamenti della UI. Pulsante `GENERA ANTEPRIMA CUT`.
+- v0058: feedback CUT immediato al click, loader, barra determinata dalle fasi/unità completate, percentuale, tempo trascorso e cronologia delle ultime fasi. Polling stato ogni 900ms. Il cambio sorgente non blocca più lo stato del nuovo job dietro un errore 409 della vecchia proposta. Errore 429 Groq visibile con indicazione del limite temporaneo e tempo suggerito dal servizio.
+- Se Groq interrompe la verifica, il rilancio riusa trascrizione e gruppi riconosciuti per la medesima firma sorgente; i risultati del video precedente restano esclusi.
 
 1. Il bridge mantiene un heartbeat con il backend locale e rileva la timeline focalizzata.
 2. **USA AUDIO IN RMBL B ROLL** invia audio e intervalli video esistenti; l'audio può essere riutilizzato solo se la firma della timeline coincide.

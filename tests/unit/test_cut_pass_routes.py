@@ -45,6 +45,8 @@ def test_cut_jobs_persist_proposal_allow_review_and_reject_stale_source(tmp_path
             if data['job']['status']!='running':break
             time.sleep(.01)
         assert data['job']['status']=='succeeded',data
+        assert data['job']['started_at']<=data['job']['finished_at']
+        assert data['job']['history'][-1]['message']=='Proposta salvata · preparo la revisione'
         assert data['text']=='prima frase completa'
         revision=data['plan']['revision']
         response=client.put('/api/curation/projects/p/cut',json={'revision':revision,'selected_takes':{'0':0}})
@@ -53,7 +55,10 @@ def test_cut_jobs_persist_proposal_allow_review_and_reject_stale_source(tmp_path
         assert client.put('/api/curation/projects/p/cut',json={'revision':revision}).status_code==409
         assert client.get('/api/curation/projects/p/cut/preview/../../project.json').status_code==404
         p.analysis_signature='changed'
-        assert client.get('/api/curation/projects/p/cut').status_code==409
+        changed=client.get('/api/curation/projects/p/cut')
+        assert changed.status_code==200
+        assert changed.json()['plan'] is None
+        assert changed.json()['source_changed'] is True
     assert len(calls)==1
     assert not (tmp_path/'p'/'run'/'transcript-raw.json').exists()
 

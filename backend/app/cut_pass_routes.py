@@ -8,6 +8,7 @@ import shutil
 from pathlib import Path
 import subprocess
 import uuid
+import time
 
 from fastapi import HTTPException
 from fastapi.responses import FileResponse
@@ -156,7 +157,7 @@ def install_cut_routes(app,store,root,load_project,active_run):
     def align_plan(p,folder,plan,progress):
         from .cut_alignment import refine_cut_timing
         aligned,warnings=refine_cut_timing(read(folder/'transcript-original.json'),plan,
-            Path(p.source_video.path),folder,progress=lambda done,total:progress(2,f'Riallineo parole e fine frase · take {done+1}/{total}'))
+            Path(p.source_video.path),folder,progress=lambda done,total:progress(2+.8*done/max(1,total),f'Riallineo parole e fine frase · take {done+1}/{total}'))
         write_json(folder/'transcript-aligned.json',aligned)
         write_json(folder/'alignment-signature.json',{'signature':p.analysis_signature})
         adjusted=build_cut_plan(aligned,duration=p.source_video.duration,fps=p.source_video.fps,
@@ -186,19 +187,24 @@ def install_cut_routes(app,store,root,load_project,active_run):
         p,folder=paths(pid)
         if jobs.get(pid,{}).get('status')=='running' or active_run(root/pid/'run'):
             raise HTTPException(409,'Attendi la fine dell’operazione in corso')
-        job={'id':uuid.uuid4().hex,'kind':kind,'status':'running','completed':0,'total':4,'message':'Avvio CUT'}
+        job={'id':uuid.uuid4().hex,'kind':kind,'status':'running','completed':0,'total':4,'message':'Avvio CUT',
+            'started_at':time.time(),'updated_at':time.time(),'history':[], 'source_signature':p.analysis_signature}
         jobs[pid]=job; write_json(folder/'job.json',job)
         def progress(done,message):
-            job.update(completed=done,message=message);write_json(folder/'job.json',dict(job))
+            stamp=time.time()
+            job.update(completed=max(job['completed'],done),message=message,updated_at=stamp)
+            job['history'].append({'completed':done,'message':message,'at':stamp})
+            job['history']=job['history'][-30:]
+            write_json(folder/'job.json',dict(job))
         async def run():
             try:
                 result=await asyncio.to_thread(operation,p,folder,progress)
-                job.update(status='succeeded',completed=4,message='Operazione CUT completata',result=result)
+                job.update(status='succeeded',completed=4,message='Operazione CUT completata',result=result,finished_at=time.time())
             except Exception as exc:
                 message=str(exc)
                 if isinstance(exc,subprocess.CalledProcessError):
                     message=(exc.stderr or b'').decode('utf-8',errors='replace')[-1800:]
-                job.update(status='failed',message=message,error_type=type(exc).__name__)
+                job.update(status='failed',message=message,error_type=type(exc).__name__,finished_at=time.time())
             write_json(folder/'job.json',dict(job))
         task=asyncio.create_task(run());tasks.add(task);task.add_done_callback(tasks.discard)
         return dict(job)
@@ -208,7 +214,12 @@ def install_cut_routes(app,store,root,load_project,active_run):
         _,folder=paths(pid)
         payload={'job':state(pid),'plan':None}
         if (folder/'plan.json').is_file():
-            _,_,plan=current(pid)
+            try:
+                _,_,plan=current(pid)
+            except HTTPException as exc:
+                if exc.status_code!=409:raise
+                payload['source_changed']=True
+                return payload
             payload['plan']=plan; payload['text']=clean_transcript(timing_read(folder),plan)['text']
         return payload
 
@@ -224,9 +235,15 @@ def install_cut_routes(app,store,root,load_project,active_run):
                 raw=transcribe_groq(Path(p.source_video.path),folder)
                 write_json(cached,raw);write_json(signature,{'signature':p.analysis_signature})
             progress(1,'Trascrizione pronta · riconosco ripartenze e take…')
-            suggestion=propose_groups(raw)
-            if not isinstance(suggestion,dict):suggestion={'groups':suggestion,'discards':[]}
-            write_json(folder/'suggestions.json',suggestion)
+            proposal_signature=folder/'suggestions-signature.json'
+            if proposal_signature.is_file() and (folder/'suggestions.json').is_file() and read(proposal_signature).get('signature')==p.analysis_signature:
+                suggestion=read(folder/'suggestions.json')
+                progress(1,'Gruppi già riconosciuti · riprendo dalla verifica delle take')
+            else:
+                suggestion=propose_groups(raw)
+                if not isinstance(suggestion,dict):suggestion={'groups':suggestion,'discards':[]}
+                write_json(folder/'suggestions.json',suggestion)
+                write_json(proposal_signature,{'signature':p.analysis_signature})
             groups,discards,warnings=prepare_suggestions(suggestion)
             progress(2,'Verifico l’ultima take completa di ciascuna frase…')
             groups=choose_complete_takes(raw,groups)
