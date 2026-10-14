@@ -102,9 +102,10 @@ def test_actual_cut_render_has_exact_frame_count_and_audio(tmp_path):
     plan=build_cut_plan(raw,duration=4,fps=30,signature='s',groups=[])
     target=tmp_path/'clean.mp4';render_cut(source,target,plan)
     result=subprocess.run(['ffprobe','-v','error','-count_frames','-show_entries',
-        'stream=codec_type,nb_read_frames','-of','json',str(target)],check=True,capture_output=True,text=True)
+        'stream=codec_type,nb_read_frames,duration','-of','json',str(target)],check=True,capture_output=True,text=True)
     streams=json.loads(result.stdout)['streams']
     assert int(next(s for s in streams if s['codec_type']=='video')['nb_read_frames'])==plan['duration_frames']
+    assert abs(float(next(s for s in streams if s['codec_type']=='video')['duration'])-plan['duration_seconds'])<.001
     assert any(s['codec_type']=='audio' for s in streams)
 
 

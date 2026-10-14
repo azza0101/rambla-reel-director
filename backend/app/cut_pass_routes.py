@@ -118,7 +118,8 @@ def render_cut(source, target, plan, *, preview=False):
     from fractions import Fraction
     rate=float(Fraction(plan['fps']))
     selected='+'.join(f"gte(n,{s['source_in_frame']})*lt(n,{s['source_out_frame']})" for s in plan['segments'])
-    video=f"[0:v]fps={plan['fps']},select='{selected}',setpts=N/({rate:.12f}*TB)"
+    # fps establishes a 1/fps timebase: integer N avoids floating point losing a tick.
+    video=f"[0:v]fps={plan['fps']},select='{selected}',setpts=N"
     if preview:video+=',scale=-2:540'
     filters=[video+'[v]']; inputs=[]
     for i,s in enumerate(plan['segments']):
@@ -128,7 +129,7 @@ def render_cut(source, target, plan, *, preview=False):
     filters.append(''.join(inputs)+f'concat=n={len(inputs)}:v=0:a=1[a]')
     graph=target.with_suffix('.fffilter'); graph.write_text(';\n'.join(filters),encoding='utf-8')
     subprocess.run(['ffmpeg','-v','error','-y','-i',str(source),'-filter_complex_script',str(graph),
-        '-map','[v]','-map','[a]','-c:v','libx264','-preset','veryfast','-crf','23' if preview else '18',
+        '-map','[v]','-map','[a]','-r',plan['fps'],'-fps_mode','cfr','-c:v','libx264','-preset','veryfast','-crf','23' if preview else '18',
         '-pix_fmt','yuv420p','-c:a','aac','-movflags','+faststart',str(target)],
         check=True,capture_output=True,timeout=900)
 

@@ -137,7 +137,7 @@ def build_cut_plan(transcript, *, duration, fps, signature, groups, discards=(),
         if b<=a: continue
         segments.append({'source_in_frame':a,'source_out_frame':b,'edited_in_frame':cursor,'edited_out_frame':cursor+b-a})
         cursor+=b-a
-    plan={'schema_version':'rmbl-cut-1','source_signature':signature,'fps':str(rate),
+    plan={'schema_version':'rmbl-cut-1','render_version':2,'source_signature':signature,'fps':str(rate),
           'source_duration_frames':total,'duration_frames':cursor,'duration_seconds':cursor/float(rate),
           'segments':segments,'groups':normalized,'discards':normalized_discards,'alternatives':alternatives,
           'removed_word_indices':sorted(removed),'pause_threshold':pause_threshold,'breathing':breathing,'status':'draft'}
