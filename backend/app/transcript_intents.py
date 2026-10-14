@@ -532,11 +532,11 @@ def build_textplus_export(run: Path, project_id: str, *, fps: int = 25, track_hi
     }
 
 
-def build_combined_resolve_export(run: Path, project_id: str, *, fps: int = 25) -> dict[str, Any]:
+def build_combined_resolve_export(run: Path, project_id: str, *, fps: int = 25, include_highlights: bool = True) -> dict[str, Any]:
     """Build title rows plus native-subtitle rows without duplicating highlights."""
     if fps <= 0:
         raise ValueError("Timeline fps must be positive")
-    title_rows = selected_word_ranges(run, "highlight", max_words=3)
+    title_rows = selected_word_ranges(run, "highlight", max_words=3) if include_highlights else []
     titles = []
     for row in title_rows:
         start, end = float(row["start_seconds"]), float(row["end_seconds"])
@@ -551,7 +551,7 @@ def build_combined_resolve_export(run: Path, project_id: str, *, fps: int = 25) 
     for chunk in normalized_chunks(run):
         chunk_id = str(chunk["id"])
         words = _row_words(chunk)
-        highlighted = set(intents.get(chunk_id, {}).get("highlighted_word_indices", []))
+        highlighted = set(intents.get(chunk_id, {}).get("highlighted_word_indices", [])) if include_highlights else set()
         groups: list[list[int]] = []
         for index in range(len(words)):
             if index in highlighted:
@@ -581,7 +581,7 @@ def build_combined_resolve_export(run: Path, project_id: str, *, fps: int = 25) 
     return {
         "schema_version": "rambla-resolve-combined-1",
         "project_id": project_id,
-        "fps": int(fps),
+        "fps": float(fps),
         "timeline_basis": "source transcript word timestamps",
         "transcript_signature": load_phrase_intents(run).get("transcript_signature"),
         "title_count": len(titles),

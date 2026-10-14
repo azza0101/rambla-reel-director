@@ -134,6 +134,16 @@ CONTESTO INTEGRALE:\n'''+context+'\nGRUPPI:\n'+json.dumps(candidates,ensure_asci
     return result
 
 
+def verify_cut_render(target, plan):
+    probe = subprocess.run(['ffprobe', '-v', 'error', '-show_entries',
+        'stream=codec_type,nb_frames', '-of', 'json', str(target)],
+        check=True, capture_output=True, text=True, timeout=30)
+    streams = json.loads(probe.stdout).get('streams') or []
+    video = next((s for s in streams if s.get('codec_type') == 'video'), {})
+    if int(video.get('nb_frames') or 0) != plan['duration_frames'] or not any(s.get('codec_type') == 'audio' for s in streams):
+        raise ValueError('MP4 CUT incompleto o di una revisione diversa: rigenera il download')
+
+
 def render_cut(source, target, plan, *, preview=False):
     from fractions import Fraction
     rate=float(Fraction(plan['fps']))
@@ -148,10 +158,16 @@ def render_cut(source, target, plan, *, preview=False):
         inputs.append(f'[a{i}]')
     filters.append(''.join(inputs)+f'concat=n={len(inputs)}:v=0:a=1[a]')
     graph=target.with_suffix('.fffilter'); graph.write_text(';\n'.join(filters),encoding='utf-8')
-    subprocess.run(['ffmpeg','-v','error','-y','-i',str(source),'-filter_complex_script',str(graph),
-        '-map','[v]','-map','[a]','-r',plan['fps'],'-fps_mode','cfr','-c:v','libx264','-preset','veryfast','-crf','23' if preview else '18',
-        '-pix_fmt','yuv420p','-c:a','aac','-movflags','+faststart',str(target)],
-        check=True,capture_output=True,timeout=900)
+    temporary = target.with_name(target.stem + '-' + uuid.uuid4().hex + '.partial.mp4')
+    try:
+        subprocess.run(['ffmpeg','-v','error','-y','-i',str(source),'-filter_complex_script',str(graph),
+            '-map','[v]','-map','[a]','-r',plan['fps'],'-fps_mode','cfr','-c:v','libx264','-preset','veryfast','-crf','23' if preview else '18',
+            '-pix_fmt','yuv420p','-c:a','aac','-movflags','+faststart',str(temporary)],
+            check=True,capture_output=True,timeout=900)
+        verify_cut_render(temporary, plan)
+        temporary.replace(target)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def install_cut_routes(app,store,root,load_project,active_run):
@@ -413,6 +429,54 @@ def install_cut_routes(app,store,root,load_project,active_run):
         if not target.is_file(): raise HTTPException(404,'Genera prima l’anteprima')
         return FileResponse(target,media_type='video/mp4')
 
+    def download_source(pid):
+        origin_path = root / pid / 'cut-origin.json'
+        if origin_path.is_file():
+            origin = read(origin_path)
+            plan = origin['plan']
+            # The confirmed child's source is its own full-resolution CUT render.
+            p, folder = paths(pid)
+            return plan, Path(p.source_video.path), folder, True
+        p, folder, plan = current(pid)
+        return plan, Path(p.source_video.path), folder, False
+
+    @app.post('/api/curation/projects/{pid}/cut/download')
+    async def download_cut(pid: str):
+        plan, source, _, confirmed = download_source(pid)
+        def operation(p, folder, progress):
+            target = source if confirmed else folder / ('clean-' + plan['revision'] + '.mp4')
+            progress(1, 'Preparo MP4 CUT alla risoluzione originale…')
+            ready = False
+            if target.is_file():
+                try:
+                    verify_cut_render(target, plan)
+                    ready = True
+                except (ValueError, subprocess.SubprocessError):
+                    pass
+            if not ready:
+                if confirmed:
+                    raise ValueError('Video CUT confermato non disponibile')
+                render_cut(source, target, plan)
+            if not confirmed and store.load(pid).analysis_signature != plan['source_signature']:
+                raise ValueError('Sorgente modificata durante il render: ricalcola CUT')
+            progress(3, 'MP4 CUT pronto da scaricare')
+            return {'download_url': f'/api/curation/projects/{pid}/cut/download/{plan["revision"]}'}
+        return await launch(pid, 'download', operation)
+
+    @app.get('/api/curation/projects/{pid}/cut/download/{revision}')
+    async def download_cut_file(pid: str, revision: str):
+        plan, source, folder, confirmed = download_source(pid)
+        if revision != plan['revision']:
+            raise HTTPException(409, 'CUT modificato: genera il download aggiornato')
+        target = source if confirmed else folder / ('clean-' + revision + '.mp4')
+        if not target.is_file():
+            raise HTTPException(404, 'Genera prima il download MP4 CUT')
+        try:
+            verify_cut_render(target, plan)
+        except (ValueError, subprocess.SubprocessError) as exc:
+            raise HTTPException(409, 'MP4 CUT incompleto: rigenera il download') from exc
+        return FileResponse(target, media_type='video/mp4', filename=f'RMBL-CUT-{pid}-{revision}.mp4')
+
     @app.post('/api/curation/projects/{pid}/cut/confirm')
     async def confirm_cut(pid:str,request:CutReview):
         _,_,plan=current(pid)
@@ -442,7 +506,10 @@ def install_cut_routes(app,store,root,load_project,active_run):
             write_json(run/'semantic-beats.json',outline)
             write_json(run/'run-input.json',analysis_input_signature(Path(child.source_video.path),Path(child.guide_audio.path)))
             write_json(run/'analysis-signature.json',{'analysis_signature':child.analysis_signature})
-            write_json(root/child.project_id/'cut-origin.json',{'project_id':pid,'plan':plan,'source_path':p.source_video.path})
+            source_stat = Path(p.source_video.path).stat()
+            write_json(root/child.project_id/'cut-origin.json',{'project_id':pid,'plan':plan,'source_path':p.source_video.path,
+                'source_signature': p.source_video.signature,
+                'source_identity': {'size': source_stat.st_size, 'mtime_ns': source_stat.st_mtime_ns}})
             progress(3,'Testo pulito e tempi salvati · progetto originale conservato')
             plan.update(status='confirmed',clean_project_id=child.project_id)
             write_json(folder/'plan.json',plan)

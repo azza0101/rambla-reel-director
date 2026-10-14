@@ -49,6 +49,13 @@ def test_semantic_srt_never_exceeds_three_words(run):
     assert "00:00:01,500 --> 00:00:02,500" in output
 
 
+def test_subtitles_include_highlighted_words_when_titles_are_not_exported(run):
+    result = build_combined_resolve_export(run, 'p', fps=30000/1001, include_highlights=False)
+    assert result['titles'] == []
+    assert ' '.join(row['text'] for row in result['subtitles']) == 'Uno due tre Quattro cinque, sei sette Otto nove'
+    assert result['fps'] == 30000/1001
+
+
 def test_animation_export_keeps_order_separators_and_concatenation(run):
     result = build_animation_export(run, "project-1")
     assert result["schema_version"] == "rambla-animation-selection-2"

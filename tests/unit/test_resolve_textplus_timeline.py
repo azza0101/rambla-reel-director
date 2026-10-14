@@ -828,6 +828,23 @@ def test_setting_text_prefers_exposed_template_control_in_custom_title():
     assert animated.GetInput("StyledText", 0) == "0"
 
 
+def test_text_control_waits_for_fusion_to_initialize_before_next_insertion(monkeypatch):
+    from backend.app.resolve_textplus_timeline import _text_tool
+    from types import SimpleNamespace
+    template = SimpleNamespace(Name='Template')
+    class Composition:
+        calls = 0
+        def GetToolList(self, *_):
+            self.calls += 1
+            return {} if self.calls < 3 else {1: template}
+    comp = Composition()
+    item = SimpleNamespace(GetFusionCompByIndex=lambda _: comp)
+    delays = []
+    monkeypatch.setattr('backend.app.resolve_textplus_timeline.time.sleep', delays.append)
+    assert _text_tool(item) is template
+    assert len(delays) == 2
+
+
 def test_selected_title_name_is_required_and_preserved():
     assert title_name_from_payload({"title_name": "KURA_paper_title_v9"}) == "KURA_paper_title_v9"
 

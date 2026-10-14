@@ -361,7 +361,7 @@ class BridgeClient:
 
     def poll_once(self) -> BridgeSnapshot:
         try:
-            session = self.request_json("/api/curation/resolve-bridge/session", "POST", {"bridge_session_id": self.session_id})
+            session = self.request_json("/api/curation/resolve-bridge/session", "POST", {"bridge_session_id": self.session_id, "bridge_version": RELEASE_VERSION})
             self.session_id = str(session.get("bridge_session_id") or self.session_id)
             status = self.request_json("/api/curation/resolve-bridge/status")
             if not status.get("connected"):
@@ -603,6 +603,9 @@ class BridgeApp:
         self._fit_window(package_visible=False)
 
     def _select_destination(self, value: str) -> None:
+        if (getattr(self, '_debug_row', {}).get('summary') or {}).get('native_cut'):
+            self.destination.set('new')
+            return
         self._destination_explicit = True
         self.destination.set(value)
         if value == "new" and hasattr(self, "apply_scope") and self.apply_scope.get() != "all":
@@ -689,6 +692,14 @@ class BridgeApp:
             self.widgets["package"].configure(text=f"NUOVA REVISIONE · v{package.get('revision',1)}\nDurata {float(summary.get('duration_seconds') or 0):.1f}s\n{summary.get('broll_count',0)} B-roll · {summary.get('subtitle_count',0)} subs · {summary.get('title_count',0)} frasi · {summary.get('generic_broll_count',0)} generiche\nDifferenze: +{changes.get('broll_added',0)} / -{changes.get('broll_removed',0)} B-roll")
             received = bool(package.get("bridge_received_at"))
             self._set_apply_buttons("normal" if received and package.get("status") != "applying" else "disabled")
+            if summary.get('native_cut'):
+                self.destination.set('new')
+                self.widgets['package'].configure(text=self.widgets['package'].cget('text') +
+                    f"\nCUT nativo · {summary['cut_count']} tagli · {summary['fps']} fps · {summary['width']}×{summary['height']}\nCrea una nuova timeline dal video originale")
+                for key in ('apply_subtitles', 'apply_titles', 'apply_media'):
+                    self.widgets[key].configure(state='disabled')
+            if self.widgets.get('apply_all') is not None:
+                self.widgets['apply_all'].configure(text='APPLICA COMPONENTI SELEZIONATE')
             self.widgets["discard"].configure(state="normal")
             if self.widgets.get("copy_debug") is not None:
                 self.widgets["copy_debug"].configure(state="normal", text="COPIA DEBUG")

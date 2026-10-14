@@ -190,7 +190,10 @@ def test_apply_surfaces_real_helper_progress_file():
 def test_package_read_retries_transient_windows_lock(monkeypatch):
     from backend.app.resolve_handoff import _read_json
     attempts=[]
+    original_read = Path.read_text
     def read(path, **kwargs):
+        if path != Path('package.json'):
+            return original_read(path, **kwargs)
         attempts.append(path)
         if len(attempts)==1:
             raise PermissionError("sharing violation")

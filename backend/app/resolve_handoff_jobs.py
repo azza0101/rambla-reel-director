@@ -27,6 +27,16 @@ class ResolveHandoffJobs:
         if apply_scope != "all" and destination_mode != "active":
             raise ValueError("Selective Resolve updates require the active timeline")
         package = self.store.read(project_root, package_id)
+        if package.get('payload', {}).get('native_cut'):
+            if package['status'] == 'completed':
+                return package
+            if apply_scope != 'all':
+                raise ValueError('Il pacchetto CUT nativo va applicato completo alle componenti scelte')
+            destination_mode = 'new'
+        if package.get('payload', {}).get('native_cut_reference'):
+            if current_timeline_id != package['payload']['source_timeline_id']:
+                raise ValueError('Apri la timeline CUT corrispondente prima di aggiornare le componenti')
+            destination_mode = 'active'
         if package["status"] == "applying":
             return package
         if package.get("resolve_project") and package["resolve_project"] != current_project:
@@ -110,6 +120,12 @@ class ResolveHandoffJobs:
             self.store.transition(project_root, package_id, "completed", result=result,
                                   diagnostics={'elapsed_seconds':round(time.time()-started_at,1),'phases':phases},
                                   progress={"phase":"completed", "percent":100, "message":"Timeline pronta"})
+            if payload.get('native_cut'):
+                from .resolve_native_cut import clear_native_cut_checkpoint
+                try:
+                    clear_native_cut_checkpoint(payload)
+                except OSError:
+                    pass  # Completed receipt is durable; leftover checkpoint cannot duplicate it.
         except Exception as exc:
             stop.set()
             if watcher: watcher.join(timeout=1)

@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import subprocess
 import sys
 import time
 import uuid
@@ -31,6 +32,7 @@ from .project_maintenance import clean_beat_media, clean_project_media, delete_p
 from .debug_research_cli import research_stage_type
 from .theme_preferences import ThemePreferences, load_theme_preferences, save_theme_preferences, validate_theme_preferences
 from .resolve_title_templates import DEFAULT_RESOLVE_TITLE_NAME
+from .export_components import ExportComponents, normalize_components, filter_selected_media
 
 
 class BeatSplitRequest(BaseModel):
@@ -107,6 +109,7 @@ class ResolveBridgeCaptureRequest(BaseModel):
 
 class ResolveBridgeSessionRequest(BaseModel):
     bridge_session_id: str | None = Field(default=None, max_length=128)
+    bridge_version: str | None = Field(default=None, max_length=32)
 
 
 class ResolveHandoffApplyRequest(BaseModel):
@@ -501,12 +504,14 @@ def create_app(
     bridge_session_state = _read_json(bridge_session_path, {})
     active_bridge_session_id = str(bridge_session_state.get("bridge_session_id") or "")
     bridge_last_seen = 0.0
+    active_bridge_version = ''
 
     @app.post("/api/curation/resolve-bridge/session")
     async def start_resolve_bridge_session(request: ResolveBridgeSessionRequest | None = None) -> dict[str, Any]:
-        nonlocal active_bridge_session_id, bridge_last_seen
+        nonlocal active_bridge_session_id, bridge_last_seen, active_bridge_version
         requested = str(request.bridge_session_id or "").strip() if request else ""
         active_bridge_session_id = requested or uuid.uuid4().hex
+        active_bridge_version = str(request.bridge_version or '') if request else ''
         bridge_last_seen = time.time()
         from .atomic_io import write_json
         write_json(bridge_session_path, {"bridge_session_id": active_bridge_session_id, "last_seen": bridge_last_seen})
@@ -769,7 +774,7 @@ def create_app(
         parts=request.url.path.split('/')
         if request.method=='POST' and len(parts)>5 and parts[1:4]==['api','curation','projects']:
             pid=parts[4]
-            if parts[5] in {'resolve','resolve-handoffs','resolve-preparation'}:
+            if parts[5] == 'resolve':
                 try:
                     load_project(pid)
                 except HTTPException as exc:
@@ -1227,11 +1232,12 @@ def create_app(
         except (OSError, RuntimeError) as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    def combined_resolve_payload(project_id: str) -> dict[str, Any]:
+    def combined_resolve_payload(project_id: str, components=None, fps_override=None) -> dict[str, Any]:
         from .transcript_intents import build_combined_resolve_export
         project = load_project(project_id)
-        fps = project_export_fps(project_id, project)
-        payload = build_combined_resolve_export(run_root(project_id), project_id, fps=fps)
+        fps = fps_override or project_export_fps(project_id, project)
+        payload = build_combined_resolve_export(run_root(project_id), project_id, fps=fps,
+            include_highlights=components is None or components['highlights'])
         subtitle_key = hashlib.sha256(
             json.dumps(payload["subtitles"], ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest()[:10]
@@ -1243,23 +1249,40 @@ def create_app(
             project_name=project.name,
             timeline_name=f"{project.name} - SUBS + KEYWORDS TIMELINE v1",
             media_bin_name="TEMP",
-            title_name=selected_title(project_id).resolve_name,
             subtitle_srt_path=str(subtitle_path),
         )
+        if payload['titles'] and (components is None or components['highlights']):
+            payload['title_name'] = selected_title(project_id).resolve_name
+        elif components is not None and not components['highlights']:
+            payload['titles'] = []
+            payload['title_count'] = 0
+        if components is not None and not components['subtitles']:
+            payload['subtitles'] = []
+            payload['subtitle_count'] = 0
         return payload
 
-    def broll_timeline_payload(project_id: str, *, allow_unavailable: bool = False) -> dict[str, Any]:
+    def broll_timeline_payload(project_id: str, *, allow_unavailable: bool = False, fps_override=None, components=None) -> dict[str, Any]:
         from .broll_timeline_export import build_broll_timeline_plan
         from .curation_artifacts import load_curation_run
         from .video_preview import probe_preview
         project = load_project(project_id)
         run = run_root(project_id)
-        fps = project_export_fps(project_id, project)
+        fps = fps_override or project_export_fps(project_id, project)
         view = load_curation_run(run)
         selection = _read_json(active_retrieval_root(run) / "selection-plan.json", {"chunks": {}})
+        if components is not None:
+            selection = {'chunks': {beat_id: {**choice, 'selected_assets': [row for row in choice.get('selected_assets') or []
+                if filter_selected_media([view.candidate_index.get(str(row.get('asset_id')))], components)]}
+                for beat_id, choice in (selection.get('chunks') or {}).items() if isinstance(choice, dict)}}
+            if not any(choice['selected_assets'] for choice in selection['chunks'].values()):
+                return {'clips': [], 'clip_count': 0, 'unavailable': [], 'selected_beat_count': 0}
+        wanted = {str(row.get('asset_id')) for choice in (selection.get('chunks') or {}).values()
+                  for row in choice.get('selected_assets') or []}
         visual_plan = _read_json(run / "visual-plan.json", {})
         assets = {}
         for asset_id, candidate in view.candidate_index.items():
+            if asset_id not in wanted:
+                continue
             kind = str(candidate.kind or "video")
             path = str(candidate.local_asset_path or "").strip()
             preview_path = str(candidate.preview_path or "").strip()
@@ -1305,7 +1328,11 @@ def create_app(
             raise ValueError("No selected clip is ready for timeline export. Download or replace them: " + rows)
         return plan
 
-    async def prepare_selected_timeline_media(project_id: str, report=None) -> list[dict[str, str]]:
+    async def prepare_selected_timeline_media(project_id: str, report=None, components=None) -> list[dict[str, str]]:
+        if components is not None and not (components['broll'] or components['social']):
+            if report:
+                report(60, 'Media esclusi dall’export · salto download')
+            return []
         from .curation_artifacts import load_curation_run
         from .resolve_media_issues import download_issue
         from .social_media import media_path, prepare_media
@@ -1318,6 +1345,8 @@ def create_app(
         view = load_curation_run(run)
         selection = _read_json(active_retrieval_root(run) / "selection-plan.json", {"chunks": {}})
         wanted = [str(row.get("asset_id")) for choice in (selection.get("chunks") or {}).values() for row in (choice.get("selected_assets") or [])]
+        if components is not None:
+            wanted = [aid for aid in wanted if filter_selected_media([view.candidate_index.get(aid)], components)]
         failures = []
         for index, asset_id in enumerate(wanted):
             candidate = view.candidate_index.get(asset_id)
@@ -1353,18 +1382,51 @@ def create_app(
                 failures.append(download_issue(candidate, exc))
         return failures
 
-    def editing_resolve_payload(project_id: str) -> dict[str, Any]:
+    def editing_resolve_payload(project_id: str, components=None) -> dict[str, Any]:
         from .transcript_intents import has_selected_intent
-        payload = combined_resolve_payload(project_id)
-        if has_selected_intent(run_root(project_id), "coverage"):
-            broll = broll_timeline_payload(project_id, allow_unavailable=True)
+        components = normalize_components(components)
+        native_cut = None
+        native_reference = None
+        if components['video']:
+            from .native_cut_export import load_native_cut
+            from fractions import Fraction
+            native_cut = load_native_cut(root / project_id, root)
+            if (root / project_id / 'resolve-bridge.json').is_file():
+                raise ValueError('CUT nativo supportato sul video originale caricato, non sulla guida multitraccia Resolve')
+            if any(components[k] for k in ('subtitles', 'highlights', 'broll', 'social', 'generic')) and not (root / project_id / 'cut-origin.json').is_file():
+                raise ValueError('Conferma CUT e continua prima di esportare testo e coperture sul montaggio pulito')
+        elif (root / project_id / 'cut-origin.json').is_file():
+            from .native_cut_export import load_native_cut
+            from fractions import Fraction
+            native_reference = load_native_cut(root / project_id, root)
+            receipts = [_read_json(path, {}) for path in (root / project_id / 'resolve-outbox').glob('*/package.json')]
+            receipt = next((row.get('result') for row in sorted(receipts, key=lambda row: row.get('updated_at', ''), reverse=True)
+                if row.get('status') == 'completed' and row.get('result', {}).get('cut_revision') == native_reference['revision']
+                and row.get('result', {}).get('source_identity') == native_reference['source_identity']), None)
+            if not receipt:
+                raise ValueError('Seleziona Video CUT per creare prima la base nativa corrispondente')
+        export_cut = native_cut or native_reference
+        if components['subtitles'] or components['highlights']:
+            payload = combined_resolve_payload(project_id, components, float(Fraction(export_cut['fps'])) if export_cut else None)
+        else:
+            project = load_project(project_id)
+            payload = {'project_id': project_id, 'project_name': project.name,
+                       'fps': project_export_fps(project_id, project), 'titles': [], 'subtitles': [],
+                       'title_count': 0, 'subtitle_count': 0}
+        if (components['broll'] or components['social']) and has_selected_intent(run_root(project_id), "coverage"):
+            broll = broll_timeline_payload(project_id, allow_unavailable=True,
+                fps_override=float(Fraction(export_cut['fps'])) if export_cut else None, components=components)
+            broll['clips'] = filter_selected_media(broll['clips'], components)
+            broll['unavailable'] = [row for row in broll['unavailable']
+                                    if filter_selected_media([{'provider': str(row.get('asset_id', '')).split(':')[0].split('--')[-1]}], components)]
+            broll['clip_count'] = len(broll['clips'])
         else:
             broll = {"clips": [], "clip_count": 0, "unavailable": []}
         project = load_project(project_id)
         bridge = _read_json(root / project_id / "resolve-bridge.json", {})
         generic = _read_json(run_root(project_id) / "generic-coverage.json", {"items": [], "selected": []})
         chosen = set(generic.get("selected") or [])
-        generic_clips = [row for row in generic.get("items") or [] if str(row.get("provider_id")) in chosen]
+        generic_clips = [row for row in generic.get("items") or [] if components['generic'] and str(row.get("provider_id")) in chosen]
         payload.update(
             mode="editing", broll_clips=broll["clips"], broll_count=broll["clip_count"], broll_unavailable=broll["unavailable"],
             timeline_name=f"{project.name} - SUBS + KEYWORDS + B-ROLL TIMELINE v1",
@@ -1376,7 +1438,16 @@ def create_app(
             duration_seconds=bridge.get("duration") or 0,
             generic_broll_clips=generic_clips,
             generic_tail_gap_seconds=2.0,
+            components=components,
         )
+        if native_cut:
+            payload.update(native_cut=native_cut, fps=float(Fraction(native_cut['fps'])),
+                           duration_seconds=native_cut['duration_seconds'], destination_mode='new')
+        elif native_reference:
+            payload.update(native_cut_reference=native_reference, source_timeline_id=receipt['timeline_id'],
+                           source_project_name=receipt.get('resolve_project'), source_timeline_name=receipt.get('timeline_name'),
+                           native_cut_fps=native_reference['fps'], fps=float(Fraction(native_reference['fps'])),
+                           duration_seconds=native_reference['duration_seconds'], destination_mode='active')
         return payload
 
     async def prepare_generic_media(project_id: str, report=None) -> None:
@@ -1460,6 +1531,50 @@ def create_app(
         load_project(project_id)
         return root / project_id
 
+    @app.get('/api/curation/projects/{project_id}/export-options')
+    async def get_export_options(project_id: str):
+        load_project(project_id)
+        saved = _read_json(root / project_id / 'export-options.json', {})
+        available = ((root / project_id / 'cut-origin.json').is_file() or (root / project_id / 'cut' / 'plan.json').is_file()) and not (root / project_id / 'resolve-bridge.json').is_file()
+        draft_cut = available and not (root / project_id / 'cut-origin.json').is_file()
+        defaults = {'video': True} if draft_cut else None
+        flags = normalize_components(saved.get('components', defaults), has_native_cut=available)
+        counts = {key: 0 for key in flags}
+        run = run_root(project_id)
+        origin = _read_json(root / project_id / 'cut-origin.json', {})
+        cut = origin.get('plan') or _read_json(root / project_id / 'cut' / 'plan.json', {})
+        counts['video'] = len(cut.get('segments') or [])
+        generic = _read_json(run / 'generic-coverage.json', {})
+        counts['generic'] = len(generic.get('selected') or [])
+        if (run / 'semantic-chunks.json').is_file():
+            from .transcript_intents import build_combined_resolve_export
+            text = build_combined_resolve_export(run, project_id, include_highlights=flags['highlights'])
+            counts['subtitles'], counts['highlights'] = text['subtitle_count'], text['title_count']
+            from .curation_artifacts import load_curation_run
+            from .export_components import SOCIAL
+            view = load_curation_run(run)
+            selection = _read_json(active_retrieval_root(run) / 'selection-plan.json', {})
+            for choice in (selection.get('chunks') or {}).values():
+                for selected in choice.get('selected_assets') or []:
+                    candidate = view.candidate_index.get(str(selected.get('asset_id')))
+                    if candidate:
+                        counts['social' if candidate.provider in SOCIAL else 'broll'] += 1
+        return {'components': flags, 'counts': counts,
+                'component_availability': {key: not draft_cut for key in ('subtitles', 'highlights', 'broll', 'social', 'generic')},
+                'video_available': available,
+                'video_reason': 'Conferma CUT e continua per aggiungere testo e coperture ai tagli' if draft_cut else '' if available else 'Video disponibile dopo ANALIZZA CUT sul file originale caricato'}
+
+    @app.put('/api/curation/projects/{project_id}/export-options')
+    async def put_export_options(project_id: str, components: ExportComponents):
+        load_project(project_id)
+        try:
+            flags = normalize_components(components)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        from .atomic_io import write_json
+        write_json(root / project_id / 'export-options.json', {'components': flags})
+        return {'components': flags}
+
     def find_handoff(package_id: str) -> tuple[Path, dict[str, Any]]:
         matches = list(root.glob(f"*/resolve-outbox/{package_id}/package.json"))
         if not matches:
@@ -1468,11 +1583,13 @@ def create_app(
         return project_root, handoff_store.read(project_root, package_id)
 
     @app.post("/api/curation/projects/{project_id}/resolve-handoffs")
-    async def prepare_resolve_handoff(project_id: str):
+    async def prepare_resolve_handoff(project_id: str, components: ExportComponents | None = None):
         try:
-            media_issues = await prepare_selected_timeline_media(project_id)
-            await prepare_generic_media(project_id)
-            payload = editing_resolve_payload(project_id)
+            flags = normalize_components(components)
+            media_issues = await prepare_selected_timeline_media(project_id, components=flags)
+            if flags['generic']:
+                await prepare_generic_media(project_id)
+            payload = editing_resolve_payload(project_id, flags)
             payload["project_id"] = project_id
             payload["bridge_session_id"] = active_bridge_session_id
             payload["media_issues"] = media_issues
@@ -1482,15 +1599,35 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post('/api/curation/projects/{project_id}/resolve-preparation')
-    async def start_resolve_preparation(project_id: str):
+    async def start_resolve_preparation(project_id: str, components: ExportComponents | None = None):
         load_project(project_id)
+        try:
+            flags = normalize_components(components)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if (root / project_id / 'cut-origin.json').is_file() and not flags['video']:
+            try:
+                await asyncio.to_thread(editing_resolve_payload, project_id, flags)
+            except (OSError, ValueError, KeyError) as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if flags['video']:
+            from .native_cut_export import load_native_cut
+            try:
+                await asyncio.to_thread(load_native_cut, root / project_id, root)
+            except (OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            if not active_bridge_session_id or time.time() - bridge_last_seen > 6:
+                raise HTTPException(status_code=409, detail='Apri il bridge e attendi CONNECTED prima di inviare il CUT nativo')
+            if not active_bridge_version.startswith('v') or not active_bridge_version[1:].isdigit() or int(active_bridge_version[1:]) < 71:
+                raise HTTPException(status_code=409, detail='Aggiorna il bridge a v0071 per ricevere il CUT nativo')
         session_id = active_bridge_session_id
         async def prepare(report):
-            media_issues = await prepare_selected_timeline_media(project_id, report)
+            media_issues = await prepare_selected_timeline_media(project_id, report, flags)
             report(65, 'Coperture pronte · controllo video finali')
-            await prepare_generic_media(project_id, report)
+            if flags['generic']:
+                await prepare_generic_media(project_id, report)
             report(80, 'Media pronti · preparo sottotitoli, frasi e tempi')
-            payload = await asyncio.to_thread(editing_resolve_payload, project_id)
+            payload = await asyncio.to_thread(editing_resolve_payload, project_id, flags)
             payload.update(project_id=project_id, bridge_session_id=session_id)
             payload["media_issues"] = media_issues
             report(85, 'Salvo il pacchetto per il bridge')
@@ -1538,11 +1675,14 @@ def create_app(
     async def apply_resolve_handoff(package_id: str, request: ResolveHandoffApplyRequest):
         project_root, package = find_handoff(package_id)
         try:
+            if (package.get('payload') or {}).get('native_cut'):
+                if package.get('bridge_session_id') != active_bridge_session_id or time.time() - bridge_last_seen > 6:
+                    raise ValueError('Sessione bridge cambiata o offline: invia di nuovo il CUT da RMBL')
             # The package can stay open in the Resolve bridge while the user
             # changes the Fusion Title in EDITING. Titles must always use the
             # project's current selection, never the stale title_name frozen
             # when INVIA A RESOLVE originally prepared the handoff.
-            if request.apply_scope in {"all", "titles"}:
+            if request.apply_scope in {"all", "titles"} and (package.get('payload') or {}).get('titles'):
                 project_id = str(package.get("project_id") or project_root.name)
                 handoff_store.update_payload(
                     project_root,

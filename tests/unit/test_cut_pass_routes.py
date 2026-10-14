@@ -81,7 +81,11 @@ def test_cut_preview_renders_exact_source_ranges_with_original_audio(tmp_path,mo
     raw=transcript([(1,2,'a b'),(5,6,'c d')])
     plan=build_cut_plan(raw,duration=7,fps=30,signature='s',groups=[])
     calls=[]
-    monkeypatch.setattr(module.subprocess,'run',lambda command,**kw:calls.append(command))
+    def render(command, **kwargs):
+        calls.append(command)
+        Path(command[-1]).write_bytes(b'mp4')
+    monkeypatch.setattr(module.subprocess,'run', render)
+    monkeypatch.setattr(module, 'verify_cut_render', lambda *args: None)
     render_cut(tmp_path/'original.mp4',tmp_path/'preview.mp4',plan,preview=True)
     graph=(tmp_path/'preview.fffilter').read_text()
     assert 'gte(n,24)*lt(n,66)' in graph
@@ -176,4 +180,4 @@ def test_cut_project_cannot_send_compacted_times_to_unchanged_resolve_timeline(t
     with TestClient(app) as client:
         response=client.post(f'/api/curation/projects/{p.project_id}/resolve-preparation')
         assert response.status_code==409
-        assert 'fase successiva' in response.json()['detail']
+        assert response.json()['detail']

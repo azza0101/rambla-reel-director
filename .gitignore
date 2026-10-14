@@ -120,3 +120,7 @@ selected_assets.json
 # Keep directory contracts documentable without committing contents
 !.gitkeep
 
+
+.superpowers/
+
+.test-native-*

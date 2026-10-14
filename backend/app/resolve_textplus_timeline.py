@@ -254,7 +254,7 @@ def _is_rambla_broll_item(item: Any) -> bool:
     return "RAMBLA" in keywords.upper() and str(item.GetClipColor() or "") in {"Purple", "Beige"}
 
 
-def remove_prior_rambla_broll(timeline: Any) -> tuple[int, list[int]]:
+def remove_prior_rambla_broll(timeline: Any, components=None) -> tuple[int, list[int]]:
     """Remove only prior RMBL B-roll and return the tracks that can be reused."""
     remove: list[Any] = []
     tracks: list[int] = []
@@ -263,6 +263,12 @@ def remove_prior_rambla_broll(timeline: Any) -> tuple[int, list[int]]:
         for item in timeline.GetItemListInTrack("video", track) or []:
             if not _is_rambla_broll_item(item):
                 continue
+            if components is not None:
+                metadata = item.GetMediaPoolItem().GetMetadata() or {}
+                tokens = {token.strip().casefold() for token in str(metadata.get('Keywords') or '').split(',')}
+                key = 'generic' if item.GetClipColor() == 'Beige' else 'social' if tokens.intersection({'youtube', 'youtube_shorts', 'tiktok', 'instagram'}) else 'broll'
+                if not components.get(key):
+                    continue
             remove.append(item)
             found = True
         if found:
@@ -635,6 +641,9 @@ def select_exact_segments(
 
 
 def _frame_to_timecode(frame: int, fps: int) -> str:
+    # New CUT timelines use non-drop-frame timecode; labels use nominal FPS,
+    # while source/destination calculations retain the real fractional rate.
+    fps = int(round(fps))
     hours, remainder = divmod(int(frame), fps * 3600)
     minutes, remainder = divmod(remainder, fps * 60)
     seconds, frames = divmod(remainder, fps)
@@ -764,16 +773,23 @@ def restore_track_locks(timeline: Any, states: list[tuple[str, int, bool]]) -> N
 
 
 def _text_tool(item: Any) -> Any:
-    composition = item.GetFusionCompByIndex(1)
-    if not composition:
-        raise RuntimeError("Resolve created a title without a Fusion composition")
-    tools = composition.GetToolList(False, "TextPlus") or {}
-    values = list(tools.values()) if isinstance(tools, dict) else list(tools)
+    values = []
+    for attempt in range(25):
+        composition = item.GetFusionCompByIndex(1)
+        tools = composition.GetToolList(False, 'TextPlus') if composition else {}
+        values = list(tools.values()) if isinstance(tools, dict) else list(tools or [])
+        if values:
+            break
+        if attempt < 24:
+            time.sleep(.2)
+    if not values:
+        raise RuntimeError('Resolve non ha inizializzato il testo Fusion entro 5 secondi')
     exposed = [tool for tool in values if str(getattr(tool, "Name", "")).casefold() == "template"]
     if len(exposed) == 1:
         return exposed[0]
     if len(values) != 1:
-        raise RuntimeError("Resolve Text+ composition is ambiguous")
+        names = [str(getattr(tool, 'Name', '')) for tool in values]
+        raise RuntimeError(f"Resolve Text+ composition is ambiguous: {len(values)} controls {names}")
     return values[0]
 
 
@@ -1012,6 +1028,8 @@ def raise_if_cancelled(payload: dict[str, Any]) -> None:
 
 def report_handoff_progress(payload: dict[str, Any], phase: str, percent: int, message: str) -> None:
     raise_if_cancelled(payload)
+    if payload.get('native_cut_fresh'):
+        percent = 65 + round(min(100, max(0, percent)) * .34)
     raw=str(payload.get("handoff_progress_path") or "").strip()
     if not raw: return
     from .atomic_io import write_json
@@ -1032,6 +1050,39 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
     project = project_manager.GetCurrentProject()
     if not project:
         raise RuntimeError("Open a DaVinci Resolve project first")
+    if payload.get('native_cut'):
+        from .resolve_native_cut import create_native_cut_base, verify_native_cut_base, delete_owned_native_cut, recover_native_cut_result, record_native_cut_result
+        recovered = recover_native_cut_result(project, payload)
+        if recovered:
+            return recovered
+        pool = project.GetMediaPool()
+        original = project.GetCurrentTimeline()
+        base = create_native_cut_base(resolve, project, payload,
+            progress=lambda percent, message: report_handoff_progress(payload, 'cut', percent, message))
+        cut = payload['native_cut']
+        try:
+            if any(payload.get(key) for key in ('titles', 'subtitles', 'broll_clips', 'generic_broll_clips')):
+                overlay = {**payload, 'destination_mode': 'active', 'source_timeline_id': base['timeline_id'],
+                           'bridge_mark_in': base['base_frame'], 'native_cut_fresh': True,
+                           'native_cut_fps': cut['fps']}
+                overlay.pop('native_cut')
+                result = materialize_in_resolve(overlay)
+            else:
+                result = {'status': 'created', 'timeline_id': base['timeline_id'],
+                          'timeline_name': base['timeline_name'], 'title_count': 0, 'subtitle_count': 0,
+                          'broll_count': 0, 'generic_broll_count': 0}
+            verify_native_cut_base(base['timeline'], cut, base['base_frame'])
+            result.update(video_count=base['video_count'], audio_count=base['audio_count'],
+                          resolve_project=project.GetName(),
+                          cut_revision=cut['revision'], source_identity=cut['source_identity'],
+                          fps=cut['fps'], width=cut['width'], height=cut['height'], destination_mode='new')
+            save_resolve_project(project_manager)
+            record_native_cut_result(project, payload, result)
+            report_handoff_progress(payload, 'completed', 100, 'Timeline CUT nativa pronta')
+            return result
+        except Exception:
+            delete_owned_native_cut(project, pool, base['timeline'], original, payload)
+            raise
     linked_id = str(payload.get("source_timeline_id") or "").strip()
     linked_project = str(payload.get("source_project_name") or "").strip()
     if linked_project and str(project.GetName()) != linked_project:
@@ -1049,11 +1100,19 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
         original = project.GetCurrentTimeline()
     if not original:
         raise RuntimeError("Open the destination timeline in Resolve first")
+    if payload.get('native_cut_reference'):
+        from .resolve_native_cut import verify_native_cut_base, verify_source_identity
+        verify_source_identity(payload['native_cut_reference'])
+        verify_native_cut_base(original, payload['native_cut_reference'], int(original.GetStartFrame()))
+        payload = {**payload, 'bridge_mark_in': int(original.GetStartFrame())}
     report_handoff_progress(payload,"validate",5,"Collegamento Resolve verificato")
     fps_value = float(original.GetSetting("timelineFrameRate") or 0)
     original_name = str(original.GetName())
     fps = int(round(fps_value))
-    if fps <= 0 or abs(fps_value - fps) > 0.001:
+    if payload.get('native_cut_fps'):
+        from fractions import Fraction
+        fps = float(Fraction(payload['native_cut_fps']))
+    if fps <= 0 or (not payload.get('native_cut_fps') and abs(fps_value - fps) > 0.001):
         raise RuntimeError(f"The first release supports integer timeline frame rates; Resolve reports {fps_value:g} fps")
     mode = mode_from_payload(payload)
     apply_scope = str(payload.get("apply_scope") or "all").strip().casefold()
@@ -1062,6 +1121,11 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
     include_titles = apply_scope in {"all", "titles"}
     include_subtitles = apply_scope in {"all", "subtitles"}
     include_broll = apply_scope in {"all", "media"}
+    components = payload.get('components')
+    if components is not None:
+        include_titles = include_titles and components.get('highlights', False) and bool(payload.get('titles'))
+        include_subtitles = include_subtitles and components.get('subtitles', False) and bool(payload.get('subtitles'))
+        include_broll = include_broll and any(components.get(key, False) for key in ('broll', 'social', 'generic'))
     title_payload = {**payload, "items": payload.get("titles") or payload.get("items") or []}
     plan = build_textplus_timeline_plan(title_payload, target_fps=fps) if include_titles else {"segments": [], "boundaries": []}
     title_name = title_name_from_payload(payload) if include_titles else str(payload.get("title_name") or "")
@@ -1137,9 +1201,12 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
             if not media_folder:
                 raise RuntimeError(f"Resolve could not create the Media Pool bin '{media_folder_name}'")
         if destination_mode == "active":
-            backup_name = next_backup_name(project, original_name)
-            generated, backup = create_active_backup(original, backup_name)
-            backup_drt = export_drt(resolve, backup, backup_drt_path(payload, backup_name))
+            if payload.get('native_cut_fresh'):
+                generated = original
+            else:
+                backup_name = next_backup_name(project, original_name)
+                generated, backup = create_active_backup(original, backup_name)
+                backup_drt = export_drt(resolve, backup, backup_drt_path(payload, backup_name))
         else:
             generated = original.DuplicateTimeline(build_name)
             if not generated:
@@ -1152,7 +1219,15 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
         else:
             active_mutated = True
             if apply_scope == "all":
-                remove_prior_rambla_items(generated, title_name=title_name)
+                if components is None:
+                    remove_prior_rambla_items(generated, title_name=title_name)
+                else:
+                    if components.get('highlights'):
+                        muted_title_count = remove_prior_rambla_titles(generated, title_name=title_name)
+                    if components.get('subtitles'):
+                        muted_subtitle_count = mute_prior_rambla_subtitles(generated)
+                    if any(components.get(k) for k in ('broll', 'social', 'generic')):
+                        removed_broll_count, reusable_broll_tracks = remove_prior_rambla_broll(generated, components)
             elif apply_scope == "titles":
                 muted_title_count = remove_prior_rambla_titles(generated, title_name=title_name)
             elif apply_scope == "subtitles":
@@ -1220,6 +1295,9 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
                 color_setter = getattr(inserted, "SetClipColor", None)
                 if color_setter:
                     color_setter("Yellow")
+                # Even blank boundary titles must finish initializing before
+                # another insertion can split/overwrite their composition.
+                _text_tool(inserted)
                 if operation["text"] is not None:
                     set_textplus_content(inserted, operation["text"])
             report_handoff_progress(payload,"titles",66,"Parole evidenziate inserite")

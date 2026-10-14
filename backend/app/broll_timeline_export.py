@@ -24,11 +24,11 @@ def build_broll_timeline_plan(
     selection: dict[str, Any],
     assets: dict[str, dict[str, Any]],
     *,
-    fps: int,
+    fps: float,
 ) -> dict[str, Any]:
     """Resolve selected assets into exact phrase ranges without requiring every beat."""
-    if not isinstance(fps, int) or isinstance(fps, bool) or fps <= 0:
-        raise ValueError("timeline fps must be a positive integer")
+    if not isinstance(fps, (int, float)) or isinstance(fps, bool) or not math.isfinite(fps) or fps <= 0:
+        raise ValueError("timeline fps must be positive and finite")
     beats = {
         str(row.get("id")): row
         for row in visual_plan.get("visual_beats", [])

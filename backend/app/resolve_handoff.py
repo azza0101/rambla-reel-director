@@ -53,7 +53,7 @@ def _summary(payload: dict[str, Any]) -> dict[str, Any]:
     timed_ready = sum(_media_ready(row) for row in timed)
     generic_ready = sum(_media_ready(row) for row in generic)
     unavailable = len(payload.get("broll_unavailable") or []) + len(timed) - timed_ready + len(generic) - generic_ready
-    return {
+    summary = {
         "duration_seconds": float(payload.get("duration_seconds") or 0),
         "title_count": len(payload.get("titles") or payload.get("segments") or []),
         "subtitle_count": len(payload.get("subtitles") or []),
@@ -61,6 +61,14 @@ def _summary(payload: dict[str, Any]) -> dict[str, Any]:
         "generic_broll_count": generic_ready,
         "unavailable_count": unavailable,
     }
+    if payload.get('native_cut'):
+        cut = payload['native_cut']
+        summary.update(native_cut=True, cut_count=len(cut['segments']), fps=cut['fps'],
+                       width=cut['width'], height=cut['height'])
+    if payload.get('components') is not None:
+        summary['components'] = deepcopy(payload['components'])
+    return summary
+
 
 
 def _row_keys(payload: dict[str, Any], field: str) -> set[str]:
@@ -124,13 +132,17 @@ class ResolveHandoffStore:
                 continue
             if row.get("status") not in {"pending", "applying", "failed", "completed", "cancelled"}:
                 continue
-            if resolve_project and row.get("resolve_project") != resolve_project:
+            native_session = bool((row.get('summary') or {}).get('native_cut') and bridge_session_id
+                                  and row.get('bridge_session_id') == bridge_session_id)
+            if resolve_project and row.get("resolve_project") != resolve_project and not native_session:
                 continue
             if bridge_session_id and row.get("bridge_session_id") not in {"", bridge_session_id}:
                 continue
             rows.append(row)
         rows=sorted(rows, key=lambda row: row.get("created_at", ""), reverse=True)
-        return [row for row in rows if not timeline_id or row.get("timeline_id")==timeline_id]
+        return [row for row in rows if not timeline_id or row.get("timeline_id")==timeline_id
+                or ((row.get('summary') or {}).get('native_cut') and bridge_session_id
+                    and row.get('bridge_session_id') == bridge_session_id)]
 
     def mark_received(self, project_root: Path, package_id: str, *, bridge_session_id: str) -> dict[str, Any]:
         with self._lock:

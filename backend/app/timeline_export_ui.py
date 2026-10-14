@@ -7,7 +7,7 @@ PANEL = r'''
 <section class="panel timelineExportV33" id="timelineExportV33" data-workflow-step-v42="7">
   <div class="top"><div><h2>7 · Export timeline <span id="timelineExportCompleteV28" class="stepStatusV12" hidden></span> <span id="resolveBridgeLiveV34" class="resolveBridgeLiveV34 off">BRIDGE OFFLINE</span></h2>
   <p class="muted">Prepara sottotitoli, parole evidenziate e B-roll. Resolve li applica soltanto dopo la conferma nel bridge.</p></div></div>
-  <button id="sendResolvePackageV33" class="primary resolvePrimaryV33">INVIA A RESOLVE · SUBS + FRASI + B-ROLL</button>
+  <button id="sendResolvePackageV33" class="primary resolvePrimaryV33">INVIA A RESOLVE</button><details class="legacyExportsV33"><summary>Componenti da esportare</summary><div id="resolveComponentsV71" class="timelineExportActionsV33"></div><p id="resolveComponentsReasonV71" class="muted"></p></details>
   <div id="resolveDeliveryV33" class="resolveDeliveryV33" hidden><div id="resolveDeliveryCheckV33" class="resolveDeliveryCheckV33" hidden>✓</div><strong id="resolveDeliveryTitleV33">Preparazione pacchetto Resolve…</strong><span id="resolveDeliverySummaryV33"></span><div id="resolveDeliveryProgressV33" class="resolveDeliveryProgressBarV34"><i></i></div><b id="resolveDeliveryPercentV37">0%</b><small id="resolveDeliveryDetailV33"></small></div>
   <div id="resolveMediaIssuesV48" class="resolveMediaIssuesV48" hidden></div>
   <details id="resolveDebugV39" hidden><summary>Diagnostica Resolve</summary><button id="copyResolveDebugV39">COPIA DIAGNOSTICA</button><textarea id="resolveDebugTextV39" readonly aria-label="Diagnostica Resolve" style="width:100%;min-height:150px;margin-top:8px"></textarea></details><details class="legacyExportsV33"><summary>Export file e strumenti precedenti</summary><div class="timelineExportActionsV33"><button id="exportTimelineXmlV33">ESPORTA XML</button><button id="exportTimelineDraV33">ESPORTA DRA</button><button id="openTimelineResolveV33">CREA SUBITO IN RESOLVE · TEMP</button></div></details>
@@ -25,6 +25,10 @@ CSS = r'''<style id="timeline-export-v33-style">
 </style>'''
 
 JS = r'''
+const resolveComponentLabelsV71={video:'Video · CUT nativo',subtitles:'Sottotitoli',highlights:'Parole evidenziate',broll:'B-roll e immagini',social:'Clip social',generic:'Coperture generiche'};
+let resolveComponentsV71=null;
+async function loadResolveComponentsV71(){if(!state.pid)return;const pid=state.pid;const options=await api(`/projects/${pid}/export-options`);if(state.pid!==pid)return;resolveComponentsV71=options.components;$('resolveComponentsV71').innerHTML=Object.entries(resolveComponentLabelsV71).map(([key,label])=>`<label><input type="checkbox" data-component="${key}" ${options.components[key]?'checked':''} ${(key==='video'?!options.video_available:options.component_availability?.[key]===false)?'disabled':''}> ${label} <small>(${options.counts?.[key]||0})</small></label>`).join('');$('resolveComponentsReasonV71').textContent=options.video_reason||'';for(const input of $('resolveComponentsV71').querySelectorAll('input'))input.onchange=async()=>{const next=Object.fromEntries([...$('resolveComponentsV71').querySelectorAll('input')].map(input=>[input.dataset.component,input.checked]));resolveComponentsV71=next;try{await api(`/projects/${pid}/export-options`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(next)})}catch(error){$('resolveComponentsReasonV71').textContent=error.message}}}
+
 let resolveHandoffIdV33=null,resolveHandoffPollV33=null,resolvePreparingV37=false,resolveDeliveryStartedV37=0;
 let genericCoverageV33={items:[],selected:[]};
 function renderResolveMediaIssuesV48(items=[]){const box=$('resolveMediaIssuesV48');box.hidden=!items.length;if(!items.length){box.innerHTML='';return}box.innerHTML=`<strong>${items.length} clip saltate · il resto viene inviato normalmente</strong>${items.map(row=>`<article class="resolveMediaIssueV48"><b>${esc(row.beat_id)} · ${esc(row.title||row.provider)}</b><span>${esc(row.message)}</span>${row.source_page?`<a href="${esc(row.source_page)}" target="_blank" rel="noopener">${row.reason==='verification_required'?'APRI FONTE E RISOLVI CAPTCHA':'APRI FONTE'}</a>`:''}</article>`).join('')}<button id="retryResolveMediaV48">RIPROVA DOWNLOAD</button>`;$('retryResolveMediaV48').onclick=prepareResolveHandoffV33}
@@ -57,7 +61,7 @@ async function prepareResolveHandoffV33(){
  $('resolveDeliveryTitleV33').textContent='PREPARAZIONE PER RESOLVE';$('resolveDeliverySummaryV33').textContent='Controllo le selezioni salvate';setResolveDeliveryProgressV33(0);$('resolveDeliveryDetailV33').textContent='Avvio…';$('timelineExportStatusV33').textContent='';box.scrollIntoView({block:'nearest',behavior:'smooth'});
  const projectId=state.pid;
  try{
-  let job=await api(`/projects/${projectId}/resolve-preparation`,{method:'POST'});
+  let job=await api(`/projects/${projectId}/resolve-preparation`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(resolveComponentsV71)});
   while(true){
    setResolveDeliveryProgressV33(job.percent);$('resolveDeliverySummaryV33').textContent=job.message;$('resolveDeliveryDetailV33').textContent=`Tempo trascorso: ${job.elapsed_seconds||0}s · avanzamento aggiornato dal server`;
    if(job.status==='failed')throw Error(job.message||job.error||'Preparazione non riuscita');
@@ -79,6 +83,6 @@ setInterval(pollResolveBridgeLiveV34,2000);pollResolveBridgeLiveV34();
 
 let resolveRestoreProjectV39=null;
 async function restoreResolveDeliveryV39(){if(!state.pid||resolvePreparingV37||resolveRestoreProjectV39===state.pid)return;resolveRestoreProjectV39=state.pid;clearInterval(resolveHandoffPollV33);resolveHandoffIdV33=null;try{const row=await api(`/projects/${state.pid}/resolve-handoffs/latest`);if(!row.package_id||row.status==='discarded')return;resolveHandoffIdV33=row.package_id;resolveDeliveryStartedV37=Date.now();await pollResolveHandoffV33();if(!['failed','completed'].includes(row.status))resolveHandoffPollV33=setInterval(pollResolveHandoffV33,1000)}catch(_){resolveRestoreProjectV39=null}}
-const hydrateTimelineBaseV33=hydrate;hydrate=async function(){const value=await hydrateTimelineBaseV33();syncTimelineExportV33();await restoreResolveDeliveryV39();return value};syncTimelineExportV33();
+const hydrateTimelineBaseV33=hydrate;hydrate=async function(){const value=await hydrateTimelineBaseV33();syncTimelineExportV33();await loadResolveComponentsV71();await restoreResolveDeliveryV39();return value};syncTimelineExportV33();
 '''
 
