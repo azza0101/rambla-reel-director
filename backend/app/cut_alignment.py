@@ -1,5 +1,8 @@
 """Refine measured speech boundaries on short source windows without changing text."""
 import copy
+import hashlib
+import json
+from .atomic_io import write_json
 from difflib import SequenceMatcher
 import re
 import subprocess
@@ -8,6 +11,7 @@ from .cut_pass import words_of
 
 
 def refine_cut_timing(transcript,plan,source,folder,*,transcriber=None,runner=subprocess.run,progress=None):
+    use_cache=transcriber is None
     if transcriber is None:
         from .cloud_analyze_cli import transcribe_groq
         transcriber=transcribe_groq
@@ -28,7 +32,16 @@ def refine_cut_timing(transcript,plan,source,folder,*,transcriber=None,runner=su
         clip=folder/f'align-{n}.wav'
         runner(['ffmpeg','-v','error','-y','-ss',str(start),'-t',str(end-start),'-i',str(source),
             '-vn','-ac','1','-ar','16000',str(clip)],check=True,capture_output=True,timeout=90)
-        measured=transcriber(clip,folder)
+        key=hashlib.sha256(json.dumps({'source':plan['source_signature'],'a':a,'b':b,'start':start,'end':end},sort_keys=True).encode()).hexdigest()
+        cache=folder/'alignment-cache'/f'{key}.json'
+        if use_cache and cache.is_file():measured=json.loads(cache.read_text(encoding='utf-8'))
+        else:
+            try:measured=transcriber(clip,folder)
+            except Exception as exc:
+                if 'Groq ASR failed (429)' not in str(exc) and 'Groq ASR failed (413)' not in str(exc):raise
+                warnings.append('Quota Groq audio raggiunta: affinamento aggiuntivo sospeso; conservati i timestamp già misurati della trascrizione.')
+                break
+            if use_cache:cache.parent.mkdir(parents=True,exist_ok=True);write_json(cache,measured)
         if measured.get('timing_basis')!='cloud_asr_word_timestamps':
             warnings.append(f'Take {a}–{b}: allineamento non misurato, mantenuti i tempi precedenti')
             continue

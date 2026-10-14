@@ -88,3 +88,57 @@ def test_last_valid_take_uses_previous_take_as_alternative_not_later_bad_fragmen
         'takes':[[0,1],[2,3],[4,6]],'selected_take':1,'confidence':1,'reason':'ultima completa'}])
     assert clean_transcript(raw,plan)['text']=='sono Giulia'
     assert plan['alternatives'][0]['take_index']==0
+
+
+def test_rejected_take_cannot_swallow_unique_following_passage():
+    raw=transcript([(0,4,'Come mi sentirei con una foto in salotto'),
+                    (5,15,'Come mi sentirei con una foto in salotto Noi creiamo itinerari con rispetto per le persone che incontriamo')])
+    plan=build_cut_plan(raw,duration=16,fps=30,signature='s',groups=[
+        {'takes':[[0,7],[8,25]],'selected_take':0,'confidence':.99}])
+    clean=clean_transcript(raw,plan)['text']
+    assert 'Noi creiamo itinerari con rispetto per le persone che incontriamo' in clean
+    assert plan['protected_passages']
+
+
+def test_unique_introduction_is_retained_outside_repeat_groups():
+    raw=transcript([(0,2,'Domanda iniziale'),(3,5,'Domanda iniziale'),(6,10,'Ciao sono Giulia di Kura Viaggi')])
+    plan=build_cut_plan(raw,duration=11,fps=30,signature='s',groups=[{'takes':[[0,1],[2,3]],'confidence':.99}])
+    assert 'Ciao sono Giulia di Kura Viaggi' in clean_transcript(raw,plan)['text']
+
+
+
+def test_manual_exclusion_is_reversible_and_updates_timing():
+    from backend.app.cut_pass import review_words
+    raw=transcript([(0,3,'foto Ciao sono Giulia'),(4,7,'saluto alternativo'),(8,11,'saluto alternativo')])
+    groups=[{'takes':[[4,5],[6,7]],'confidence':.99}]
+    base=build_cut_plan(raw,duration=12,fps=30,signature='s',groups=groups)
+    edited=build_cut_plan(raw,duration=12,fps=30,signature='s',groups=groups,excluded_word_indices=[0,6,7])
+    assert clean_transcript(raw,edited)['text']=='Ciao sono Giulia'
+    assert edited['duration_frames']<base['duration_frames']
+    visible=review_words(raw,edited)
+    assert visible[0]['text']=='foto' and visible[0]['excluded']
+    assert all(w['index'] not in [4,5] for w in visible)
+    restored=build_cut_plan(raw,duration=12,fps=30,signature='s',groups=groups,excluded_word_indices=[])
+    assert clean_transcript(raw,restored)['text']==clean_transcript(raw,base)['text']
+
+
+def test_manual_exclusion_rejects_invalid_indices_and_empty_cut():
+    raw=transcript([(0,2,'ciao Giulia')])
+    with pytest.raises(ValueError,match='Parole escluse'):
+        build_cut_plan(raw,duration=3,fps=30,signature='s',groups=[],excluded_word_indices=[-1])
+    with pytest.raises(ValueError,match='almeno una parola'):
+        build_cut_plan(raw,duration=3,fps=30,signature='s',groups=[],excluded_word_indices=[0,1])
+
+
+def test_tight_pause_pass_changes_only_time_and_reverts_exactly():
+    raw=transcript([(0,1,'Ciao Giulia'),(1.8,2.8,'parlo di viaggi'),(4,5,'con cura')])
+    args=dict(duration=6,fps=30,signature='s',groups=[],excluded_word_indices=[1])
+    normal=build_cut_plan(raw,**args)
+    tight=build_cut_plan(raw,**args,tight_pauses=True)
+    assert clean_transcript(raw,normal)['text']==clean_transcript(raw,tight)['text']
+    assert tight['duration_frames']<normal['duration_frames']
+    assert tight['pause_seconds_removed']>0
+    assert tight['excluded_word_indices']==normal['excluded_word_indices']
+    reverted=build_cut_plan(raw,**args,tight_pauses=False)
+    assert reverted['segments']==normal['segments']
+    assert reverted['revision']==normal['revision']

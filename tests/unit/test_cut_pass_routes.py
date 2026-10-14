@@ -31,6 +31,10 @@ def test_cut_jobs_persist_proposal_allow_review_and_reject_stale_source(tmp_path
     monkeypatch.setattr(asr,'transcribe_groq',lambda *a:calls.append(a) or raw)
     monkeypatch.setattr(module,'propose_groups',lambda t:[{'takes':[[0,1],[2,4]],'confidence':.95,'reason':'correzione'}])
     monkeypatch.setattr(module,'choose_complete_takes',lambda raw,groups:groups)
+    import backend.app.cut_silence as silence
+    monkeypatch.setattr(silence,'detect_silences',lambda *a:[])
+    import backend.app.cut_residual as residual
+    monkeypatch.setattr(residual,'review_residual_takes',lambda raw,plan:plan)
     import backend.app.cut_alignment as alignment
     monkeypatch.setattr(alignment,'refine_cut_timing',lambda raw,*a,**kw:(raw,[]))
     app=FastAPI()
@@ -53,6 +57,14 @@ def test_cut_jobs_persist_proposal_allow_review_and_reject_stale_source(tmp_path
         assert response.status_code==200
         assert response.json()['text']=='prima frase'
         assert client.put('/api/curation/projects/p/cut',json={'revision':revision}).status_code==409
+        before=client.get('/api/curation/projects/p/cut').json()
+        tight=client.put('/api/curation/projects/p/cut',json={'revision':before['plan']['revision'],'tight_pauses':True}).json()
+        assert tight['plan']['tight_pauses'] is True
+        assert tight['text']==before['text']
+        edited=client.put('/api/curation/projects/p/cut',json={'revision':tight['plan']['revision']}).json()
+        assert edited['plan']['tight_pauses'] is True
+        reverted=client.put('/api/curation/projects/p/cut',json={'revision':edited['plan']['revision'],'tight_pauses':False}).json()
+        assert reverted['plan']['segments']==before['plan']['segments']
         assert client.get('/api/curation/projects/p/cut/preview/../../project.json').status_code==404
         p.analysis_signature='changed'
         changed=client.get('/api/curation/projects/p/cut')

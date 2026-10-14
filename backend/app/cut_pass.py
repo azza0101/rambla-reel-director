@@ -5,6 +5,8 @@ from fractions import Fraction
 import hashlib
 import json
 import math
+import re
+from difflib import SequenceMatcher
 
 
 def words_of(transcript):
@@ -46,7 +48,7 @@ def prepare_suggestions(suggestion):
     return groups,discards,warnings
 
 
-def build_cut_plan(transcript, *, duration, fps, signature, groups, discards=(), pause_threshold=1.2, breathing=.18):
+def build_cut_plan(transcript, *, duration, fps, signature, groups, discards=(), pause_threshold=1.2, breathing=.18, excluded_word_indices=(), tight_pauses=False, pause_mode="soft", silence_intervals=()):
     if transcript.get('timing_basis') != 'cloud_asr_word_timestamps':
         raise ValueError('CUT richiede timestamp misurati per parola')
     rate = Fraction(str(fps)).limit_denominator(100000)
@@ -58,7 +60,12 @@ def build_cut_plan(transcript, *, duration, fps, signature, groups, discards=(),
         raise ValueError('Parole oltre la durata della sorgente')
     if not .05 <= breathing <= .5 or not .5 <= pause_threshold <= 5:
         raise ValueError('Parametri pause non validi')
+    if type(tight_pauses) is not bool:raise ValueError('Scelta pause non valida')
+    normal_pause_threshold,normal_breathing=pause_threshold,breathing
+    if pause_mode not in {'soft','medium','strong'}:raise ValueError('Modalità pause non valida')
+    if tight_pauses:pause_threshold,breathing={'soft':(.45,.10),'medium':(.30,.08),'strong':(.18,.06)}[pause_mode]
     removed, occupied, normalized, alternatives = set(), set(), [], []
+    protected=[]
     for group in groups:
         takes = group.get('takes', [])
         if len(takes) < 2:
@@ -88,6 +95,25 @@ def build_cut_plan(transcript, *, duration, fps, signature, groups, discards=(),
         for i,(a,b) in enumerate(takes):
             if selected != -1 and i != selected:
                 removed.update(range(a,b+1))
+        # A rejected take may accidentally include a new, independent passage.
+        # Preserve long unmatched continuations instead of silently deleting them.
+        protected.extend(group.get('separated_passages',[]))
+        if selected >= 0 and not group.get('boundaries_reviewed'):
+            token=lambda w: re.sub(r'[^\w]', '', w['text'].casefold())
+            for ti,(a,b) in enumerate(takes):
+                if ti==selected: continue
+                candidate=[token(w) for w in words[a:b+1]]
+                matched_end=0; matched_count=0
+                for oi,(oa,ob) in enumerate(takes):
+                    if oi==ti: continue
+                    blocks=[x for x in SequenceMatcher(None,candidate,[token(w) for w in words[oa:ob+1]],autojunk=False).get_matching_blocks() if x.size>=3]
+                    if blocks:
+                        matched_end=max(matched_end,max(x.a+x.size for x in blocks))
+                        matched_count=max(matched_count,sum(x.size for x in blocks))
+                if matched_count>=6 and len(candidate)-matched_end>=8:
+                    tail=list(range(a+matched_end,b+1))
+                    removed.difference_update(tail)
+                    protected.append({'range':[tail[0],tail[-1]],'reason':'Continuazione distinta dalla frase ripetuta: conservata per verifica.'})
         row = {**group,'selected_take':selected,'takes':takes}
         row['texts'] = [' '.join(w['text'] for w in words[a:b+1]) for a,b in takes]
         row['source_ranges'] = [{'start':words[a]['start'],'end':words[b]['end'],
@@ -114,6 +140,11 @@ def build_cut_plan(transcript, *, duration, fps, signature, groups, discards=(),
         if type(keep) is not bool: raise ValueError('Scelta scarto non valida')
         if not keep: removed.update(indexes)
         normalized_discards.append({**discard,'keep':keep,'text':' '.join(w['text'] for w in words[a:b+1])})
+    automatic_removed=sorted(removed)
+    excluded=set(excluded_word_indices)
+    if any(type(i) is not int or not 0<=i<len(words) for i in excluded):
+        raise ValueError('Parole escluse non valide')
+    removed.update(excluded)
     kept = [w for w in words if w['index'] not in removed]
     if not kept:
         raise ValueError('Il montaggio deve conservare almeno una parola')
@@ -132,6 +163,9 @@ def build_cut_plan(transcript, *, duration, fps, signature, groups, discards=(),
         for r in ranges:
             if da <= r[0] < db: r[0]=db
             if da < r[1] <= db: r[1]=da
+    if tight_pauses and silence_intervals:
+        from .cut_silence import trim_silence_ranges
+        ranges=trim_silence_ranges(ranges,silence_intervals,float(rate),pause_mode,kept)
     segments=[]; cursor=0
     for a,b,_ in ranges:
         if b<=a: continue
@@ -140,31 +174,50 @@ def build_cut_plan(transcript, *, duration, fps, signature, groups, discards=(),
     plan={'schema_version':'rmbl-cut-1','render_version':2,'source_signature':signature,'fps':str(rate),
           'source_duration_frames':total,'duration_frames':cursor,'duration_seconds':cursor/float(rate),
           'segments':segments,'groups':normalized,'discards':normalized_discards,'alternatives':alternatives,
-          'removed_word_indices':sorted(removed),'pause_threshold':pause_threshold,'breathing':breathing,'status':'draft'}
+          'excluded_word_indices':sorted(excluded),'automatic_removed_word_indices':automatic_removed,'protected_passages':protected,'removed_word_indices':sorted(removed),'pause_threshold':normal_pause_threshold,'breathing':normal_breathing,'tight_pauses':tight_pauses,'pause_mode':pause_mode,'pause_algorithm_version':3,'silence_intervals':list(silence_intervals),'status':'draft'}
     for alt in alternatives:
         word=words[alt.pop('anchor_word_index')]
         anchor=word['start']*rate
         seg=next((s for s in segments if anchor<s['source_out_frame'] and word['end']*rate>s['source_in_frame']),None)
-        if seg is None:raise ValueError('Una parola mantenuta non ha un segmento temporale')
-        alt['edited_in_frame']=seg['edited_in_frame']+max(0,round(anchor-seg['source_in_frame']))
+        if seg is None: seg=min(segments,key=lambda s:abs(s['source_in_frame']-anchor))
+        alt['edited_in_frame']=seg['edited_in_frame']+min(seg['edited_out_frame']-seg['edited_in_frame'],max(0,round(anchor-seg['source_in_frame'])))
+    if tight_pauses:
+        normal=build_cut_plan(transcript,duration=duration,fps=fps,signature=signature,groups=groups,discards=discards,pause_threshold=normal_pause_threshold,breathing=normal_breathing,excluded_word_indices=excluded_word_indices)
+        plan['pause_seconds_removed']=max(0,normal['duration_seconds']-plan['duration_seconds'])
+    else:plan['pause_seconds_removed']=0
     plan['revision']=hashlib.sha256(json.dumps(plan,sort_keys=True).encode()).hexdigest()[:24]
     return plan
 
 
 def clean_transcript(transcript,plan):
     rate=float(Fraction(plan['fps'])); removed=set(plan['removed_word_indices']); result=[]
-    for s in plan['segments']:
-        selected=[]
-        for w in words_of(transcript):
-            if w['index'] in removed: continue
-            start,end=w['start']*rate,w['end']*rate
-            if start<s['source_out_frame'] and end>s['source_in_frame']:
-                selected.append({**w,'source_start':w['start'],'source_end':w['end'],
-                    'start':(s['edited_in_frame']+max(0,start-s['source_in_frame']))/rate,
-                    'end':min(s['edited_out_frame'],s['edited_in_frame']+end-s['source_in_frame'])/rate})
-        if selected:
-            result.append({'start':selected[0]['start'],'end':selected[-1]['end'],
-                'text':' '.join(w['text'] for w in selected),'words':selected})
+    buckets=[[] for _ in plan['segments']];previous_segment=0
+    for w in words_of(transcript):
+        if w['index'] in removed:continue
+        start,end=w['start']*rate,w['end']*rate
+        scores=[max(0,min(end,s['source_out_frame'])-max(start,s['source_in_frame'])) for s in plan['segments']]
+        best=max(range(previous_segment,len(scores)),key=lambda i:scores[i])
+        if scores[best]<=0:
+            best=min(range(previous_segment,len(scores)),key=lambda i:abs(plan['segments'][i]['source_in_frame']-start))
+        previous_segment=best;s=plan['segments'][best]
+        a=min(s['edited_out_frame']-1,s['edited_in_frame']+max(0,start-s['source_in_frame']))
+        b=max(a+1,min(s['edited_out_frame'],s['edited_in_frame']+end-s['source_in_frame']))
+        buckets[best].append({**w,'source_start':w['start'],'source_end':w['end'],'start':a/rate,'end':b/rate})
+    for selected in buckets:
+        if selected:result.append({'start':selected[0]['start'],'end':selected[-1]['end'],
+            'text':' '.join(w['text'] for w in selected),'words':selected})
     return {**transcript,'segments':result,'text':' '.join(s['text'] for s in result),
             'source_duration_seconds':plan['duration_seconds'],'cut_revision':plan['revision'],
             'timing_basis':'cloud_asr_word_timestamps','timeline_fps':rate}
+
+
+def review_words(transcript,plan):
+    """Visible narrative includes manual exclusions, so every edit is reversible."""
+    removed=set(plan.get('automatic_removed_word_indices',plan['removed_word_indices']))
+    excluded=set(plan.get('excluded_word_indices',[]))
+    result=[]
+    for word in words_of(transcript):
+        if word['index'] in removed: continue
+        group=next((i for i,g in enumerate(plan['groups']) if any(a<=word['index']<=b for a,b in g['takes'])),None)
+        result.append({**word,'excluded':word['index'] in excluded,'group_index':group})
+    return result

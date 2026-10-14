@@ -1,6 +1,6 @@
 # RMBL B ROLL — handoff tecnico
 
-Aggiornato: 2026-10-14  Versione: `v0058`  Branch di consegna: `feat/api-first-text-first-v1`
+Aggiornato: 2026-10-14  Versione: `v0070`  Branch di consegna: `feat/api-first-text-first-v1`
 
 ## Avvio rapido
 
@@ -240,3 +240,41 @@ I test focalizzati sulla disposizione dei comandi di modifica testo, UI, tema e 
   trackIndex ignorato, invii consecutivi, vecchi caption conservati, IN non-zero,
   marker invariati, lock ripristinati e rifiuto delle destinazioni non sicure.
 - Verifica su Resolve reale richiesta: i test automatici non aprono Resolve.
+
+## v0059 — CUT preservazione testo
+Il testo completo mantenuto è visibile anche per frasi senza ripetizioni. Protezione conservativa delle continuazioni lunghe non corrispondenti alle altre take; conservate e segnalate invece di essere eliminate. Proposta 20662ddac185 ricostruita conservando le scelte e con backup del piano. 21 test CUT passati.
+
+## v0060 — Revisione CUT nel testo
+Box completo interattivo con take evidenziate apribili, esclusioni manuali per intervalli di indici parola originali e ripristino delle parole barrate. Le esclusioni sono persistenti nel piano, applicate prima della mappa temporale/render e preservate durante il riallineamento. Anteprima e conferma sotto il box. Nessuna chiamata AI per queste modifiche.
+
+## v0061 — CUT compatto
+Primo clic esclude/ripristina subito una parola; secondo clic estende la stessa operazione al range. Evidenziazioni continue con spazi inclusi. Hover/focus mostra Take alternative; dialog nativo per una sola frase, scelta e ascolto indipendente dal player anteprima. Nessun elenco permanente delle frasi ripetute.
+
+## v0062 — Confini semantici delle take
+Revisione semantica prima della scelta take: ogni range deve rappresentare solo il concetto comune; nuovi concetti separati restano indipendenti e conservati, frammenti non equivalenti non offerti come alternative. Verifica strutturale: risposta completa, range solo sottointervalli originali; remap scelte. VERIFICA CONFINI TAKE ripara un piano salvato senza perdere esclusioni o scelte; backup automatico. Usa Groq, nessuna chiamata Codex.
+
+## v0063 — Anteprima CUT post conferma
+Progetti CUT derivati possono riprodurre il proprio clean.mp4 dal pulsante anteprima, anche senza piano draft, senza nuovo render/AI. Motivo visibile e tooltip quando anteprima disabilitata.
+
+## v0064 — Revisione ripartenze residue
+Secondo pass sul testo mantenuto per correzioni parziali/non letterali e ripetizioni mancate. Aggiunte validate, nessuna sovrapposizione con scelte esistenti; esclusioni mantenute, backup. VERIFICA RIPARTENZE ripara piani salvati. Durata originale/CUT visibile anche su progetto confermato; player take etichettato sorgente integrale.
+
+## v0065 — Pause reel reversibili
+ELIMINA PAUSE LUNGHE prima anteprima: gap >0.45 s, respiro di 0.06 s per lato, soli tempi senza cambiare parole/selezioni. Spunta verde al salvataggio e secondi rimossi. RIPRISTINA PAUSE riapplica i parametri normali conservati; stato tight persistente in review/riallineamento/ripartenze/confini. Nessuna chiamata AI.
+
+## v0066 — SOFT/STRONG e silenzi misurati
+ELIMINA PAUSE con selettori SOFT/STRONG sotto. Rileva silenzi reali con ffmpeg -40 dB, minimo 0.15 s; soft taglia >0.45 s lasciando 0.06 s per lato, strong >0.18 s con 0.04 s per lato. Non dipende solo dai gap ASR. Intervalli misurati persistiti nel piano e preservati da tutte le review. Ogni parola ASR assegnata una sola volta al segmento con maggior parte sopravvissuta: niente duplicazioni quando il timestamp attraversa un silenzio. Revert ricostruisce tempi normali.
+
+## v0067 — MEDIUM e protezione finali brevi
+SOFT/MEDIUM/STRONG rispettivamente soglia 0.45/0.30/0.18 s, margini 0.10/0.08/0.06 s. Protezione parole brevi <=0.35 s quando un confine del silenzio misurato le attraversa: conserva timestamp completo e 0.04 s extra. Risolve via a sorgente 77.76–78.02. Algoritmo pause v3, riapplicare per anteprima aggiornata.
+
+## v0068 — Domande ripetute e regia residua
+La revisione riceve candidati locali di ripetizioni 4–12 parole con normalizzazione modal verbs e confini frase, senza auto-tagli. Riceve anche anomalie ASR parole >1.8 s e indicazioni per distinguere conferme di regia. Caso utente: tre domande non bisogna/dobbiamo più scattare, esatto esteso 14 s.
+
+## v0069 — CUT entro quota Groq 8k TPM
+Tutte le fasi CUT segmentate: riconoscimento con finestre fino 300 parole e overlap60, confini con take compattate e batch10, scelta batch5 con contesto locale, residuali220 parole. Indici assoluti; merge/dedup range, conflitti conservativi. Completion CUT cap2600, reasoning medium. Limitatore locale rolling60s 7500 token conservativi, conto alla rovescia via job, retry429 limitato. Cache JSON per hash prompt/schema in cut/api-cache per riprendere i blocchi riusciti. Nessun DEV richiesto. Client generale Groq conserva il default; override solo CUT.
+
+Le sovrapposizioni dei risultati residui vengono unite in modo conservativo: gruppi già gestiti mantenuti, scarti limitati alle parole libere, scelte manuali protette. Cache per riallineamento ASR di finestre; su 429/413 del solo affinamento opzionale conserva timestamp misurati e segnala diagnostica, senza bloccare il piano.
+
+## v0070 — UNDO/REDO esclusioni CUT
+Pulsanti accanto ESCLUDI DAL CUT, cronologia fino100 modifiche alle esclusioni nella sessione. Salvataggio solo riuscito crea history; errori undo/redo non consumano stack. Nuova esclusione azzera redo; cambio progetto/sorgente azzera cronologia. Restano invariati scelte take e preset pause.

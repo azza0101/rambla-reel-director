@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from .atomic_io import write_json
-from .cut_pass import build_cut_plan, clean_transcript, words_of, prepare_suggestions
+from .cut_pass import build_cut_plan, clean_transcript, words_of, prepare_suggestions, review_words
 
 
 class CutReview(BaseModel):
@@ -23,6 +23,9 @@ class CutReview(BaseModel):
     revision: str
     selected_takes: dict[str, int] = Field(default_factory=dict, max_length=1000)
     keep_discards: dict[str, bool] = Field(default_factory=dict, max_length=1000)
+    tight_pauses: bool | None = None
+    pause_mode: str | None = Field(default=None, pattern="^(soft|medium|strong)$")
+    excluded_word_indices: list[int] | None = Field(default=None, max_length=100000)
     pause_threshold: float = Field(default=1.2, ge=.5, le=5)
     breathing: float = Field(default=.18, ge=.05, le=.5)
 
@@ -71,14 +74,21 @@ Trascrizione: indice:parola, [PAUSA] indica una pausa superiore a 1.2 secondi.\n
             'required':['takes','reason','confidence'],'properties':{
                 'takes':{'type':'array','minItems':2,'items':{'type':'array','minItems':2,'maxItems':2,'items':{'type':'integer'}}},
                 'reason':{'type':'string'},'confidence':{'type':'number'}}}}}}
-    reply=GroqDirectorClient(os.environ.get('GROQ_API_KEY',''),model='openai/gpt-oss-120b',
-        fallback_models=(),thinking_level='high',max_retries_per_model=0).generate_json(prompt,schema)
-    return reply.data
+    from .cut_cloud import word_windows,query_json,merge_suggestions
+    windows=word_windows(words)
+    header=prompt.split('Trascrizione:')[0]+'Trascrizione con INDICI ORIGINALI: non rinumerare.\n'
+    replies=[]
+    for i,window in enumerate(windows):
+        text=' '.join(f"{w['index']}:{w['text']}" for w in window)
+        replies.append(query_json(header+text,schema,f'Riconosco take · blocco {i+1}/{len(windows)}'))
+    return merge_suggestions(replies)
 
 
 def choose_complete_takes(transcript,groups):
     """A separate editorial check chooses the last *valid* take, not the last fragment."""
     from .groq_api import GroqDirectorClient
+    from .cut_boundaries import review_take_boundaries
+    groups=review_take_boundaries(transcript,groups)
     words=words_of(transcript)
     context=' '.join(w['text'] for w in words)
     candidates=[{'group':i,'takes':[' '.join(w['text'] for w in words[a:b+1]) for a,b in g['takes']]} for i,g in enumerate(groups)]
@@ -99,9 +109,18 @@ CONTESTO INTEGRALE:\n'''+context+'\nGRUPPI:\n'+json.dumps(candidates,ensure_asci
             'group':{'type':'integer'},'selected_take':{'type':'integer'},
             'reason':{'type':'string'},'confidence':{'type':'number'}}}}}}
     if not groups:return groups
-    reply=GroqDirectorClient(os.environ.get('GROQ_API_KEY',''),model='openai/gpt-oss-120b',
-        fallback_models=(),thinking_level='high',max_retries_per_model=0).generate_json(prompt,schema)
-    choices=reply.data['choices']
+    from .cut_cloud import pack_items,query_json
+    batches=pack_items(candidates,max_chars=3000,max_items=5)
+    header=prompt.split('CONTESTO INTEGRALE:')[0]
+    choices=[]
+    for i,batch in enumerate(batches):
+        relevant=[]
+        for item in batch:
+            for a,b in groups[item['group']]['takes']:
+                relevant.extend(w['text'] for w in words[max(0,a-8):min(len(words),b+9)])
+        local=' '.join(relevant)[:1600]
+        data=query_json(header+'\nCONTESTO LOCALE:\n'+local+'\nGRUPPI:\n'+json.dumps(batch,ensure_ascii=False),schema,f'Scelgo take complete · blocco {i+1}/{len(batches)}')
+        choices.extend(data['choices'])
     if len(choices)!=len(groups) or {c['group'] for c in choices}!=set(range(len(groups))):
         raise ValueError('Revisione delle take incompleta')
     result=[dict(g) for g in groups]
@@ -162,7 +181,7 @@ def install_cut_routes(app,store,root,load_project,active_run):
         write_json(folder/'alignment-signature.json',{'signature':p.analysis_signature})
         adjusted=build_cut_plan(aligned,duration=p.source_video.duration,fps=p.source_video.fps,
             signature=p.analysis_signature,groups=plan['groups'],discards=plan.get('discards',[]),
-            pause_threshold=plan['pause_threshold'],breathing=plan['breathing'])
+            pause_threshold=plan['pause_threshold'],breathing=plan['breathing'],excluded_word_indices=plan.get('excluded_word_indices',[]),tight_pauses=plan.get('tight_pauses',False),pause_mode=plan.get('pause_mode','soft'),silence_intervals=plan.get('silence_intervals',[]))
         adjusted['warnings']=list(dict.fromkeys([w for w in plan.get('warnings',[]) if not w.startswith('Take ')]+warnings))
         return adjusted
 
@@ -198,7 +217,11 @@ def install_cut_routes(app,store,root,load_project,active_run):
             write_json(folder/'job.json',dict(job))
         async def run():
             try:
-                result=await asyncio.to_thread(operation,p,folder,progress)
+                def work():
+                    from .cut_cloud import cloud_context
+                    with cloud_context(folder,lambda message:progress(job['completed'],message)):
+                        return operation(p,folder,progress)
+                result=await asyncio.to_thread(work)
                 job.update(status='succeeded',completed=4,message='Operazione CUT completata',result=result,finished_at=time.time())
             except Exception as exc:
                 message=str(exc)
@@ -211,8 +234,15 @@ def install_cut_routes(app,store,root,load_project,active_run):
 
     @app.get('/api/curation/projects/{pid}/cut')
     async def get_cut(pid:str):
-        _,folder=paths(pid)
+        p,folder=paths(pid)
         payload={'job':state(pid),'plan':None}
+        origin=root/pid/'cut-origin.json'
+        if origin.is_file() and Path(p.source_video.path).resolve()==(root/pid/'source'/'clean.mp4').resolve():
+            payload['confirmed_preview_url']=f'/api/curation/projects/{pid}/media/source-video/source'
+            saved_origin=read(origin)
+            payload['cut_parent_project_id']=saved_origin['project_id']
+            payload['confirmed_duration_seconds']=p.source_video.duration
+            payload['original_duration_seconds']=saved_origin['plan']['source_duration_frames']/float(__import__('fractions').Fraction(saved_origin['plan']['fps']))
         if (folder/'plan.json').is_file():
             try:
                 _,_,plan=current(pid)
@@ -221,6 +251,7 @@ def install_cut_routes(app,store,root,load_project,active_run):
                 payload['source_changed']=True
                 return payload
             payload['plan']=plan; payload['text']=clean_transcript(timing_read(folder),plan)['text']
+            payload['words']=review_words(timing_read(folder),plan)
         return payload
 
     @app.post('/api/curation/projects/{pid}/cut/analyze')
@@ -252,6 +283,9 @@ def install_cut_routes(app,store,root,load_project,active_run):
             plan=build_cut_plan(raw,duration=p.source_video.duration,fps=p.source_video.fps,
                 signature=p.analysis_signature,groups=groups,discards=discards)
             plan['warnings']=warnings
+            progress(2,'Verifico ripartenze parziali rimaste nel testo…')
+            from .cut_residual import review_residual_takes
+            plan=review_residual_takes(raw,plan)
             plan=align_plan(p,folder,plan,progress)
             write_json(folder/'plan.json',plan)
             progress(3,'Proposta salvata · preparo la revisione')
@@ -295,6 +329,39 @@ def install_cut_routes(app,store,root,load_project,active_run):
             return {'revision':plan['revision']}
         return await launch(pid,'rebuild',operation)
 
+    @app.post('/api/curation/projects/{pid}/cut/residual')
+    async def repair_residual(pid:str):
+        def operation(p,folder,progress):
+            from .cut_residual import review_residual_takes
+            _,_,old=current(pid)
+            progress(1,'Cerco frasi interrotte e ripartenze nel testo mantenuto…')
+            new=review_residual_takes(timing_read(folder),old)
+            progress(3,'Ripartenze verificate · conservo scelte e tempi originali…')
+            write_json(folder/('plan-backup-residual-'+str(time.time_ns())+'.json'),old)
+            write_json(folder/'plan.json',new)
+            return {'revision':new['revision']}
+        return await launch(pid,'residual',operation)
+
+    @app.post('/api/curation/projects/{pid}/cut/boundaries')
+    async def repair_boundaries(pid:str):
+        def operation(p,folder,progress):
+            from .cut_boundaries import review_take_boundaries
+            _,_,old=current(pid)
+            raw=timing_read(folder)
+            progress(1,'Verifico i confini semantici delle take…')
+            groups=review_take_boundaries(raw,old['groups'])
+            progress(3,'Separo le frasi indipendenti e conservo le scelte…')
+            new=build_cut_plan(raw,duration=p.source_video.duration,fps=p.source_video.fps,
+                signature=p.analysis_signature,groups=groups,discards=old.get('discards',[]),
+                pause_threshold=old['pause_threshold'],breathing=old['breathing'],
+                excluded_word_indices=old.get('excluded_word_indices',[]),tight_pauses=old.get('tight_pauses',False),pause_mode=old.get('pause_mode','soft'),silence_intervals=old.get('silence_intervals',[]))
+            new['warnings']=old.get('warnings',[])
+            write_json(folder/('plan-backup-boundaries-'+str(time.time_ns())+'.json'),old)
+            write_json(folder/'boundary-review.json',{'source_signature':p.analysis_signature,'groups':groups})
+            write_json(folder/'plan.json',new)
+            return {'revision':new['revision']}
+        return await launch(pid,'boundaries',operation)
+
     @app.put('/api/curation/projects/{pid}/cut')
     async def review_cut(pid:str,request:CutReview):
         p,folder,plan=current(pid)
@@ -307,17 +374,25 @@ def install_cut_routes(app,store,root,load_project,active_run):
                 index=int(key)
                 if not 0<=index<len(groups): raise ValueError('Gruppo non valido')
                 groups[index]['selected_take']=selected
+                groups[index]['user_selected_take']=True
             for key,keep in request.keep_discards.items():
                 index=int(key)
                 if not 0<=index<len(discards):raise ValueError('Scarto non valido')
                 discards[index]['keep']=keep
+            silences=plan.get('silence_intervals',[])
+            if request.tight_pauses is True and not silences:
+                from .cut_silence import detect_silences
+                silences=await asyncio.to_thread(detect_silences,Path(p.source_video.path),p.source_video.duration)
             new=build_cut_plan(timing_read(folder),duration=p.source_video.duration,
                 fps=p.source_video.fps,signature=p.analysis_signature,groups=groups,discards=discards,
-                pause_threshold=request.pause_threshold,breathing=request.breathing)
+                pause_threshold=request.pause_threshold,breathing=request.breathing,
+                excluded_word_indices=plan.get("excluded_word_indices",[]) if request.excluded_word_indices is None else request.excluded_word_indices,
+                tight_pauses=plan.get("tight_pauses",False) if request.tight_pauses is None else request.tight_pauses,
+                pause_mode=request.pause_mode or plan.get("pause_mode","soft"),silence_intervals=silences)
         except (ValueError,IndexError,KeyError) as exc: raise HTTPException(422,str(exc)) from exc
         new['warnings']=plan.get('warnings',[])
         write_json(folder/'plan.json',new)
-        return {'plan':new,'text':clean_transcript(timing_read(folder),new)['text']}
+        return {'plan':new,'text':clean_transcript(timing_read(folder),new)['text'],'words':review_words(timing_read(folder),new)}
 
     @app.post('/api/curation/projects/{pid}/cut/preview')
     async def preview_cut(pid:str):

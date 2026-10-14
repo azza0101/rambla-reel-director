@@ -25,3 +25,17 @@ def test_uncertain_short_transcription_preserves_original_words_and_times():
         transcriber=lambda *a:transcript([(1,2,'qualcosa diversa')]))
     assert warnings
     assert result['segments']==raw['segments']
+
+
+def test_optional_refinement_quota_does_not_discard_measured_transcript():
+    raw=transcript([(2,3,'Cura Viaggi')]);plan=build_cut_plan(raw,duration=5,fps=30,signature='s',groups=[])
+    plan['groups']=[{'takes':[[0,1],[0,1]],'selected_take':0}]
+    calls=[]
+    def limited(*args):
+        calls.append(args)
+        raise RuntimeError('Groq ASR failed (429): Rate limit reached')
+    result,warnings=refine_cut_timing(raw,plan,Path('source'),Path('.'),runner=lambda *a,**kw:None,transcriber=limited)
+    assert result['segments']==raw['segments']
+    assert result['timing_basis']=='cloud_asr_word_timestamps'
+    assert len(calls)==1
+    assert 'timestamp già misurati' in warnings[0]

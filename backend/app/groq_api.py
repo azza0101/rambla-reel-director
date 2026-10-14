@@ -42,10 +42,13 @@ class GroqDirectorClient:
         sleeper: Callable[[float], None] = time.sleep,
         event_callback: Callable[[str, dict[str, Any]], None] | None = None,
         http_client: Any | None = None,
+        max_output_tokens: int | None = None,
     ) -> None:
         clean_key = str(api_key or "").strip()
         if not clean_key:
             raise ValueError("GROQ_API_KEY is required")
+        self.max_output_tokens = max_output_tokens
+        if max_output_tokens is not None and (type(max_output_tokens) is not int or max_output_tokens<1):raise ValueError('max_output_tokens must be positive')
         self._api_key = clean_key
         self.model = str(model or DEFAULT_GROQ_MODEL).strip()
         self.fallback_models = tuple(
@@ -179,7 +182,7 @@ class GroqDirectorClient:
                     "reasoning_effort": self.thinking_level,
                     "reasoning_format": "hidden",
                     "temperature": 1.0,
-                    "max_completion_tokens": self._max_completion_tokens(active_model),
+                    "max_completion_tokens": self.max_output_tokens or self._max_completion_tokens(active_model),
                     "stream": False,
                     "response_format": {
                         "type": "json_schema",
