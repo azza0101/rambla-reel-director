@@ -1,6 +1,6 @@
 # RMBL B ROLL — handoff tecnico
 
-Aggiornato: 2026-10-09  Versione: `v0053`  Branch di consegna: `feat/api-first-text-first-v1`
+Aggiornato: 2026-10-14  Versione: `v0055`  Branch di consegna: `feat/api-first-text-first-v1`
 
 ## Avvio rapido
 
@@ -12,6 +12,17 @@ Aggiornato: 2026-10-09  Versione: `v0053`  Branch di consegna: `feat/api-first-t
 - Versione unica app/bridge: `RAMBLA_VERSION`.
 
 ## Flusso Resolve
+
+### Pass CUT opzionale v0054 (fase plugin)
+
+- Pannello prima della selezione parole: analisi integrale Groq ASR con tempi misurati, gruppi di tentativi, revisione semantica dell'ultima take completa e scarti fuori scena.
+- `cut_pass.py` costruisce un'unica mappa in frame originali/ricompattati, conserva la take precedente a quella valida e protegge i confini dall'arrotondamento.
+- `cut_pass_routes.py` salva trascrizione originale, suggerimenti, revisione e piano fuori dagli artefatti del workflow. Job asincroni con progressi delle fasi effettivamente completate, errori e debug copiabile.
+- UI permette ascolto delle take, cambio della scelta, conservazione/scarto dell'intero gruppo, ripristino degli scarti, parametri pause e anteprima video pulita.
+- Conferma crea un progetto indipendente `nome · CUT`, con video di proprietà, guida audio e trascrizione già rimappata; originale e bozza restano recuperabili. Il nuovo progetto riprende dalla selezione delle parole senza ASR.
+- Export verso Resolve dei progetti CUT intenzionalmente bloccato in questa prima fase: deve essere implementata l'applicazione della mappa alla timeline originale con backup e alternative disattivate. Il contratto completo è salvato in `cut-origin.json`.
+- Test: motore, confini fra parole, FPS, restituzione take precedente, job/revisioni, render reale con conteggio frame e conferma su progetto indipendente. Prova su `TEST-autocut_v1 / IMG_1545.MOV`: 336 parole fino a 185.282s; proposta iniziale verificata 11.9s con tre gruppi, anteprima generata. La domanda sul peso del passaporto è conservata nella proposta: l'utente può scartare quel gruppo se era una variante abbandonata.
+- v0055: timestamp video ricompattati con contatore intero dopo il filtro FPS e frequenza di output esplicita; elimina una durata video dichiarata più breve di un frame. Il test reale verifica sia conteggio frame sia durata video, oltre alla presenza audio. La revisione render invalida le vecchie anteprime.
 
 1. Il bridge mantiene un heartbeat con il backend locale e rileva la timeline focalizzata.
 2. **USA AUDIO IN RMBL B ROLL** invia audio e intervalli video esistenti; l'audio può essere riutilizzato solo se la firma della timeline coincide.
