@@ -29,3 +29,26 @@ c.refreshCut().then(()=>{
 '''
     result=subprocess.run([node,'-e',script],capture_output=True,text=True,encoding='utf-8')
     assert result.returncode==0,result.stderr
+
+
+def test_cut_click_shows_pending_activity_before_server_reply_and_progress_is_real():
+    node=shutil.which('node')
+    if not node:pytest.skip('node unavailable')
+    harness=r'''
+const vm=require('vm'),assert=require('assert'),nodes=new Map();
+const c={Map,Date,Math,Number,String,state:{pid:'p',project:{source_video:{}}},draw(){},setInterval(){},
+$:id=>{if(!nodes.has(id))nodes.set(id,{scrollIntoView(){},querySelector(){return{}},querySelectorAll(){return[]}});return nodes.get(id)},
+api:()=>new Promise(()=>{}),document:{},navigator:{clipboard:{}}};vm.createContext(c);
+'''
+    script=harness+'vm.runInContext('+__import__('json').dumps(JS)+',c);'+r'''
+vm.runInContext('drawCut=()=>{}',c);c.cutAction('analyze');
+assert.equal(vm.runInContext('cutData.job.status',c),'starting');
+assert.equal(nodes.get('cutPassFold').open,true);
+assert.equal(c.cutProgressState({status:'running',completed:0,total:4}).active,true);
+assert.equal(c.cutProgressState({status:'running',completed:0,total:4}).percent,0);
+assert.equal(c.cutProgressState({status:'running',completed:2.4,total:4}).percent,60);
+assert.equal(c.cutProgressState({status:'failed',completed:2,total:4,message:'429 Rate limit'}).label,'Limite temporaneo Groq');
+assert.equal(c.cutProgressState({status:'succeeded'}).percent,100);
+'''
+    result=subprocess.run([node,'-e',script],capture_output=True,text=True,encoding='utf-8')
+    assert result.returncode==0,result.stderr
