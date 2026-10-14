@@ -75,7 +75,10 @@ def test_page_contains_full_transcript_intent_workspace():
     assert "CREA TIMELINE PAROLE SELEZIONATE" in page
     assert "/resolve-title-templates" in page
     assert "X-Rambla-Filename" in page
-    assert "KURA paper title v8" in page
+    assert "resolveTitleTemplateV21" in page
+    assert "transcriptPrerequisiteV72" in page
+    assert "VAI A CONFERMA CUT" in page
+    assert "content.inert=!ready" in page
     assert "Trascina qui un Fusion Title .drfx" in page
     assert "Riavvia Resolve" in page
     assert "restartRequired" in page

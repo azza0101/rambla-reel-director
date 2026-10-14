@@ -1,7 +1,11 @@
 # RMBL B ROLL — handoff tecnico
 
-Aggiornato: 2026-10-14  Versione: `v0071`  Branch di consegna: `feat/api-first-text-first-v1`
+Aggiornato: 2026-10-14  Versione: `v0072`  Branch di consegna: `feat/api-first-text-first-v1`
 
+
+## Visibilità trascrizione v0072
+
+Sezione 2 sempre visibile e apribile. Prima della trascrizione/conferma CUT mostra un avviso con collegamento a CONFERMA CUT; contenuto attenuato e non interattivo. Il workflow già pronto resta invariato.
 
 ## Export selettivo e CUT nativo v0071
 
