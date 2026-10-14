@@ -58,5 +58,5 @@ def test_resolve_preparation_keeps_running_when_selected_media_download_fails():
 
     source = Path("backend/app/curation_server.py").read_text(encoding="utf-8")
     assert "Download delle clip selezionate non completato" not in source
-    assert "broll_timeline_payload(project_id, allow_unavailable=True)" in source
+    assert "broll_timeline_payload(project_id, allow_unavailable=True," in source
     assert 'payload["media_issues"] = media_issues' in source

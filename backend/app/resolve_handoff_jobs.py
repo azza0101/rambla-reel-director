@@ -19,6 +19,11 @@ class ResolveHandoffJobs:
         self._lock = threading.RLock()
         self._active: str | None = None
 
+    @property
+    def is_applying(self) -> bool:
+        with self._lock:
+            return self._active is not None
+
     def apply(self, project_root: Path, package_id: str, destination_mode: str, apply_scope: str = "all", *, current_project: str, current_timeline_id: str, current_mark_in: int | None = None) -> dict[str, Any]:
         if destination_mode not in {"new", "active"}:
             raise ValueError("destination_mode must be 'new' or 'active'")

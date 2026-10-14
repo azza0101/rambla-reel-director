@@ -67,3 +67,38 @@ def test_video_only_preparation_has_no_editorial_or_template_dependency(tmp_path
 
 
 from tests.unit.test_cut_pass_routes import tmp_path
+
+
+def test_bridge_heartbeat_does_not_query_resolve_during_apply(tmp_path, monkeypatch):
+    import threading
+    from types import SimpleNamespace
+    from fastapi.testclient import TestClient
+    from backend.app.curation_server import create_app
+    from backend.app.resolve_handoff import ResolveHandoffStore
+    import backend.app.resolve_bridge as bridge
+    import backend.app.resolve_textplus_timeline as helper
+    calls = []
+    timeline = SimpleNamespace(GetName=lambda: 'T', GetUniqueId=lambda: 'timeline-id')
+    project = SimpleNamespace(GetName=lambda: 'TEST', GetCurrentTimeline=lambda: timeline)
+    resolve = SimpleNamespace(GetProjectManager=lambda: SimpleNamespace(GetCurrentProject=lambda: project))
+    monkeypatch.setattr(bridge, 'connect_resolve', lambda: calls.append('read') or resolve)
+    monkeypatch.setattr(bridge, 'timeline_range', lambda _: (0, 30, 'timeline'))
+    gate = threading.Event()
+    def run(payload):
+        gate.wait(2)
+        return {}
+    monkeypatch.setattr(helper, 'run_resolve_helper', run)
+    root = tmp_path/'projects'
+    app = create_app(project_root=root)
+    project_root = root/'p'; project_root.mkdir(parents=True)
+    store = ResolveHandoffStore(root)
+    package = store.prepare(project_root, {'source_project_name': 'TEST'})
+    try:
+        with TestClient(app) as client:
+            assert client.get('/api/curation/resolve-bridge/status').json()['connected']
+            app.state.resolve_handoff_jobs.apply(project_root, package['package_id'], 'new', current_project='TEST', current_timeline_id='timeline-id')
+            status = client.get('/api/curation/resolve-bridge/status').json()
+            assert status['connected'] and status['operation_in_progress']
+            assert calls == ['read']
+    finally:
+        gate.set()

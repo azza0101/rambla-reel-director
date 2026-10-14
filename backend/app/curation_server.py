@@ -494,6 +494,8 @@ def create_app(
     from .resolve_textplus_timeline import run_resolve_helper as resolve_handoff_runner
     handoff_store = ResolveHandoffStore(root)
     handoff_jobs = ResolveHandoffJobs(handoff_store, resolve_handoff_runner)
+    app.state.resolve_handoff_jobs = handoff_jobs
+    last_resolve_bridge_status = {'connected': False, 'bridge_api_version': 2}
     from .resolve_prepare_jobs import ResolvePrepareJobs
     prepare_jobs = ResolvePrepareJobs()
     social_profiles = browser_profile_manager or BrowserProfileManager(_default_browser_profile_root(root), owns_live_session=True)
@@ -553,6 +555,9 @@ def create_app(
 
     @app.get("/api/curation/resolve-bridge/status")
     async def resolve_bridge_status() -> dict[str, Any]:
+        nonlocal last_resolve_bridge_status
+        if handoff_jobs.is_applying:
+            return {**last_resolve_bridge_status, 'operation_in_progress': True}
         from .resolve_bridge import connect_resolve, timeline_range
         try:
             resolve = await asyncio.to_thread(connect_resolve)
@@ -561,10 +566,11 @@ def create_app(
             if not project or not timeline:
                 raise RuntimeError("Apri un progetto e una timeline DaVinci Resolve")
             mark_in, mark_out, source = timeline_range(timeline)
-            return {"connected": True, "bridge_api_version": 2,
+            last_resolve_bridge_status = {"connected": True, "bridge_api_version": 2,
                     "project": project.GetName(), "timeline": timeline.GetName(),
                     "timeline_id": str(timeline.GetUniqueId()),
                     "mark_in": mark_in, "mark_out": mark_out, "range_source": source}
+            return last_resolve_bridge_status
         except Exception as exc:
             return {"connected": False, "bridge_api_version": 2, "detail": str(exc)}
 

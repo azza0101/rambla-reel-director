@@ -129,7 +129,7 @@ def test_bridge_source_is_served_for_local_self_update():
         )
         source = Path("tools/resolve_bridge/RAMBLA_B_ROLL.py").read_text(encoding="utf-8")
         assert response.status_code == 200
-        assert response.text == source
+        assert response.text.replace("\r\n", "\n") == source
         assert response.headers["x-rambla-bridge-sha256"]
     finally:
         shutil.rmtree(root, ignore_errors=True)

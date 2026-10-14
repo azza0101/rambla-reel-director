@@ -1,6 +1,17 @@
 # RMBL B ROLL — handoff tecnico
 
-Aggiornato: 2026-10-14  Versione: `v0070`  Branch di consegna: `feat/api-first-text-first-v1`
+Aggiornato: 2026-10-14  Versione: `v0071`  Branch di consegna: `feat/api-first-text-first-v1`
+
+
+## Export selettivo e CUT nativo v0071
+
+- Sezione 7: sotto INVIA A RESOLVE, tendina **Componenti da esportare** con video CUT, sottotitoli, parole evidenziate, B-roll/immagini, social e coperture generiche. Preferenze salvate per progetto; preparazione solo dei componenti scelti.
+- Video CUT: nuova timeline dal file lungo originale, video/audio separati, tagli in frame, formato 1080 sul lato corto e FPS originali anche 30000/1001. Take alternative disattivate sopra la base. Bozza non confermata: solo video; confermare CUT prima di lavorare sugli overlay.
+- Invii senza video su progetto CUT richiedono timeline e ricevuta della stessa revisione/sorgente. IN modificato non sposta gli overlay della base CUT.
+- Titoli separati sopra i video: creatore esistente con un solo seed Fusion inizializzato. Sottotitoli nativi su ST1 riservata. Nessuna dipendenza MCP nel prodotto.
+- SCARICA MP4 CUT sotto il player: file completo separato, render atomico verificato con ffprobe.
+- Heartbeat durante APPLICA usa stato cached senza RPC concorrenti. Checkpoint/ricevuta evitano duplicazioni dopo errori di conferma.
+- Verifica 2026-10-14: 257 test CUT/Resolve/export passati, con cartelle temporanee adattate al drive Windows nel processo di test. Helper prodotto provato su 20 video + 20 audio, 13 alternative disattivate, 1860 frame a 30fps, 1080x1920; titolo KURA v9 separato, SRT e generica in coda. Prova 30000/1001: 60 frame, 2.002s.
 
 ## Avvio rapido
 
@@ -20,7 +31,7 @@ Aggiornato: 2026-10-14  Versione: `v0070`  Branch di consegna: `feat/api-first-t
 - `cut_pass_routes.py` salva trascrizione originale, suggerimenti, revisione e piano fuori dagli artefatti del workflow. Job asincroni con progressi delle fasi effettivamente completate, errori e debug copiabile.
 - UI permette ascolto delle take, cambio della scelta, conservazione/scarto dell'intero gruppo, ripristino degli scarti, parametri pause e anteprima video pulita.
 - Conferma crea un progetto indipendente `nome · CUT`, con video di proprietà, guida audio e trascrizione già rimappata; originale e bozza restano recuperabili. Il nuovo progetto riprende dalla selezione delle parole senza ASR.
-- Export verso Resolve dei progetti CUT intenzionalmente bloccato in questa prima fase: deve essere implementata l'applicazione della mappa alla timeline originale con backup e alternative disattivate. Il contratto completo è salvato in `cut-origin.json`.
+- Da v0071, CUT di video originali caricati in app esportabile come nuova timeline nativa; CUT di guida audio multitraccia del bridge ancora escluso. Contratto congelato in `cut-origin.json`.
 - Test: motore, confini fra parole, FPS, restituzione take precedente, job/revisioni, render reale con conteggio frame e conferma su progetto indipendente. Prova su `TEST-autocut_v1 / IMG_1545.MOV`: 336 parole fino a 185.282s; proposta iniziale verificata 11.9s con tre gruppi, anteprima generata. La domanda sul peso del passaporto è conservata nella proposta: l'utente può scartare quel gruppo se era una variante abbandonata.
 - v0055: timestamp video ricompattati con contatore intero dopo il filtro FPS e frequenza di output esplicita; elimina una durata video dichiarata più breve di un frame. Il test reale verifica sia conteggio frame sia durata video, oltre alla presenza audio. La revisione render invalida le vecchie anteprime.
 - v0056: anteprima pulita azzera il seek e il callback di ASCOLTA, ricarica anche job successivi con lo stesso esito e mostra il player accanto ai comandi. Audio/video originali vengono messi in pausa durante l'ascolto CUT.

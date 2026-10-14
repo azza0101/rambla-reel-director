@@ -13,6 +13,37 @@ def checkpoint_path(payload):
     return Path(raw).with_name('native-cut-checkpoint.json') if raw else None
 
 
+def configure_native_timeline(timeline, cut):
+    rate = Fraction(cut['fps'])
+    ntsc = {Fraction(24000, 1001): '23.976', Fraction(30000, 1001): '29.97', Fraction(60000, 1001): '59.94'}
+    label = ntsc.get(rate, str(int(rate)) if rate.denominator == 1 else str(float(rate)))
+    values = {'useCustomSettings': '1', 'timelineFrameRate': label, 'timelineDropFrameTimecode': '0',
+              'timelineResolutionWidth': str(cut['width']), 'timelineResolutionHeight': str(cut['height'])}
+    setter = getattr(timeline, 'SetSettings', None)
+    if callable(setter):
+        write = lambda key, value: setter({key: value})
+    else:
+        setter = getattr(timeline, 'SetSetting', None)
+        if not callable(setter):
+            raise RuntimeError('API impostazioni timeline non disponibile')
+        write = setter
+    for key, value in values.items():
+        if write(key, value):
+            continue
+        # Resolve21 Timeline API can use NTSC enum tokens23/29/59, unlike
+        # Project settings. Verify the displayed fractional rate after setting.
+        if key == 'timelineFrameRate' and rate in ntsc and write(key, str(int(rate))):
+            continue
+        raise RuntimeError(f'Resolve non accetta impostazione CUT {key}={value}')
+    getter = getattr(timeline, 'GetSettings', None)
+    actual = getter() if callable(getter) else timeline.GetSetting()
+    if (abs(float(actual['timelineFrameRate']) - float(rate)) > .002
+        or str(actual['timelineDropFrameTimecode']) != '0'
+        or int(actual['timelineResolutionWidth']) != cut['width']
+        or int(actual['timelineResolutionHeight']) != cut['height']):
+        raise RuntimeError('Formato/FPS della timeline non corrispondono alla sorgente')
+
+
 def clear_native_cut_checkpoint(payload):
     path = checkpoint_path(payload)
     if path:
@@ -100,9 +131,10 @@ def verify_native_cut_base(timeline, cut, base_frame):
             source_start = getattr(item, 'GetSourceStartFrame', None)
             if callable(source_start) and source_start() != segment['source_in_frame']:
                 raise RuntimeError(f'Verifica CUT {kind} fallita: IN sorgente diverso dal piano')
-            source_end = getattr(item, 'GetSourceEndFrame', None)
-            if callable(source_end) and source_end() != segment['source_out_frame']:
-                raise RuntimeError(f'Verifica CUT {kind} fallita: OUT sorgente diverso dal piano')
+            # For VFR phone media GetSourceEndFrame can report the last decoded
+            # source frame rather than the CFR cut boundary (one fewer frame).
+            # OUT is checked by the append's verified destination length; IN
+            # and original media identity are checked here independently.
             if cut.get('source_path'):
                 media = item.GetMediaPoolItem()
                 if not media or Path(media.GetClipProperty('File Path')).resolve() != Path(cut['source_path']).resolve():
@@ -142,27 +174,7 @@ def create_native_cut_base(resolve, project, payload, *, progress=None):
                                     'timeline_name': name, 'revision': cut['revision']})
         if not timeline or not project.SetCurrentTimeline(timeline):
             raise RuntimeError('Impossibile attivare la nuova timeline CUT')
-        rate = Fraction(cut['fps'])
-        rate_label = {Fraction(24000, 1001): '23.976', Fraction(30000, 1001): '29.97',
-                      Fraction(60000, 1001): '59.94'}.get(rate, str(int(rate)) if rate.denominator == 1 else str(float(rate)))
-        settings = {'useCustomSettings': '1', 'timelineFrameRate': rate_label,
-                    'timelineDropFrameTimecode': '0',
-                    'timelineResolutionWidth': str(cut['width']),
-                    'timelineResolutionHeight': str(cut['height'])}
-        setter = getattr(timeline, 'SetSettings', None)
-        if callable(setter):
-            if not setter(settings):
-                raise RuntimeError('Resolve non accetta formato/FPS della nuova timeline CUT')
-        else:
-            setter = getattr(timeline, 'SetSetting', None)
-            if not callable(setter) or not all(setter(k, v) for k, v in settings.items()):
-                raise RuntimeError('Resolve non accetta formato/FPS della nuova timeline CUT')
-        getter = getattr(timeline, 'GetSettings', None)
-        actual = getter() if callable(getter) else timeline.GetSetting()
-        if (abs(float(actual['timelineFrameRate']) - float(Fraction(cut['fps']))) > .002
-            or int(actual['timelineResolutionWidth']) != cut['width']
-            or int(actual['timelineResolutionHeight']) != cut['height']):
-            raise RuntimeError('Formato/FPS della timeline non corrispondono alla sorgente')
+        configure_native_timeline(timeline, cut)
         base = int(timeline.GetStartFrame())
         convention = None
         for index, segment in enumerate(cut['segments']):

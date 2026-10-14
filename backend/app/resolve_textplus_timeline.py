@@ -447,7 +447,7 @@ def find_title_carrier_media(timeline: Any) -> Any:
     for track in range(1, int(timeline.GetTrackCount("video") or 0) + 1):
         for item in timeline.GetItemListInTrack("video", track) or []:
             media = item.GetMediaPoolItem()
-            if media is not None and str(media.GetClipProperty("Type") or "").casefold() == "video":
+            if media is not None and str(media.GetClipProperty("Type") or "").casefold() in {'video', 'video + audio', 'video+audio'}:
                 return media
     raise RuntimeError("Resolve needs at least one source video to create separate RMBL title clips")
 
@@ -515,6 +515,53 @@ def append_separate_fusion_titles(
     finally:
         shutil.rmtree(directory, ignore_errors=True)
     return inserted
+
+
+def append_native_cut_titles(resolve, project, target, plan, payload, *, title_name, track_index, base_frame):
+    """Reuse one initialized title composition without repeated overwrite inserts."""
+    from types import SimpleNamespace
+    from .resolve_native_cut import configure_native_timeline
+    pool = project.GetMediaPool()
+    getter = getattr(target, 'GetSettings', None)
+    settings = getter() if callable(getter) else target.GetSetting()
+    seed = pool.CreateEmptyTimeline('RMBL CUT TITLE SEED ' + uuid.uuid4().hex[:8])
+    if not seed:
+        raise RuntimeError('Impossibile creare la composizione modello del titolo CUT')
+    try:
+        configure_native_timeline(seed, {'fps': payload['native_cut_fps'],
+            'width': int(settings['timelineResolutionWidth']), 'height': int(settings['timelineResolutionHeight'])})
+        if not activate_timeline(resolve, project, seed):
+            raise RuntimeError('Impossibile attivare la composizione modello del titolo CUT')
+        inserted = insert_fusion_title_with_retry(seed, title_name)
+        if not inserted:
+            raise RuntimeError(f"Resolve non riesce a inserire il titolo '{title_name}'")
+        _text_tool(inserted)
+        seed_base = int(seed.GetStartFrame())
+        output = []
+        for index, row in enumerate(plan['segments']):
+            raise_if_cancelled(payload)
+            activate_timeline(resolve, project, seed)
+            set_textplus_content(inserted, row['text'])
+            source = SimpleNamespace(
+                GetStart=lambda row=row: seed_base + row['start_frame'],
+                GetEnd=lambda row=row: seed_base + row['end_frame'],
+                ExportFusionComp=inserted.ExportFusionComp)
+            if not activate_timeline(resolve, project, target):
+                raise RuntimeError('Impossibile attivare la timeline CUT per i titoli')
+            clips = append_separate_fusion_titles(pool, target, [source], source_base_frame=seed_base,
+                destination_base_frame=base_frame, track_index=track_index, title_name=title_name,
+                composition_root=Path(payload.get('media_staging_root') or Path.cwd()) / '.title-comps')
+            item = clips[0]
+            if str(_text_tool(item).GetInput('StyledText', 0)) != row['text']:
+                raise RuntimeError('Verifica testo del titolo CUT non riuscita')
+            output.append({**row, 'item': item})
+            report_handoff_progress(payload, 'titles', 35 + int(30 * (index + 1) / len(plan['segments'])),
+                                    f"Parole evidenziate: {index + 1}/{len(plan['segments'])}")
+        return output
+    finally:
+        activate_timeline(resolve, project, target)
+        if pool.DeleteTimelines([seed]) is False:
+            raise RuntimeError('Resolve non riesce a rimuovere la timeline modello dei titoli CUT')
 
 
 def backup_drt_path(payload: dict[str, Any], backup_name: str) -> Path:
@@ -745,6 +792,10 @@ def protect_existing_tracks(
 
 
 def unlock_broll_tracks(timeline: Any, clips: list[dict[str, Any]]) -> None:
+    required = max((int(row['track_index']) for row in clips), default=0)
+    while int(timeline.GetTrackCount('video') or 0) < required:
+        if timeline.AddTrack('video') is False:
+            raise RuntimeError('Resolve could not create the selected B-roll tracks')
     for track in sorted({int(row["track_index"]) for row in clips}):
         if timeline.SetTrackLock("video", track, False) is False:
             raise RuntimeError(f"Resolve could not unlock B-roll track {track}")
@@ -1075,7 +1126,10 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
             result.update(video_count=base['video_count'], audio_count=base['audio_count'],
                           resolve_project=project.GetName(),
                           cut_revision=cut['revision'], source_identity=cut['source_identity'],
-                          fps=cut['fps'], width=cut['width'], height=cut['height'], destination_mode='new')
+                          fps=cut['fps'], width=cut['width'], height=cut['height'], destination_mode='new',
+                          source_unchanged=True,
+                          source_timeline_id=str(original.GetUniqueId()) if original else None,
+                          source_timeline=str(original.GetName()) if original else None)
             save_resolve_project(project_manager)
             record_native_cut_result(project, payload, result)
             report_handoff_progress(payload, 'completed', 100, 'Timeline CUT nativa pronta')
@@ -1226,6 +1280,8 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
                         muted_title_count = remove_prior_rambla_titles(generated, title_name=title_name)
                     if components.get('subtitles'):
                         muted_subtitle_count = mute_prior_rambla_subtitles(generated)
+                        # The native importer always targets ST1; reserve it before the snapshot.
+                        subtitle_target_track = reserve_subtitle_track_at_start(generated)
                     if any(components.get(k) for k in ('broll', 'social', 'generic')):
                         removed_broll_count, reusable_broll_tracks = remove_prior_rambla_broll(generated, components)
             elif apply_scope == "titles":
@@ -1260,7 +1316,7 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
                 name_rambla_track(generated, "video", title_track_index, "RMBL TEXT")
         base_frame = int(payload.get("bridge_mark_in") if payload.get("bridge_mark_in") is not None else generated.GetStartFrame())
         keep = []
-        if include_titles:
+        if include_titles and not payload.get('native_cut_fps'):
             title_target = generated
             title_base_frame = base_frame
             if destination_mode == "active":
@@ -1337,6 +1393,10 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
                 if media_pool.DeleteTimelines([title_build_timeline]) is False:
                     raise RuntimeError("Resolve could not remove the temporary RMBL title timeline")
                 title_build_timeline = None
+        elif include_titles:
+            keep = append_native_cut_titles(resolve, project, generated, plan, payload,
+                title_name=title_name, track_index=int(title_track_index), base_frame=base_frame)
+            report_handoff_progress(payload, 'titles', 66, 'Parole evidenziate CUT inserite')
         else:
             report_handoff_progress(payload,"titles",66,"Testi RMBL lasciati invariati")
 

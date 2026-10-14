@@ -139,6 +139,8 @@ def rig(monkeypatch):
         timeline.tracks = copy.deepcopy(backups[-1])
         return timeline
     monkeypatch.setattr(materializer, "create_active_backup", backup)
+    monkeypatch.setattr(materializer, "export_drt", lambda *args: None)
+    monkeypatch.setattr(materializer, "remove_archived_backup_timeline", lambda *args: None)
     monkeypatch.setattr(materializer, "find_timeline_media_item", lambda *args: object())
     monkeypatch.setattr(materializer, "restore_active_timeline", restore)
     payload = {"mode": "editing", "apply_scope": "subtitles", "destination_mode": "active",
@@ -213,3 +215,12 @@ def test_legacy_plain_import_still_restores_its_temporary_lock(rig):
                                            rig.timeline, rows, fps=30, base_frame=108000)
     native.verify_native_subtitles(rig.timeline, rows, fps=30, base_frame=108000, items=items)
     assert len(items) == 2 and rig.timeline.GetIsTrackLocked("subtitle", 1) is True
+
+
+def test_checked_subtitles_only_preserves_previous_items(rig):
+    rig.payload['apply_scope'] = 'all'
+    rig.payload['components'] = {'subtitles': True, 'highlights': False, 'broll': False, 'social': False, 'generic': False, 'video': False}
+    previous = [item.uid for track in rig.timeline.tracks['subtitle'] for item in track['items']]
+    materializer.materialize_in_resolve(rig.payload)
+    current = [item.uid for track in rig.timeline.tracks['subtitle'] for item in track['items']]
+    assert all(uid in current for uid in previous)

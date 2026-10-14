@@ -124,3 +124,5 @@ selected_assets.json
 .superpowers/
 
 .test-native-*
+
+/QA_NATIVE_CUT_TEST/
