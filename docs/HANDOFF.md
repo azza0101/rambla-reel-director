@@ -1,7 +1,13 @@
 # RMBL B ROLL — handoff tecnico
 
-Aggiornato: 2026-10-14  Versione: `v0073`  Branch di consegna: `feat/api-first-text-first-v1`
+Aggiornato: 2026-10-15  Versione: `v0074`  Branch di consegna: `feat/api-first-text-first-v1`
 
+
+## Parole evidenziate senza annidamento v0074
+
+- Eliminato CreateFusionClip dal percorso condiviso append_separate_fusion_titles: composizione applicata direttamente alla singola clip, senza contenitore Fusion/compound. Vale per invii CUT e standard.
+- Nome assegnato prima di importare la composizione; testo e timing verificati. Prova reale isolata: titolo a frame 320–350, composizione corretta, clip ordinaria con 11714 frame di margine destro. Nessun contenitore da decomporre.
+- 267 test CUT/Resolve/export/UI passati. Le clip già annidate si rigenerano reinviando le sole parole evidenziate; non vengono convertite silenziosamente durante l’aggiornamento.
 
 ## Invio componenti dal progetto CUT v0073
 

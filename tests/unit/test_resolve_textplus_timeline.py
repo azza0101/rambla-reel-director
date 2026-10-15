@@ -194,17 +194,17 @@ def test_separate_fusion_titles_are_individual_clips_on_the_upper_track():
         def GetTrackCount(self, kind): return 1
         def GetItemListInTrack(self, kind, track): return [existing]
         def CreateFusionClip(self, items):
-            clip = FusionItem(items[0]); self.created.append(clip); return clip
+            raise AssertionError("Titles must not be wrapped in a nested Fusion Clip")
 
     class Pool:
         def __init__(self): self.rows = []
         def AppendToTimeline(self, rows):
             self.rows.extend(rows)
             row = rows[0]
-            return [SimpleNamespace(
+            return [FusionItem(SimpleNamespace(
                 GetStart=lambda: row["recordFrame"],
                 GetEnd=lambda: row["recordFrame"] + row["endFrame"],
-            )]
+            ))]
 
     timeline, pool = Timeline(), Pool()
     clips = append_separate_fusion_titles(

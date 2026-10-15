@@ -466,9 +466,9 @@ def append_separate_fusion_titles(
     """Copy isolated Fusion titles back as individual clips on the upper track.
 
     Resolve cannot append a Fusion Title directly to a chosen video track. A
-    short ordinary clip can, however, be placed precisely and converted into a
-    Fusion Clip. Importing the title composition into each carrier preserves
-    editable, separate title clips without rippling any existing edit.
+    short ordinary clip can be placed precisely and receive the composition
+    directly. Never use CreateFusionClip here: it nests the clip and makes
+    ordinary duration edits depend on decomposing it first.
     """
     carrier = find_title_carrier_media(timeline)
     inserted: list[Any] = []
@@ -494,13 +494,11 @@ def append_separate_fusion_titles(
             }]) or []
             if len(raw) != 1:
                 raise RuntimeError(f"Resolve could not place RMBL title carrier {index}")
-            fusion_item = timeline.CreateFusionClip([raw[0]])
-            if not fusion_item:
-                raise RuntimeError(f"Resolve could not create separate RMBL Fusion clip {index}")
-            if not fusion_item.ImportFusionComp(str(comp_path)):
-                raise RuntimeError(f"Resolve could not import RMBL title composition {index}")
+            fusion_item = raw[0]
             if fusion_item.SetName(title_name) is False:
                 raise RuntimeError(f"Resolve could not name RMBL title clip {index}")
+            if not fusion_item.ImportFusionComp(str(comp_path)):
+                raise RuntimeError(f"Resolve could not import RMBL title composition {index}")
             color_setter = getattr(fusion_item, "SetClipColor", None)
             if color_setter is not None and color_setter("Yellow") is False:
                 raise RuntimeError(f"Resolve could not color RMBL title clip {index}")
