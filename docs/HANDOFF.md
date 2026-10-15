@@ -1,7 +1,11 @@
 # RMBL B ROLL — handoff tecnico
 
-Aggiornato: 2026-10-14  Versione: `v0072`  Branch di consegna: `feat/api-first-text-first-v1`
+Aggiornato: 2026-10-14  Versione: `v0073`  Branch di consegna: `feat/api-first-text-first-v1`
 
+
+## Invio componenti dal progetto CUT v0073
+
+Il progetto CUT confermato cerca la ricevuta della base nativa anche nel proprio progetto originale (cut-origin.project_id), verificando revisione e identità sorgente. Consente video-only dal padre seguito da testi/subs dal figlio sulla stessa timeline, senza reimportare il video.
 
 ## Visibilità trascrizione v0072
 

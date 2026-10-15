@@ -53,3 +53,17 @@ def test_frozen_child_uses_its_own_map_and_changed_original_is_rejected(tmp_path
         native.load_native_cut(root / child.project_id, root)
     with pytest.raises(ValueError, match='cambiato'):
         native.load_native_cut(root / parent.project_id, root)
+
+
+def test_cut_child_finds_parent_video_receipt_only_for_frozen_revision(tmp_path):
+    import json
+    from backend.app.native_cut_export import find_native_cut_receipt
+    parent=tmp_path/'parent'; child=tmp_path/'child'; child.mkdir(); parent.mkdir()
+    (child/'cut-origin.json').write_text(json.dumps({'project_id':'parent'}))
+    out=parent/'resolve-outbox'/'sent'; out.mkdir(parents=True)
+    cut={'revision':'frozen', 'source_identity':{'size':123,'mtime_ns':456}}
+    receipt={'status':'completed','updated_at':'2026-10-14', 'result':{**cut,'cut_revision':'frozen','timeline_id':'existing-cut'}}
+    (out/'package.json').write_text(json.dumps(receipt))
+    assert find_native_cut_receipt(child,tmp_path,cut)['timeline_id']=='existing-cut'
+    assert find_native_cut_receipt(child,tmp_path,{**cut,'revision':'changed'}) is None
+    assert find_native_cut_receipt(child,tmp_path,{**cut,'source_identity':{'size':124}}) is None

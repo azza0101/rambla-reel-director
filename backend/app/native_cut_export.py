@@ -65,3 +65,27 @@ def load_native_cut(project_root,projects_root):
         raise ValueError('Il video originale congelato è stato modificato: ripristina la sorgente')
     return {**plan,'source_path':str(source.resolve()),'fps':str(source_rate),'width':width,'height':height,
             'source_identity':identity,'export_schema':'rmbl-native-cut-1'}
+
+
+def find_native_cut_receipt(project_root, projects_root, cut):
+    """The uploaded parent and its confirmed CUT share the same verified base."""
+    roots = [Path(project_root)]
+    origin = roots[0] / 'cut-origin.json'
+    if origin.is_file():
+        provenance = json.loads(origin.read_text(encoding='utf-8'))
+        parent_id = str(provenance.get('project_id') or '')
+        if parent_id and parent_id not in {'.', '..'} and all(c.isalnum() or c in '_-' for c in parent_id):
+            roots.append(Path(projects_root) / parent_id)
+    receipts = []
+    for owner in roots:
+        for path in (owner / 'resolve-outbox').glob('*/package.json'):
+            try:
+                row = json.loads(path.read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                continue
+            result = row.get('result') or {}
+            if (row.get('status') == 'completed' and result.get('timeline_id')
+                    and result.get('cut_revision') == cut['revision']
+                    and result.get('source_identity') == cut['source_identity']):
+                receipts.append(row)
+    return max(receipts, key=lambda row: row.get('updated_at', ''), default={}).get('result')

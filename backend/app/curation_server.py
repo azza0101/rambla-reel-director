@@ -1405,10 +1405,8 @@ def create_app(
             from .native_cut_export import load_native_cut
             from fractions import Fraction
             native_reference = load_native_cut(root / project_id, root)
-            receipts = [_read_json(path, {}) for path in (root / project_id / 'resolve-outbox').glob('*/package.json')]
-            receipt = next((row.get('result') for row in sorted(receipts, key=lambda row: row.get('updated_at', ''), reverse=True)
-                if row.get('status') == 'completed' and row.get('result', {}).get('cut_revision') == native_reference['revision']
-                and row.get('result', {}).get('source_identity') == native_reference['source_identity']), None)
+            from .native_cut_export import find_native_cut_receipt
+            receipt = find_native_cut_receipt(root / project_id, root, native_reference)
             if not receipt:
                 raise ValueError('Seleziona Video CUT per creare prima la base nativa corrispondente')
         export_cut = native_cut or native_reference
