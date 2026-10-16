@@ -109,6 +109,10 @@ class GroqDirectorClient:
         return 16384
 
     def _post(self, body: dict[str, Any], headers: dict[str, str]) -> Any:
+        from .magic_usage import invoke_http
+        return invoke_http('groq', body, lambda: self._post_unbudgeted(body, headers))
+
+    def _post_unbudgeted(self, body: dict[str, Any], headers: dict[str, str]) -> Any:
         if self._http_client is not None:
             return self._http_client.post(
                 self.endpoint,

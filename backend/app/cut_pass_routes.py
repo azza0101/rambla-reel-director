@@ -227,6 +227,8 @@ def install_cut_routes(app,store,root,load_project,active_run):
             'started_at':time.time(),'updated_at':time.time(),'history':[], 'source_signature':p.analysis_signature}
         jobs[pid]=job; write_json(folder/'job.json',job)
         def progress(done,message):
+            from .magic_usage import check_current
+            check_current()
             stamp=time.time()
             job.update(completed=max(job['completed'],done),message=message,updated_at=stamp)
             job['history'].append({'completed':done,'message':message,'at':stamp})

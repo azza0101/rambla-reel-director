@@ -202,12 +202,14 @@ def transcribe_groq(source: Path, output: Path) -> dict[str, Any]:
     with audio.open("rb") as handle:
         files = {"file": (audio.name, handle, "audio/flac")}
         with httpx.Client(timeout=httpx.Timeout(180.0, connect=20.0, write=60.0)) as client:
-            response = client.post(
+            from .magic_usage import invoke_http
+            response = invoke_http('groq_asr', {'model':model, 'source':str(source.resolve()),
+                'size':source.stat().st_size, 'mtime_ns':source.stat().st_mtime_ns, 'data':data}, lambda: client.post(
                 GROQ_TRANSCRIPTIONS_ENDPOINT,
                 headers={"Authorization": f"Bearer {api_key}"},
                 data=data,
                 files=files,
-            )
+            ))
     try:
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:

@@ -248,6 +248,10 @@ class GeminiInteractionsClient:
         return self.retry_delays[min(retry_index, len(self.retry_delays) - 1)]
 
     def _post(self, body: dict[str, Any], headers: dict[str, str]) -> Any:
+        from .magic_usage import invoke_http
+        return invoke_http('gemini', body, lambda: self._post_unbudgeted(body, headers))
+
+    def _post_unbudgeted(self, body: dict[str, Any], headers: dict[str, str]) -> Any:
         if self._http_client is not None:
             return self._http_client.post(
                 self.endpoint,
@@ -275,7 +279,8 @@ class GeminiInteractionsClient:
             return self._post(body, headers)
         started = time.monotonic()
         with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(self._post, body, headers)
+            from contextvars import copy_context
+            future = executor.submit(copy_context().run, self._post, body, headers)
             while True:
                 try:
                     return future.result(timeout=15.0)

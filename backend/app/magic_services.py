@@ -12,5 +12,5 @@ class MagicWaitingInput(RuntimeError):
     """An external verification or a supported source is needed to continue."""
 
 
-class MagicBudgetReached(RuntimeError):
+class MagicBudgetReached(ValueError):
     """Return a partial, explicit result instead of making more paid calls."""

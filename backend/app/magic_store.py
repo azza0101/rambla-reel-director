@@ -10,6 +10,7 @@ from copy import deepcopy
 
 from .atomic_io import write_json
 from .magic_models import MagicOptions
+from .magic_services import MagicBudgetReached
 
 
 def fingerprint(value):
@@ -89,7 +90,7 @@ class MagicStore:
             calls = [c for c in row['calls'].values() if c['cloud']]
             if cloud and (len(calls) >= row['options']['max_cloud_requests'] or
                           (visual and sum(c['visual'] for c in calls) >= row['options']['max_visual_requests'])):
-                raise ValueError('Raggiunto il budget AI di MAGICO')
+                raise MagicBudgetReached('Raggiunto il budget AI di MAGICO')
             call_id = uuid.uuid4().hex
             row['calls'][call_id] = dict(phase=phase, provider=provider, input_signature=input_signature,
                 visual=visual, cloud=cloud, status='started', started_at=datetime.now(timezone.utc).isoformat())
