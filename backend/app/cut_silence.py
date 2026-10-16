@@ -16,7 +16,7 @@ def detect_silences(source,duration):
     return ranges
 
 
-def trim_silence_ranges(ranges,silences,rate,mode,words=()):
+def trim_silence_ranges(ranges,silences,rate,mode,words=(),*,end_margin_ms=0):
     minimum,margin={'soft':(.45,.10),'medium':(.30,.08),'strong':(.18,.06)}[mode]
     cuts=[]
     for start,end in silences:
@@ -25,6 +25,9 @@ def trim_silence_ranges(ranges,silences,rate,mode,words=()):
             # measured timestamp of brief words touched by a silence boundary.
             cut_start,cut_end=start+margin,end-margin
             for word in words:
+                if end_margin_ms and word['start'] < cut_start < word['end'] + end_margin_ms/1000:
+                    next_start = min((w['start'] for w in words if w['start'] >= word['end']), default=float('inf'))
+                    cut_start = max(cut_start, min(word['end'] + end_margin_ms/1000, next_start))
                 if word['end']-word['start']<=.35:
                     if word['start']<cut_start<word['end']:cut_start=word['end']+.04
                     if word['start']<cut_end<word['end']:cut_end=word['start']-.04

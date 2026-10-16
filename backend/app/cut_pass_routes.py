@@ -28,6 +28,7 @@ class CutReview(BaseModel):
     excluded_word_indices: list[int] | None = Field(default=None, max_length=100000)
     pause_threshold: float = Field(default=1.2, ge=.5, le=5)
     breathing: float = Field(default=.18, ge=.05, le=.5)
+    end_margin_ms: int | None = Field(default=None, ge=0, le=400)
 
 
 def propose_groups(transcript):
@@ -197,7 +198,7 @@ def install_cut_routes(app,store,root,load_project,active_run):
         write_json(folder/'alignment-signature.json',{'signature':p.analysis_signature})
         adjusted=build_cut_plan(aligned,duration=p.source_video.duration,fps=p.source_video.fps,
             signature=p.analysis_signature,groups=plan['groups'],discards=plan.get('discards',[]),
-            pause_threshold=plan['pause_threshold'],breathing=plan['breathing'],excluded_word_indices=plan.get('excluded_word_indices',[]),tight_pauses=plan.get('tight_pauses',False),pause_mode=plan.get('pause_mode','soft'),silence_intervals=plan.get('silence_intervals',[]))
+            pause_threshold=plan['pause_threshold'],breathing=plan['breathing'],excluded_word_indices=plan.get('excluded_word_indices',[]),tight_pauses=plan.get('tight_pauses',False),pause_mode=plan.get('pause_mode','soft'),silence_intervals=plan.get('silence_intervals',[]),end_margin_ms=plan.get('end_margin_ms',0))
         adjusted['warnings']=list(dict.fromkeys([w for w in plan.get('warnings',[]) if not w.startswith('Take ')]+warnings))
         return adjusted
 
@@ -274,38 +275,9 @@ def install_cut_routes(app,store,root,load_project,active_run):
     async def analyze_cut(pid:str):
         def operation(p,folder,progress):
             from .cloud_analyze_cli import transcribe_groq
-            cached=folder/'transcript-original.json'; signature=folder/'source-signature.json'
-            progress(0,'Trascrizione integrale con tempi per parola…')
-            if cached.is_file() and signature.is_file() and read(signature).get('signature')==p.analysis_signature:
-                raw=read(cached)
-            else:
-                raw=transcribe_groq(Path(p.source_video.path),folder)
-                write_json(cached,raw);write_json(signature,{'signature':p.analysis_signature})
-            progress(1,'Trascrizione pronta · riconosco ripartenze e take…')
-            proposal_signature=folder/'suggestions-signature.json'
-            if proposal_signature.is_file() and (folder/'suggestions.json').is_file() and read(proposal_signature).get('signature')==p.analysis_signature:
-                suggestion=read(folder/'suggestions.json')
-                progress(1,'Gruppi già riconosciuti · riprendo dalla verifica delle take')
-            else:
-                suggestion=propose_groups(raw)
-                if not isinstance(suggestion,dict):suggestion={'groups':suggestion,'discards':[]}
-                write_json(folder/'suggestions.json',suggestion)
-                write_json(proposal_signature,{'signature':p.analysis_signature})
-            groups,discards,warnings=prepare_suggestions(suggestion)
-            progress(2,'Verifico l’ultima take completa di ciascuna frase…')
-            groups=choose_complete_takes(raw,groups)
-            write_json(folder/'reviewed-suggestions.json',{'groups':groups,'discards':discards})
-            progress(2,'Take verificate · calcolo tagli e tempi del montaggio…')
-            plan=build_cut_plan(raw,duration=p.source_video.duration,fps=p.source_video.fps,
-                signature=p.analysis_signature,groups=groups,discards=discards)
-            plan['warnings']=warnings
-            progress(2,'Verifico ripartenze parziali rimaste nel testo…')
-            from .cut_residual import review_residual_takes
-            plan=review_residual_takes(raw,plan)
-            plan=align_plan(p,folder,plan,progress)
-            write_json(folder/'plan.json',plan)
-            progress(3,'Proposta salvata · preparo la revisione')
-            return {'revision':plan['revision'],'groups':len(plan['groups'])}
+            from .cut_analysis_service import analyze_cut_project
+            return analyze_cut_project(p,folder,progress,transcribe=transcribe_groq,
+                propose=propose_groups,choose=choose_complete_takes,align=align_plan)
         return await launch(pid,'analyze',operation)
 
     @app.get('/api/curation/projects/{pid}/cut/words')
@@ -370,7 +342,7 @@ def install_cut_routes(app,store,root,load_project,active_run):
             new=build_cut_plan(raw,duration=p.source_video.duration,fps=p.source_video.fps,
                 signature=p.analysis_signature,groups=groups,discards=old.get('discards',[]),
                 pause_threshold=old['pause_threshold'],breathing=old['breathing'],
-                excluded_word_indices=old.get('excluded_word_indices',[]),tight_pauses=old.get('tight_pauses',False),pause_mode=old.get('pause_mode','soft'),silence_intervals=old.get('silence_intervals',[]))
+                excluded_word_indices=old.get('excluded_word_indices',[]),tight_pauses=old.get('tight_pauses',False),pause_mode=old.get('pause_mode','soft'),silence_intervals=old.get('silence_intervals',[]),end_margin_ms=old.get('end_margin_ms',0))
             new['warnings']=old.get('warnings',[])
             write_json(folder/('plan-backup-boundaries-'+str(time.time_ns())+'.json'),old)
             write_json(folder/'boundary-review.json',{'source_signature':p.analysis_signature,'groups':groups})
@@ -404,7 +376,7 @@ def install_cut_routes(app,store,root,load_project,active_run):
                 pause_threshold=request.pause_threshold,breathing=request.breathing,
                 excluded_word_indices=plan.get("excluded_word_indices",[]) if request.excluded_word_indices is None else request.excluded_word_indices,
                 tight_pauses=plan.get("tight_pauses",False) if request.tight_pauses is None else request.tight_pauses,
-                pause_mode=request.pause_mode or plan.get("pause_mode","soft"),silence_intervals=silences)
+                pause_mode=request.pause_mode or plan.get("pause_mode","soft"),silence_intervals=silences,end_margin_ms=request.end_margin_ms if request.end_margin_ms is not None else plan.get('end_margin_ms',0))
         except (ValueError,IndexError,KeyError) as exc: raise HTTPException(422,str(exc)) from exc
         new['warnings']=plan.get('warnings',[])
         write_json(folder/'plan.json',new)
@@ -515,3 +487,9 @@ def install_cut_routes(app,store,root,load_project,active_run):
             write_json(folder/'plan.json',plan)
             return {'project_id':child.project_id}
         return await launch(pid,'confirm',operation)
+
+    from .cut_analysis_service import CutEngine
+    engine = CutEngine({'analyze':analyze_cut, 'boundaries':repair_boundaries,
+        'residual':repair_residual, 'review':review_cut, 'confirm':confirm_cut}, state, current)
+    app.state.cut_engine = engine
+    return engine

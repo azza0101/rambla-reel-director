@@ -64,7 +64,7 @@ def reconcile_question_takes(transcript,plan):
                         else:blocks.append([i,i])
                     for pair in blocks:discards.append({'range':pair,'reason':'Conferme e regia fra take della stessa domanda','confidence':.99,'keep':False})
             break
-    new=build_cut_plan(transcript,duration=plan['source_duration_frames']/float(__import__('fractions').Fraction(plan['fps'])),fps=plan['fps'],signature=plan['source_signature'],groups=groups,discards=discards,pause_threshold=plan['pause_threshold'],breathing=plan['breathing'],excluded_word_indices=plan.get('excluded_word_indices',[]),tight_pauses=plan.get('tight_pauses',False),pause_mode=plan.get('pause_mode','soft'),silence_intervals=plan.get('silence_intervals',[]))
+    new=build_cut_plan(transcript,duration=plan['source_duration_frames']/float(__import__('fractions').Fraction(plan['fps'])),fps=plan['fps'],signature=plan['source_signature'],groups=groups,discards=discards,pause_threshold=plan['pause_threshold'],breathing=plan['breathing'],excluded_word_indices=plan.get('excluded_word_indices',[]),tight_pauses=plan.get('tight_pauses',False),pause_mode=plan.get('pause_mode','soft'),silence_intervals=plan.get('silence_intervals',[]),end_margin_ms=plan.get('end_margin_ms',0))
     new['warnings']=plan.get('warnings',[])
     return new
 
@@ -128,7 +128,7 @@ def merge_residual_suggestions(transcript,plan,suggestion):
     new=build_cut_plan(transcript,duration=plan['source_duration_frames']/float(__import__('fractions').Fraction(plan['fps'])),
         fps=plan['fps'],signature=plan['source_signature'],groups=plan['groups']+groups,
         discards=plan.get('discards',[])+discards,pause_threshold=plan['pause_threshold'],breathing=plan['breathing'],
-        excluded_word_indices=plan.get('excluded_word_indices',[]),tight_pauses=plan.get('tight_pauses',False),pause_mode=plan.get('pause_mode','soft'),silence_intervals=plan.get('silence_intervals',[]))
+        excluded_word_indices=plan.get('excluded_word_indices',[]),tight_pauses=plan.get('tight_pauses',False),pause_mode=plan.get('pause_mode','soft'),silence_intervals=plan.get('silence_intervals',[]),end_margin_ms=plan.get('end_margin_ms',0))
     new['warnings']=plan.get('warnings',[])+warnings
     new['residual_reviewed']=True
     return new
