@@ -27,6 +27,29 @@ def test_phases_complete_once_and_resume_reuses_checkpoints(tmp_path):
     asyncio.run(run())
 
 
+def test_partial_warnings_survive_and_offline_delivery_can_resume(tmp_path):
+    from backend.app.magic_runner import MagicRunner
+    from backend.app.magic_store import MagicStore
+    from backend.app.magic_models import MagicOptions
+    calls=[]; online=[False]
+    class Services:
+        async def run_phase(self, phase, context, options, report):
+            calls.append(phase)
+            if phase=='research': return {'partial':True,'warnings':['one provider unavailable']}
+            if phase=='delivery': return {'awaiting_bridge':not online[0], 'received':online[0]}
+            return {}
+    async def run():
+        runner=MagicRunner(MagicStore(tmp_path),Services(),lambda _: 's')
+        row=runner.start('p',MagicOptions());await runner.tasks[row['run_id']]
+        final=runner.store.read(row['run_id'])
+        assert final['status']=='partial' and final['warnings']==['one provider unavailable']
+        assert 'bridge' in final['message'].lower()
+        online[0]=True;runner.resume(row['run_id']);await runner.tasks[row['run_id']]
+        assert calls.count('delivery')==2 and calls.count('research')==1
+        assert runner.store.read(row['run_id'])['checkpoints']['delivery']['result']['received']
+    asyncio.run(run())
+
+
 def test_cancel_stops_next_phase_and_source_change_prevents_checkpoint(tmp_path):
     from backend.app.magic_runner import MagicRunner
     from backend.app.magic_store import MagicStore

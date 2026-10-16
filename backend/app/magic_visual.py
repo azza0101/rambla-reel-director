@@ -9,11 +9,13 @@ from .magic_coverage import validated_verdicts
 
 def sample_candidate(candidate, directory):
     """Sample the available clip itself, never substitute its search thumbnail."""
-    path = Path(candidate.get('local_asset_path') or candidate.get('preview_path') or '')
+    preview = Path(candidate.get('preview_path') or '')
+    path = preview if preview.is_file() else Path(candidate.get('local_asset_path') or '')
     if not path.is_file():
         return {**candidate, 'sampled_frames': []}
     stat = path.stat()
-    folder = Path(directory) / fingerprint([str(path.resolve()), stat.st_size, stat.st_mtime_ns])[:24]
+    folder = Path(directory) / fingerprint([str(path.resolve()), stat.st_size, stat.st_mtime_ns,
+        candidate.get('source_start_seconds') if path != preview else 0])[:24]
     folder.mkdir(parents=True, exist_ok=True)
     image = candidate.get('kind') == 'image'
     if image:
@@ -24,7 +26,11 @@ def sample_candidate(candidate, directory):
         duration = float(json.loads(probe.stdout)['format']['duration'])
         if duration <= 0:
             raise ValueError('Durata media non valida')
-        offsets = [duration * fraction for fraction in (.2, .5, .8)]
+        start = 0 if path == preview else max(0, float(candidate.get('source_start_seconds') or 0))
+        span = min(4.0, duration-start)
+        if span <= 0:
+            raise ValueError('Intervallo sorgente non disponibile')
+        offsets = [start + span * fraction for fraction in (.2, .5, .8)]
     frames = []
     for index, offset in enumerate(offsets):
         output = folder / f'{index}.jpg'

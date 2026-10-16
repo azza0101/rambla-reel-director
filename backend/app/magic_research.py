@@ -36,11 +36,13 @@ async def research_beats(beats, options, directory, research, report):
             try:
                 result = await research(beat['id'], provider, query)
                 check_current()
+                if result.get('errors'):
+                    raise RuntimeError(str(result['errors']))
                 journal[key].update(status='completed', result=result)
             except (MagicBudgetReached, MagicWaitingInput):
                 raise
             except Exception as exc:
-                message = f"{beat['id']} · {provider}: {exc}"
+                message = f"{beat['id']} · {provider}: {getattr(exc, 'detail', exc)}"
                 journal[key].update(status='failed', error=message)
                 warnings.append(message)
                 blocked.add((beat['id'], provider))

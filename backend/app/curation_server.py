@@ -70,6 +70,7 @@ class BeatResearchRequest(BaseModel):
     visual_verify: bool = False
     variation_round: int = Field(default=0,ge=0)
     query_overrides: dict[str,str] = Field(default_factory=dict,max_length=30)
+    magic_exact_query: bool = False
 
 
 class DirectorRequest(BaseModel):
@@ -773,7 +774,7 @@ def create_app(
         return root / project_id / "run"
 
     from .cut_pass_routes import install_cut_routes
-    install_cut_routes(app, store, root, load_project, _active_run_for)
+    cut_engine = install_cut_routes(app, store, root, load_project, _active_run_for)
 
     @app.middleware('http')
     async def protect_cut_resolve_export(request, call_next):
@@ -1326,7 +1327,13 @@ def create_app(
                 "source_page": candidate.source_page,
                 "provider": candidate.provider,
             }
-        plan = build_broll_timeline_plan(visual_plan, selection, assets, fps=fps)
+        magic = _read_json(active_retrieval_root(run) / 'magic-coverage.json', {})
+        decisions = magic.get('decisions') or []
+        if decisions:
+            from .magic_store import fingerprint
+            if magic.get('plan_signature') != fingerprint(visual_plan) or abs(float(magic.get('fps') or 0)-fps) > .001:
+                raise ValueError('Il piano MAGICO è cambiato: rigenera le coperture prima di esportare')
+        plan = build_broll_timeline_plan(visual_plan, selection, assets, fps=fps, magic_decisions=decisions)
         if plan["selected_beat_count"] == 0:
             raise ValueError("Select at least one B-roll clip before exporting the timeline")
         if plan["unavailable"] and not plan["clips"] and not allow_unavailable:
@@ -1334,7 +1341,7 @@ def create_app(
             raise ValueError("No selected clip is ready for timeline export. Download or replace them: " + rows)
         return plan
 
-    async def prepare_selected_timeline_media(project_id: str, report=None, components=None) -> list[dict[str, str]]:
+    async def prepare_selected_timeline_media(project_id: str, report=None, components=None, asset_ids=None) -> list[dict[str, str]]:
         if components is not None and not (components['broll'] or components['social']):
             if report:
                 report(60, 'Media esclusi dall’export · salto download')
@@ -1351,6 +1358,8 @@ def create_app(
         view = load_curation_run(run)
         selection = _read_json(active_retrieval_root(run) / "selection-plan.json", {"chunks": {}})
         wanted = [str(row.get("asset_id")) for choice in (selection.get("chunks") or {}).values() for row in (choice.get("selected_assets") or [])]
+        if asset_ids is not None:
+            wanted = list(dict.fromkeys(asset_ids))
         if components is not None:
             wanted = [aid for aid in wanted if filter_selected_media([view.candidate_index.get(aid)], components)]
         failures = []
@@ -1430,7 +1439,8 @@ def create_app(
         bridge = _read_json(root / project_id / "resolve-bridge.json", {})
         generic = _read_json(run_root(project_id) / "generic-coverage.json", {"items": [], "selected": []})
         chosen = set(generic.get("selected") or [])
-        generic_clips = [row for row in generic.get("items") or [] if components['generic'] and str(row.get("provider_id")) in chosen]
+        used_generics = {str(row.get('asset_id','')).rsplit(':',1)[-1] for row in broll['clips'] if row.get('role') == 'generic'}
+        generic_clips = [row for row in generic.get("items") or [] if components['generic'] and str(row.get("provider_id")) in chosen and str(row.get('provider_id')) not in used_generics]
         payload.update(
             mode="editing", broll_clips=broll["clips"], broll_count=broll["clip_count"], broll_unavailable=broll["unavailable"],
             timeline_name=f"{project.name} - SUBS + KEYWORDS + B-ROLL TIMELINE v1",
@@ -1480,7 +1490,7 @@ def create_app(
             raise ValueError('Download coperture generiche non completato: ' + ' · '.join(errors))
         return
     @app.get("/api/curation/projects/{project_id}/generic-coverage")
-    async def generic_coverage(project_id: str, refresh: bool = False, scope: str = "topic"):
+    async def generic_coverage(project_id: str, refresh: bool = False, scope: str = "topic", max_queries: int = 4):
         from .atomic_io import write_json
         from .generic_coverage import candidate_dict, derive_topic_queries, merge_unique
         from .online_assets import PexelsSource
@@ -1503,7 +1513,7 @@ def create_app(
             errors.append('Nessun luogo riconosciuto nel testo. Specifica il luogo nella trascrizione o usa una query manuale sulla scena.')
         for place, queries in query_groups:
             groups=[]
-            for query in queries:
+            for query in queries[:max(1,min(4,max_queries))]:
                 try:
                     rows=await source.search(query, orientation="landscape", min_duration=2, max_duration=180, limit=12)
                     group=[{**candidate_dict(row), "coverage_group": scope, "place": place} for row in rows if not place or not conflicting_place(row.title+' '+row.description,[place])]
@@ -1916,6 +1926,7 @@ def create_app(
             'visual_verify': False if cloud_mode else request.visual_verify,
             'variation_round': request.variation_round,
             'query_overrides': request.query_overrides,
+            'magic_exact_query': request.magic_exact_query,
         }
         asyncio.create_task(_run_research_state(state, beat_id, request.mode, provider_scope, research_runner))
         return {
@@ -1926,6 +1937,70 @@ def create_app(
             "resolve_calls": 0,
         }
 
+    from .magic_store import MagicStore
+    from .magic_runner import MagicRunner
+    from .magic_product import MagicProductServices, source_signature
+    from .magic_routes import install_magic_routes
+    magic_store = MagicStore(root)
+
+    async def magic_research(pid, beat, provider, query):
+        from .magic_usage import check_current
+        result = await research_beat_route(pid, beat, BeatResearchRequest(mode='append',
+            providers=('images' if provider == 'google_images' else provider,),
+            query_overrides={'*':query}, magic_exact_query=True))
+        state = debug.RUNS[result['run_id']]
+        try:
+            while state.status in {'QUEUED','RUNNING'}:
+                check_current()
+                await asyncio.sleep(.25)
+        except Exception:
+            state.status = 'CANCELLED'
+            if state.process:
+                state.process.terminate()
+            raise
+        if state.status != 'SUCCEEDED':
+            raise RuntimeError(state.last_message)
+        retrieval = active_retrieval_root(run_root(pid))
+        rows = _read_json(retrieval/'online-candidates.json', [])
+        errors = [error for row in rows if str(row.get('beat_id') or '').split(':')[0] == beat
+                  for error in row.get('errors', [])]
+        if provider == 'google_images':
+            images = _read_json(retrieval/'image-candidates.json', {})
+            errors.extend((images.get('chunks', {}).get(beat) or {}).get('errors', []))
+        return {'status':'complete', 'errors':errors}
+
+    async def magic_prepare(pid, asset_ids, report):
+        return await prepare_selected_timeline_media(pid, report=report, asset_ids=asset_ids)
+
+    async def magic_deliver(pid, payload, run_id, report):
+        from .atomic_io import write_json
+        from .magic_usage import check_current
+        journal = magic_store._path(run_id).with_name('delivery.json')
+        if not active_bridge_session_id or time.time()-bridge_last_seen > 6:
+            return {'awaiting_bridge':True, 'received':False}
+        old = _read_json(journal, {})
+        session = active_bridge_session_id
+        if old.get('bridge_session_id') == session:
+            package = handoff_store.read(root/pid, old['package_id'])
+        else:
+            package = handoff_store.prepare(root/pid, {**payload, 'project_id':pid, 'bridge_session_id':session})
+            write_json(journal, {'package_id':package['package_id'],'bridge_session_id':session})
+        report(0,1,'Pacchetto salvato · attendo conferma di ricezione dal bridge')
+        deadline = time.monotonic()+8
+        while not package.get('bridge_received_at') and time.monotonic() < deadline:
+            check_current()
+            await asyncio.sleep(.25)
+            package = handoff_store.read(root/pid, package['package_id'])
+        received = bool(package.get('bridge_received_at'))
+        report(int(received),1,'Ricevuto dal bridge · premi APPLICA in Resolve' if received else 'Pacchetto pronto · il bridge non ha ancora confermato la ricezione')
+        return {'package_id':package['package_id'],'received':received,'awaiting_bridge':not received}
+
+    magic_services = MagicProductServices(store, root, magic_store, cut_engine, magic_research, magic_prepare,
+        lambda pid:editing_resolve_payload(pid, {'video':True,'subtitles':True,'highlights':True,'broll':True,'social':True,'generic':False}), magic_deliver,
+        generics=lambda pid,limit:generic_coverage(pid,scope='places',max_queries=limit))
+    magic_runner = MagicRunner(magic_store, magic_services, lambda pid:source_signature(store,root,pid))
+    magic_services.check = magic_runner.check
+    install_magic_routes(app, magic_runner, load_project)
     return app
 
 

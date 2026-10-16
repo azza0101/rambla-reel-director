@@ -69,10 +69,11 @@ class MagicRunner:
             context = MagicContext.model_validate(row)
             options = MagicOptions.model_validate(row['options'])
             chain = fingerprint({'source': context.source_signature, 'options': options.model_dump()})
+            warnings, partial, awaiting_bridge = [], False, False
             for index, phase in enumerate(PHASES):
                 row = self.check(run_id)
                 cached = row['checkpoints'].get(phase)
-                if cached and cached['input_signature'] == chain:
+                if cached and cached['input_signature'] == chain and not (phase == 'delivery' and cached['result'].get('awaiting_bridge')):
                     result = cached['result']
                 else:
                     self.store.transition(run_id, phase=phase, completed=0, total=0,
@@ -88,14 +89,20 @@ class MagicRunner:
                     result = await self.services.run_phase(phase, context, options, report)
                     self.check(run_id)
                     self.store.checkpoint(run_id, phase, result, chain)
+                warnings.extend(str(value) for value in result.get('warnings', []))
+                partial = partial or bool(result.get('partial'))
+                awaiting_bridge = awaiting_bridge or bool(result.get('awaiting_bridge'))
                 if phase == 'cut':
                     context.output_project_id = result.get('output_project_id', context.output_project_id)
                     context.cut_revision = result.get('cut_revision', context.cut_revision)
                     self.store.transition(run_id, output_project_id=context.output_project_id,
                                           cut_revision=context.cut_revision)
                 chain = fingerprint({'parent': chain, 'phase': phase, 'result': result})
-            self.store.transition(run_id, status='ready', phase='completed', percent=100,
-                                  message='MAGICO pronto · applicazione in Resolve solo dopo APPLICA')
+            message = 'MAGICO parziale · controlla le segnalazioni' if partial else 'MAGICO pronto · applicazione in Resolve solo dopo APPLICA'
+            if awaiting_bridge:
+                message += ' · pacchetto salvato, apri il bridge e premi RIPRENDI'
+            self.store.transition(run_id, status='partial' if partial else 'ready', phase='completed', percent=100,
+                                  warnings=list(dict.fromkeys(warnings)), message=message)
         except MagicCancelled:
             self.store.transition(run_id, status='cancelled', message='MAGICO interrotto · risultati conservati')
         except MagicWaitingInput as exc:

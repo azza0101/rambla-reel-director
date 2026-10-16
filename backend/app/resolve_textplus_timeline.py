@@ -162,6 +162,11 @@ def active_track_layout(
         {**row, "track_index": original_video_tracks + max(1, int(row.get("track_index") or 2) - 1)}
         for row in clips
     ]
+    alternatives = [row for row in remapped if row.get('role') == 'fallback_image']
+    if alternatives:
+        image_track = max([original_video_tracks] + [int(row['track_index']) for row in remapped if row.get('role') != 'fallback_image']) + 1
+        for row in alternatives:
+            row['track_index'] = image_track
     title_track = max([original_video_tracks] + [int(row["track_index"]) for row in remapped]) + 1
     return remapped, title_track
 
@@ -1040,6 +1045,12 @@ def append_broll_clips(media_pool: Any, timeline: Any, clips: list[dict[str, Any
         }]) or []
         if len(result) != 1:
             raise RuntimeError(f"Resolve could not place selected clip: {row['asset_id']}")
+        if row.get('enabled') is False:
+            if result[0].SetClipEnabled(False) is False:
+                raise RuntimeError('Resolve could not disable the alternative image')
+        if row.get('track_name'):
+            if timeline.SetTrackName('video', int(row['track_index']), str(row['track_name'])) is False:
+                raise RuntimeError('Resolve could not name the alternative image track')
         if fps is not None:
             expected = (int(base_frame) + int(row["record_start_frame"]),
                         int(base_frame) + int(row["record_end_frame"]))
@@ -1206,7 +1217,7 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
             tail_frame += duration_frames
         source_payload_fps = float(payload.get("fps") or fps)
         coverage_rows = rescale_broll_frames(
-            [{**row, "role": "coverage"} for row in payload.get("broll_clips") or []],
+            [{**row, "role": row.get('role') or "coverage"} for row in payload.get("broll_clips") or []],
             source_fps=source_payload_fps, target_fps=fps,
         )
         all_broll_rows = coverage_rows + generic_rows

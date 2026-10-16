@@ -1,0 +1,10 @@
+def test_magic_controls_show_real_progress_budget_and_manual_apply():
+    from backend.app.curation_ui_v2 import render_curation_page_v2
+    html=render_curation_page_v2('test')
+    assert 'id="magicStart"' in html
+    assert 'id="magicProgress"' in html and '<progress id="magicProgress"' in html
+    assert 'max_cloud_requests' in html and 'max_visual_requests' in html
+    assert 'id="magicCancel"' in html and 'id="magicResume"' in html
+    assert 'APPLICA resta manuale' in html
+    assert '/magic/latest' in html
+    assert 'id="magicOpenResult"' in html

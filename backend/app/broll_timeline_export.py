@@ -25,6 +25,7 @@ def build_broll_timeline_plan(
     assets: dict[str, dict[str, Any]],
     *,
     fps: float,
+    magic_decisions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Resolve selected assets into exact phrase ranges without requiring every beat."""
     if not isinstance(fps, (int, float)) or isinstance(fps, bool) or not math.isfinite(fps) or fps <= 0:
@@ -34,6 +35,14 @@ def build_broll_timeline_plan(
         for row in visual_plan.get("visual_beats", [])
         if isinstance(row, dict) and row.get("id")
     }
+    from .magic_models import CoverageDecision
+    decisions = {}
+    for raw in magic_decisions or []:
+        decision = CoverageDecision.model_validate(raw)
+        key = (decision.beat_id, decision.asset_id)
+        if key in decisions:
+            raise ValueError('Duplicate MAGICO coverage decision')
+        decisions[key] = decision
     clips: list[dict[str, Any]] = []
     unavailable: list[dict[str, str]] = []
     selected_beat_count = 0
@@ -54,6 +63,16 @@ def build_broll_timeline_plan(
             continue
         for order, picked in enumerate(chosen):
             asset_id = str(picked.get("asset_id") or "")
+            decision = decisions.get((str(beat_id), asset_id))
+            clip_start, clip_end = record_start, record_end
+            required = record_end - record_start
+            if decision:
+                clip_start, clip_end = decision.edited_in_frame, decision.edited_out_frame
+                if clip_start < record_start or clip_end > record_end:
+                    raise ValueError('MAGICO coverage falls outside its phrase')
+                required = clip_end - clip_start
+                if decision.source_out_frame - decision.source_in_frame != required:
+                    raise ValueError('MAGICO coverage duration mismatch')
             asset = assets.get(asset_id) or {}
             kind = str(asset.get("kind") or "video")
             raw_path = str(asset.get("media_path") or "").strip()
@@ -73,6 +92,8 @@ def build_broll_timeline_plan(
                 else None
             )
             source_start = _frame(source_start_seconds, fps)
+            if decision:
+                source_start = decision.source_in_frame
             if available - source_start < required:
                 unavailable.append({"beat_id": str(beat_id), "asset_id": asset_id, "reason": "clip is shorter than phrase and cannot preserve exact timing"})
                 continue
@@ -83,12 +104,20 @@ def build_broll_timeline_plan(
                 "provider": str(asset.get("provider") or "unknown"),
                 "kind": kind,
                 "media_path": str(path.resolve()), "track_index": _track(picked.get("track"), order),
-                "record_start_frame": record_start, "record_end_frame": record_end,
+                "record_start_frame": clip_start, "record_end_frame": clip_end,
                 "source_start_frame": source_start, "source_end_frame": source_start + required,
                 "duration_frames": required,
                 "preview_source_start_seconds": source_start_seconds,
                 "preview_source_end_seconds": source_end_seconds,
+                **({'role': decision.role, 'enabled': decision.enabled, 'clip_color': 'Beige' if decision.role == 'generic' else 'Purple',
+                    'track_name': 'RMBL IMMAGINI ALTERNATIVE' if decision.role == 'fallback_image' else '',
+                    'verification_reason': decision.reason} if decision else {}),
             })
+    alternatives = [row for row in clips if row.get('role') == 'fallback_image']
+    if alternatives:
+        image_track = max([1] + [int(row['track_index']) for row in clips if row.get('role') != 'fallback_image']) + 1
+        for row in alternatives:
+            row['track_index'] = image_track
     clips.sort(key=lambda row: (row["record_start_frame"], row["track_index"], row["asset_id"]))
     duration = max([_frame(float(row.get("end") or 0), fps) for row in beats.values()] + [1])
     return {

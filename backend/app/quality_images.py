@@ -73,7 +73,7 @@ async def source_images(chunks,output,plan,ranker,client_id,*,sources=None,fetch
             row.update(old);row['quality_version']=VERSION;row['candidates'],n=diverse_candidates(old['candidates'],history+cross,limit=4)
             row['accepted_count']=len(row['candidates']);row['cache_status']='reused';history.extend(row['candidates']);result['duplicates_rejected']+=n;result['cache_reused_chunks']+=1;continue
         result['retried_chunks']+=1
-        for shot in beat['shots']:
+        for shot in (beat['shots'][:1] if search_options.get('magic_exact_query') else beat['shots']):
             accepted=[];seen=set()
             spec=build_retrieval_spec(beat,shot,'image')
             requested_queries,manual_query=image_queries_for_shot(shot,spec['queries'],search_options)

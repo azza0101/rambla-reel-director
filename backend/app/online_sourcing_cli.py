@@ -110,6 +110,11 @@ async def _source_outline(
     """Source each short coverage slot, preserving beat-level compatibility."""
 
     slots = plan_coverage_slots(outline["beats"])
+    options = json.loads(os.environ.get('RAMBLA_SOCIAL_SEARCH_OPTIONS', '{}') or '{}')
+    if options.get('magic_exact_query'):
+        # MAGICO issues bounded queries itself; do not multiply one across shots.
+        seen_beats = set()
+        slots = [slot for slot in slots if slot.beat_id not in seen_beats and not seen_beats.add(slot.beat_id)]
     if not slots:
         return {}, [], {}
 

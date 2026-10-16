@@ -372,8 +372,9 @@ def render_curation_page_v2(build_token: str | None = None) -> str:
     )
     html = _organize_workflow(html)
     from .cut_pass_ui import PANEL as CUT_PANEL, CSS as CUT_CSS, JS as CUT_JS
-    html = html.replace('<section class="panel transcriptWorkspaceV14"', CUT_PANEL + '<section class="panel transcriptWorkspaceV14"', 1)
-    html = html.replace('</style>', '</style>' + CUT_CSS, 1)
+    from .magic_ui import PANEL as MAGIC_PANEL, CSS as MAGIC_CSS, JS as MAGIC_JS
+    html = html.replace('<section class="panel transcriptWorkspaceV14"', MAGIC_PANEL + CUT_PANEL + '<section class="panel transcriptWorkspaceV14"', 1)
+    html = html.replace('</style>', '</style>' + CUT_CSS + MAGIC_CSS, 1)
     html = html.replace('</style>', '</style>' + _MANAGEMENT_CSS + _WORKFLOW_ACCORDION_CSS + GALLERY_CSS + STUDIO_CSS + TRANSCRIPT_INTENT_CSS + TIMELINE_EXPORT_CSS + THEME_SETTINGS_CSS, 1)
     html = html.replace('</main><dialog id="lightbox">', TIMELINE_EXPORT_PANEL + THEME_SETTINGS_PANEL + '</main><dialog id="lightbox">', 1)
     html = html.replace('</main><dialog id="lightbox">', _PROJECT_DIALOG + '</main><dialog id="lightbox">', 1)
@@ -418,7 +419,7 @@ setInterval(async()=>{try{const target=await api('/desktop-target');if(!target.r
         )
     from .scene_workspace_ui import CSS as SCENE_CSS, JS as SCENE_JS
     html = html.replace('</main>', SCENE_CSS + '</main>', 1)
-    html = html.replace(needle, SCENE_JS + _WORKFLOW_ACCORDION_JS + CUT_JS + needle, 1)
+    html = html.replace(needle, SCENE_JS + _WORKFLOW_ACCORDION_JS + CUT_JS + MAGIC_JS + needle, 1)
     html = html.replace("filter:'all'", "filter:'broll'")
     html = html.replace('RAMBLA · B-ROLL', 'RMBL B ROLL').replace('RAMBLA - B-ROLL', 'RMBL B ROLL')
     html = re.sub(r'\bRAMBLA\b', 'RMBL B ROLL', html)
