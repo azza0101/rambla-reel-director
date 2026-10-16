@@ -143,6 +143,19 @@ def verify_native_cut_base(timeline, cut, base_frame):
     return counts
 
 
+def alternative_duration(cut, alternative):
+    """Cap a discarded take to its chosen phrase on the compacted frame map."""
+    start = alternative['edited_in_frame']
+    group = cut['groups'][alternative['group_index']]
+    chosen = group['source_ranges'][group['selected_take']]
+    ends = [s['edited_in_frame'] + min(s['source_out_frame'], chosen['out_frame']) - s['source_in_frame']
+            for s in cut['segments']
+            if max(s['source_in_frame'], chosen['in_frame']) < min(s['source_out_frame'], chosen['out_frame'])]
+    end = max(ends, default=start)
+    return max(0, min(alternative['source_out_frame'] - alternative['source_in_frame'],
+                      end - start, cut['duration_frames'] - start))
+
+
 def create_native_cut_base(resolve, project, payload, *, progress=None):
     cut = payload['native_cut']
     validate_native_cut(cut)
@@ -189,8 +202,7 @@ def create_native_cut_base(resolve, project, payload, *, progress=None):
         alternatives = cut.get('alternatives') or []
         alternative_tracks = []
         for alternative in sorted(alternatives, key=lambda row: row['edited_in_frame']):
-            duration = min(alternative['source_out_frame'] - alternative['source_in_frame'],
-                           cut['duration_frames'] - alternative['edited_in_frame'])
+            duration = alternative_duration(cut, alternative)
             if duration <= 0:
                 continue
             # Reuse tracks only when the alternatives do not overlap.
@@ -208,7 +220,8 @@ def create_native_cut_base(resolve, project, payload, *, progress=None):
                 mediaType=1, trackIndex=track, recordFrame=base + alternative['edited_in_frame'])]) or []
             if (len(items) != 1 or items[0].GetStart() != base + alternative['edited_in_frame']
                 or items[0].GetEnd() != base + alternative['edited_in_frame'] + duration
-                or not items[0].SetClipEnabled(False)):
+                or not items[0].SetClipEnabled(False)
+                or not items[0].SetClipColor('Red')):
                 raise RuntimeError('Verifica della take alternativa disattivata non riuscita')
             timeline.SetTrackName('video', track, 'RMBL TAKE ALTERNATIVA')
         return dict(timeline=timeline, fps=cut['fps'], base_frame=base,

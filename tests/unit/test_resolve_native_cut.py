@@ -105,3 +105,15 @@ def test_fractional_timeline_setting_falls_back_to_resolve_ntsc_enum_and_verifie
     configure_native_timeline(timeline, dict(fps='30000/1001', width=1080, height=1920))
     assert timeline.values['timelineFrameRate'] == '29'
     assert timeline.values['timelineDropFrameTimecode'] == '0'
+
+
+def test_alternative_stops_at_corresponding_chosen_phrase_after_pause_cuts():
+    from backend.app.resolve_native_cut import alternative_duration
+    cut={'duration_frames':300,'groups':[{'selected_take':1,'source_ranges':[{}, {'in_frame':100,'out_frame':200}]}],
+         'segments':[{'source_in_frame':90,'source_out_frame':150,'edited_in_frame':0,'edited_out_frame':60},
+                     {'source_in_frame':170,'source_out_frame':220,'edited_in_frame':60,'edited_out_frame':110},
+                     {'source_in_frame':300,'source_out_frame':490,'edited_in_frame':110,'edited_out_frame':300}]}
+    alt={'group_index':0,'edited_in_frame':10,'source_in_frame':0,'source_out_frame':180}
+    assert alternative_duration(cut,alt)==80
+    assert alternative_duration(cut,{**alt,'source_out_frame':20})==20
+    assert alternative_duration(cut,{**alt,'edited_in_frame':90})==0

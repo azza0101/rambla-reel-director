@@ -1,7 +1,11 @@
 # RMBL B ROLL — handoff tecnico
 
-Aggiornato: 2026-10-15  Versione: `v0074`  Branch di consegna: `feat/api-first-text-first-v1`
+Aggiornato: 2026-10-16  Versione: `v0075`  Branch di consegna: `feat/api-first-text-first-v1`
 
+
+## Take alternative compatte v0075
+
+Le take scartate restano disattivate e diventano Red. La durata termina al termine della frase scelta corrispondente, rimappata attraverso i segmenti CUT anche se contiene pause eliminate. Una take più corta non viene allungata. Sorgente originale e maniglie restano disponibili. Si applica ai nuovi export video CUT; timeline già importate non alterate automaticamente.
 
 ## Parole evidenziate senza annidamento v0074
 
