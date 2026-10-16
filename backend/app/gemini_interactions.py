@@ -299,7 +299,12 @@ class GeminiInteractionsClient:
         schema: dict[str, Any],
         *,
         previous_interaction_id: str | None = None,
+        image_inputs: list[dict[str, Any]] | None = None,
     ) -> GeminiJSONReply:
+        if image_inputs and any(part.get('type') != 'image' or not part.get('data') or
+                                part.get('mime_type') not in {'image/jpeg', 'image/png', 'image/webp'}
+                                for part in image_inputs):
+            raise ValueError('Invalid image input')
         requested_model = self.model
         if previous_interaction_id and self._sticky_model:
             model_chain = (self._sticky_model,)
@@ -354,7 +359,7 @@ class GeminiInteractionsClient:
                 )
                 body: dict[str, Any] = {
                     "model": active_model,
-                    "input": prompt,
+                    "input": [{"type": "text", "text": prompt}, *image_inputs] if image_inputs else prompt,
                     "generation_config": {"thinking_level": self.thinking_level},
                     "response_format": [
                         {

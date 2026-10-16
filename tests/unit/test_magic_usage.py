@@ -47,3 +47,25 @@ def test_existing_groq_client_is_accounted_without_recording_api_key(tmp_path):
     calls=store.read(row['run_id'])['calls']
     assert len(calls)==1
     assert 'private-key-must-not-be-saved' not in str(calls)
+
+
+def test_gemini_image_parts_use_the_visual_sub_budget(tmp_path):
+    from backend.app.gemini_interactions import GeminiInteractionsClient
+    from backend.app.magic_usage import provider_scope
+    from backend.app.magic_store import MagicStore
+    from backend.app.magic_models import MagicOptions
+    from backend.app.magic_services import MagicBudgetReached
+    class HTTP:
+        def __init__(self): self.bodies=[]
+        def post(self,*args,**kwargs):
+            self.bodies.append(kwargs['json'])
+            return httpx.Response(200,json={'steps':[{'type':'model_output','content':[{'type':'text','text':'{"ok":true}'}]}]},request=httpx.Request('POST','https://example.invalid'))
+    http=HTTP()
+    store=MagicStore(tmp_path); row=store.create_or_resume('p','s',MagicOptions(max_visual_requests=1))
+    client=GeminiInteractionsClient('test',http_client=http,max_retries_per_model=0,fallback_models=())
+    with provider_scope(store,row['run_id'],'selection',lambda:None):
+        assert client.generate_json('inspect',{'type':'object'},image_inputs=[{'type':'image','data':'AAAA','mime_type':'image/jpeg'}]).data['ok']
+        with pytest.raises(MagicBudgetReached):
+            client.generate_json('inspect other',{'type':'object'},image_inputs=[{'type':'image','data':'BBBB','mime_type':'image/jpeg'}])
+    assert http.bodies[0]['input'][0] == {'type':'text','text':'inspect'}
+    assert len(http.bodies)==1

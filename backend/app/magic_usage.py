@@ -38,7 +38,7 @@ def invoke_http(provider, payload, operation, *, visual=False):
             return httpx.Response(cached['status_code'], content=cached['body'].encode(),
                 headers=cached['headers'], request=httpx.Request('POST','https://cached-provider.invalid'))
     text = json.dumps(payload, ensure_ascii=False)
-    visual = visual or '"image_url"' in text or '"inline_data"' in text or '"inlineData"' in text
+    visual = visual or '"image_url"' in text or '"inline_data"' in text or '"inlineData"' in text or '"type": "image"' in text
     call_id = store.begin_call(run_id, phase, provider, signature, visual=visual)
     try:
         response = operation()
