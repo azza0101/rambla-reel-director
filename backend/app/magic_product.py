@@ -29,6 +29,11 @@ def source_signature(projects, root, pid):
     signatures = [(str(path), path.stat().st_size, path.stat().st_mtime_ns) for path in files]
     state = {name: read_json(Path(root)/pid/'run'/name) for name in
         ('semantic-chunks.json','phrase-intents.json','transcript-corrections.json')}
+    bridge = read_json(Path(root)/pid/'resolve-bridge.json', {})
+    state['resolve_source'] = bridge.get('cut_source')
+    if bridge.get('cut_source', {}).get('supported'):
+        from .resolve_cut_source import verify_snapshot_files
+        verify_snapshot_files(bridge['cut_source'])
     return fingerprint([project.analysis_signature, signatures, state])
 
 

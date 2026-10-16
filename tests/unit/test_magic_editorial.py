@@ -38,6 +38,7 @@ def test_full_editorial_uses_standard_intents_and_director_plan(tmp_path):
                 coverage_word_indices=[0,1,2,3,4] if u['chunk_id']=='c0' else [],
                 highlighted_word_indices=[1,2] if u['chunk_id']=='c0' else []) for u in units]}
         rows,_=json.JSONDecoder().raw_decode(prompt.split('TRANSCRIPT_CHUNKS=')[1])
+        assert all(c['id']=='c0' for c in rows), 'Do not spend Director calls on already unselected talking-head chunks'
         return {'global_topic':'Tourism in Egypt','beats':[dict(chunk_id=c['id'],
             action='BROLL' if c['id']=='c0' else 'KEEP_TALKING_HEAD',
             editorial_function='Show local tourist police' if c['id']=='c0' else 'Keep introduction',

@@ -146,7 +146,7 @@ def can_reuse_audio_capture(previous: dict[str, Any], current: dict[str, Any], *
 
 
 def inspect_active_timeline(*, resolve: Any | None = None, detect_videos: bool = True,
-                            include_v1: bool = False) -> dict[str, Any]:
+                            include_v1: bool = False, include_cut_snapshot: bool = False) -> dict[str, Any]:
     resolve = resolve or connect_resolve()
     project = resolve.GetProjectManager().GetCurrentProject()
     if not project:
@@ -156,7 +156,7 @@ def inspect_active_timeline(*, resolve: Any | None = None, detect_videos: bool =
         raise RuntimeError("Apri una timeline DaVinci Resolve")
     start, end, range_source = timeline_range(timeline)
     fps = float(timeline.GetSetting("timelineFrameRate") or 0)
-    return {
+    result = {
         "resolve_project": project.GetName(), "resolve_timeline": timeline.GetName(),
         "resolve_timeline_id": str(timeline.GetUniqueId()), "fps": fps,
         "mark_in": start, "mark_out": end, "range_source": range_source,
@@ -167,6 +167,13 @@ def inspect_active_timeline(*, resolve: Any | None = None, detect_videos: bool =
         "audio_item_count": count_audio_items(timeline,start,end),
         "audio_fingerprint": timeline_audio_fingerprint(timeline, start, end, fps),
     }
+    if include_cut_snapshot:
+        from .resolve_cut_source import capture_cut_source
+        try:
+            result['cut_source'] = capture_cut_source(timeline,start,end)
+        except Exception as exc:
+            result['cut_source'] = {'supported':False,'issues':[f'Snapshot CUT non disponibile: {type(exc).__name__}: {exc}']}
+    return result
 
 
 def connect_resolve() -> Any:
@@ -196,6 +203,11 @@ def capture_active_timeline(output_dir: Path, *, resolve: Any | None = None, tim
     fps = float(timeline.GetSetting("timelineFrameRate") or 0)
     existing_video_ranges = detect_video_ranges(timeline, start, end, fps, include_v1) if detect_videos else []
     audio_fingerprint = timeline_audio_fingerprint(timeline, start, end, fps)
+    from .resolve_cut_source import capture_cut_source
+    try:
+        cut_source = capture_cut_source(timeline, start, end)
+    except Exception as exc:
+        cut_source = {'supported':False,'issues':[f'Snapshot CUT non disponibile: {type(exc).__name__}: {exc}']}
     output_dir = Path(output_dir).resolve(); output_dir.mkdir(parents=True, exist_ok=True)
     stem = f"rambla-bridge-{int(time.time() * 1000)}"
     previous_format = project.GetCurrentRenderFormatAndCodec() or {}
@@ -268,6 +280,7 @@ def capture_active_timeline(output_dir: Path, *, resolve: Any | None = None, tim
                 "include_v1": bool(include_v1),
                 "existing_video_ranges": existing_video_ranges,
                 "audio_fingerprint": audio_fingerprint, "reused_audio": False,
+                "cut_source": cut_source,
                 "audio_capture_format": ("WAV Audio Only" if successful_label == "Audio Only" else successful_label + " MP4/AAC") + " (temporary copy)"}
     finally:
         if job:

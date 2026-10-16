@@ -615,7 +615,7 @@ def create_app(
         from .atomic_io import write_json
         from .resolve_bridge import can_reuse_audio_capture, capture_active_timeline, inspect_active_timeline, require_explicit_capture_range
         inspection = await asyncio.to_thread(
-            inspect_active_timeline, detect_videos=request.detect_videos, include_v1=request.include_v1
+            inspect_active_timeline, detect_videos=request.detect_videos, include_v1=request.include_v1, include_cut_snapshot=True
         )
         if request.force_recalculate:
             try:

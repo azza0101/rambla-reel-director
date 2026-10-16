@@ -27,6 +27,27 @@ def test_shared_cut_analysis_reuses_transcript_and_proposals(tmp_path, monkeypat
     assert calls == ['asr','propose']
 
 
+def test_magic_reserves_budget_instead_of_retranscribing_every_take(tmp_path):
+    from backend.app.magic_store import MagicStore
+    from backend.app.magic_models import MagicOptions
+    from backend.app.magic_usage import provider_scope
+    from backend.app.cut_alignment import refine_cut_timing
+    from backend.app.cut_pass import build_cut_plan
+    from tests.unit.test_cut_pass import transcript
+    from pathlib import Path
+    raw=transcript([(2,3,'Cura Viaggi')])
+    plan=build_cut_plan(raw,duration=5,fps=30,signature='s',groups=[])
+    plan['groups']=[{'takes':[[0,1],[0,1]],'selected_take':0}]
+    store=MagicStore(tmp_path);row=store.create_or_resume('p','s',MagicOptions(max_cloud_requests=12))
+    for index in range(2):
+        call=store.begin_call(row['run_id'],'cut','groq_asr',str(index));store.finish_call(row['run_id'],call,result={})
+    def forbidden(*a):raise AssertionError('No extra ASR budget for refinement')
+    with provider_scope(store,row['run_id'],'cut',lambda:None):
+        result,warnings=refine_cut_timing(raw,plan,Path('source'),tmp_path,
+            runner=lambda *a,**kw:None,transcriber=forbidden)
+    assert result['segments']==raw['segments'] and warnings
+
+
 def test_magic_cut_isolates_manual_source_and_reuses_confirmed_child(tmp_path):
     import asyncio, json
     from pathlib import Path

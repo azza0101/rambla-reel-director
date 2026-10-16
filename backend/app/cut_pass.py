@@ -55,7 +55,11 @@ def build_cut_plan(transcript, *, duration, fps, signature, groups, discards=(),
     if rate <= 0 or not math.isfinite(float(duration)) or duration <= 0:
         raise ValueError('Durata/FPS non validi')
     words = words_of(transcript)
-    total = math.ceil(float(duration)*rate)
+    frame_duration = float(duration)*rate
+    nearest_frame = round(frame_duration)
+    # A rational NTSC duration round-tripped through float can be 120.000…01.
+    # Preserve the exact grid instead of inventing a final black/silent frame.
+    total = nearest_frame if abs(frame_duration-nearest_frame) < 1e-7 else math.ceil(frame_duration)
     if words[-1]['end'] > duration + .25:
         raise ValueError('Parole oltre la durata della sorgente')
     if not .05 <= breathing <= .5 or not .5 <= pause_threshold <= 5:

@@ -24,6 +24,19 @@ def check_current():
         context[3]()
 
 
+def optional_asr_allowed():
+    """Reserve most of a MAGICO budget for editorial and visual decisions."""
+    context = _CONTEXT.get()
+    if context is None:
+        return True
+    store, run_id, _, check = context
+    check()
+    row = store.read(run_id)
+    maximum = max(1,min(3,row['options']['max_cloud_requests']//6))
+    used = sum(c['provider']=='groq_asr' and c['phase']=='cut' for c in row['calls'].values())
+    return used < maximum
+
+
 def invoke_http(provider, payload, operation, *, visual=False):
     context = _CONTEXT.get()
     if context is None:

@@ -99,11 +99,17 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
         save_phrase_intents(run,changes,intents['transcript_signature'])
         package = transcript_package(run,project_id,duration)
         package_signature = fingerprint(package['chunks'])
-        director_batches = pack_items(package['chunks'],max_chars=2000,max_items=3)
-        decisions = []
+        selected = set(package.get('coverage_selected_chunk_ids') or [])
+        director_batches = pack_items([c for c in package['chunks'] if c['id'] in selected],max_chars=2000,max_items=3)
+        decisions = {c['id']:dict(chunk_id=c['id'],action='KEEP_TALKING_HEAD',
+            editorial_function='Conserva il parlato senza copertura',core_meaning=c['text'],subtext='',
+            visual_mode='single',avoid=[],shots=[]) for c in package['chunks']}
         preceding = ''
+        prior_context = {}
+        for chunk in package['chunks']:
+            prior_context[chunk['id']] = preceding
+            preceding += ' '+chunk['text']
         for index,batch in enumerate(director_batches):
-            selected = set(package.get('coverage_selected_chunk_ids') or [])
             local = {**package,'chunks':batch,'coverage_selected_chunk_ids':[c['id'] for c in batch if c['id'] in selected]}
             prompt = build_director_prompt(local)+'\nCONTESTO COMPLETO COMPATTO:\n'+context
             prompt += '\nSe il testo parla esplicitamente di un evento storico o violenza, rappresenta quel significato: '
@@ -114,7 +120,7 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
             for raw,chunk in zip(reply['beats'],batch):
                 if raw['chunk_id'] != chunk['id']:
                     raise ValueError('Ordine delle frasi Director diverso dalla trascrizione')
-                expected_places = beat_places(chunk['text'],context,preceding)
+                expected_places = beat_places(chunk['text'],context,prior_context[chunk['id']])
                 raw = deepcopy(raw)
                 for shot in raw['shots']:
                     for field in ('image_queries','video_queries'):
@@ -122,10 +128,9 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
                         if not queries:
                             raise ValueError('Query fuori contesto geografico: correzione necessaria')
                         shot[field] = anchor_queries(queries,expected_places)
-                decisions.append(raw)
-                preceding += ' '+chunk['text']
+                decisions[chunk['id']] = raw
             report(len(director_batches)+index+1,2*len(director_batches),'Piano visuale contestuale verificato')
-        plan = compile_director_decisions(package,{'global_topic':topic or context,'beats':decisions})
+        plan = compile_director_decisions(package,{'global_topic':topic or context,'beats':[decisions[c['id']] for c in package['chunks']]})
         if fingerprint(transcript_package(run,project_id,duration)['chunks']) != package_signature:
             raise ValueError('Le selezioni sono cambiate durante il piano: pubblicazione sospesa')
         editorial_root = import_plan(run,plan,package)

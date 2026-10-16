@@ -34,8 +34,21 @@ def refine_cut_timing(transcript,plan,source,folder,*,transcriber=None,runner=su
             '-vn','-ac','1','-ar','16000',str(clip)],check=True,capture_output=True,timeout=90)
         key=hashlib.sha256(json.dumps({'source':plan['source_signature'],'a':a,'b':b,'start':start,'end':end},sort_keys=True).encode()).hexdigest()
         cache=folder/'alignment-cache'/f'{key}.json'
+        alias=folder/'alignment-cache-source.json'
+        if use_cache and not cache.is_file() and alias.is_file():
+            from .resolve_cut_source import file_identity
+            previous=json.loads(alias.read_text(encoding='utf-8'))
+            if previous.get('path')==str(source.resolve()) and previous.get('identity')==file_identity(source):
+                old_key=hashlib.sha256(json.dumps({'source':previous['signature'],'a':a,'b':b,'start':start,'end':end},sort_keys=True).encode()).hexdigest()
+                inherited=folder/'alignment-cache'/f'{old_key}.json'
+                if inherited.is_file():cache=inherited
         if use_cache and cache.is_file():measured=json.loads(cache.read_text(encoding='utf-8'))
         else:
+            from .magic_usage import optional_asr_allowed
+            if not optional_asr_allowed():
+                message='MAGICO economico: conservati i timestamp già misurati; affinamento ASR aggiuntivo limitato per riservare budget a piano e coperture.'
+                if message not in warnings:warnings.append(message)
+                continue
             try:measured=transcriber(clip,folder)
             except Exception as exc:
                 if 'Groq ASR failed (429)' not in str(exc) and 'Groq ASR failed (413)' not in str(exc):raise

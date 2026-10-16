@@ -51,6 +51,10 @@ def clear_native_cut_checkpoint(payload):
 
 
 def verify_source_identity(cut):
+    if cut.get('resolve_source'):
+        from .resolve_cut_source import verify_snapshot_files
+        verify_snapshot_files(cut['resolve_source'])
+        return None
     source = Path(cut['source_path'])
     if not source.is_file():
         raise ValueError('Video lungo originale non disponibile')
@@ -117,6 +121,9 @@ def append_exact_segment(pool, timeline, source, segment, base_frame, *, convent
 
 
 def verify_native_cut_base(timeline, cut, base_frame):
+    if cut.get('resolve_source'):
+        from .resolve_native_multitrack import verify_multitrack_base
+        return verify_multitrack_base(timeline,cut,base_frame)
     if cut.get('source_identity'):
         verify_source_identity(cut)
     expected = [(base_frame + s['edited_in_frame'], base_frame + s['edited_out_frame'])
@@ -171,6 +178,9 @@ def create_native_cut_base(resolve, project, payload, *, progress=None):
             if existing.GetUniqueId() == previous['timeline_id']:
                 raise RuntimeError(f"Timeline CUT parziale ancora presente: {previous['timeline_name']}. Rimuovila prima di riprovare.")
         checkpoint.unlink()
+    if cut.get('resolve_source'):
+        from .resolve_native_multitrack import create_multitrack_cut
+        return create_multitrack_cut(resolve,project,payload,progress=progress)
     original = project.GetCurrentTimeline()
     folder = pool.GetCurrentFolder()
     timeline = None

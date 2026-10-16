@@ -26,6 +26,14 @@ def load_native_cut(project_root,projects_root):
     if origin.is_file():
         provenance=json.loads(origin.read_text(encoding='utf-8'))
         plan=deepcopy(provenance['plan']);source=Path(provenance['source_path'])
+        if provenance.get('resolve_source'):
+            from .resolve_cut_source import verify_snapshot_files, remap_source_cut
+            snapshot = provenance['resolve_source']
+            verify_snapshot_files(snapshot)
+            remap_source_cut(snapshot,plan)
+            return {**plan,'resolve_source':snapshot,'source_path':'',
+                'source_identity':{'resolve_snapshot':snapshot['signature']},
+                'width':snapshot['width'],'height':snapshot['height'],'export_schema':'rmbl-native-cut-1'}
     else:
         plan=deepcopy(json.loads((project_root/'cut'/'plan.json').read_text(encoding='utf-8')))
         from .curation_project import ProjectStore

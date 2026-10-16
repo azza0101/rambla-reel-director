@@ -3,6 +3,7 @@ from pathlib import Path
 import asyncio
 import json
 import shutil
+import subprocess
 from .atomic_io import write_json
 from .cut_pass_routes import CutReview
 from .magic_services import MagicWaitingInput
@@ -20,8 +21,14 @@ class MagicCutAdapter:
         origin_path = self.root / source.project_id / 'cut-origin.json'
         origin = json.loads(origin_path.read_text(encoding='utf-8')) if origin_path.is_file() else None
         bridge = self.root / source.project_id / 'resolve-bridge.json'
+        bridge_data = json.loads(bridge.read_text(encoding='utf-8')) if bridge.is_file() else {}
+        snapshot = bridge_data.get('cut_source') or (origin or {}).get('resolve_source')
         if bridge.is_file() and not origin:
-            raise MagicWaitingInput('CUT da Resolve: acquisizione delle clip originali necessaria prima del montaggio automatico')
+            if not snapshot or not snapshot.get('supported'):
+                issues = ' · '.join((snapshot or {}).get('issues', []))
+                raise MagicWaitingInput('CUT da Resolve: usa RICALCOLA AUDIO per acquisire le clip originali. '+issues)
+            from .resolve_cut_source import verify_snapshot_files
+            verify_snapshot_files(snapshot)
         if source.source_video is None:
             raise MagicWaitingInput('Carica un video con audio per avviare MAGICO')
         from .workspace_backup import backup_project_state
@@ -34,7 +41,8 @@ class MagicCutAdapter:
                 raise ValueError('La sorgente originale del CUT è cambiata')
         work = self.projects.create(source.name + ' · MAGICO sorgente')
         state = dict(work_project_id=work.project_id, initialized=False, steps={},
-                     source_path=str(source_path), inherited_origin=origin)
+                     source_path=str(source_path), inherited_origin=origin, resolve_source=snapshot,
+                     guide_path=source.guide_audio.path if getattr(source,'guide_audio',None) else None)
         write_json(journal, state)
         return journal, state
 
@@ -43,7 +51,27 @@ class MagicCutAdapter:
             return
         source = self.projects.load(context.source_project_id)
         origin = state.get('inherited_origin')
-        work = self.projects.register_local_video(state['work_project_id'], Path(state['source_path']))
+        if state.get('resolve_source') and not origin:
+            from .resolve_cut_source import verify_snapshot_files, frame_rate
+            from dataclasses import replace
+            snapshot = state['resolve_source']
+            verify_snapshot_files(snapshot)
+            if not state.get('guide_path'):
+                raise ValueError('Guida audio Resolve non disponibile: ricalcola audio')
+            rate = frame_rate(snapshot['fps'])
+            frames = snapshot['mark_out']-snapshot['mark_in']
+            guide = self.root/state['work_project_id']/'source'/'resolve-guide.mp4'
+            guide.parent.mkdir(parents=True,exist_ok=True)
+            if not guide.is_file():
+                subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i',f'color=c=black:s=360x640:r={rate}',
+                    '-i',state['guide_path'],'-frames:v',str(frames),'-c:v','libx264','-preset','veryfast',
+                    '-c:a','aac','-shortest',str(guide)],check=True,capture_output=True,timeout=300)
+            state['source_path'] = str(guide)
+            work = self.projects.register_local_video(state['work_project_id'], guide)
+            work = replace(work,source_video=replace(work.source_video,fps=float(rate),duration=frames/float(rate)))
+            self.projects._save(work)
+        else:
+            work = self.projects.register_local_video(state['work_project_id'], Path(state['source_path']))
         folder = self.root / work.project_id / 'cut'
         folder.mkdir(parents=True, exist_ok=True)
         cache_pid = str(origin.get('project_id') or '') if origin else source.project_id
@@ -63,6 +91,11 @@ class MagicCutAdapter:
                 for name in ('source-signature.json', 'suggestions-signature.json', 'alignment-signature.json'):
                     if (folder/name).is_file():
                         write_json(folder/name, {'signature':work.analysis_signature})
+                inherited_source = getattr(cache_source,'source_video',None)
+                if inherited_source and Path(inherited_source.path).resolve() == Path(state['source_path']).resolve():
+                    from .resolve_cut_source import file_identity
+                    write_json(folder/'alignment-cache-source.json',dict(signature=cache_source.analysis_signature,
+                        path=str(Path(state['source_path']).resolve()),identity=file_identity(state['source_path'])))
         if origin and (folder / 'transcript-original.json').is_file():
             plan = {**origin['plan'], 'source_signature':work.analysis_signature, 'status':'draft'}
             plan.pop('clean_project_id', None)
@@ -93,6 +126,11 @@ class MagicCutAdapter:
             write_json(journal, state)
             report((index+1)*4, 16, f'CUT · {action} completato')
         _, _, plan = self.engine.current(pid)
+        if state.get('resolve_source'):
+            child = self.root/state['steps']['confirm']['project_id']/'cut-origin.json'
+            provenance = json.loads(child.read_text(encoding='utf-8'))
+            provenance['resolve_source'] = state['resolve_source']
+            write_json(child,provenance)
         return dict(output_project_id=state['steps']['confirm']['project_id'],
                     cut_revision=plan['revision'], work_project_id=pid,
                     warnings=plan.get('warnings', []))
