@@ -102,6 +102,12 @@ def compact_director_batches(chunks):
 
 def _magic_director_schema(count):
     schema = deepcopy(director_schema(count))
+    # Groq can expand a list despite an exact item limit, then reject its own
+    # otherwise usable JSON before we can retain the requested rows.
+    beats = schema['properties']['beats']
+    beats.pop('minItems', None)
+    beats.pop('maxItems', None)
+    beats['description'] = f'Exactly {count} decisions for, and only for, the supplied transcript chunk IDs.'
     properties = schema['properties']['beats']['items']['properties']
     properties['action']['enum'] = ['BROLL']
     properties['visual_mode']['enum'] = ['single']
@@ -109,6 +115,29 @@ def _magic_director_schema(count):
     for field in ('image_queries','video_queries'):
         properties['shots']['items']['properties'][field]['maxItems'] = 2
     return schema
+
+
+def _requested_director_rows(reply, batch):
+    """Return one decision per requested chunk, ignoring provider spillover."""
+    rows = reply.get('beats')
+    if not isinstance(rows, list):
+        raise ValueError('Director MAGICO non ha restituito le decisioni')
+    expected = {str(chunk['id']) for chunk in batch}
+    selected, extras = {}, 0
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError('Director MAGICO ha restituito una decisione non valida')
+        chunk_id = str(row.get('chunk_id') or '')
+        if chunk_id not in expected:
+            extras += 1
+            continue
+        if chunk_id in selected:
+            raise ValueError('Director MAGICO ha duplicato una frase richiesta')
+        selected[chunk_id] = row
+    missing = expected-set(selected)
+    if missing:
+        raise ValueError('Director MAGICO non ha coperto tutte le frasi richieste')
+    return [selected[str(chunk['id'])] for chunk in batch], extras
 
 
 def run_magic_editorial(run, project_id, duration, report, *, query=None):
@@ -131,7 +160,7 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
                           'allowed':[w['index'] for w in window]})
     batches = pack_items(units,max_chars=2800,max_items=8)
     choices = {str(c['id']):dict(chunk_id=str(c['id']),coverage_word_indices=[],highlighted_word_indices=[]) for c in chunks}
-    topic, dropped_indices = '', 0
+    topic, dropped_indices, extra_director_rows = '', 0, 0
     with cloud_context(run/'magic-editorial-cache', lambda message:report(0,0,message)):
         for index, batch in enumerate(batches):
             prompt = ('Sei il montatore di un reel e devi PRODURRE le selezioni editoriali, non solo classificare il tema. '
@@ -190,12 +219,11 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
             prompt += '\nSe il testo parla esplicitamente di un evento storico o violenza, rappresenta quel significato: '
             prompt += 'non sostituirlo automaticamente con una strada tranquilla. Non inventare attribuzioni archivistiche o geografiche.'
             prompt += '\nPer ciascun passaggio selezionato proponi una sola inquadratura concreta, con una o due query semplici per mezzo. Mantieni concise le spiegazioni. Non inventare un paese, una città o un aeroporto specifico se il passaggio non lo nomina: in quel caso la query deve restare geografically neutral.'
+            prompt += '\nRestituisci esclusivamente le decisioni per gli ID in TRANSCRIPT_CHUNKS di questo blocco: non ripetere o aggiungere frasi dal contesto completo.'
             reply = query(prompt,_magic_director_schema(len(batch)),f'Piano visuale · blocco {index+1}/{len(director_batches)}')
-            if len(reply.get('beats',[])) != len(batch):
-                raise ValueError('Director MAGICO non ha coperto tutte le frasi')
-            for raw,chunk in zip(reply['beats'],batch):
-                if raw['chunk_id'] != chunk['id']:
-                    raise ValueError('Ordine delle frasi Director diverso dalla trascrizione')
+            rows, extras = _requested_director_rows(reply,batch)
+            extra_director_rows += extras
+            for raw,chunk in zip(rows,batch):
                 expected_places = beat_places(chunk['text'],context,prior_context[chunk['id']])
                 raw = deepcopy(raw)
                 for shot in raw['shots']:
@@ -213,6 +241,8 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
         warnings = []
         if dropped_indices:
             warnings.append(f'Selezione AI corretta: ignorati {dropped_indices} indici fuori dalla frase, senza modificare il testo')
+        if extra_director_rows:
+            warnings.append(f'Piano visuale corretto: ignorate {extra_director_rows} frasi fuori dal blocco richiesto')
         return {'editorial_root':str(editorial_root),'beat_count':len(plan['visual_beats']),
                 'coverage_count':sum(b['action']=='BROLL' for b in plan['visual_beats']),
                 'global_topic':plan['global_topic'],'plan_signature':fingerprint(plan), 'warnings':warnings}

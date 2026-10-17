@@ -40,6 +40,18 @@ def test_provider_index_outside_its_word_window_is_dropped_not_fatal():
     assert dropped == 2
 
 
+def test_director_schema_and_parser_accept_only_the_requested_batch():
+    from backend.app.magic_editorial import _magic_director_schema, _requested_director_rows
+    schema = _magic_director_schema(2)
+    beats = schema['properties']['beats']
+    assert 'minItems' not in beats and 'maxItems' not in beats
+    batch = [{'id':'c1'},{'id':'c2'}]
+    rows, extras = _requested_director_rows({'beats':[
+        {'chunk_id':'outside'}, {'chunk_id':'c2'}, {'chunk_id':'c1'}]},batch)
+    assert [row['chunk_id'] for row in rows] == ['c1','c2']
+    assert extras == 1
+
+
 def test_full_context_keeps_places_even_when_mentioned_in_middle_of_long_text():
     from backend.app.magic_editorial import editorial_context
     text=('introduzione '*600)+' polizia turistica in Egitto '+('conclusione '*600)
