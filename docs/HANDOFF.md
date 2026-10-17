@@ -1,6 +1,10 @@
 # RMBL B ROLL — handoff tecnico
 
-Aggiornato: 2026-10-17  Versione: `v0077`  Branch di consegna: `feat/api-first-text-first-v1`
+Aggiornato: 2026-10-17  Versione: `v0078`  Branch di consegna: `feat/api-first-text-first-v1`
+
+## Reinvio esplicito MAGICO v0078
+
+INVIA AL BRIDGE disponibile dopo la preparazione, anche su risultato parziale/già consegnato: conserva CUT, selezioni, ricerche, media, payload e contatori; invalida solo la consegna e archivia il journal precedente, producendo un nuovo pacchetto nella sessione corrente. Nessuna nuova chiamata AI. Riprendi mantiene il significato di continuare le fasi interrotte. Il bridge mostra GIÀ APPLICATO e disabilita APPLICA sul CUT completato, anziché offrire un pulsante che il backend ignora per evitare duplicati. Reinvio abilita una nuova applicazione, con nuova timeline CUT esplicitamente indicata. 288 regressioni passate.
 
 ## Recupero template Fusion vuoto v0077
 

@@ -1,6 +1,7 @@
 """Sequential, checkpointed MAGICO execution; no UI automation or agent loop."""
 import asyncio
 import traceback
+import uuid
 from .magic_models import MagicContext, MagicOptions
 from .magic_store import fingerprint
 from .magic_services import MagicWaitingInput, MagicBudgetReached
@@ -37,6 +38,20 @@ class MagicRunner:
 
     def resume(self, run_id):
         return self._schedule(self.store.read(run_id))
+
+    def resend(self, run_id):
+        row = self.store.read(run_id)
+        if run_id in self.tasks and not self.tasks[run_id].done():
+            return row
+        self.store.validate_source(run_id,self.source_signature(row['source_project_id']))
+        if 'preparation' not in row['checkpoints']:
+            raise ValueError('Il pacchetto non è ancora pronto: premi RIPRENDI')
+        journal = self.store._path(run_id).with_name('delivery.json')
+        if journal.is_file():
+            journal.rename(journal.with_name('delivery-history-'+uuid.uuid4().hex+'.json'))
+        checkpoints = {k:v for k,v in row['checkpoints'].items() if k!='delivery'}
+        row = self.store.transition(run_id,checkpoints=checkpoints,message='Invio il pacchetto salvato al bridge')
+        return self._schedule(row)
 
     def status(self, run_id):
         row = self.store.read(run_id)

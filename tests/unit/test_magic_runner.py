@@ -3,6 +3,29 @@ import pytest
 from tests.unit.test_cut_pass_routes import tmp_path
 
 
+def test_explicit_resend_only_repeats_delivery_and_preserves_budget(tmp_path):
+    from backend.app.magic_runner import MagicRunner
+    from backend.app.magic_store import MagicStore
+    from backend.app.magic_models import MagicOptions
+    calls=[]
+    class Services:
+        async def run_phase(self,phase,*args):
+            calls.append(phase)
+            return {'received':True} if phase=='delivery' else {}
+    async def run():
+        runner=MagicRunner(MagicStore(tmp_path),Services(),lambda _: 's')
+        row=runner.start('p',MagicOptions());await runner.tasks[row['run_id']]
+        journal=runner.store._path(row['run_id']).with_name('delivery.json')
+        journal.write_text('{"package_id":"old"}')
+        runner.resend(row['run_id']);await runner.tasks[row['run_id']]
+        assert calls.count('delivery')==2
+        assert calls.count('cut')==calls.count('preparation')==1
+        assert not journal.exists()
+        assert list(journal.parent.glob('delivery-history-*.json'))
+        assert runner.store.read(row['run_id'])['calls']=={}
+    asyncio.run(run())
+
+
 def test_phases_complete_once_and_resume_reuses_checkpoints(tmp_path):
     from backend.app.magic_runner import MagicRunner, PHASES
     from backend.app.magic_store import MagicStore

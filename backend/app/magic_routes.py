@@ -34,3 +34,7 @@ def install_magic_routes(app, runner, load_project):
     @app.post('/api/curation/magic/{run_id}/resume')
     async def resume_magic(run_id: str):
         return checked(runner.resume, run_id)
+
+    @app.post('/api/curation/magic/{run_id}/send')
+    async def send_magic(run_id: str):
+        return checked(runner.resend,run_id)

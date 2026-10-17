@@ -8,3 +8,5 @@ def test_magic_controls_show_real_progress_budget_and_manual_apply():
     assert 'APPLICA resta manuale' in html
     assert '/magic/latest' in html
     assert 'id="magicOpenResult"' in html
+    assert "magicSend.id='magicSend'" in html and 'INVIA AL BRIDGE' in html
+    assert '/send' in html

@@ -758,11 +758,15 @@ class BridgeApp:
         status = row.get("status") or ""; message = progress.get("message") or status
         if status == "completed":
             result = row.get("result") or {}
-            message = "✓ INVIO COMPLETATO · il pacchetto resta disponibile per altri invii"
+            native = bool((row.get('summary') or {}).get('native_cut'))
+            message = ("✓ GIÀ APPLICATO · " + str(result.get('timeline_name') or 'timeline creata') +
+                "\nPer una nuova applicazione usa INVIA AL BRIDGE in MAGICO.") if native else "✓ INVIO COMPLETATO · il pacchetto resta disponibile per altri invii"
             if result.get("subtitle_track_fallback"):
                 track = result.get("subtitle_track_index")
                 message += f" · Resolve ha usato ST{track}" if track else " · fallback Subtitle track"
-            self._set_apply_buttons("normal")
+            self._set_apply_buttons("disabled" if native else "normal")
+            if native and self.widgets.get('apply_all') is not None:
+                self.widgets['apply_all'].configure(text='GIÀ APPLICATO')
             self.widgets["cancel_apply"].configure(state="disabled")
         elif status == "cancelled":
             message = "✓ OPERAZIONE INTERROTTA · timeline ripristinata · pacchetto ancora disponibile"

@@ -23,7 +23,9 @@ $('magicCancel').onclick=async()=>{if(magicRow){magicRow=await api(`/magic/${mag
 $('magicResume').onclick=async()=>{if(!magicRow||magicBusy)return;magicBusy=true;drawMagic();try{magicRow=await api(`/magic/${magicRow.run_id}/resume`,{method:'POST'})}catch(e){reportError(e)}finally{magicBusy=false;drawMagic()}};
 $('magicOpenResult').onclick=async()=>{if(!magicRow?.output_project_id)return;const pid=magicRow.output_project_id,p=await api(`/projects/${pid}`);show(p,p.name,`/api/curation/projects/${pid}/media/source-video/source`);if(typeof openOnlyWorkflowStepV42==='function')openOnlyWorkflowStepV42(2)};
 $('magicCopyDebug').onclick=()=>navigator.clipboard.writeText($('magicDebug').textContent).catch(reportError);
-const baseMagicDraw=drawMagic;drawMagic=function(){baseMagicDraw();const s=magicRow?.checkpoints?.selection?.result;if(s){$('magicUsage').textContent+=` · ${s.verified_videos||0} video verificati · ${s.disabled_images||0} immagini disattivate · ${s.uncovered||0} passaggi senza copertura`}};
+const magicSend=document.createElement('button');magicSend.id='magicSend';magicSend.textContent='INVIA AL BRIDGE';magicSend.hidden=true;magicSend.title='Rimanda il pacchetto salvato senza nuove analisi. APPLICA resta manuale; il CUT creerà una nuova timeline.';document.querySelector('.magicActions').append(magicSend);
+magicSend.onclick=async()=>{if(!magicRow||magicBusy)return;magicBusy=true;drawMagic();try{magicRow=await api(`/magic/${magicRow.run_id}/send`,{method:'POST'})}catch(e){reportError(e)}finally{magicBusy=false;drawMagic()}};
+const baseMagicDraw=drawMagic;drawMagic=function(){baseMagicDraw();magicSend.hidden=!magicRow?.checkpoints?.preparation;magicSend.disabled=magicBusy||['queued','running'].includes(magicRow?.status);const s=magicRow?.checkpoints?.selection?.result;if(s){$('magicUsage').textContent+=` · ${s.verified_videos||0} video verificati · ${s.disabled_images||0} immagini disattivate · ${s.uncovered||0} passaggi senza copertura`}};
 const previousMagicShow=show;show=function(...args){const result=previousMagicShow(...args);drawMagic();refreshMagic();return result};
 drawMagic();setInterval(refreshMagic,1500);
 '''
