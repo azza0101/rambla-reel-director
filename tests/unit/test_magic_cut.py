@@ -20,7 +20,7 @@ def test_confirmed_reviewed_boundaries_are_not_paid_for_again(tmp_path):
     adapter._workspace=lambda _: (tmp_path/'journal.json',state)
     adapter._initialize=lambda *args: None
     asyncio.run(adapter.run(context,MagicOptions(),lambda *args:None))
-    assert calls==['review','confirm']
+    assert calls==['residual','review','confirm']
     assert state['steps']['boundaries']['reused_confirmed_boundaries']
 
 

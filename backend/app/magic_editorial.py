@@ -97,6 +97,7 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
                 'coverage_word_indices: seleziona passaggi completi che descrivono oggetti, luoghi, persone, azioni o fatti '
                 'mostrabili con video o immagini. Includi tutte le parole del passaggio, non solo il nome del soggetto. '
                 'Alterna volto e coperture: in un testo adatto circa 20-45% del parlato, senza forzare una quota o inventare immagini. '
+                'Non usare coperture per connettivi, ripetizioni, frasi di transizione o concetti che possono restare più chiari sul volto. '
                 'Introduzione, CTA e riflessioni personali possono restare sul volto. '
                 'highlighted_word_indices: scegli i concetti più importanti anche quando sono astratti o riflessivi '
                 '(esempio: libertà, privilegio, responsabilità), oltre a nomi e fatti chiave. Non lasciare tutti gli highlight '
@@ -146,7 +147,7 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
             prompt = build_director_prompt(local)+'\nCONTESTO COMPLETO COMPATTO:\n'+context
             prompt += '\nSe il testo parla esplicitamente di un evento storico o violenza, rappresenta quel significato: '
             prompt += 'non sostituirlo automaticamente con una strada tranquilla. Non inventare attribuzioni archivistiche o geografiche.'
-            prompt += '\nPer ciascun passaggio selezionato proponi una sola inquadratura concreta, con una o due query semplici per mezzo. Mantieni concise le spiegazioni.'
+            prompt += '\nPer ciascun passaggio selezionato proponi una sola inquadratura concreta, con una o due query semplici per mezzo. Mantieni concise le spiegazioni. Non inventare un paese, una città o un aeroporto specifico se il passaggio non lo nomina: in quel caso la query deve restare geografically neutral.'
             reply = query(prompt,_magic_director_schema(len(batch)),f'Piano visuale · blocco {index+1}/{len(director_batches)}')
             if len(reply.get('beats',[])) != len(batch):
                 raise ValueError('Director MAGICO non ha coperto tutte le frasi')

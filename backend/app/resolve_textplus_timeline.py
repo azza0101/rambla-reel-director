@@ -8,7 +8,7 @@ from datetime import datetime
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import shutil
 import subprocess
@@ -535,10 +535,38 @@ def restore_empty_title_composition(item, title_name, payload):
         raise RuntimeError(f"Composizione vuota per '{title_name}': pacchetto originale non disponibile")
     root = Path(payload.get('media_staging_root') or Path.cwd())/'.title-comps'
     root.mkdir(parents=True,exist_ok=True)
+    # ``setting:/`` is relative to the title's installed .setting file.  Resolve
+    # 21.1 sometimes returns an empty comp for an installed title, so the
+    # fallback imports it from disk.  Importing only the .setting loses its
+    # paper/animation assets and produces an apparently valid but black title.
+    # Keep an extracted package next to the generated .comp and make every
+    # Loader path absolute before importing it.
+    asset_root = root/'assets'/template.sha256
     temporary = root/(uuid.uuid4().hex+'.comp')
     try:
         with zipfile.ZipFile(template.source_path) as archive:
-            setting = archive.read(template.setting_path).decode('utf-8-sig')
+            if not asset_root.is_dir():
+                staging = root/('.extract-'+uuid.uuid4().hex)
+                try:
+                    archive.extractall(staging)
+                    extracted = staging/Path(*PurePosixPath(template.setting_path).parent.parts)
+                    if not (extracted/Path(PurePosixPath(template.setting_path).name)).is_file():
+                        raise RuntimeError('Le risorse del template originale non sono complete')
+                    asset_root.parent.mkdir(parents=True,exist_ok=True)
+                    shutil.move(str(extracted),str(asset_root))
+                finally:
+                    shutil.rmtree(staging,ignore_errors=True)
+            setting_path = asset_root/PurePosixPath(template.setting_path).name
+            setting = setting_path.read_text(encoding='utf-8-sig')
+            def absolute_setting_asset(match):
+                relative = PurePosixPath(match.group(1))
+                if relative.is_absolute() or '..' in relative.parts:
+                    raise RuntimeError('Percorso risorsa non valido nel template')
+                candidate = asset_root/Path(*relative.parts)
+                if not candidate.is_file():
+                    raise RuntimeError(f'Risorsa del titolo non trovata: {relative.as_posix()}')
+                return '"'+candidate.resolve().as_posix()+'"'
+            setting = re.sub(r'"setting:/([^"\\]+)"',absolute_setting_asset,setting,flags=re.I)
         temporary.write_text('Composition '+setting,encoding='utf-8')
         if not item.ImportFusionComp(str(temporary)):
             raise RuntimeError('Importazione diretta del template originale non riuscita')

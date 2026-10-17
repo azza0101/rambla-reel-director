@@ -108,9 +108,18 @@ class MagicCutAdapter:
         journal, state = await asyncio.to_thread(self._workspace, context)
         await asyncio.to_thread(self._initialize, context, journal, state)
         pid = state['work_project_id']
-        for index, action in enumerate(('analyze', 'boundaries', 'review', 'confirm')):
+        # A confirmed source CUT is useful as an editable starting point, but it
+        # is not proof that every late restart was found.  MAGICO must run its
+        # residual audit again on inherited plans; otherwise it can faithfully
+        # reproduce a previously missed repetition in a new edit.
+        actions = ['analyze', 'boundaries']
+        if state.get('inherited_origin'):
+            actions.append('residual')
+        actions.extend(('review', 'confirm'))
+        total = len(actions) * 4
+        for index, action in enumerate(actions):
             if action in state['steps']:
-                report((index+1)*4, 16, 'CUT · risultato già salvato')
+                report((index+1)*4, total, 'CUT · risultato già salvato')
                 continue
             request = None
             if action == 'boundaries' and state.get('inherited_origin'):
@@ -119,7 +128,7 @@ class MagicCutAdapter:
                 if groups and all(group.get('boundaries_reviewed') is True for group in groups):
                     state['steps'][action] = {'reused_confirmed_boundaries':True}
                     write_json(journal, state)
-                    report((index+1)*4,16,'CUT · confini delle take già verificati')
+                    report((index+1)*4,total,'CUT · confini delle take già verificati')
                     continue
             if action in {'review', 'confirm'}:
                 _, _, plan = self.engine.current(pid)
@@ -129,10 +138,10 @@ class MagicCutAdapter:
                     request.pause_mode = options.pause_mode
                     request.end_margin_ms = options.end_margin_ms
             result = await self.engine.perform(action, pid, request=request,
-                report=lambda done,total,message,index=index:report(index*4+done,16,message))
+                report=lambda done,stage_total,message,index=index:report(index*4+done,total,message))
             state['steps'][action] = result
             write_json(journal, state)
-            report((index+1)*4, 16, f'CUT · {action} completato')
+            report((index+1)*4, total, f'CUT · {action} completato')
         _, _, plan = self.engine.current(pid)
         # Responses are addressed by the exact prompt, schema and model options.
         # Copying them does not reuse replies for different text or selections.

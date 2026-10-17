@@ -12,12 +12,14 @@ def test_empty_title_restores_exact_package_and_connects_output(tmp_path):
     def import_comp(path):
         text=Path(path).read_text(encoding='utf-8')
         assert text.startswith('Composition {') and 'KURA_paper_title_v9' in text
+        assert 'setting:/' not in text
         state['loaded']=True
         return True
     item=SimpleNamespace(GetFusionCompByIndex=lambda _:comp,ImportFusionComp=import_comp)
     restore_empty_title_composition(item,'KURA_paper_title_v9',{'media_staging_root':str(tmp_path)})
     assert state['loaded'] and links==[('Input',group)]
     assert not list(tmp_path.rglob('*.comp'))
+    assert (tmp_path/'.title-comps'/'assets').is_dir()
 
 
 def test_native_cut_titles_use_one_seed_composition_and_separate_exact_clips(monkeypatch):

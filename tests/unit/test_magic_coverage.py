@@ -12,6 +12,13 @@ def test_shortlist_deduplicates_sources_and_rejects_wrong_country():
     assert [r['asset_id'] for r in shortlist_candidates(rows, 'tourist police Egypt', ['Egypt'], limit=6)] == ['a']
 
 
+def test_shortlist_rejects_a_specific_unrelated_airport():
+    from backend.app.magic_coverage import shortlist_candidates
+    rows = [dict(asset_id='changi', source_page='https://x/changi',
+                 title='Changi airport immigration area overview', provider='pexels')]
+    assert shortlist_candidates(rows, 'airport immigration passport Italy', ['Italy'], limit=6) == []
+
+
 def test_metadata_and_poster_alone_cannot_verify_video():
     from backend.app.magic_coverage import validated_verdicts
     rows = [dict(asset_id='a', kind='video', sampled_frames=['one.jpg'])]

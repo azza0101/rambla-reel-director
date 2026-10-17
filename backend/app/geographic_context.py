@@ -31,6 +31,7 @@ PLACES = {
  'Kenya': ('Kenya','keniota','Kenyan'),
  'Tanzania': ('Tanzania','tanzaniano','Tanzanian'),
  'South Africa': ('Sudafrica','South Africa'),
+ 'Singapore': ('Singapore','Singaporean','Changi'),
  'Iceland': ('Islanda','Iceland','islandese','Icelandic'),
  'Norway': ('Norvegia','Norway','norvegese','Norwegian'),
  'Jordan': ('Giordania','Jordan','giordano','Jordanian'),
@@ -38,13 +39,13 @@ PLACES = {
  'Cairo': ('Cairo','Il Cairo'), 'Luxor': ('Luxor',), 'Giza': ('Giza','Giza pyramids'),
  'Minya': ('Minya','El Minya','Al Minya','al-Minya','Elminia','Elmini','Delminia','Minia'),
  'Amarna': ('Amarna','Tell el Amarna'), 'Nile': ('Nilo','Nile'),
- 'Bangkok': ('Bangkok',), 'Phuket': ('Phuket',), 'Chiang Mai': ('Chiang Mai',),
+ 'Bangkok': ('Bangkok',), 'Phuket': ('Phuket',), 'Chiang Mai': ('Chiang Mai',), 'Changi': ('Changi',),
  'Rome': ('Roma','Rome'), 'Milan': ('Milano','Milan'), 'Venice': ('Venezia','Venice'),
  'Paris': ('Parigi','Paris'), 'London': ('Londra','London'), 'New York': ('New York',),
  'Tokyo': ('Tokyo',), 'Bali': ('Bali',), 'Marrakech': ('Marrakech','Marrakesh'),
  'Istanbul': ('Istanbul',), 'Athens': ('Atene','Athens'), 'Lisbon': ('Lisbona','Lisbon'),
 }
-COUNTRY = {'Amarna':'Egypt','Nile':'Egypt','Cairo':'Egypt','Luxor':'Egypt','Giza':'Egypt','Minya':'Egypt','Bangkok':'Thailand','Phuket':'Thailand','Chiang Mai':'Thailand','Rome':'Italy','Milan':'Italy','Venice':'Italy','Paris':'France','London':'United Kingdom','New York':'United States','Tokyo':'Japan','Bali':'Indonesia','Marrakech':'Morocco','Istanbul':'Turkey','Athens':'Greece','Lisbon':'Portugal'}
+COUNTRY = {'Amarna':'Egypt','Nile':'Egypt','Cairo':'Egypt','Luxor':'Egypt','Giza':'Egypt','Minya':'Egypt','Bangkok':'Thailand','Phuket':'Thailand','Chiang Mai':'Thailand','Changi':'Singapore','Rome':'Italy','Milan':'Italy','Venice':'Italy','Paris':'France','London':'United Kingdom','New York':'United States','Tokyo':'Japan','Bali':'Indonesia','Marrakech':'Morocco','Istanbul':'Turkey','Athens':'Greece','Lisbon':'Portugal'}
 
 def places_in(text):
     hits=[]
