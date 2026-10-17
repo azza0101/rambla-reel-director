@@ -113,6 +113,14 @@ class MagicCutAdapter:
                 report((index+1)*4, 16, 'CUT · risultato già salvato')
                 continue
             request = None
+            if action == 'boundaries' and state.get('inherited_origin'):
+                _, _, existing = self.engine.current(pid)
+                groups = existing.get('groups') or []
+                if groups and all(group.get('boundaries_reviewed') is True for group in groups):
+                    state['steps'][action] = {'reused_confirmed_boundaries':True}
+                    write_json(journal, state)
+                    report((index+1)*4,16,'CUT · confini delle take già verificati')
+                    continue
             if action in {'review', 'confirm'}:
                 _, _, plan = self.engine.current(pid)
                 request = CutReview(revision=plan['revision'])
@@ -126,6 +134,16 @@ class MagicCutAdapter:
             write_json(journal, state)
             report((index+1)*4, 16, f'CUT · {action} completato')
         _, _, plan = self.engine.current(pid)
+        # Responses are addressed by the exact prompt, schema and model options.
+        # Copying them does not reuse replies for different text or selections.
+        inherited_cache = self.root/context.source_project_id/'run'/'magic-editorial-cache'/'api-cache'
+        child_cache = self.root/state['steps']['confirm']['project_id']/'run'/'magic-editorial-cache'/'api-cache'
+        if inherited_cache.is_dir():
+            child_cache.mkdir(parents=True,exist_ok=True)
+            for cached in inherited_cache.glob('*.json'):
+                target = child_cache/cached.name
+                if not target.exists():
+                    shutil.copy2(cached,target)
         if state.get('resolve_source'):
             child = self.root/state['steps']['confirm']['project_id']/'cut-origin.json'
             provenance = json.loads(child.read_text(encoding='utf-8'))

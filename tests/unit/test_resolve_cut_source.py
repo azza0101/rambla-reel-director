@@ -24,6 +24,14 @@ def test_remap_keeps_gaps_tracks_and_source_offsets_at_fractional_fps():
     with pytest.raises(ValueError):remap_source_cut({**snapshot(),'supported':False},cut)
 
 
+def test_snapshot_module_imports_without_server_dependencies():
+    import subprocess,sys
+    result=subprocess.run([sys.executable,'-S','-c',
+        'from backend.app.resolve_cut_source import frame_rate; assert frame_rate("30")==30'],
+        capture_output=True,text=True)
+    assert result.returncode==0,result.stderr
+
+
 def test_fractional_cut_duration_does_not_invent_a_last_frame():
     from backend.app.cut_pass import build_cut_plan
     from fractions import Fraction

@@ -2,6 +2,16 @@ import pytest
 from tests.unit.test_cut_pass_routes import tmp_path
 
 
+def test_director_batches_do_not_count_word_metadata():
+    from backend.app.magic_editorial import compact_director_batches
+    chunks = [dict(id=f'c{i}', start=i, end=i+1, text='polizia turistica in Egitto',
+                   words=[dict(text='parola', metadata='x'*1000)]*100) for i in range(22)]
+    batches = compact_director_batches(chunks)
+    assert len(batches) == 4
+    assert sum(map(len, batches)) == 22
+    assert all(set(c) == {'id','start','end','text'} for batch in batches for c in batch)
+
+
 def test_automatic_word_selections_cover_all_chunks_and_limit_keyword_spans():
     from backend.app.magic_editorial import selection_changes
     chunks=[{'id':'c0','text':'la polizia turistica in Egitto'},{'id':'c1','text':'ciao sono Giulia'}]
@@ -50,3 +60,18 @@ def test_full_editorial_uses_standard_intents_and_director_plan(tmp_path):
     assert load_phrase_intents(tmp_path)['phrases']['c0']['highlighted_word_indices']==[1,2]
     plan=json.loads((tmp_path/'visual-plan.json').read_text())
     assert [b['action'] for b in plan['visual_beats']]==['BROLL','KEEP_TALKING_HEAD']
+
+
+def test_empty_ai_selections_on_substantial_speech_are_not_published_as_success(tmp_path):
+    import json
+    from backend.app.magic_editorial import run_magic_editorial
+    from backend.app.magic_services import MagicWaitingInput
+    chunks=[{'id':'c','start':0,'end':30,'text':' '.join(['passaporto frontiere viaggio costo libertà']*10)}]
+    (tmp_path/'semantic-chunks.json').write_text(json.dumps(chunks))
+    (tmp_path/'transcript-raw.json').write_text(json.dumps({'language':'it','segments':[]}))
+    def query(prompt,schema,label):
+        units=json.loads(prompt.split('UNITA=')[1])
+        return {'global_topic':'Travel','choices':[dict(unit_id=u['unit_id'],coverage_word_indices=[],highlighted_word_indices=[]) for u in units]}
+    with pytest.raises(MagicWaitingInput):
+        run_magic_editorial(tmp_path,'p',30,lambda *a:None,query=query)
+    assert not (tmp_path/'visual-plan.json').exists()

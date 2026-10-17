@@ -232,7 +232,10 @@ class MagicProductServices:
         write_json(retrieval/'magic-coverage.json',dict(plan_signature=fingerprint(read_json(run/'visual-plan.json')),
             cut_revision=context.cut_revision,fps=fps,decisions=decisions,verdicts=verdicts))
         report(1,1,'Coperture selezionate e immagini alternative salvate')
-        return dict(selected=len(decisions),warnings=warnings,partial=bool(warnings))
+        return dict(selected=len(decisions),
+            verified_videos=sum(d['role']!='fallback_image' for d in decisions),
+            disabled_images=sum(d['role']=='fallback_image' for d in decisions),
+            uncovered=len(beats)-len(decisions),warnings=warnings,partial=bool(warnings))
 
     @staticmethod
     def persist_generic_candidates(retrieval, candidates, decisions):

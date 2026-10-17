@@ -2,6 +2,28 @@ from types import SimpleNamespace
 from tests.unit.test_cut_pass_routes import tmp_path
 
 
+def test_confirmed_reviewed_boundaries_are_not_paid_for_again(tmp_path):
+    import asyncio
+    from backend.app.magic_cut import MagicCutAdapter
+    from backend.app.magic_models import MagicOptions
+    context=SimpleNamespace(run_id='r',source_project_id='original')
+    state={'work_project_id':'work','initialized':True,'inherited_origin':{'plan':{}},
+           'steps':{'analyze':{'reused_confirmed_cut':True}}}
+    calls=[]
+    class Engine:
+        def current(self,pid):
+            return None,None,{'revision':'r','groups':[{'boundaries_reviewed':True}]}
+        async def perform(self,action,*args,**kwargs):
+            calls.append(action)
+            return {'project_id':'child'} if action=='confirm' else {}
+    adapter=MagicCutAdapter(None,tmp_path,None,Engine())
+    adapter._workspace=lambda _: (tmp_path/'journal.json',state)
+    adapter._initialize=lambda *args: None
+    asyncio.run(adapter.run(context,MagicOptions(),lambda *args:None))
+    assert calls==['review','confirm']
+    assert state['steps']['boundaries']['reused_confirmed_boundaries']
+
+
 def test_final_margin_protects_long_word_low_energy_ending():
     from backend.app.cut_silence import trim_silence_ranges
     words = [{'start':.2,'end':1.1}]

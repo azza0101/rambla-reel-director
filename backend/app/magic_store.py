@@ -63,11 +63,25 @@ class MagicStore:
             write_json(path, row)
             return deepcopy(row)
 
+    def latest_for_view(self, project_id):
+        own = self.latest(project_id)
+        if own:
+            return own
+        pointer = self.root/self._id(project_id)/'magic-parent-run.json'
+        if not pointer.is_file():
+            return None
+        row = self.read(json.loads(pointer.read_text(encoding='utf-8'))['run_id'])
+        return row if row.get('output_project_id') == project_id else None
+
     def transition(self, run_id, **changes):
         with self.lock:
             row = self.read(run_id)
             row.update(changes, updated_at=datetime.now(timezone.utc).isoformat())
             write_json(self._path(run_id), row)
+            if row.get('output_project_id'):
+                pointer = self.root/self._id(row['output_project_id'])/'magic-parent-run.json'
+                pointer.parent.mkdir(parents=True,exist_ok=True)
+                write_json(pointer,{'run_id':run_id})
             return deepcopy(row)
 
     def validate_source(self, run_id, signature):

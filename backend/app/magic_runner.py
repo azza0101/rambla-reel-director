@@ -31,7 +31,7 @@ class MagicRunner:
         if any(call['status'] == 'unknown' for call in row['calls'].values()):
             return row
         self.store.validate_source(run_id, self.source_signature(row['source_project_id']))
-        row = self.store.transition(run_id, status='running', cancel_requested=False, error=None)
+        row = self.store.transition(run_id, status='running', cancel_requested=False, error=None, diagnostics=None)
         self.tasks[run_id] = asyncio.create_task(self._run(run_id))
         return row
 

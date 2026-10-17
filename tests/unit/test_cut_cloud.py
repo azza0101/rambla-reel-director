@@ -60,3 +60,17 @@ def test_oversized_request_is_blocked_locally_before_network(monkeypatch):
     monkeypatch.setattr(cloud,'_QUOTA',TokenWindow())
     with pytest.raises(ValueError,match='Blocco CUT troppo grande'):
         cloud.query_json('x'*30000,{},'troppo grande')
+
+
+def test_magic_can_bound_reasoning_without_changing_manual_defaults(monkeypatch):
+    from types import SimpleNamespace
+    import backend.app.cut_cloud as cloud
+    import backend.app.groq_api as groq
+    calls=[]
+    class FakeClient:
+        def __init__(self,*a,**kw):calls.append(kw)
+        def generate_json(self,*a):return SimpleNamespace(data={'ok':True},usage={'total_tokens':10})
+    monkeypatch.setattr(groq,'GroqDirectorClient',FakeClient)
+    monkeypatch.setattr(cloud,'_QUOTA',TokenWindow())
+    cloud.query_json('small',{'type':'object'},'magic',max_output_tokens=2600,thinking_level='low')
+    assert calls[0]['thinking_level']=='low' and calls[0]['max_output_tokens']==2600

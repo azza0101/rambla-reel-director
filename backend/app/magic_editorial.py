@@ -44,17 +44,36 @@ def selection_changes(chunks, rows):
 def _selection_schema():
     indices = {'type':'array','items':{'type':'integer','minimum':0}}
     row = {'type':'object','additionalProperties':False,
-           'properties':{'unit_id':{'type':'string'},'coverage_word_indices':indices,'highlighted_word_indices':indices},
+           'properties':{'unit_id':{'type':'string'},
+               'coverage_word_indices':{**indices,'description':'Exact numbered words of complete passages to cover with B-roll, including all words between the selected IN and OUT.'},
+               'highlighted_word_indices':{**indices,'description':'Exact numbered words of important concepts to emphasize as titles. Reflective and abstract concepts are valid. Usually 1-3 words per concept.'}},
            'required':['unit_id','coverage_word_indices','highlighted_word_indices']}
     return {'type':'object','additionalProperties':False,'properties':{
         'global_topic':{'type':'string'},'choices':{'type':'array','items':row}},'required':['global_topic','choices']}
+
+
+def compact_director_batches(chunks):
+    from .cut_cloud import pack_items
+    compact = [{key: chunk[key] for key in ('id','start','end','text')} for chunk in chunks]
+    return pack_items(compact, max_chars=2000, max_items=6)
+
+
+def _magic_director_schema(count):
+    schema = deepcopy(director_schema(count))
+    properties = schema['properties']['beats']['items']['properties']
+    properties['action']['enum'] = ['BROLL']
+    properties['visual_mode']['enum'] = ['single']
+    properties['shots'].update(minItems=1, maxItems=1)
+    for field in ('image_queries','video_queries'):
+        properties['shots']['items']['properties'][field]['maxItems'] = 2
+    return schema
 
 
 def run_magic_editorial(run, project_id, duration, report, *, query=None):
     from .cut_cloud import cloud_context, query_json, pack_items, word_windows
     run = Path(run)
     if query is None:
-        query = lambda prompt,schema,label:query_json(prompt,schema,label,max_output_tokens=1800)
+        query = lambda prompt,schema,label:query_json(prompt,schema,label,max_output_tokens=2600,thinking_level='low')
     chunks = normalized_chunks(run)
     if not chunks:
         raise ValueError('La trascrizione del CUT è vuota')
@@ -73,10 +92,19 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
     topic = ''
     with cloud_context(run/'magic-editorial-cache', lambda message:report(0,0,message)):
         for index, batch in enumerate(batches):
-            prompt = ('Sei il montatore di un reel. Seleziona soltanto gli indici delle parole realmente presenti. '
-                'Coperture: scegli descrizioni concrete che una ripresa possa mostrare, senza coprire necessariamente introduzione, '
-                'CTA e interpretazione della persona. Parole evidenziate: pochi concetti forti, massimo tre parole consecutive; '
-                'non evidenziare intere frasi. Puoi scegliere liste vuote. Non cambiare testo o unire significati distinti. '
+            prompt = ('Sei il montatore di un reel e devi PRODURRE le selezioni editoriali, non solo classificare il tema. '
+                'Compila coverage_word_indices e highlighted_word_indices usando i numeri davanti alle parole. '
+                'coverage_word_indices: seleziona passaggi completi che descrivono oggetti, luoghi, persone, azioni o fatti '
+                'mostrabili con video o immagini. Includi tutte le parole del passaggio, non solo il nome del soggetto. '
+                'Alterna volto e coperture: in un testo adatto circa 20-45% del parlato, senza forzare una quota o inventare immagini. '
+                'Introduzione, CTA e riflessioni personali possono restare sul volto. '
+                'highlighted_word_indices: scegli i concetti più importanti anche quando sono astratti o riflessivi '
+                '(esempio: libertà, privilegio, responsabilità), oltre a nomi e fatti chiave. Non lasciare tutti gli highlight '
+                'vuoti solo perché il testo è riflessivo. In genere 5-10 concetti al minuto, massimo tre parole consecutive '
+                'per concetto e poche evidenziazioni per frase. Non evidenziare intere frasi. '
+                'Esempio con parole 0:Il 1:passaporto 2:non 3:è 4:uguale 5:per 6:tutti: '
+                'highlighted_word_indices può essere [1], coverage_word_indices può essere [0,1,2,3,4,5,6]. '
+                'Liste vuote solo per unità che non richiedono davvero quel trattamento. Non cambiare testo o unire significati distinti. '
                 'Ogni unit_id deve comparire una volta; gli indici sono quelli originali indicati, non ricominciano da zero.\n'
                 +context+'\nUNITA='+json.dumps([{k:v for k,v in u.items() if k!='allowed'} for u in batch],ensure_ascii=False))
             reply = query(prompt,_selection_schema(),f'Selezioni automatiche · blocco {index+1}/{len(batches)}')
@@ -93,6 +121,10 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
                     choices[unit['chunk_id']][field].extend(row[field])
             report(index+1,len(batches)*2,'Parole chiave e passaggi da coprire identificati')
         changes = selection_changes(chunks,list(choices.values()))
+        if sum(len(c['text'].split()) for c in chunks) >= 40 and not any(
+                row['coverage_word_indices'] or row['highlighted_word_indices'] for row in changes.values()):
+            from .magic_services import MagicWaitingInput
+            raise MagicWaitingInput('L’AI non ha proposto né coperture né parole chiave: risultato incompleto. Il CUT è conservato; verifica le selezioni prima di continuare.')
         if fingerprint(normalized_chunks(run)) != input_signature:
             raise ValueError('Il testo è cambiato durante MAGICO: selezioni non sovrascritte')
         intents = load_phrase_intents(run)
@@ -100,7 +132,7 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
         package = transcript_package(run,project_id,duration)
         package_signature = fingerprint(package['chunks'])
         selected = set(package.get('coverage_selected_chunk_ids') or [])
-        director_batches = pack_items([c for c in package['chunks'] if c['id'] in selected],max_chars=2000,max_items=3)
+        director_batches = compact_director_batches([c for c in package['chunks'] if c['id'] in selected])
         decisions = {c['id']:dict(chunk_id=c['id'],action='KEEP_TALKING_HEAD',
             editorial_function='Conserva il parlato senza copertura',core_meaning=c['text'],subtext='',
             visual_mode='single',avoid=[],shots=[]) for c in package['chunks']}
@@ -114,7 +146,8 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
             prompt = build_director_prompt(local)+'\nCONTESTO COMPLETO COMPATTO:\n'+context
             prompt += '\nSe il testo parla esplicitamente di un evento storico o violenza, rappresenta quel significato: '
             prompt += 'non sostituirlo automaticamente con una strada tranquilla. Non inventare attribuzioni archivistiche o geografiche.'
-            reply = query(prompt,director_schema(len(batch)),f'Piano visuale · blocco {index+1}/{len(director_batches)}')
+            prompt += '\nPer ciascun passaggio selezionato proponi una sola inquadratura concreta, con una o due query semplici per mezzo. Mantieni concise le spiegazioni.'
+            reply = query(prompt,_magic_director_schema(len(batch)),f'Piano visuale · blocco {index+1}/{len(director_batches)}')
             if len(reply.get('beats',[])) != len(batch):
                 raise ValueError('Director MAGICO non ha coperto tutte le frasi')
             for raw,chunk in zip(reply['beats'],batch):

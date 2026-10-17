@@ -78,11 +78,12 @@ def merge_suggestions(replies):
     return {'groups':groups,'discards':list(discards.values())}
 
 
-def query_json(prompt,schema,label,*,max_output_tokens=2600):
+def query_json(prompt,schema,label,*,max_output_tokens=2600,thinking_level='medium'):
     from .groq_api import GroqDirectorClient,GroqAPIError
     context=_CONTEXT.get();notify=context[1] if context else lambda message:None
     cache_input={'v':1,'prompt':prompt,'schema':schema}
     if max_output_tokens != 2600:cache_input['max_output_tokens']=max_output_tokens
+    if thinking_level != 'medium':cache_input['thinking_level']=thinking_level
     key=hashlib.sha256(json.dumps(cache_input,sort_keys=True).encode()).hexdigest()
     cache=context[0]/'api-cache'/f'{key}.json' if context else None
     if cache and cache.is_file():notify(label+' · risultato salvato');return json.loads(cache.read_text(encoding='utf-8'))
@@ -93,7 +94,7 @@ def query_json(prompt,schema,label,*,max_output_tokens=2600):
                 notify(f'{label} · attendo quota Groq: {math.ceil(delay)} s');time.sleep(min(1,delay))
             notify(label+' · analisi in corso')
             _QUOTA.record(budget,time.monotonic())
-            client=GroqDirectorClient(os.environ.get('GROQ_API_KEY',''),model='openai/gpt-oss-120b',fallback_models=(),thinking_level='medium',max_retries_per_model=0,max_output_tokens=max_output_tokens)
+            client=GroqDirectorClient(os.environ.get('GROQ_API_KEY',''),model='openai/gpt-oss-120b',fallback_models=(),thinking_level=thinking_level,max_retries_per_model=0,max_output_tokens=max_output_tokens)
             try:reply=client.generate_json(prompt,schema)
             except GroqAPIError as exc:
                 if '(429)' not in str(exc) or attempt==2:raise

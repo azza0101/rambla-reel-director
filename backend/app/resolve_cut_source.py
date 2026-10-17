@@ -2,7 +2,13 @@
 from fractions import Fraction
 from pathlib import Path
 import math
-from .magic_store import fingerprint
+import hashlib
+import json
+
+
+def fingerprint(value):
+    # This module is imported by Resolve's standalone Python, without app packages.
+    return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 
 
 def frame_rate(value):

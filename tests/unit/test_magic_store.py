@@ -31,6 +31,16 @@ def test_crash_preserves_unknown_call_and_budget_counts_attempts(tmp_path):
         recovered.begin_call(run['run_id'], 'editorial', 'groq', 'input-v2')
 
 
+def test_output_project_reload_can_find_its_magic_run_without_reusing_it_as_source(tmp_path):
+    from backend.app.magic_store import MagicStore
+    from backend.app.magic_models import MagicOptions
+    store=MagicStore(tmp_path)
+    row=store.create_or_resume('source','signature',MagicOptions())
+    store.transition(row['run_id'],output_project_id='child')
+    assert store.latest_for_view('child')['run_id']==row['run_id']
+    assert store.latest('child') is None
+
+
 def test_options_reject_zero_limits_and_unknown_providers():
     from backend.app.magic_models import MagicOptions
     from pydantic import ValidationError

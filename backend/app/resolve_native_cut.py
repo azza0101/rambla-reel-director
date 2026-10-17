@@ -163,6 +163,11 @@ def alternative_duration(cut, alternative):
                       end - start, cut['duration_frames'] - start))
 
 
+def set_alternative_color(item):
+    # Resolve 21.1's clip palette has Pink but rejects Red (marker palette differs).
+    return bool(item.SetClipColor('Red') or item.SetClipColor('Pink'))
+
+
 def create_native_cut_base(resolve, project, payload, *, progress=None):
     cut = payload['native_cut']
     validate_native_cut(cut)
@@ -231,7 +236,7 @@ def create_native_cut_base(resolve, project, payload, *, progress=None):
             if (len(items) != 1 or items[0].GetStart() != base + alternative['edited_in_frame']
                 or items[0].GetEnd() != base + alternative['edited_in_frame'] + duration
                 or not items[0].SetClipEnabled(False)
-                or not items[0].SetClipColor('Red')):
+                or not set_alternative_color(items[0])):
                 raise RuntimeError('Verifica della take alternativa disattivata non riuscita')
             timeline.SetTrackName('video', track, 'RMBL TAKE ALTERNATIVA')
         return dict(timeline=timeline, fps=cut['fps'], base_frame=base,

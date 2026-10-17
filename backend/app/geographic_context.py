@@ -16,6 +16,8 @@ PLACES = {
  'Japan': ('Giappone','Japan','giapponese','Japanese'),
  'China': ('Cina','China','cinese','Chinese'),
  'India': ('India','indiano','indiana','Indian'),
+ 'Sri Lanka': ('Sri Lanka','Sri Lankan','srilankese','singalese'),
+ 'Colombia': ('Colombia','colombiano','colombiana','Colombian'),
  'Vietnam': ('Vietnam','vietnamita','Vietnamese'),
  'Indonesia': ('Indonesia','indonesiano','Indonesian'),
  'Cambodia': ('Cambogia','Cambodia','cambogiano','Cambodian'),

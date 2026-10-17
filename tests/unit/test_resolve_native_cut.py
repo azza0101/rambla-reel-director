@@ -107,6 +107,15 @@ def test_fractional_timeline_setting_falls_back_to_resolve_ntsc_enum_and_verifie
     assert timeline.values['timelineDropFrameTimecode'] == '0'
 
 
+def test_alternative_color_uses_supported_resolve_palette():
+    from types import SimpleNamespace
+    from backend.app.resolve_native_cut import set_alternative_color
+    calls=[]
+    item=SimpleNamespace(SetClipColor=lambda color: calls.append(color) or color=='Pink')
+    assert set_alternative_color(item)
+    assert calls==['Red','Pink']
+
+
 def test_alternative_stops_at_corresponding_chosen_phrase_after_pause_cuts():
     from backend.app.resolve_native_cut import alternative_duration
     cut={'duration_frames':300,'groups':[{'selected_take':1,'source_ranges':[{}, {'in_frame':100,'out_frame':200}]}],

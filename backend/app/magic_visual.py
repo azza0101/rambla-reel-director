@@ -10,14 +10,19 @@ from .magic_coverage import validated_verdicts
 def sample_candidate(candidate, directory):
     """Sample the available clip itself, never substitute its search thumbnail."""
     preview = Path(candidate.get('preview_path') or '')
-    path = preview if preview.is_file() else Path(candidate.get('local_asset_path') or '')
+    local = Path(candidate.get('local_asset_path') or '')
+    # Stock preview_path can be a search JPEG, not a playable video preview.
+    # Judge the downloaded video segment whenever it is available.
+    image = candidate.get('kind') == 'image'
+    path = local if not image and local.is_file() else preview if preview.is_file() else local
+    if not image and path.suffix.lower() in {'.jpg','.jpeg','.png','.webp','.gif'}:
+        return {**candidate,'sampled_frames':[]}
     if not path.is_file():
         return {**candidate, 'sampled_frames': []}
     stat = path.stat()
     folder = Path(directory) / fingerprint([str(path.resolve()), stat.st_size, stat.st_mtime_ns,
         candidate.get('source_start_seconds') if path != preview else 0])[:24]
     folder.mkdir(parents=True, exist_ok=True)
-    image = candidate.get('kind') == 'image'
     if image:
         offsets = [None]
     else:
@@ -40,6 +45,8 @@ def sample_candidate(candidate, directory):
                 command += ['-ss', f'{offset:.6f}']
             command += ['-i', str(path), '-frames:v', '1', '-vf', 'scale=512:512:force_original_aspect_ratio=decrease', str(output)]
             subprocess.run(command, capture_output=True, check=True, timeout=30)
+        if not output.is_file() or not output.stat().st_size:
+            raise ValueError('Nessun fotogramma decodificabile nel punto richiesto')
         frames.append(str(output))
     return {**candidate, 'sampled_frames': frames}
 
@@ -47,7 +54,8 @@ def sample_candidate(candidate, directory):
 def judge_batch(candidates, client):
     if client is None:
         return validated_verdicts(candidates, None)
-    usable = [row for row in candidates if len(row.get('sampled_frames') or []) >= (3 if row.get('kind') == 'video' else 1)]
+    usable = [row for row in candidates if len(row.get('sampled_frames') or []) >= (3 if row.get('kind') == 'video' else 1)
+              and all(Path(p).is_file() and Path(p).stat().st_size for p in row['sampled_frames'])]
     if not usable:
         return validated_verdicts(candidates, None)
     parts, manifest = [], []

@@ -89,8 +89,15 @@ def create_multitrack_cut(resolve, project, payload, *, progress=None):
         for kind in ('video','audio'):
             tracks = [t for t in snapshot['tracks'] if t['kind']==kind]
             if kind=='audio':
-                # This timeline is empty and owned by this operation only.
-                for index in range(int(timeline.GetTrackCount('audio') or 0),0,-1):
+                # Resolve refuses to delete its last audio track. Add the desired
+                # subtypes first, then remove only the empty default tracks.
+                defaults = int(timeline.GetTrackCount('audio') or 0)
+                for track in tracks:
+                    if timeline.AddTrack('audio',track['subtype']) is False:
+                        raise RuntimeError('Impossibile creare le tracce audio originali del CUT')
+                for index in range(defaults,0,-1):
+                    if not tracks:
+                        break
                     if timeline.DeleteTrack('audio',index) is False:
                         raise RuntimeError('Impossibile configurare le tracce audio CUT')
             for track in tracks:
@@ -138,7 +145,8 @@ def create_multitrack_cut(resolve, project, payload, *, progress=None):
                         raise RuntimeError('Sorgente della take alternativa non disponibile')
                     imported[row['path']] = items[0]
                 item = append_mapped_clip(pool,timeline,imported[row['path']],mapped,base)
-                if item.SetClipColor('Red') is False:
+                from .resolve_native_cut import set_alternative_color
+                if not set_alternative_color(item):
                     raise RuntimeError('Impossibile colorare la take alternativa')
         verify_project_source(project,snapshot)  # originals and markers remain untouched
         return dict(timeline=timeline,fps=cut['fps'],base_frame=base,timeline_id=timeline.GetUniqueId(),

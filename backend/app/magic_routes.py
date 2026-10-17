@@ -20,7 +20,7 @@ def install_magic_routes(app, runner, load_project):
     @app.get('/api/curation/projects/{pid}/magic/latest')
     async def latest_magic(pid: str):
         load_project(pid)
-        row = runner.store.latest(pid)
+        row = runner.store.latest_for_view(pid)
         return runner.status(row['run_id']) if row else {}
 
     @app.get('/api/curation/magic/{run_id}')
