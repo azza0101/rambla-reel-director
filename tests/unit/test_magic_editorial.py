@@ -72,6 +72,19 @@ def test_magic_replaces_an_invented_location_with_the_beat_context():
     assert 'Changi' not in queries[0]
 
 
+def test_magic_removes_duplicate_queries_from_later_beats():
+    from backend.app.magic_editorial import _deduplicate_plan_queries
+    chunks = [{'id':'c1','text':'scrivere una lettera invito famiglia'},
+              {'id':'c2','text':'ricevere una lettera invito viaggio'}]
+    decisions = {chunk['id']:{'shots':[{'image_queries':['hand writing invitation letter'],
+                                        'video_queries':['hand writing invitation letter']}]} for chunk in chunks}
+    repaired = _deduplicate_plan_queries(decisions,chunks)
+    assert repaired == 3
+    queries = [query for decision in decisions.values() for shot in decision['shots']
+               for field in ('image_queries','video_queries') for query in shot[field]]
+    assert len(queries) == len(set(query.casefold() for query in queries))
+
+
 def test_full_context_keeps_places_even_when_mentioned_in_middle_of_long_text():
     from backend.app.magic_editorial import editorial_context
     text=('introduzione '*600)+' polizia turistica in Egitto '+('conclusione '*600)

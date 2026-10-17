@@ -165,6 +165,37 @@ def _geographically_safe_queries(queries, expected_places, fallback_text):
     return anchor_queries([fallback],expected_places), True
 
 
+def _deduplicate_plan_queries(decisions, chunks):
+    """Avoid sending the same stock-search query to two different beats."""
+    seen, repairs = set(), 0
+    for chunk in chunks:
+        decision = decisions[str(chunk['id'])]
+        for shot in decision['shots']:
+            for field in ('image_queries','video_queries'):
+                unique = []
+                for query in shot[field]:
+                    key = ' '.join(str(query).casefold().split())
+                    if key not in seen:
+                        seen.add(key)
+                        unique.append(query)
+                    else:
+                        repairs += 1
+                if unique:
+                    shot[field] = unique
+                    continue
+                words = [word.strip('.,;:!?') for word in str(chunk['text']).split()]
+                fallback = ' '.join(word for word in words if word)[:120]
+                fallback = ' '.join(fallback.split()[:10]) or 'documentary travel scene'
+                candidate = fallback
+                suffix = 2
+                while ' '.join(candidate.casefold().split()) in seen:
+                    candidate = ' '.join((fallback.split()[:8] + [f'scene{suffix}']))
+                    suffix += 1
+                seen.add(' '.join(candidate.casefold().split()))
+                shot[field] = [candidate]
+    return repairs
+
+
 def run_magic_editorial(run, project_id, duration, report, *, query=None):
     from .cut_cloud import cloud_context, query_json, pack_items, word_windows
     run = Path(run)
@@ -259,6 +290,7 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
                         geography_repairs += int(repaired)
                 decisions[chunk['id']] = raw
             report(len(director_batches)+index+1,2*len(director_batches),'Piano visuale contestuale verificato')
+        duplicate_query_repairs = _deduplicate_plan_queries(decisions,package['chunks'])
         plan = compile_director_decisions(package,{'global_topic':topic or context,'beats':[decisions[c['id']] for c in package['chunks']]})
         if fingerprint(transcript_package(run,project_id,duration)['chunks']) != package_signature:
             raise ValueError('Le selezioni sono cambiate durante il piano: pubblicazione sospesa')
@@ -272,6 +304,8 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
             warnings.append(f'Piano visuale corretto: limitate {compacted_director_items} scene o query oltre il budget MAGICO')
         if geography_repairs:
             warnings.append(f'Piano visuale corretto: riscritte {geography_repairs} query con luogo incoerente')
+        if duplicate_query_repairs:
+            warnings.append(f'Piano visuale corretto: rimosse {duplicate_query_repairs} query duplicate tra beat diversi')
         return {'editorial_root':str(editorial_root),'beat_count':len(plan['visual_beats']),
                 'coverage_count':sum(b['action']=='BROLL' for b in plan['visual_beats']),
                 'global_topic':plan['global_topic'],'plan_signature':fingerprint(plan), 'warnings':warnings}
