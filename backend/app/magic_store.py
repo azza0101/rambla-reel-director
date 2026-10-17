@@ -101,7 +101,11 @@ class MagicStore:
                 if call['input_signature'] == input_signature and call['provider'] == provider and call['status'] in {'started', 'unknown'}:
                     raise ValueError('Esito della chiamata precedente incerto: verifica prima di riprovare')
             cloud = provider != 'local'
-            calls = [c for c in row['calls'].values() if c['cloud']]
+            # A provider-side 4xx/5xx produced no usable work and must not
+            # consume the user's finite MAGICO budget. Unknown calls still
+            # count: retrying one could duplicate a charge or a generation.
+            calls = [c for c in row['calls'].values()
+                     if c['cloud'] and c.get('status') != 'failed']
             if cloud and (len(calls) >= row['options']['max_cloud_requests'] or
                           (visual and sum(c['visual'] for c in calls) >= row['options']['max_visual_requests'])):
                 raise MagicBudgetReached('Raggiunto il budget AI di MAGICO')

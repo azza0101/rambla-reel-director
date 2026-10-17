@@ -31,6 +31,17 @@ def test_crash_preserves_unknown_call_and_budget_counts_attempts(tmp_path):
         recovered.begin_call(run['run_id'], 'editorial', 'groq', 'input-v2')
 
 
+def test_explicitly_failed_provider_reply_does_not_consume_magic_budget(tmp_path):
+    from backend.app.magic_store import MagicStore
+    from backend.app.magic_models import MagicOptions
+    store = MagicStore(tmp_path)
+    run = store.create_or_resume('p', 'v1', MagicOptions(max_cloud_requests=1))
+    failed = store.begin_call(run['run_id'], 'editorial', 'groq', 'bad-response')
+    store.finish_call(run['run_id'], failed, result={'status_code':400}, error='HTTP 400')
+    next_call = store.begin_call(run['run_id'], 'editorial', 'groq', 'usable-response')
+    assert next_call
+
+
 def test_output_project_reload_can_find_its_magic_run_without_reusing_it_as_source(tmp_path):
     from backend.app.magic_store import MagicStore
     from backend.app.magic_models import MagicOptions
