@@ -520,6 +520,40 @@ def append_separate_fusion_titles(
     return inserted
 
 
+def restore_empty_title_composition(item, title_name, payload):
+    """Resolve 21.1 can return an empty composition for an installed title."""
+    import zipfile
+    from .resolve_title_templates import inspect_drfx
+    composition = item.GetFusionCompByIndex(1)
+    if composition and composition.GetToolList(False):
+        return
+    supplied = payload.get('title_package_path')
+    packages = [Path(supplied)] if supplied else list((Path(__file__).resolve().parents[1]/'assets'/'resolve_titles').glob('*.drfx'))
+    template = next((row for path in packages if path.is_file()
+                     for row in [inspect_drfx(path)] if row.resolve_name == title_name),None)
+    if template is None:
+        raise RuntimeError(f"Composizione vuota per '{title_name}': pacchetto originale non disponibile")
+    root = Path(payload.get('media_staging_root') or Path.cwd())/'.title-comps'
+    root.mkdir(parents=True,exist_ok=True)
+    temporary = root/(uuid.uuid4().hex+'.comp')
+    try:
+        with zipfile.ZipFile(template.source_path) as archive:
+            setting = archive.read(template.setting_path).decode('utf-8-sig')
+        temporary.write_text('Composition '+setting,encoding='utf-8')
+        if not item.ImportFusionComp(str(temporary)):
+            raise RuntimeError('Importazione diretta del template originale non riuscita')
+        composition = item.GetFusionCompByIndex(1)
+        output = composition.FindTool(title_name)
+        if not output:
+            raise RuntimeError('Uscita del template originale non disponibile')
+        if not composition.GetToolList(False,'MediaOut'):
+            media_out = composition.AddTool('MediaOut')
+            if not media_out or media_out.ConnectInput('Input',output) is False:
+                raise RuntimeError('Collegamento uscita del template non riuscito')
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def append_native_cut_titles(resolve, project, target, plan, payload, *, title_name, track_index, base_frame):
     """Reuse one initialized title composition without repeated overwrite inserts."""
     from types import SimpleNamespace
@@ -538,6 +572,7 @@ def append_native_cut_titles(resolve, project, target, plan, payload, *, title_n
         inserted = insert_fusion_title_with_retry(seed, title_name)
         if not inserted:
             raise RuntimeError(f"Resolve non riesce a inserire il titolo '{title_name}'")
+        restore_empty_title_composition(inserted,title_name,payload)
         _text_tool(inserted)
         seed_base = int(seed.GetStartFrame())
         output = []

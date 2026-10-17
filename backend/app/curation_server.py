@@ -1259,7 +1259,9 @@ def create_app(
             subtitle_srt_path=str(subtitle_path),
         )
         if payload['titles'] and (components is None or components['highlights']):
-            payload['title_name'] = selected_title(project_id).resolve_name
+            template = selected_title(project_id)
+            payload['title_name'] = template.resolve_name
+            payload['title_package_path'] = str(template.source_path)
         elif components is not None and not components['highlights']:
             payload['titles'] = []
             payload['title_count'] = 0
@@ -1698,10 +1700,12 @@ def create_app(
             # when INVIA A RESOLVE originally prepared the handoff.
             if request.apply_scope in {"all", "titles"} and (package.get('payload') or {}).get('titles'):
                 project_id = str(package.get("project_id") or project_root.name)
+                template = selected_title(project_id)
                 handoff_store.update_payload(
                     project_root,
                     package_id,
-                    title_name=selected_title(project_id).resolve_name,
+                    title_name=template.resolve_name,
+                    title_package_path=str(template.source_path),
                 )
             return handoff_jobs.apply(project_root, package_id, request.destination_mode, request.apply_scope,
                                       current_project=request.current_project,

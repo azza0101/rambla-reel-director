@@ -1,6 +1,12 @@
 # RMBL B ROLL — handoff tecnico
 
-Aggiornato: 2026-10-17  Versione: `v0076`  Branch di consegna: `feat/api-first-text-first-v1`
+Aggiornato: 2026-10-17  Versione: `v0077`  Branch di consegna: `feat/api-first-text-first-v1`
+
+## Recupero template Fusion vuoto v0077
+
+Resolve 21.1 può inserire KURA_paper_title_v9 restituendo una composizione senza nodi, anche se il template è installato. Il seed CUT verifica la composizione e, solo se vuota, importa direttamente il .setting del medesimo pacchetto DRFX in una composizione, collega MediaOut e usa poi il percorso già esistente dei titoli singoli. Nessun cambio di template o compound. Il pacchetto selezionato è trasmesso e aggiornato insieme al nome al momento di APPLICA. Seed già valido invariato. Prova reale: testo modificabile, 68 nodi e MediaOut collegato; regressioni 287 passate. Pacchetto fallito rilanciato sui media salvati senza nuove chiamate AI; rollback precedente aveva rimosso la timeline incompleta.
+
+Esito reale completato: `RMBL CUT 20261017 081754 aee559` nel progetto TEST Egitto, 19 video + 19 audio originali, 39 titoli individuali con una composizione ciascuno, 91 sottotitoli nativi, 9 coperture e zero saltate. Durata 2232 frame a 30 fps, 1080x1920, source_unchanged=true. Conferma indipendente via MCP dopo fine helper; nessun RPC concorrente durante l’importazione.
 
 ## MAGICO ibrido economico v0076
 
