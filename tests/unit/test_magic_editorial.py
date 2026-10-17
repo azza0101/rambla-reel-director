@@ -52,6 +52,17 @@ def test_director_schema_and_parser_accept_only_the_requested_batch():
     assert extras == 1
 
 
+def test_magic_decision_keeps_one_scene_and_two_queries():
+    from backend.app.magic_editorial import _compact_magic_decision
+    raw = {'shots':[
+        {'image_queries':['a','b','c'], 'video_queries':['d','e','f']},
+        {'image_queries':['g'], 'video_queries':['h']},
+    ]}
+    decision, dropped = _compact_magic_decision(raw)
+    assert decision['shots'] == [{'image_queries':['a','b'], 'video_queries':['d','e']}]
+    assert dropped == 3
+
+
 def test_full_context_keeps_places_even_when_mentioned_in_middle_of_long_text():
     from backend.app.magic_editorial import editorial_context
     text=('introduzione '*600)+' polizia turistica in Egitto '+('conclusione '*600)

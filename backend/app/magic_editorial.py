@@ -111,9 +111,6 @@ def _magic_director_schema(count):
     properties = schema['properties']['beats']['items']['properties']
     properties['action']['enum'] = ['BROLL']
     properties['visual_mode']['enum'] = ['single']
-    properties['shots'].update(minItems=1, maxItems=1)
-    for field in ('image_queries','video_queries'):
-        properties['shots']['items']['properties'][field]['maxItems'] = 2
     return schema
 
 
@@ -140,6 +137,23 @@ def _requested_director_rows(reply, batch):
     return [selected[str(chunk['id'])] for chunk in batch], extras
 
 
+def _compact_magic_decision(raw):
+    """Make a permissive provider reply fit MAGICO's one-scene budget."""
+    decision = deepcopy(raw)
+    shots = decision.get('shots')
+    if not isinstance(shots, list) or not shots:
+        raise ValueError('Director MAGICO non ha proposto una scena per la frase richiesta')
+    dropped = max(0, len(shots)-1)
+    decision['shots'] = shots[:1]
+    for field in ('image_queries','video_queries'):
+        values = decision['shots'][0].get(field)
+        if not isinstance(values, list) or not values:
+            raise ValueError('Director MAGICO non ha proposto query utilizzabili')
+        dropped += max(0, len(values)-2)
+        decision['shots'][0][field] = values[:2]
+    return decision, dropped
+
+
 def run_magic_editorial(run, project_id, duration, report, *, query=None):
     from .cut_cloud import cloud_context, query_json, pack_items, word_windows
     run = Path(run)
@@ -160,7 +174,7 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
                           'allowed':[w['index'] for w in window]})
     batches = pack_items(units,max_chars=2800,max_items=8)
     choices = {str(c['id']):dict(chunk_id=str(c['id']),coverage_word_indices=[],highlighted_word_indices=[]) for c in chunks}
-    topic, dropped_indices, extra_director_rows = '', 0, 0
+    topic, dropped_indices, extra_director_rows, compacted_director_items = '', 0, 0, 0
     with cloud_context(run/'magic-editorial-cache', lambda message:report(0,0,message)):
         for index, batch in enumerate(batches):
             prompt = ('Sei il montatore di un reel e devi PRODURRE le selezioni editoriali, non solo classificare il tema. '
@@ -224,8 +238,9 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
             rows, extras = _requested_director_rows(reply,batch)
             extra_director_rows += extras
             for raw,chunk in zip(rows,batch):
+                raw, dropped = _compact_magic_decision(raw)
+                compacted_director_items += dropped
                 expected_places = beat_places(chunk['text'],context,prior_context[chunk['id']])
-                raw = deepcopy(raw)
                 for shot in raw['shots']:
                     for field in ('image_queries','video_queries'):
                         queries = [q for q in shot[field] if not conflicting_place(q,expected_places)]
@@ -243,6 +258,8 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
             warnings.append(f'Selezione AI corretta: ignorati {dropped_indices} indici fuori dalla frase, senza modificare il testo')
         if extra_director_rows:
             warnings.append(f'Piano visuale corretto: ignorate {extra_director_rows} frasi fuori dal blocco richiesto')
+        if compacted_director_items:
+            warnings.append(f'Piano visuale corretto: limitate {compacted_director_items} scene o query oltre il budget MAGICO')
         return {'editorial_root':str(editorial_root),'beat_count':len(plan['visual_beats']),
                 'coverage_count':sum(b['action']=='BROLL' for b in plan['visual_beats']),
                 'global_topic':plan['global_topic'],'plan_signature':fingerprint(plan), 'warnings':warnings}
