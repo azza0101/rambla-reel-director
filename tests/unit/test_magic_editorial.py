@@ -63,6 +63,15 @@ def test_magic_decision_keeps_one_scene_and_two_queries():
     assert dropped == 3
 
 
+def test_magic_replaces_an_invented_location_with_the_beat_context():
+    from backend.app.magic_editorial import _geographically_safe_queries
+    queries, repaired = _geographically_safe_queries(
+        ['Changi airport immigration area'], ['Italy'], 'passport privilege and border control')
+    assert repaired is True
+    assert queries and 'Italy' in queries[0]
+    assert 'Changi' not in queries[0]
+
+
 def test_full_context_keeps_places_even_when_mentioned_in_middle_of_long_text():
     from backend.app.magic_editorial import editorial_context
     text=('introduzione '*600)+' polizia turistica in Egitto '+('conclusione '*600)

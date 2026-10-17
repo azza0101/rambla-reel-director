@@ -154,6 +154,17 @@ def _compact_magic_decision(raw):
     return decision, dropped
 
 
+def _geographically_safe_queries(queries, expected_places, fallback_text):
+    """Preserve the beat when a provider invents a conflicting location."""
+    valid = [query for query in queries if not conflicting_place(query,expected_places)]
+    if valid:
+        return anchor_queries(valid,expected_places), False
+    words = str(fallback_text or '').split()
+    # A short semantic phrase searches better than the invented place name.
+    fallback = ' '.join(words[:8]) or 'travel documentary scene'
+    return anchor_queries([fallback],expected_places), True
+
+
 def run_magic_editorial(run, project_id, duration, report, *, query=None):
     from .cut_cloud import cloud_context, query_json, pack_items, word_windows
     run = Path(run)
@@ -174,7 +185,7 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
                           'allowed':[w['index'] for w in window]})
     batches = pack_items(units,max_chars=2800,max_items=8)
     choices = {str(c['id']):dict(chunk_id=str(c['id']),coverage_word_indices=[],highlighted_word_indices=[]) for c in chunks}
-    topic, dropped_indices, extra_director_rows, compacted_director_items = '', 0, 0, 0
+    topic, dropped_indices, extra_director_rows, compacted_director_items, geography_repairs = '', 0, 0, 0, 0
     with cloud_context(run/'magic-editorial-cache', lambda message:report(0,0,message)):
         for index, batch in enumerate(batches):
             prompt = ('Sei il montatore di un reel e devi PRODURRE le selezioni editoriali, non solo classificare il tema. '
@@ -243,10 +254,9 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
                 expected_places = beat_places(chunk['text'],context,prior_context[chunk['id']])
                 for shot in raw['shots']:
                     for field in ('image_queries','video_queries'):
-                        queries = [q for q in shot[field] if not conflicting_place(q,expected_places)]
-                        if not queries:
-                            raise ValueError('Query fuori contesto geografico: correzione necessaria')
-                        shot[field] = anchor_queries(queries,expected_places)
+                        shot[field], repaired = _geographically_safe_queries(
+                            shot[field], expected_places, raw.get('core_meaning') or chunk['text'])
+                        geography_repairs += int(repaired)
                 decisions[chunk['id']] = raw
             report(len(director_batches)+index+1,2*len(director_batches),'Piano visuale contestuale verificato')
         plan = compile_director_decisions(package,{'global_topic':topic or context,'beats':[decisions[c['id']] for c in package['chunks']]})
@@ -260,6 +270,8 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
             warnings.append(f'Piano visuale corretto: ignorate {extra_director_rows} frasi fuori dal blocco richiesto')
         if compacted_director_items:
             warnings.append(f'Piano visuale corretto: limitate {compacted_director_items} scene o query oltre il budget MAGICO')
+        if geography_repairs:
+            warnings.append(f'Piano visuale corretto: riscritte {geography_repairs} query con luogo incoerente')
         return {'editorial_root':str(editorial_root),'beat_count':len(plan['visual_beats']),
                 'coverage_count':sum(b['action']=='BROLL' for b in plan['visual_beats']),
                 'global_topic':plan['global_topic'],'plan_signature':fingerprint(plan), 'warnings':warnings}
