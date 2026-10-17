@@ -33,6 +33,13 @@ def test_transition_only_words_never_become_magic_broll():
     assert changes['c0']['coverage_word_indices']==[3,4,5,6,7,8]
 
 
+def test_provider_index_outside_its_word_window_is_dropped_not_fatal():
+    from backend.app.magic_editorial import _valid_window_indices
+    valid, dropped = _valid_window_indices([3, 4, 80, '5'], range(0, 10))
+    assert valid == [3, 4]
+    assert dropped == 2
+
+
 def test_full_context_keeps_places_even_when_mentioned_in_middle_of_long_text():
     from backend.app.magic_editorial import editorial_context
     text=('introduzione '*600)+' polizia turistica in Egitto '+('conclusione '*600)

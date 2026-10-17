@@ -34,6 +34,21 @@ def _remove_transition_coverage(words, selected):
     return sorted(chosen)
 
 
+def _valid_window_indices(values, allowed):
+    """Keep a usable provider response when it cites a neighbouring window.
+
+    The model sees global word numbers and can occasionally include the first
+    word from the adjacent 80-word window.  That must not discard the whole
+    editorial pass: use the indices which unambiguously belong to this window
+    and expose the dropped count in the run warnings.
+    """
+    if not isinstance(values, list):
+        raise ValueError('Selezione AI non valida: atteso un elenco di parole')
+    allowed = set(allowed)
+    valid = [index for index in values if type(index) is int and index in allowed]
+    return sorted(set(valid)), len(values) - len(valid)
+
+
 def editorial_context(text):
     text = str(text)
     excerpt = text if len(text) <= 2000 else text[:1100] + ' … ' + text[len(text)//2-200:len(text)//2+200] + ' … ' + text[-450:]
@@ -116,7 +131,7 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
                           'allowed':[w['index'] for w in window]})
     batches = pack_items(units,max_chars=2800,max_items=8)
     choices = {str(c['id']):dict(chunk_id=str(c['id']),coverage_word_indices=[],highlighted_word_indices=[]) for c in chunks}
-    topic = ''
+    topic, dropped_indices = '', 0
     with cloud_context(run/'magic-editorial-cache', lambda message:report(0,0,message)):
         for index, batch in enumerate(batches):
             prompt = ('Sei il montatore di un reel e devi PRODURRE le selezioni editoriali, non solo classificare il tema. '
@@ -144,9 +159,9 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
             for row in rows:
                 unit = expected[row['unit_id']]
                 for field in ('coverage_word_indices','highlighted_word_indices'):
-                    if any(type(i) is not int or i not in unit['allowed'] for i in row[field]):
-                        raise ValueError('Selezione AI fuori dalla finestra di parole')
-                    choices[unit['chunk_id']][field].extend(row[field])
+                    valid, dropped = _valid_window_indices(row[field],unit['allowed'])
+                    dropped_indices += dropped
+                    choices[unit['chunk_id']][field].extend(valid)
             report(index+1,len(batches)*2,'Parole chiave e passaggi da coprire identificati')
         changes = selection_changes(chunks,list(choices.values()))
         if sum(len(c['text'].split()) for c in chunks) >= 40 and not any(
@@ -195,6 +210,9 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
         if fingerprint(transcript_package(run,project_id,duration)['chunks']) != package_signature:
             raise ValueError('Le selezioni sono cambiate durante il piano: pubblicazione sospesa')
         editorial_root = import_plan(run,plan,package)
+        warnings = []
+        if dropped_indices:
+            warnings.append(f'Selezione AI corretta: ignorati {dropped_indices} indici fuori dalla frase, senza modificare il testo')
         return {'editorial_root':str(editorial_root),'beat_count':len(plan['visual_beats']),
                 'coverage_count':sum(b['action']=='BROLL' for b in plan['visual_beats']),
-                'global_topic':plan['global_topic'],'plan_signature':fingerprint(plan)}
+                'global_topic':plan['global_topic'],'plan_signature':fingerprint(plan), 'warnings':warnings}
