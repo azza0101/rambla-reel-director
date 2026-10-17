@@ -15,6 +15,9 @@ class MagicOptions(BaseModel):
     max_visual_requests: int = Field(default=4, ge=0, le=100)
     queries_per_provider: int = Field(default=2, ge=1, le=4)
     candidates_per_beat: int = Field(default=6, ge=1, le=12)
+    # Stored with every run. A changed workflow must produce a fresh run
+    # rather than silently delivering checkpoints from an earlier algorithm.
+    workflow_revision: Literal['magic-v2'] = 'magic-v2'
 
     @model_validator(mode='after')
     def bounded_visual_budget(self):

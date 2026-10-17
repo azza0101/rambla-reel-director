@@ -50,6 +50,19 @@ def test_phases_complete_once_and_resume_reuses_checkpoints(tmp_path):
     asyncio.run(run())
 
 
+def test_workflow_revision_does_not_reuse_a_completed_legacy_run(tmp_path):
+    from backend.app.magic_store import MagicStore
+    from backend.app.magic_models import MagicOptions
+    store = MagicStore(tmp_path)
+    old = store.create_or_resume('project', 'signature', MagicOptions())
+    old['options'].pop('workflow_revision')
+    old['status'] = 'ready'
+    store.transition(old['run_id'], options=old['options'], status='ready')
+    fresh = store.create_or_resume('project', 'signature', MagicOptions())
+    assert fresh['run_id'] != old['run_id']
+    assert fresh['options']['workflow_revision'] == 'magic-v2'
+
+
 def test_partial_warnings_survive_and_offline_delivery_can_resume(tmp_path):
     from backend.app.magic_runner import MagicRunner
     from backend.app.magic_store import MagicStore
