@@ -1,6 +1,17 @@
 # RMBL B ROLL — handoff tecnico
 
-Aggiornato: 2026-10-16  Versione: `v0075`  Branch di consegna: `feat/api-first-text-first-v1`
+Aggiornato: 2026-10-17  Versione: `v0076`  Branch di consegna: `feat/api-first-text-first-v1`
+
+## MAGICO ibrido economico v0076
+
+- Pulsante MAGICO dopo la sorgente: CUT isolato, pause medium e margine finale 120 ms, selezioni automatiche, piano contestuale, ricerche limitate, verifica dei fotogrammi reali, pacchetto standard. APPLICA resta manuale.
+- Budget predefinito 12 chiamate cloud totali, di cui al massimo 4 visive. Nessuna chiamata Codex nel prodotto. Risposte, checkpoint e consumi persistono; riprendere non azzera i contatori. CAPTCHA e media non verificati restano segnalati, non approvati automaticamente.
+- Le immagini di riserva verificate sono disattivate su traccia dedicata sotto i titoli. Se non c’è una copertura verificata resta il parlato, con avviso. Generiche collocate nel testo quando coerenti, senza coda obbligatoria.
+- Sorgente caricata oppure snapshot di clip originali Resolve: tracce AV, offset sorgente, abilitazioni e formato conservati. Retime/nested e sorgenti non verificabili fermano il percorso prima della modifica.
+- Correzioni da test reale: Director raggruppa il testo compatto anziché metadati parola; risultato AI completamente vuoto non viene pubblicato; verifica video usa il file scaricato anziché il JPEG Pexels; fotogrammi mancanti non fanno fallire tutto; modulo snapshot standalone senza dipendenze server.
+- Resolve 21.1 rifiuta Red nella tavolozza delle clip: le alternative restano disattivate e usano Pink se Red non è supportato. Tracce audio nuove create prima di eliminare quelle vuote predefinite.
+- QA reale TEST Egitto: CUT da file originale 2232 frame a 30 fps, 10 alternative disattivate, marker originali invariati. Ricostruzione snapshot multitraccia 210 frame esatti, firma sorgente invariata. 285 regressioni passate prima del rilascio; parsing JS verificato.
+- Collaudo cloud reale run `7f7c968e5ad6486e8e2c50e02f0f17a7`: output salvato `3b295c5c891c`, 5 richieste editoriali più 4 visive incluse le prove di correzione. Esito parziale per coperture non approvate/budget, pacchetto preparato. Ricezione/applicazione completa da verificare dopo aggiornamento runtime; non dichiarate concluse da questo handoff.
 
 
 ## Take alternative compatte v0075
