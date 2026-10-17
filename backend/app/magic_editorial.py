@@ -10,6 +10,30 @@ from .geographic_context import places_in, beat_places, anchor_queries, conflict
 from .magic_store import fingerprint
 
 
+# These phrases only connect two ideas.  Treating them as B-roll produces
+# calendars, generic phones or other filler that makes the cut less precise.
+_TRANSITION_ONLY_COVERAGE = (
+    ('poi', 'un', 'giorno'),
+    ('e', 'quindi'),
+    ('ma', 'in', 'che', 'senso'),
+    ('e', 'poi'),
+    ('a', 'questo', 'punto'),
+)
+
+
+def _remove_transition_coverage(words, selected):
+    """Keep AI coverage on what is shown, never on connective filler."""
+    clean = [str(word).casefold().strip('.,;:!?…') for word in words]
+    chosen = set(selected)
+    for phrase in _TRANSITION_ONLY_COVERAGE:
+        width = len(phrase)
+        for start in range(len(clean)-width+1):
+            indexes = set(range(start, start+width))
+            if tuple(clean[start:start+width]) == phrase and indexes.issubset(chosen):
+                chosen.difference_update(indexes)
+    return sorted(chosen)
+
+
 def editorial_context(text):
     text = str(text)
     excerpt = text if len(text) <= 2000 else text[:1100] + ' … ' + text[len(text)//2-200:len(text)//2+200] + ' … ' + text[-450:]
@@ -30,6 +54,9 @@ def selection_changes(chunks, rows):
             if not isinstance(values, list) or any(type(i) is not int or not 0 <= i < count for i in values):
                 raise ValueError('Indice parola MAGICO fuori dalla trascrizione')
             result[key] = sorted(set(values))
+        words = [str(word.get('text') or word.get('word') or '') if isinstance(word, dict) else str(word)
+                 for word in (chunk.get('words') or str(chunk['text']).split())]
+        result['coverage_word_indices'] = _remove_transition_coverage(words, result['coverage_word_indices'])
         length = 0
         previous = -2
         for index in result['highlighted_word_indices']:

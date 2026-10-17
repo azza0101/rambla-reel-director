@@ -24,6 +24,15 @@ def test_automatic_word_selections_cover_all_chunks_and_limit_keyword_spans():
     with pytest.raises(ValueError):selection_changes(chunks,[{**rows[0],'highlighted_word_indices':[0,1,2,3]},rows[1]])
 
 
+def test_transition_only_words_never_become_magic_broll():
+    from backend.app.magic_editorial import selection_changes
+    chunks=[{'id':'c0','text':'Poi un giorno Rasit mi ha chiesto una lettera'}]
+    rows=[{'chunk_id':'c0','coverage_word_indices':[0,1,2,3,4,5,6,7,8],
+           'highlighted_word_indices':[]}]
+    changes=selection_changes(chunks,rows)
+    assert changes['c0']['coverage_word_indices']==[3,4,5,6,7,8]
+
+
 def test_full_context_keeps_places_even_when_mentioned_in_middle_of_long_text():
     from backend.app.magic_editorial import editorial_context
     text=('introduzione '*600)+' polizia turistica in Egitto '+('conclusione '*600)
