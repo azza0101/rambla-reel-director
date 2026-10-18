@@ -74,7 +74,7 @@ def judge_batch(candidates, client):
         'from a generic road/uniform. Reject conflicting architecture, flags, uniforms or unrelated subjects. '
         'A video must be coherent across all its samples. If uncertain use confidence below 85; '
         'do not invent evidence. Return exactly one verdict per asset_id, with a concrete reason. '
-        'Images are editorial alternatives and remain disabled regardless of verdict.\n'
+        'A verified still image can be active coverage when no suitable video exists.\n'
         + json.dumps(manifest, ensure_ascii=False))
     schema = dict(type='object', additionalProperties=False, required=['verdicts'], properties={
         'verdicts': dict(type='array', items=dict(type='object', additionalProperties=False,
