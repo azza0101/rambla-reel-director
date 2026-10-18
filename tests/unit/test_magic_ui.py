@@ -10,3 +10,7 @@ def test_magic_controls_show_real_progress_budget_and_manual_apply():
     assert 'id="magicOpenResult"' in html
     assert "magicSend.id='magicSend'" in html and 'INVIA AL BRIDGE' in html
     assert '/send' in html
+    assert 'id="magicPhases"' in html
+    assert 'renderMagicPhases' in html
+    assert 'await hydrate()' in html
+    assert 'prepareBrollViewV24()' in html
