@@ -97,10 +97,9 @@ def _selection_schema():
 def compact_director_batches(chunks):
     from .cut_cloud import pack_items
     compact = [{key: chunk[key] for key in ('id','start','end','text')} for chunk in chunks]
-    # The director sees a compact full-text context too.  Eight short chunks
-    # keep the provider request below its prompt ceiling while still reducing
-    # the number of calls for a normal five-minute reel.
-    return pack_items(compact, max_chars=2400, max_items=8)
+    # The director also sees a compact global context.  These conservative
+    # bounds stay under the provider's complete-request token ceiling.
+    return pack_items(compact, max_chars=2000, max_items=6)
 
 
 def _magic_director_schema(count):

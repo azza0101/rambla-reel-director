@@ -11,7 +11,10 @@ class MagicOptions(BaseModel):
     pause_mode: Literal['soft', 'medium', 'strong'] = 'medium'
     end_margin_ms: int = Field(default=120, ge=0, le=400)
     providers: list[Provider] = Field(default_factory=lambda: ['pexels', 'youtube_shorts', 'google_images'])
-    max_cloud_requests: int = Field(default=12, ge=1, le=100)
+    # Long source videos can need several small editorial batches.  Twenty
+    # remains a bounded per-run allowance and prevents a completed CUT from
+    # stopping before its own visual plan is published.
+    max_cloud_requests: int = Field(default=20, ge=1, le=100)
     max_visual_requests: int = Field(default=4, ge=0, le=100)
     queries_per_provider: int = Field(default=2, ge=1, le=4)
     candidates_per_beat: int = Field(default=6, ge=1, le=12)

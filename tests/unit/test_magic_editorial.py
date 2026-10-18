@@ -7,9 +7,8 @@ def test_director_batches_do_not_count_word_metadata():
     chunks = [dict(id=f'c{i}', start=i, end=i+1, text='polizia turistica in Egitto',
                    words=[dict(text='parola', metadata='x'*1000)]*100) for i in range(22)]
     batches = compact_director_batches(chunks)
-    # Eight compact chunks per call preserves room for the context while keeping
-    # a five-minute script inside MAGICO's economical request budget.
-    assert len(batches) == 3
+    # Compact batches leave room for the global context inside each request.
+    assert len(batches) == 4
     assert sum(map(len, batches)) == 22
     assert all(set(c) == {'id','start','end','text'} for batch in batches for c in batch)
 
