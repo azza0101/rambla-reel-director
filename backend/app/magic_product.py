@@ -259,19 +259,29 @@ class MagicProductServices:
         for index in range(0,len(prepared),12):
             check_current()
             batch = prepared[index:index+12]
-            try:
-                verdicts.update(await asyncio.to_thread(judge_batch,batch,client))
-            except MagicBudgetReached:
-                warnings.append('Budget visivo raggiunto: candidati restanti non approvati')
-                break
-            except ValueError as exc:
-                warnings.append(f'Risposta visiva non valida: {exc}')
-                break
-            except Exception as exc:
-                from .gemini_interactions import GeminiAPIError
-                if not isinstance(exc, GeminiAPIError):
-                    raise
-                warnings.append(f'Verifica visiva non disponibile: {exc}')
+            for attempt in range(2):
+                try:
+                    verdicts.update(await asyncio.to_thread(judge_batch,batch,client))
+                    break
+                except MagicBudgetReached:
+                    warnings.append('Budget visivo raggiunto: candidati restanti non approvati')
+                    batch = []
+                    break
+                except ValueError as exc:
+                    warnings.append(f'Risposta visiva non valida: {exc}')
+                    batch = []
+                    break
+                except Exception as exc:
+                    from .gemini_interactions import GeminiAPIError
+                    if not isinstance(exc, GeminiAPIError):
+                        raise
+                    if attempt == 0:
+                        warnings.append(f'Verifica visiva temporaneamente non disponibile, riprovata: {exc}')
+                        continue
+                    warnings.append(f'Verifica visiva non disponibile: {exc}')
+                    batch = []
+                    break
+            if not batch and any('Budget visivo raggiunto' in warning for warning in warnings):
                 break
             report(min(len(ordered[:maximum])*2,len(ordered[:maximum])+index+len(batch)),
                 max(1,len(ordered[:maximum])*2),'Coerenza visiva verificata')

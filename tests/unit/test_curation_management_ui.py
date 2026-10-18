@@ -235,6 +235,17 @@ def test_workspace_session_restores_across_ports_and_periodically_autosaves():
     assert "active_chunk_id" in html
 
 
+def test_desktop_target_polling_ignores_empty_or_stale_target_without_clearing_project():
+    from backend.app.curation_ui_v2 import render_curation_page_v2
+
+    html = render_curation_page_v2("desktop-target-safe")
+    assert "desktopTargetRevision" in html
+    assert "if(!target.project_id)return;" in html
+    assert "desktopProjectSwitchBusy=false;desktopTargetRevision=0" not in html
+    assert "Saved project not found" in html
+    assert "setTimeout(restoreWorkspaceSessionV13,3000)" in html
+
+
 def test_management_ui_keeps_existing_layout_and_adds_api_director_controls():
     from backend.app.curation_ui_v2 import render_curation_page_v2
 

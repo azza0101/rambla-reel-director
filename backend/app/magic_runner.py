@@ -39,6 +39,26 @@ class MagicRunner:
     def resume(self, run_id):
         return self._schedule(self.store.read(run_id))
 
+    def retry_from(self, run_id, phase):
+        """Rebuild only the research/selection tail of a durable MAGICO run.
+
+        CUT and editorial checkpoints are immutable here: retrying coverage
+        must never spend another transcript/director call or alter the CUT.
+        """
+        if phase not in {'research', 'selection'}:
+            raise ValueError('Puoi ripetere soltanto ricerca o coperture MAGICO')
+        row = self.store.read(run_id)
+        if run_id in self.tasks and not self.tasks[run_id].done():
+            return row
+        self.store.validate_source(run_id, self.source_signature(row['source_project_id']))
+        start = PHASES.index(phase)
+        checkpoints = {name: value for name, value in row['checkpoints'].items()
+                       if PHASES.index(name) < start}
+        row = self.store.transition(run_id, checkpoints=checkpoints, status='queued',
+            cancel_requested=False, error=None, diagnostics=None,
+            message='Riprovo le coperture con CUT e piano editoriale già salvati')
+        return self._schedule(row)
+
     def resend(self, run_id):
         row = self.store.read(run_id)
         if run_id in self.tasks and not self.tasks[run_id].done():
