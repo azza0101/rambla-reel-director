@@ -97,7 +97,10 @@ def _selection_schema():
 def compact_director_batches(chunks):
     from .cut_cloud import pack_items
     compact = [{key: chunk[key] for key in ('id','start','end','text')} for chunk in chunks]
-    return pack_items(compact, max_chars=2000, max_items=6)
+    # The director sees a compact full-text context too.  Ten short chunks
+    # still fit comfortably in the provider request and avoid exhausting a
+    # modest MAGICO budget just by splitting a normal five-minute reel.
+    return pack_items(compact, max_chars=3600, max_items=10)
 
 
 def _magic_director_schema(count):
