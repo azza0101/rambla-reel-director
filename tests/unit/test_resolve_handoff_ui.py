@@ -32,6 +32,7 @@ def test_bridge_requires_confirmation_and_offers_both_destinations():
     assert 'self.client.apply(self.destination.get(), scope)' in source
     assert 'ESPORTATO SU RESOLVE · RICEVUTO DAL BRIDGE' in Path('backend/app/timeline_export_ui.py').read_text(encoding='utf-8')
     assert 'RMBL B ROLL CONNECTED' in source
-    assert 'BRIDGE OFFLINE' in source
+    assert 'RMBL B ROLL OFFLINE' in source
+    assert 'RESOLVE OFFLINE' in source
     assert 'SingleInstance' in source
     assert '"#d8ff5b"' in source

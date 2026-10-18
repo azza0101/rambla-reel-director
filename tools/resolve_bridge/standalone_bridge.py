@@ -98,11 +98,11 @@ def default_apply_scope() -> str:
 
 
 def window_geometry(screen_width: int, screen_height: int, *, requested_height: int, package_visible: bool) -> str:
-    """Return a useful bridge size without extending below the Windows work area."""
-    preferred_width = 660 if package_visible and screen_width >= 1600 else 600
-    width = min(preferred_width, max(520, screen_width - 80))
-    wanted = max(840, requested_height + 60) if package_visible else max(680, requested_height + 40)
-    height = min(wanted, max(560, screen_height - 80))
+    """Keep the bridge compact; accordion bodies add height only when opened."""
+    preferred_width = 620 if package_visible and screen_width >= 1600 else 580
+    width = min(preferred_width, max(480, screen_width - 80))
+    wanted = max(540, requested_height + 32)
+    height = min(wanted, max(500, screen_height - 100))
     return f"{width}x{height}"
 
 
@@ -288,6 +288,37 @@ class StatusPill(RoundedPanel):
     config = configure
 
 
+class CollapsibleSection(tk.Frame):
+    """A compact bridge section with a clear arrow and an optional body."""
+    def __init__(self, parent: Any, *, title: str, expanded: bool = False,
+                 on_toggle: Callable[[], None] | None = None):
+        super().__init__(parent, bg=parent.cget("bg"))
+        self.title, self.expanded, self.on_toggle = title, bool(expanded), on_toggle
+        self.toggle_button = RoundedButton(self, text="", command=self.toggle)
+        self.toggle_button.pack(fill="x")
+        self.body = tk.Frame(self, bg=self.cget("bg"), padx=0, pady=8)
+        self._render()
+
+    def _render(self) -> None:
+        arrow = "▾" if self.expanded else "▸"
+        self.toggle_button.configure(text=f"{arrow}  {self.title}")
+        if self.expanded:
+            self.body.pack(fill="x")
+        else:
+            self.body.pack_forget()
+
+    def set_expanded(self, expanded: bool) -> None:
+        if self.expanded == bool(expanded):
+            return
+        self.expanded = bool(expanded)
+        self._render()
+        if self.on_toggle:
+            self.on_toggle()
+
+    def toggle(self) -> None:
+        self.set_expanded(not self.expanded)
+
+
 def discover_base() -> str:
     if str(APP_ROOT) not in sys.path:
         sys.path.insert(0, str(APP_ROOT))
@@ -351,6 +382,7 @@ class BridgeSnapshot:
     status: dict[str, Any]
     package: dict[str, Any] | None
     error: str = ""
+    rmbl_connected: bool = True
 
 
 class BridgeClient:
@@ -384,9 +416,9 @@ class BridgeClient:
                 package = self.request_json(f"/api/curation/resolve-handoffs/{package['package_id']}/received", "POST", {"bridge_session_id": self.session_id})
             self.current_package = package
             return BridgeSnapshot(not offline, status, package,
-                                  str(status.get("detail") or "Resolve non collegato") if offline else "")
+                                  str(status.get("detail") or "Resolve non collegato") if offline else "", True)
         except Exception as exc:
-            return BridgeSnapshot(False, {}, None, str(exc))
+            return BridgeSnapshot(False, {}, None, str(exc), False)
 
     def apply(self, destination_mode: str, apply_scope: str = "all") -> dict[str, Any]:
         if not self.current_package or not self.current_package.get("bridge_received_at"):
@@ -505,8 +537,8 @@ class BridgeApp:
 
     def _build_ui(self) -> None:
         self.root.title(f"RMBL B ROLL {RELEASE_VERSION}")
-        self.root.geometry("600x680")
-        self.root.minsize(520, 560)
+        self.root.geometry("580x540")
+        self.root.minsize(480, 500)
         self.root.resizable(True, True)
         self.root.configure(bg="#11152b")
         self.root.protocol("WM_DELETE_WINDOW", self.close)
@@ -522,7 +554,7 @@ class BridgeApp:
         self.root.bind("<MouseWheel>", lambda event: viewport.yview_scroll(int(-event.delta / 120), "units"))
         self.widgets["content"] = shell
 
-        header = RoundedPanel(shell, fill="#181d39", outline="#434b77", height=86, radius=20, padding=12); header.pack(fill="x", pady=(0, 10))
+        header = RoundedPanel(shell, fill="#181d39", outline="#434b77", height=74, radius=20, padding=12); header.pack(fill="x", pady=(0, 10))
         logo_path = APP_ROOT / "backend" / "assets" / "branding" / "rmbl_mark_white.png"
         if logo_path.is_file():
             try:
@@ -553,7 +585,9 @@ class BridgeApp:
         tk.Label(card.body, text="TIMELINE ATTIVA", bg="#202746", fg="#9299bc", font=("Segoe UI Semibold", 8), anchor="w").pack(fill="x")
         self.widgets["timeline"] = tk.Label(card.body, text="Timeline in attesa…", bg="#202746", fg="#f1f3ff", font=("Segoe UI", 10), justify="left", anchor="w"); self.widgets["timeline"].pack(fill="x", pady=(5, 0))
 
-        options_card = RoundedPanel(shell, fill="#181d39", outline="#343c65", height=344, radius=18, padding=12); options_card.pack(fill="x", pady=(0, 9))
+        self.widgets["send_section"] = CollapsibleSection(shell, title="INVIO A RMBL B ROLL", expanded=False, on_toggle=self._fit_current_window)
+        self.widgets["send_section"].pack(fill="x", pady=(0, 7))
+        options_card = RoundedPanel(self.widgets["send_section"].body, fill="#181d39", outline="#343c65", height=320, radius=18, padding=12); options_card.pack(fill="x")
         options = options_card.body
         self.detect_videos = tk.BooleanVar(value=os.environ.get('RAMBLA_BRIDGE_DETECT', '1') == '1'); self.include_v1 = tk.BooleanVar(value=os.environ.get('RAMBLA_BRIDGE_V1', '0') == '1')
         tk.Label(options,text="ANALISI DELLA TIMELINE",bg="#181d39",fg="#9299bc",font=("Segoe UI Semibold",8),anchor="w").pack(fill="x",pady=(0,6))
@@ -564,23 +598,26 @@ class BridgeApp:
         self.widgets['open'] = RoundedButton(options, text='APRI RMBL B ROLL · PROGETTO SALVATO', command=self.open_rambla); self.widgets['open'].pack(fill='x')
         self.widgets["capture_status"] = tk.Label(options, text="", bg="#181d39", fg="#b9c1e0", font=("Segoe UI", 9), wraplength=520, justify="left", anchor="w"); self.widgets["capture_status"].pack(fill="x", pady=(6, 0))
 
-        tk.Label(shell, text="PACCHETTO DA RMBL B ROLL", bg="#11152b", fg="#aeb6df", font=("Segoe UI Semibold", 9), anchor="w").pack(fill="x", pady=(6, 7))
-        package_card = RoundedPanel(shell, height=108, radius=16, padding=12); package_card.pack(fill="x")
+        self.widgets["receive_section"] = CollapsibleSection(shell, title="RICEZIONE DA RMBL B ROLL", expanded=False, on_toggle=self._fit_current_window)
+        self.widgets["receive_section"].pack(fill="x", pady=(0, 7))
+        receive = self.widgets["receive_section"].body
+        tk.Label(receive, text="PACCHETTO DA RMBL B ROLL", bg="#11152b", fg="#aeb6df", font=("Segoe UI Semibold", 9), anchor="w").pack(fill="x", pady=(0, 7))
+        package_card = RoundedPanel(receive, height=108, radius=16, padding=12); package_card.pack(fill="x")
         self.widgets["package"] = tk.Label(package_card.body, text="Nessun pacchetto ricevuto", bg="#202746", fg="#f1f3ff", font=("Segoe UI", 9), justify="left", anchor="w", wraplength=520); self.widgets["package"].pack(fill="both", expand=True)
         self.destination = tk.StringVar(value=default_destination())
-        destinations = tk.Frame(shell, bg="#11152b"); destinations.pack(fill="x", pady=(12, 5))
+        destinations = tk.Frame(receive, bg="#11152b"); destinations.pack(fill="x", pady=(12, 5))
         tk.Label(destinations,text="DESTINAZIONE",bg="#11152b",fg="#9299bc",font=("Segoe UI Semibold",8),anchor="w").pack(fill="x",pady=(0,6))
         DestinationCard(destinations,title="APPLICA ALLA TIMELINE ATTIVA",description="Crea prima un backup numerato in BCK, poi aggiorna direttamente la timeline reale dall'IN corrente",value="active",variable=self.destination,recommended=True,on_select=self._select_destination).pack(fill="x",pady=(0,7))
         DestinationCard(destinations,title="CREA UNA NUOVA TIMELINE TEMP",description="Genera una timeline separata contenente soltanto il nuovo montaggio",value="new",variable=self.destination,on_select=self._select_destination).pack(fill="x")
 
-        self.widgets["progress"] = ProgressBar(shell); self.widgets["progress"].pack(fill="x", pady=(12, 8))
-        self.widgets["message"] = tk.Label(shell, text="Il pacchetto resta disponibile: puoi inviare più parti una dopo l'altra.", bg="#11152b", fg="#b9c1e0", font=("Segoe UI", 9), wraplength=520, justify="left", anchor="w"); self.widgets["message"].pack(fill="x", pady=(0, 8))
-        self.widgets["copy_debug"] = RoundedButton(shell, text="COPIA DEBUG", command=self.copy_debug, state="disabled")
+        self.widgets["progress"] = ProgressBar(receive); self.widgets["progress"].pack(fill="x", pady=(12, 8))
+        self.widgets["message"] = tk.Label(receive, text="Il pacchetto resta disponibile: puoi inviare più parti una dopo l'altra.", bg="#11152b", fg="#b9c1e0", font=("Segoe UI", 9), wraplength=520, justify="left", anchor="w"); self.widgets["message"].pack(fill="x", pady=(0, 8))
+        self.widgets["copy_debug"] = RoundedButton(receive, text="COPIA DEBUG", command=self.copy_debug, state="disabled")
         self.widgets["copy_debug"].pack(fill="x", pady=(0, 8))
 
-        self.widgets["apply_all"] = RoundedButton(shell, text="INVIA TUTTO", command=lambda: self.apply("all"), accent=True, state="disabled")
+        self.widgets["apply_all"] = RoundedButton(receive, text="INVIA TUTTO", command=lambda: self.apply("all"), accent=True, state="disabled")
         self.widgets["apply_all"].pack(fill="x", pady=(0, 7))
-        selective = tk.Frame(shell, bg="#11152b")
+        selective = tk.Frame(receive, bg="#11152b")
         selective.pack(fill="x", pady=(0, 8))
         for column in range(3):
             selective.grid_columnconfigure(column, weight=1, uniform="selective-actions")
@@ -602,9 +639,9 @@ class BridgeApp:
             command=lambda: self.apply("media"), state="disabled"
         )
         self.widgets["apply_media"].grid(row=0, column=2, sticky="ew", padx=(4, 0))
-        self.widgets["cancel_apply"] = RoundedButton(shell, text="INTERROMPI OPERAZIONE", command=self.cancel_apply, state="disabled")
+        self.widgets["cancel_apply"] = RoundedButton(receive, text="INTERROMPI OPERAZIONE", command=self.cancel_apply, state="disabled")
         self.widgets["cancel_apply"].pack(fill="x", pady=(0, 7))
-        self.widgets["discard"] = RoundedButton(shell, text="SCARTA PACCHETTO", command=self.discard, state="disabled")
+        self.widgets["discard"] = RoundedButton(receive, text="SCARTA PACCHETTO", command=self.discard, state="disabled")
         self.widgets["discard"].pack(fill="x", pady=(0, 8))
         self._fit_window(package_visible=False)
 
@@ -646,6 +683,10 @@ class BridgeApp:
         )
         self.root.geometry(geometry)
 
+    def _fit_current_window(self) -> None:
+        receive = self.widgets.get("receive_section")
+        self._fit_window(package_visible=bool(getattr(receive, "expanded", False)))
+
     def start(self) -> None:
         self.poll()
 
@@ -686,11 +727,19 @@ class BridgeApp:
     def _render(self, snapshot: BridgeSnapshot) -> None:
         if not self.widgets: return
         self._last_status = dict(snapshot.status or {})
-        self.widgets["connection"].configure(text="● RMBL B ROLL CONNECTED" if snapshot.connected else "● BRIDGE OFFLINE", style="Lime.TLabel" if snapshot.connected else "Bad.TLabel")
-        if snapshot.status:
+        self.widgets["connection"].configure(
+            text="● RMBL B ROLL CONNECTED" if snapshot.rmbl_connected else "● RMBL B ROLL OFFLINE",
+            style="Lime.TLabel" if snapshot.rmbl_connected else "Bad.TLabel",
+        )
+        if snapshot.connected:
             row = snapshot.status
-            self.widgets["timeline"].configure(text=f"{row.get('project','')}\n{row.get('timeline','')}\nFrame {row.get('mark_in','?')} → {row.get('mark_out','?')} · {row.get('range_source','timeline')}")
-        elif snapshot.error: self.widgets["timeline"].configure(text=snapshot.error)
+            self.widgets["timeline"].configure(
+                text=f"{row.get('project','')}\n{row.get('timeline','')}\nFrame {row.get('mark_in','?')} → {row.get('mark_out','?')} · {row.get('range_source','timeline')}",
+                fg="#f1f3ff",
+            )
+        else:
+            detail = str((snapshot.status or {}).get("detail") or snapshot.error or "Riprovo automaticamente")
+            self.widgets["timeline"].configure(text=f"RESOLVE OFFLINE\n{detail}\nRiprovo automaticamente", fg="#ffb0b0")
         package = snapshot.package
         if package:
             self._debug_row = dict(package)
@@ -709,14 +758,23 @@ class BridgeApp:
             self.widgets["discard"].configure(state="normal")
             if self.widgets.get("copy_debug") is not None:
                 self.widgets["copy_debug"].configure(state="normal", text="COPIA DEBUG")
-            self.widgets["message"].configure(text="Pacchetto ricevuto. Controlla la destinazione e premi APPLICA.")
+            self.widgets["message"].configure(
+                text=("Pacchetto ricevuto. Controlla la destinazione e premi APPLICA."
+                      if snapshot.connected else
+                      "Pacchetto ricevuto. Resolve è offline: APPLICA si abilita appena torna raggiungibile.")
+            )
             self.widgets["progress"].configure(value=100)
             if package.get('status') in {'failed','applying','completed'}:
                 self._render_job(package)
             package_id = str(package.get("package_id") or "")
             if package_id and package_id != self._last_package_id:
                 self._last_package_id = package_id
-                self.root.after_idle(lambda: self._fit_window(package_visible=True))
+                receive = self.widgets.get("receive_section")
+                if receive is not None:
+                    receive.set_expanded(True)
+                    self.root.after_idle(self._fit_current_window)
+                else:
+                    self.root.after_idle(lambda: self._fit_window(package_visible=True))
         else:
             self.widgets["package"].configure(text="Nessun pacchetto ricevuto\nInvia il montaggio dalla sezione EXPORT TIMELINE di RMBL B ROLL.")
             self._set_apply_buttons("disabled"); self.widgets["cancel_apply"].configure(state="disabled"); self.widgets["discard"].configure(state="disabled"); self.widgets["progress"].configure(value=0)
@@ -724,7 +782,7 @@ class BridgeApp:
                 self.widgets["copy_debug"].configure(state="disabled", text="COPIA DEBUG")
             if self._last_package_id:
                 self._last_package_id = ""
-                self.root.after_idle(lambda: self._fit_window(package_visible=False))
+                self.root.after_idle(self._fit_current_window)
 
     def _set_apply_buttons(self, state: str) -> None:
         for key in ("apply_all", "apply_subtitles", "apply_titles", "apply_media"):

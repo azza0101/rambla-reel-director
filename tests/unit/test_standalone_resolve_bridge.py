@@ -43,10 +43,18 @@ def test_bridge_uses_modern_cards_for_capture_and_destination_controls():
     assert "ToggleCard" not in source
 
 
-def test_window_expands_for_a_received_package_and_stays_on_screen():
-    assert window_geometry(1920, 1080, requested_height=640, package_visible=False) == "600x680"
-    assert window_geometry(1920, 1080, requested_height=780, package_visible=True) == "660x840"
-    assert window_geometry(1280, 720, requested_height=900, package_visible=True) == "600x640"
+def test_bridge_groups_send_and_receive_controls_into_collapsible_sections():
+    from pathlib import Path
+    source = Path("tools/resolve_bridge/standalone_bridge.py").read_text(encoding="utf-8")
+    assert "CollapsibleSection" in source
+    assert 'title="INVIO A RMBL B ROLL"' in source
+    assert 'title="RICEZIONE DA RMBL B ROLL"' in source
+
+
+def test_window_stays_compact_with_accordion_sections_and_on_screen():
+    assert window_geometry(1920, 1080, requested_height=640, package_visible=False) == "580x672"
+    assert window_geometry(1920, 1080, requested_height=780, package_visible=True) == "620x812"
+    assert window_geometry(1280, 720, requested_height=900, package_visible=True) == "580x620"
 
 
 def test_bridge_branding_assets_and_visual_language_are_present():
@@ -144,6 +152,7 @@ def test_bridge_acknowledges_its_native_cut_package_when_resolve_is_temporarily_
     snapshot=BridgeClient(request_json=request, session_id="session-1").poll_once()
 
     assert not snapshot.connected
+    assert snapshot.rmbl_connected
     assert snapshot.package["package_id"] == "native"
     assert snapshot.package["bridge_received_at"] == "now"
     pending_path=next(path for path,_,_ in calls if "/pending?" in path)
