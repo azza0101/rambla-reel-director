@@ -268,7 +268,10 @@ class MagicProductServices:
         ordered = visual_candidate_order(beats, candidates)
         verdicts = validated_verdicts(candidates, None)
         client = self.visual_client()
-        maximum = options.max_visual_requests * 12 if client is not None else 0
+        # Keep the automatic pass responsive: visual preparation can involve a
+        # download and frame extraction per candidate. visual_candidate_order already
+        # spreads this small budget across beats and media types.
+        maximum = min(12, options.max_visual_requests * 12) if client is not None else 0
         prepared = []
         for index,row in enumerate(ordered[:maximum]):
             check_current()
