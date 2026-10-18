@@ -218,6 +218,11 @@ def test_numbered_workflow_is_collapsed_and_opens_only_the_next_step():
     assert '<section class="panel workflowSceneHeaderV44" data-workflow-step-v42="7"><h2 id="sceneWorkspaceHeading">7 · Visual beats · testo e B-roll</h2></section>' in html
     assert ".workflowNextV42{border-color" not in html
     assert "linear-gradient(180deg,#0b2427,#081b1e)" in html
+    assert "step===3||step===8" in html
+    assert "step!==3&&step!==7&&step!==8" in html
+    analysis_start = html.index('<section class="panel" data-workflow-step-v42="2">')
+    analysis_end = html.index('</section>', analysis_start)
+    assert 'id="analyze"' in html[analysis_start:analysis_end]
     for step in range(1, 10):
         assert f'data-workflow-step-v42="{step}"' in html
     assert "else shell.after(bar);" in html
