@@ -13,6 +13,25 @@ def test_canonical_plan_uses_original_text_and_full_geography(tmp_path):
     assert beat['text']=='la polizia turistica in Egitto' and beat['places']==['Egypt']
 
 
+def test_editorial_resume_repairs_saved_tiny_chunk_overlap_without_recutting(tmp_path):
+    from backend.app.magic_product import normalize_semantic_chunk_boundaries
+    run = tmp_path / 'run'; run.mkdir()
+    chunks = [
+        {'id': 'a', 'start': 10.0, 'end': 12.0, 'duration': 2.0, 'words': ['prima']},
+        {'id': 'b', 'start': 11.9666667, 'end': 14.0, 'duration': 2.0333333, 'words': ['dopo']},
+    ]
+    (run / 'semantic-chunks.json').write_text(json.dumps(chunks), encoding='utf-8')
+
+    assert normalize_semantic_chunk_boundaries(run) == 1
+    repaired = json.loads((run / 'semantic-chunks.json').read_text(encoding='utf-8'))
+    assert repaired[1]['start'] == 12.0
+    assert repaired[1]['end'] == 14.0
+    assert repaired[1]['duration'] == 2.0
+    assert repaired[1]['words'] == ['dopo']
+    original = json.loads((run / 'semantic-chunks.before-boundary-normalization.json').read_text(encoding='utf-8'))
+    assert original[1]['start'] == 11.9666667
+
+
 def test_production_selection_writes_normal_selection_and_active_image(tmp_path,monkeypatch):
     from backend.app.magic_product import MagicProductServices
     from backend.app.magic_models import MagicContext,MagicOptions

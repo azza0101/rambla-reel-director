@@ -358,7 +358,7 @@ def planning_chunks_for_coverage(run: Path) -> list[dict[str, Any]]:
         snapshot = read(snapshot_path)
         if (snapshot.get('transcript_signature') == state['transcript_signature']
                 and snapshot.get('selection_digest') == digest(state['phrases'])):
-            return snapshot['chunks']
+            return _normalize_planning_boundaries(snapshot['chunks'])
     # The semantic transcript can contain several spoken sentences in one
     # display chunk. Preserve the ASR sentence/segment ends before applying the
     # length cap, otherwise a mechanical 10-word cut can separate a noun from
@@ -473,7 +473,36 @@ def planning_chunks_for_coverage(run: Path) -> list[dict[str, Any]]:
                 "source_word_end_index": last_index,
                 "coverage_selected": active,
             })
-    return result
+    return _normalize_planning_boundaries(result)
+
+
+def _normalize_planning_boundaries(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep derived coverage units chronological when ASR words straddle a CUT edge.
+
+    The original word timing is preserved for review.  Only the derived visual
+    unit boundary is clipped by at most the overlap, so editorial plans can
+    never contain two adjacent visual beats at the same instant.
+    """
+    previous_end: float | None = None
+    normalized: list[dict[str, Any]] = []
+    for chunk in chunks:
+        if not isinstance(chunk, dict) or 'start' not in chunk or 'end' not in chunk:
+            normalized.append(chunk)
+            continue
+        row = dict(chunk)
+        try:
+            start, end = float(row['start']), float(row['end'])
+        except (TypeError, ValueError):
+            normalized.append(row)
+            continue
+        if previous_end is not None and start < previous_end:
+            start = previous_end
+        if end <= start:
+            end = start + 0.001
+        row['start'], row['end'] = start, end
+        previous_end = end
+        normalized.append(row)
+    return normalized
 
 
 def build_animation_export(run: Path, project_id: str, video_context: dict[str, Any] | None = None) -> dict[str, Any]:

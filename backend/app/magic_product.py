@@ -22,6 +22,43 @@ def read_json(path, default=None):
     return json.loads(path.read_text(encoding='utf-8')) if path.is_file() else default
 
 
+def normalize_semantic_chunk_boundaries(run):
+    """Repair tiny adjacent-chunk overlaps left by an older CUT checkpoint.
+
+    Editorial validation requires each beat to begin no earlier than the one
+    before it ends.  Old saved CUTs may be off by one frame at a boundary, so
+    repair the persisted checkpoint before resuming instead of forcing a new
+    CUT (and keep a one-time rollback copy).
+    """
+    path = Path(run) / 'semantic-chunks.json'
+    chunks = read_json(path, [])
+    if not isinstance(chunks, list):
+        return 0
+    previous_end, changed = 0.0, 0
+    for chunk in chunks:
+        if not isinstance(chunk, dict):
+            continue
+        try:
+            start, end = float(chunk['start']), float(chunk['end'])
+        except (KeyError, TypeError, ValueError):
+            continue
+        repaired_start = max(start, previous_end)
+        repaired_end = max(end, repaired_start + 0.001)
+        if repaired_start != start or repaired_end != end:
+            if changed == 0:
+                backup = path.with_name('semantic-chunks.before-boundary-normalization.json')
+                if not backup.exists():
+                    write_json(backup, chunks)
+            chunk['start'] = repaired_start
+            chunk['end'] = repaired_end
+            chunk['duration'] = repaired_end - repaired_start
+            changed += 1
+        previous_end = repaired_end
+    if changed:
+        write_json(path, chunks)
+    return changed
+
+
 def source_signature(projects, root, pid):
     project = projects.load(pid)
     files = [Path(project.source_video.path)] if project.source_video else []
@@ -151,8 +188,14 @@ class MagicProductServices:
                 raise ValueError('CUT MAGICO non confermato')
             run = self.root/pid/'run'
             if phase == 'editorial':
-                return await asyncio.to_thread(run_magic_editorial, run, pid,
+                repaired = normalize_semantic_chunk_boundaries(run)
+                result = await asyncio.to_thread(run_magic_editorial, run, pid,
                     self.projects.load(pid).source_video.duration, report)
+                if repaired:
+                    result.setdefault('warnings', []).append(
+                        f'Corrette {repaired} micro-sovrapposizioni del CUT salvato prima del piano editoriale.'
+                    )
+                return result
             if phase == 'research':
                 result = await research_beats(plan_beats(run), options, self.store._path(context.run_id).parent,
                     lambda beat,provider,query:self.research(pid,beat,provider,query), report)

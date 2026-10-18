@@ -71,6 +71,19 @@ def test_intents_are_independent_and_persisted(workdir):
     }
 
 
+def test_coverage_planning_clips_tiny_asr_overlap_between_adjacent_units():
+    from backend.app.transcript_intents import _normalize_planning_boundaries
+    source = [
+        {'id': 'one', 'start': 42.4333333, 'end': 42.4666667, 'text': 'prima', 'words': [{'text': 'prima'}]},
+        {'id': 'two', 'start': 42.4333333, 'end': 49.018, 'text': 'dopo', 'words': [{'text': 'dopo'}]},
+    ]
+    planned = _normalize_planning_boundaries(source)
+    assert planned[1]['start'] == planned[0]['end']
+    assert planned[1]['end'] == 49.018
+    assert planned[1]['words'] == [{'text': 'dopo'}]
+    assert source[1]['start'] == 42.4333333
+
+
 def test_highlighted_words_are_validated_against_real_word_timing(workdir):
     run = _run(workdir)
     state = load_phrase_intents(run)
