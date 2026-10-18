@@ -419,10 +419,16 @@ def compile_director_decisions(
                                                f"{compiled_shot['description']} {chunk['text']}")
                             suffix = next((term.casefold() for term in terms
                                            if term.casefold() not in key.split()), "scene")
-                            candidate = " ".join((query.split() + [suffix])[:10])
+                            # Historical evidence also requires a broad,
+                            # findable two-word query. Preserve that invariant
+                            # when replacing an injected duplicate fallback.
+                            has_broad = any(len(value.split()) <= 2 for value in compiled_shot[field])
+                            candidate = (f"{suffix} archive" if not has_broad
+                                         else " ".join((query.split() + [suffix])[:10]))
                             number = 2
                             while candidate.casefold() in used_queries[field]:
-                                candidate = " ".join((query.split() + [suffix, f"scene{number}"])[:10])
+                                candidate = (f"{suffix} scene{number}" if not has_broad
+                                             else " ".join((query.split() + [suffix, f"scene{number}"])[:10]))
                                 number += 1
                             query = candidate
                             compiled_shot[field][query_index] = query
