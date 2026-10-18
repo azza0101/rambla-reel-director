@@ -19,6 +19,7 @@ jobs:
       - name: MAGICO and B-roll tests
         run: |
           pytest -q \
+            tests/unit/test_cut_residual.py \
             tests/unit/test_magic_coverage.py \
             tests/unit/test_magic_research_watchdog.py \
             tests/unit/test_magic_schedule.py \
