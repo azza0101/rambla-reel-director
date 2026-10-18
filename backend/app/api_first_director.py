@@ -422,12 +422,12 @@ def compile_director_decisions(
                             # Historical evidence also requires a broad,
                             # findable two-word query. Preserve that invariant
                             # when replacing an injected duplicate fallback.
-                            has_broad = any(len(value.split()) <= 2 for value in compiled_shot[field])
-                            candidate = (f"{suffix} archive" if not has_broad
+                            requires_broad = len(query.split()) <= 2
+                            candidate = (f"{suffix} archive" if requires_broad
                                          else " ".join((query.split() + [suffix])[:10]))
                             number = 2
                             while candidate.casefold() in used_queries[field]:
-                                candidate = (f"{suffix} scene{number}" if not has_broad
+                                candidate = (f"{suffix} scene{number}" if requires_broad
                                              else " ".join((query.split() + [suffix, f"scene{number}"])[:10]))
                                 number += 1
                             query = candidate
