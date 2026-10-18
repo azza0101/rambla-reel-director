@@ -72,7 +72,10 @@ def source_signature(projects, root, pid):
     if bridge.get('cut_source', {}).get('supported'):
         from .resolve_cut_source import verify_snapshot_files
         verify_snapshot_files(bridge['cut_source'])
-    return fingerprint([project.analysis_signature, signatures, state])
+    # v2 deliberately invalidates runs created before MAGICO was locked to the
+    # active Source file.  A partial run from that older policy must never be
+    # resumed against the wrong inherited CUT lineage.
+    return fingerprint(['magic-current-source-v2', project.analysis_signature, signatures, state])
 
 
 def _literal_anchor_queries(text, proposed, *, image=False):

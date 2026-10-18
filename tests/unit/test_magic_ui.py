@@ -17,4 +17,9 @@ def test_magic_controls_show_real_progress_budget_and_manual_apply():
     assert 'desktopTargetRevision=target.revision' in html
     assert "history.replaceState(null,'',resultUrl.href)" in html
     assert 'id="magicRestart"' in html and '/restart' in html
-    assert 'magicCutOpenedRun' in html and 'openMagicOutput(3)' in html
+    assert 'ensureMagicAnalysis' in html
+    assert 'await ensureMagicAnalysis(pid)' in html
+    assert '/projects/${pid}/analyze' in html
+    # MAGICO may create a result, but must never navigate Source to it by itself.
+    assert 'magicCutOpenedRun' not in html
+    assert 'await openMagicOutput(3)' not in html

@@ -104,3 +104,29 @@ def test_magic_cut_isolates_manual_source_and_reuses_confirmed_child(tmp_path):
     asyncio.run(run())
     assert calls==['analyze','boundaries','review','confirm']
     assert json.loads(manual.read_text())=={'manual':True}
+
+
+def test_magic_uses_the_current_source_not_a_different_historical_cut_origin(tmp_path, monkeypatch):
+    import json
+    from pathlib import Path
+    from backend.app.magic_cut import MagicCutAdapter
+    from backend.app.magic_models import MagicContext, MagicOptions
+    from backend.app.magic_store import MagicStore
+    import backend.app.workspace_backup as backups
+
+    root = tmp_path / 'projects'; (root / 'current').mkdir(parents=True)
+    current = tmp_path / 'current.mp4'; current.write_bytes(b'current')
+    stale = tmp_path / 'stale.mp4'; stale.write_bytes(b'stale')
+    (root / 'current' / 'cut-origin.json').write_text(json.dumps({'source_path': str(stale)}), encoding='utf-8')
+    source = SimpleNamespace(project_id='current', name='Current', source_video=SimpleNamespace(path=str(current)))
+    work = SimpleNamespace(project_id='work')
+    projects = SimpleNamespace(load=lambda _: source, create=lambda _: work)
+    monkeypatch.setattr(backups, 'backup_project_state', lambda *args: None)
+    store = MagicStore(root)
+    row = store.create_or_resume('current', 'signature', MagicOptions())
+    adapter = MagicCutAdapter(projects, root, store, None)
+
+    _, state = adapter._workspace(MagicContext.model_validate(row))
+    assert state['source_path'] == str(current)
+    assert state['inherited_origin'] is None
+    assert state['ignored_stale_origin'] is True
