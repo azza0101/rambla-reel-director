@@ -294,7 +294,11 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
             prompt += 'non sostituirlo automaticamente con una strada tranquilla. Non inventare attribuzioni archivistiche o geografiche.'
             prompt += '\nPer ciascun passaggio selezionato proponi una sola inquadratura concreta, con una o due query semplici per mezzo. Mantieni concise le spiegazioni. Non inventare un paese, una città o un aeroporto specifico se il passaggio non lo nomina: in quel caso la query deve restare geografically neutral.'
             prompt += '\nRestituisci esclusivamente le decisioni per gli ID in TRANSCRIPT_CHUNKS di questo blocco: non ripetere o aggiungere frasi dal contesto completo.'
-            reply = query(prompt,_magic_director_schema(len(batch)),f'Piano visuale · blocco {index+1}/{len(director_batches)}')
+            # The Groq window includes the schema and the generated answer.
+            # 2400 output tokens keep a six-chunk request below its 7.5k cap.
+            reply = query(prompt,_magic_director_schema(len(batch)),
+                          f'Piano visuale · blocco {index+1}/{len(director_batches)}',
+                          max_output_tokens=2400)
             rows, extras = _requested_director_rows(reply,batch)
             extra_director_rows += extras
             for raw,chunk in zip(rows,batch):
