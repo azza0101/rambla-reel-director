@@ -77,19 +77,27 @@ def schedule_coverage(beat_id, candidate, verdict, *, start, end, total_frames, 
     if duration < minimum:
         return None
     return CoverageDecision(beat_id=beat_id, asset_id=candidate['asset_id'], provider=candidate['provider'],
-        role='fallback_image' if image else (role or 'coverage'), enabled=not image,
+        role='image_coverage' if image else (role or 'coverage'), enabled=True,
         edited_in_frame=start, edited_out_frame=start+duration, source_in_frame=source_start,
         source_out_frame=source_start+duration, verdict=verdict['verdict'], reason=verdict['reason'])
 
 
 def choose_coverage(beat_id, candidates, verdicts, **interval):
-    # Images are alternatives only, never placed over an already valid video.
-    for kind in ('video', 'image'):
+    # Editorially matched clips are preferred. A verified still is real
+    # coverage when video is unavailable; a topic-level generic is last.
+    # Generic footage must never eclipse a matching passport/document photo.
+    tiers = (
+        lambda row: row.get('kind') == 'video' and row.get('role') != 'generic',
+        lambda row: row.get('kind') == 'image',
+        lambda row: row.get('kind') == 'video' and row.get('role') == 'generic',
+    )
+    for eligible in tiers:
         for row in candidates:
-            if row.get('kind') != kind or not row.get('local_available'):
+            if not eligible(row) or not row.get('local_available'):
                 continue
             result = schedule_coverage(beat_id, row,
-                verdicts.get(row['asset_id'], dict(verdict='uncertain', reason='Non verificato')), **interval)
+                verdicts.get(row['asset_id'], dict(verdict='uncertain', reason='Non verificato')), **interval,
+                role=row.get('role'))
             if result is not None:
                 return result
     return None
