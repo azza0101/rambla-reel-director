@@ -106,8 +106,16 @@ def merge_residual_suggestions(transcript,plan,suggestion):
         if occupied.intersection(indexes):
             warnings.append('Proposta ripetuta fra blocchi ignorata: scelte esistenti conservate.')
             continue
+        # Residual replies are independent AI suggestions, not manual edits.
+        # A model can return an out-of-range take index even when the JSON
+        # schema is valid. Fail closed: keep ALL words for manual review.
+        selected = g.get('selected_take', -1)
+        if type(selected) is not int or not -2 <= selected < len(g['takes']):
+            g['selected_take'] = -1
+            warnings.append('Indice take residuale non valido: tutte le versioni conservate per revisione.')
+        if float(g.get('confidence',0))<.85:
+            g['selected_take']=-1
         occupied.update(indexes);accepted.append(g)
-        if float(g.get('confidence',0))<.85:g['selected_take']=-1
     groups=accepted;accepted_discards=[]
     protected=set(i for g in plan['groups'] if g.get('user_selected_take') and g.get('selected_take',-1)>=0
                   for a,b in [g['takes'][g['selected_take']]] for i in range(a,b+1))
