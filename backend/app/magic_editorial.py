@@ -109,7 +109,10 @@ def _magic_director_schema(count):
     beats.pop('maxItems', None)
     beats['description'] = f'Exactly {count} decisions for, and only for, the supplied transcript chunk IDs.'
     properties = schema['properties']['beats']['items']['properties']
-    properties['action']['enum'] = ['BROLL']
+    # Providers sometimes append a KEEP_TALKING_HEAD duplicate after a valid
+    # B-roll row.  Accept that harmless spillover so we can retain the B-roll
+    # decision below instead of losing the complete batch at schema validation.
+    properties['action']['enum'] = ['BROLL', 'KEEP_TALKING_HEAD']
     properties['visual_mode']['enum'] = ['single']
     return schema
 
@@ -128,7 +131,16 @@ def _requested_director_rows(reply, batch):
         if chunk_id not in expected:
             extras += 1
             continue
-        if chunk_id in selected:
+        previous = selected.get(chunk_id)
+        if previous is not None:
+            # A valid B-roll decision is more useful than the redundant
+            # talking-head fallback emitted by a few providers.  Any other
+            # duplicate remains ambiguous and therefore fails safely.
+            actions = {str(previous.get('action') or ''), str(row.get('action') or '')}
+            if actions == {'BROLL', 'KEEP_TALKING_HEAD'}:
+                selected[chunk_id] = previous if previous.get('action') == 'BROLL' else row
+                extras += 1
+                continue
             raise ValueError('Director MAGICO ha duplicato una frase richiesta')
         selected[chunk_id] = row
     missing = expected-set(selected)

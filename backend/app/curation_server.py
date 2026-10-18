@@ -2000,9 +2000,14 @@ def create_app(
         report(int(received),1,'Ricevuto dal bridge · premi APPLICA in Resolve' if received else 'Pacchetto pronto · il bridge non ha ancora confermato la ricezione')
         return {'package_id':package['package_id'],'received':received,'awaiting_bridge':not received}
 
+    async def magic_generics(pid, limit):
+        # MAGICO always includes a compact theme lane and an explicit place lane.
+        await generic_coverage(pid, scope='topic', max_queries=limit)
+        return await generic_coverage(pid, scope='places', max_queries=limit)
+
     magic_services = MagicProductServices(store, root, magic_store, cut_engine, magic_research, magic_prepare,
-        lambda pid:editing_resolve_payload(pid, {'video':True,'subtitles':True,'highlights':True,'broll':True,'social':True,'generic':False}), magic_deliver,
-        generics=lambda pid,limit:generic_coverage(pid,scope='places',max_queries=limit))
+        lambda pid:editing_resolve_payload(pid, {'video':True,'subtitles':True,'highlights':True,'broll':True,'social':True,'generic':True}), magic_deliver,
+        generics=magic_generics)
     magic_runner = MagicRunner(magic_store, magic_services, lambda pid:source_signature(store,root,pid))
     magic_services.check = magic_runner.check
     install_magic_routes(app, magic_runner, load_project)

@@ -69,6 +69,45 @@ def generic_candidates(beat, items):
     return shortlist_candidates(rows, beat['text'], beat['places'], limit=2)
 
 
+def visual_candidate_order(beats, candidates):
+    """Give every beat a video attempt and an image fallback before extras.
+
+    The visual verification budget is shared across the whole edit.  Keeping
+    images at the end meant they were never inspected on longer videos, so a
+    beat with no valid video could not receive its disabled image alternative.
+    """
+    grouped = {str(beat['id']): [] for beat in beats}
+    for candidate in candidates:
+        grouped.setdefault(str(candidate['chunk_id']), []).append(candidate)
+    lanes = {}
+    for beat_id, rows in grouped.items():
+        videos = [row for row in rows if row.get('kind') == 'video']
+        images = [row for row in rows if row.get('kind') == 'image']
+        lanes[beat_id] = videos[:1] + images[:1] + videos[1:] + images[1:]
+    maximum = max((len(rows) for rows in lanes.values()), default=0)
+    return [rows[index] for index in range(maximum) for rows in lanes.values() if index < len(rows)]
+
+
+def automatic_generic_selection(items, *, limit=4):
+    """Keep a small, always-present topic/place generic coverage set."""
+    selected, identities, places = [], set(), set()
+    for prefer_places in (True, False):
+        for item in items:
+            provider_id = str(item.get('provider_id') or '')
+            is_place = str(item.get('coverage_group') or '') == 'places' and bool(str(item.get('place') or '').strip())
+            if not provider_id or provider_id in identities or is_place != prefer_places:
+                continue
+            place = str(item.get('place') or '').casefold().strip()
+            if is_place and place in places:
+                continue
+            selected.append(provider_id); identities.add(provider_id)
+            if place:
+                places.add(place)
+            if len(selected) == limit:
+                return selected
+    return selected
+
+
 def media_duration(path):
     probe = subprocess.run(['ffprobe','-v','error','-show_entries','format=duration','-of','json',str(path)],
         capture_output=True, text=True, check=True, timeout=20)
@@ -101,6 +140,10 @@ class MagicProductServices:
                 if self.generics and 'pexels' in options.providers:
                     try:
                         await self.generics(pid, options.queries_per_provider)
+                        generic_path = run/'generic-coverage.json'
+                        generic = read_json(generic_path, {'items': [], 'selected': []})
+                        generic['selected'] = automatic_generic_selection(generic.get('items') or [])
+                        write_json(generic_path, generic)
                     except Exception as exc:
                         result['warnings'].append(f'Coperture generiche: {exc}')
                         result['partial'] = True
@@ -147,10 +190,9 @@ class MagicProductServices:
             for row in chosen:
                 row.update(beat_text=beat['text'],places=beat['places'],visual_target=beat.get('core_meaning') or beat['text'])
                 candidates.append(row)
-        # Interleave beats so the first visual budget serves the entire story.
-        grouped = {b['id']:[c for c in candidates if c['chunk_id']==b['id']] for b in beats}
-        ordered = [rows[index] for index in range(options.candidates_per_beat)
-            for rows in grouped.values() if index < len(rows)]
+        # Interleave beats so the first visual budget serves the entire story,
+        # while reserving an early lane for a disabled image fallback.
+        ordered = visual_candidate_order(beats, candidates)
         verdicts = validated_verdicts(candidates, None)
         client = self.visual_client()
         maximum = options.max_visual_requests * 12 if client is not None else 0

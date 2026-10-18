@@ -52,6 +52,18 @@ def test_director_schema_and_parser_accept_only_the_requested_batch():
     assert extras == 1
 
 
+def test_director_parser_keeps_broll_when_provider_appends_duplicate_talking_head():
+    from backend.app.magic_editorial import _magic_director_schema, _requested_director_rows
+    actions = _magic_director_schema(1)['properties']['beats']['items']['properties']['action']['enum']
+    assert actions == ['BROLL', 'KEEP_TALKING_HEAD']
+    rows, extras = _requested_director_rows({'beats':[
+        {'chunk_id':'c1','action':'BROLL'},
+        {'chunk_id':'c1','action':'KEEP_TALKING_HEAD'},
+    ]}, [{'id':'c1'}])
+    assert rows == [{'chunk_id':'c1','action':'BROLL'}]
+    assert extras == 1
+
+
 def test_magic_decision_keeps_one_scene_and_two_queries():
     from backend.app.magic_editorial import _compact_magic_decision
     raw = {'shots':[

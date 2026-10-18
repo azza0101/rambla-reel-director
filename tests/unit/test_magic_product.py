@@ -46,6 +46,29 @@ def test_production_selection_writes_normal_selection_and_disabled_image(tmp_pat
     assert not decision['enabled'] and decision['role']=='fallback_image'
 
 
+def test_selection_orders_an_image_fallback_before_second_video_option(tmp_path):
+    from backend.app.magic_product import visual_candidate_order
+    candidates = [
+        {'asset_id':'beat--video:1','chunk_id':'beat','kind':'video'},
+        {'asset_id':'beat--video:2','chunk_id':'beat','kind':'video'},
+        {'asset_id':'beat--image:1','chunk_id':'beat','kind':'image'},
+    ]
+    ordered = visual_candidate_order([{'id':'beat'}], candidates)
+    assert [row['asset_id'] for row in ordered] == ['beat--video:1','beat--image:1','beat--video:2']
+
+
+def test_magic_always_selects_compact_generic_topic_and_each_place():
+    from backend.app.magic_product import automatic_generic_selection
+    items = [
+        {'provider_id':'sri-1','coverage_group':'places','place':'Sri Lanka'},
+        {'provider_id':'sri-2','coverage_group':'places','place':'Sri Lanka'},
+        {'provider_id':'italy-1','coverage_group':'places','place':'Italy'},
+        {'provider_id':'topic-1','coverage_group':'topic'},
+        {'provider_id':'topic-2','coverage_group':'topic'},
+    ]
+    assert automatic_generic_selection(items) == ['sri-1','italy-1','topic-1','topic-2']
+
+
 def test_product_server_registers_real_magic_services(tmp_path):
     from backend.app.curation_server import create_app
     app=create_app(project_root=tmp_path)
