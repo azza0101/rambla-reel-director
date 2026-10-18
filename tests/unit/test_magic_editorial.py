@@ -54,8 +54,10 @@ def test_director_schema_and_parser_accept_only_the_requested_batch():
 
 def test_director_parser_keeps_broll_when_provider_appends_duplicate_talking_head():
     from backend.app.magic_editorial import _magic_director_schema, _requested_director_rows
-    actions = _magic_director_schema(1)['properties']['beats']['items']['properties']['action']['enum']
+    properties = _magic_director_schema(1)['properties']['beats']['items']['properties']
+    actions = properties['action']['enum']
     assert actions == ['BROLL', 'KEEP_TALKING_HEAD']
+    assert properties['visual_mode']['enum'] == ['single', 'sequence', 'juxtaposition']
     rows, extras = _requested_director_rows({'beats':[
         {'chunk_id':'c1','action':'BROLL'},
         {'chunk_id':'c1','action':'KEEP_TALKING_HEAD'},
@@ -66,12 +68,13 @@ def test_director_parser_keeps_broll_when_provider_appends_duplicate_talking_hea
 
 def test_magic_decision_keeps_one_scene_and_two_queries():
     from backend.app.magic_editorial import _compact_magic_decision
-    raw = {'shots':[
+    raw = {'visual_mode':'sequence','shots':[
         {'image_queries':['a','b','c'], 'video_queries':['d','e','f']},
         {'image_queries':['g'], 'video_queries':['h']},
     ]}
     decision, dropped = _compact_magic_decision(raw)
     assert decision['shots'] == [{'image_queries':['a','b'], 'video_queries':['d','e']}]
+    assert decision['visual_mode'] == 'single'
     assert dropped == 3
 
 

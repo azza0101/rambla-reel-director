@@ -113,7 +113,10 @@ def _magic_director_schema(count):
     # B-roll row.  Accept that harmless spillover so we can retain the B-roll
     # decision below instead of losing the complete batch at schema validation.
     properties['action']['enum'] = ['BROLL', 'KEEP_TALKING_HEAD']
-    properties['visual_mode']['enum'] = ['single']
+    # The final compacting step always publishes one scene.  Accept the other
+    # base-schema modes first so an irrelevant duplicate cannot make Groq
+    # reject the entire JSON response before it reaches our parser.
+    properties['visual_mode']['enum'] = ['single', 'sequence', 'juxtaposition']
     return schema
 
 
@@ -157,6 +160,7 @@ def _compact_magic_decision(raw):
         raise ValueError('Director MAGICO non ha proposto una scena per la frase richiesta')
     dropped = max(0, len(shots)-1)
     decision['shots'] = shots[:1]
+    decision['visual_mode'] = 'single'
     for field in ('image_queries','video_queries'):
         values = decision['shots'][0].get(field)
         if not isinstance(values, list) or not values:
