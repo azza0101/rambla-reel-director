@@ -125,6 +125,31 @@ def test_poll_heartbeats_and_receives_newest_matching_package():
     assert "timeline_id=" not in pending_path
 
 
+def test_bridge_acknowledges_its_native_cut_package_when_resolve_is_temporarily_offline():
+    calls=[]
+    def request(path, method="GET", payload=None):
+        calls.append((path,method,payload))
+        if path == "/api/curation/resolve-bridge/session" and method == "POST":
+            return {"bridge_session_id":"session-1","connected":True}
+        if path == "/api/curation/resolve-bridge/status":
+            return {"connected":False,"detail":"DaVinci Resolve non è aperto"}
+        if path.startswith("/api/curation/resolve-handoffs/pending?"):
+            return {"packages":[{"package_id":"native","created_at":"2026-10-18T00:35:14", "status":"pending",
+                                  "bridge_session_id":"session-1", "summary":{"native_cut":True}}]}
+        if path == "/api/curation/resolve-handoffs/native/received":
+            return {"package_id":"native","status":"pending","bridge_received_at":"now",
+                    "bridge_session_id":"session-1","summary":{"native_cut":True}}
+        raise AssertionError(path)
+
+    snapshot=BridgeClient(request_json=request, session_id="session-1").poll_once()
+
+    assert not snapshot.connected
+    assert snapshot.package["package_id"] == "native"
+    assert snapshot.package["bridge_received_at"] == "now"
+    pending_path=next(path for path,_,_ in calls if "/pending?" in path)
+    assert "native_only=1" in pending_path
+
+
 def test_apply_requires_received_package_and_uses_current_timeline():
     calls=[]
     responses={

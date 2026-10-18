@@ -1659,9 +1659,10 @@ def create_app(
             raise HTTPException(status_code=404, detail='Preparazione non disponibile: il server è stato riavviato. Ripeti INVIA A RESOLVE.') from None
 
     @app.get("/api/curation/resolve-handoffs/pending")
-    async def pending_resolve_handoffs(resolve_project: str = "", timeline_id: str = "", bridge_session_id: str = ""):
+    async def pending_resolve_handoffs(resolve_project: str = "", timeline_id: str = "", bridge_session_id: str = "",
+                                       native_only: bool = False):
         rows = handoff_store.pending(resolve_project=resolve_project, timeline_id=timeline_id,
-                                     bridge_session_id=bridge_session_id)
+                                     bridge_session_id=bridge_session_id, native_only=native_only)
         return {"packages": [{key: value for key, value in row.items() if key != "payload"} for row in rows]}
 
     @app.get("/api/curation/resolve-handoffs/{package_id}")

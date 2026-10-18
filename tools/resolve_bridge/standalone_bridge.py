@@ -364,11 +364,16 @@ class BridgeClient:
             session = self.request_json("/api/curation/resolve-bridge/session", "POST", {"bridge_session_id": self.session_id, "bridge_version": RELEASE_VERSION})
             self.session_id = str(session.get("bridge_session_id") or self.session_id)
             status = self.request_json("/api/curation/resolve-bridge/status")
-            if not status.get("connected"):
-                return BridgeSnapshot(False, status, None, str(status.get("detail") or "Resolve non collegato"))
+            # A native CUT is bound to this bridge session, so it can safely be
+            # acknowledged even while Resolve restarts.  Applying remains gated
+            # on Resolve being connected by the UI and the server-side apply API.
+            offline = not status.get("connected")
+            query_args = {"resolve_project": status.get("project", ""), "bridge_session_id": self.session_id}
+            if offline:
+                query_args["native_only"] = "1"
             # The focused timeline may already be a generated v1/v2. Filtering
             # by its id would hide a valid source-timeline package.
-            query = urllib.parse.urlencode({"resolve_project": status.get("project", ""), "bridge_session_id": self.session_id})
+            query = urllib.parse.urlencode(query_args)
             rows = self.request_json("/api/curation/resolve-handoffs/pending?" + query).get("packages") or []
             package = max(rows, key=lambda row: row.get("created_at", ""), default=None)
             previous = self.current_package
@@ -378,7 +383,8 @@ class BridgeClient:
             if package and not package.get("bridge_received_at"):
                 package = self.request_json(f"/api/curation/resolve-handoffs/{package['package_id']}/received", "POST", {"bridge_session_id": self.session_id})
             self.current_package = package
-            return BridgeSnapshot(True, status, package)
+            return BridgeSnapshot(not offline, status, package,
+                                  str(status.get("detail") or "Resolve non collegato") if offline else "")
         except Exception as exc:
             return BridgeSnapshot(False, {}, None, str(exc))
 
@@ -691,7 +697,7 @@ class BridgeApp:
             summary = package.get("summary") or {}; changes = package.get("change_summary") or {}
             self.widgets["package"].configure(text=f"NUOVA REVISIONE · v{package.get('revision',1)}\nDurata {float(summary.get('duration_seconds') or 0):.1f}s\n{summary.get('broll_count',0)} B-roll · {summary.get('subtitle_count',0)} subs · {summary.get('title_count',0)} frasi · {summary.get('generic_broll_count',0)} generiche\nDifferenze: +{changes.get('broll_added',0)} / -{changes.get('broll_removed',0)} B-roll")
             received = bool(package.get("bridge_received_at"))
-            self._set_apply_buttons("normal" if received and package.get("status") != "applying" else "disabled")
+            self._set_apply_buttons("normal" if snapshot.connected and received and package.get("status") != "applying" else "disabled")
             if summary.get('native_cut'):
                 self.destination.set('new')
                 self.widgets['package'].configure(text=self.widgets['package'].cget('text') +

@@ -123,7 +123,8 @@ class ResolveHandoffStore:
             raise FileNotFoundError(package_id)
         return _read_json(path)
 
-    def pending(self, *, resolve_project: str, timeline_id: str, bridge_session_id: str = "") -> list[dict[str, Any]]:
+    def pending(self, *, resolve_project: str, timeline_id: str, bridge_session_id: str = "",
+                native_only: bool = False) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         for path in self.projects_root.glob("*/resolve-outbox/*/package.json"):
             try:
@@ -132,6 +133,11 @@ class ResolveHandoffStore:
                 continue
             if row.get("status") not in {"pending", "applying", "failed", "completed", "cancelled"}:
                 continue
+            if native_only:
+                if not ((row.get('summary') or {}).get('native_cut')
+                        and bridge_session_id
+                        and row.get('bridge_session_id') == bridge_session_id):
+                    continue
             native_session = bool((row.get('summary') or {}).get('native_cut') and bridge_session_id
                                   and row.get('bridge_session_id') == bridge_session_id)
             if resolve_project and row.get("resolve_project") != resolve_project and not native_session:
