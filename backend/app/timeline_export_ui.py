@@ -1,11 +1,11 @@
 """Confirmed RAMBLA to Resolve handoff panel."""
 
 PANEL = r'''
-<section class="panel genericCoverageMicroV34" data-workflow-step-v42="6">
-  <details class="genericCoverageV33"><summary><strong>6 · Coperture generiche</strong><small>12 video Pexels sul tema generale, pronti per la coda della timeline</small></summary><h3>Coperture del tema</h3><button id="loadGenericCoverageV33">CERCA 12 VIDEO GENERICI</button><h3>Coperture del luogo</h3><p class="muted">I luoghi riconosciuti nel testo avranno gruppi separati di risultati.</p><button id="loadPlaceCoverageV35">COPERTURE DEL LUOGO · CERCA VIDEO</button><p id="genericCoverageStatusV33" class="muted"></p><div id="genericCoverageCardsV33" class="genericCoverageCardsV33"></div></details>
+<section class="panel genericCoverageMicroV34" data-workflow-step-v42="8">
+  <details class="genericCoverageV33"><summary><strong>8 · Coperture generiche</strong><small>12 video Pexels sul tema generale, pronti per la coda della timeline</small></summary><h3>Coperture del tema</h3><button id="loadGenericCoverageV33">CERCA 12 VIDEO GENERICI</button><h3>Coperture del luogo</h3><p class="muted">I luoghi riconosciuti nel testo avranno gruppi separati di risultati.</p><button id="loadPlaceCoverageV35">COPERTURE DEL LUOGO · CERCA VIDEO</button><p id="genericCoverageStatusV33" class="muted"></p><div id="genericCoverageCardsV33" class="genericCoverageCardsV33"></div></details>
 </section>
-<section class="panel timelineExportV33" id="timelineExportV33" data-workflow-step-v42="7">
-  <div class="top"><div><h2>7 · Export timeline <span id="timelineExportCompleteV28" class="stepStatusV12" hidden></span> <span id="resolveBridgeLiveV34" class="resolveBridgeLiveV34 off">BRIDGE OFFLINE</span></h2>
+<section class="panel timelineExportV33" id="timelineExportV33" data-workflow-step-v42="9">
+  <div class="top"><div><h2>9 · Export timeline <span id="timelineExportCompleteV28" class="stepStatusV12" hidden></span> <span id="resolveBridgeLiveV34" class="resolveBridgeLiveV34 off">BRIDGE OFFLINE</span></h2>
   <p class="muted">Prepara sottotitoli, parole evidenziate e B-roll. Resolve li applica soltanto dopo la conferma nel bridge.</p></div></div>
   <button id="sendResolvePackageV33" class="primary resolvePrimaryV33">INVIA A RESOLVE</button><details class="legacyExportsV33"><summary>Componenti da esportare</summary><div id="resolveComponentsV71" class="timelineExportActionsV33"></div><p id="resolveComponentsReasonV71" class="muted"></p></details>
   <div id="resolveDeliveryV33" class="resolveDeliveryV33" hidden><div id="resolveDeliveryCheckV33" class="resolveDeliveryCheckV33" hidden>✓</div><strong id="resolveDeliveryTitleV33">Preparazione pacchetto Resolve…</strong><span id="resolveDeliverySummaryV33"></span><div id="resolveDeliveryProgressV33" class="resolveDeliveryProgressBarV34"><i></i></div><b id="resolveDeliveryPercentV37">0%</b><small id="resolveDeliveryDetailV33"></small></div>

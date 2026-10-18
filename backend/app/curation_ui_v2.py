@@ -51,30 +51,30 @@ function workflowStepNodesV42(){return [...document.querySelectorAll('[data-work
 function workflowHeaderV42(node){if(node.matches('h2'))return node;return node.querySelector(':scope > .top')||node.querySelector(':scope > h2')||node.querySelector(':scope > details > summary')}
 function setWorkflowOpenV42(node,open){
  const step=Number(node.dataset.workflowStepV42),header=workflowHeaderV42(node),chevron=header?.querySelector('.workflowChevronV42');
- if(step===5){node.classList.toggle('workflowStepFiveClosedV42',!open);node.classList.toggle('workflowStepFiveOpenV42',open)}
- else if(step===6){const details=node.querySelector(':scope > details');if(details)details.open=!!open}
+ if(step===7){node.classList.toggle('workflowStepFiveClosedV42',!open);node.classList.toggle('workflowStepFiveOpenV42',open)}
+ else if(step===8){const details=node.querySelector(':scope > details');if(details)details.open=!!open}
  else node.classList.toggle('workflowCollapsedV42',!open);
  if(header){header.setAttribute('aria-expanded',String(!!open));if(chevron)chevron.textContent=open?'▼':'▶'}
 }
-function workflowIsOpenV42(node){const step=Number(node.dataset.workflowStepV42);if(step===5)return node.classList.contains('workflowStepFiveOpenV42');if(step===6)return !!node.querySelector(':scope > details')?.open;return !node.classList.contains('workflowCollapsedV42')}
+function workflowIsOpenV42(node){const step=Number(node.dataset.workflowStepV42);if(step===7)return node.classList.contains('workflowStepFiveOpenV42');if(step===8)return !!node.querySelector(':scope > details')?.open;return !node.classList.contains('workflowCollapsedV42')}
 function installWorkflowAccordionV42(){
  for(const node of workflowStepNodesV42()){
   if(node.dataset.workflowAccordionV42)continue;node.dataset.workflowAccordionV42='1';const step=Number(node.dataset.workflowStepV42),header=workflowHeaderV42(node);if(!header)continue;
-  if(step!==5&&step!==6){const body=document.createElement('div');body.className='workflowBodyV42';for(const child of [...node.children])if(child!==header)body.appendChild(child);node.appendChild(body)}
+  if(step!==7&&step!==8){const body=document.createElement('div');body.className='workflowBodyV42';for(const child of [...node.children])if(child!==header)body.appendChild(child);node.appendChild(body)}
   header.classList.add('workflowHeaderV42');header.tabIndex=0;header.setAttribute('role','button');const chevron=document.createElement('button');chevron.type='button';chevron.className='workflowChevronV42';chevron.tabIndex=-1;chevron.setAttribute('aria-label',`Apri o chiudi sezione ${step}`);const nestedHeading=header.querySelector(':scope > div > h2');if(nestedHeading){const titleRow=document.createElement('div');titleRow.className='workflowTitleRowV43';nestedHeading.before(titleRow);titleRow.append(chevron,nestedHeading)}else header.prepend(chevron);
   const toggle=event=>{if(event.type==='keydown'&&!['Enter',' '].includes(event.key))return;if(event.target.closest('button')&&event.target!==chevron)return;event.preventDefault();setWorkflowOpenV42(node,!workflowIsOpenV42(node))};header.addEventListener('click',toggle);header.addEventListener('keydown',toggle);setWorkflowOpenV42(node,false);
  }
 }
 function openOnlyWorkflowStepV42(step,scroll=true){installWorkflowAccordionV42();for(const node of workflowStepNodesV42()){const open=Number(node.dataset.workflowStepV42)===Number(step);setWorkflowOpenV42(node,open);node.classList.toggle('workflowNextV42',open)}const target=document.querySelector(`[data-workflow-step-v42="${step}"]`);if(scroll)target?.scrollIntoView({behavior:'smooth',block:'start'})}
 function nextWorkflowStepV42(){
- if(!state.pid)return 0;if(!state.data.analysis_ready)return 1;if(!state.data.editorial_plan_ready)return transcriptConfirmedProjectV42===state.pid?3:2;
+ if(!state.pid)return 0;if(!state.data.analysis_ready)return 2;if(!state.data.editorial_plan_ready)return transcriptConfirmedProjectV42===state.pid?5:4;
  const chunks=state.data.chunks||[],attempts=chunks.flatMap(c=>c.retrieval_diagnostics?.video_attempts||[]);if(!attempts.length)return 4;
- const broll=chunks.filter(c=>c.action==='BROLL'),unresolved=broll.some(c=>{const value=state.sel.get(c.id);return value!=='NO_BROLL'&&value!=='CONTINUE'&&(!Array.isArray(value)||!value.length)});if(unresolved)return 5;
- if(!(genericCoverageV33?.selected||[]).length)return 6;return 7;
+ const broll=chunks.filter(c=>c.action==='BROLL'),unresolved=broll.some(c=>{const value=state.sel.get(c.id);return value!=='NO_BROLL'&&value!=='CONTINUE'&&(!Array.isArray(value)||!value.length)});if(unresolved)return 7;
+ if(!(genericCoverageV33?.selected||[]).length)return 8;return 9;
 }
 function syncWorkflowAccordionV42(force=false){installWorkflowAccordionV42();const next=nextWorkflowStepV42();if(!next)return;const projectChanged=workflowProjectV42!==state.pid;if(projectChanged){workflowProjectV42=state.pid;workflowSuggestedV42=next;openOnlyWorkflowStepV42(next,false);return}if(force||next!==workflowSuggestedV42){workflowSuggestedV42=next;openOnlyWorkflowStepV42(next,force)}}
-document.addEventListener('click',event=>{if(event.target.closest('#continueWorkflowV15')){transcriptConfirmedProjectV42=state.pid;workflowSuggestedV42=3;setTimeout(()=>openOnlyWorkflowStepV42(3),0)}});
-const workflowTerminalBaseV42=window.ramblaRunTerminal;window.ramblaRunTerminal=(run)=>{if(workflowTerminalBaseV42)workflowTerminalBaseV42(run);if(run?.status!=='SUCCEEDED')return;const kind=workflowKindV12(run.stage_type);if(kind==='analyze')openOnlyWorkflowStepV42(2);else if(kind==='director_api')openOnlyWorkflowStepV42(4);else if(['videos','social','images'].includes(kind))openOnlyWorkflowStepV42(5)};
+document.addEventListener('click',event=>{if(event.target.closest('#continueWorkflowV15')){transcriptConfirmedProjectV42=state.pid;workflowSuggestedV42=5;setTimeout(()=>openOnlyWorkflowStepV42(5),0)}});
+const workflowTerminalBaseV42=window.ramblaRunTerminal;window.ramblaRunTerminal=(run)=>{if(workflowTerminalBaseV42)workflowTerminalBaseV42(run);if(run?.status!=='SUCCEEDED')return;const kind=workflowKindV12(run.stage_type);if(kind==='analyze')openOnlyWorkflowStepV42(3);else if(kind==='director_api')openOnlyWorkflowStepV42(6);else if(['videos','social','images'].includes(kind))openOnlyWorkflowStepV42(7)};
 const workflowDrawBaseV42=draw;draw=()=>{workflowDrawBaseV42();syncWorkflowAccordionV42(false)};
 installWorkflowAccordionV42();
 """
@@ -271,7 +271,7 @@ def _organize_workflow(html: str) -> str:
     login_status = take("socialLoginStateV2", "span")
     maintenance = take("cleanMediaV2")
     panel = (
-        '<section class="panel workflowV5" id="mediaWorkflowV5" data-workflow-step-v42="4"><h2>4 · Find media</h2>'
+        '<section class="panel workflowV5" id="mediaWorkflowV5" data-workflow-step-v42="6"><h2>6 · Find media</h2>'
         '<p class="muted">These searches cover all B-roll beats. Use the controls inside a beat to search only that beat.</p>'
         '<details class="toolsV5 providerLoginV29" id="socialConnectionsV5"><summary>LOGIN PROVIDER ESTERNI</summary>'
         f'<p class="muted">TikTok, Instagram ed Envato si aprono in una nuova finestra del profilo Chrome attivo. I download ufficiali Envato vengono associati automaticamente.</p><div class="row">{logins}</div>{login_status}</details>'
@@ -281,11 +281,12 @@ def _organize_workflow(html: str) -> str:
         f'<div><b>Still images</b><span id="imagesCompleteV12" class="stepStatusV12" hidden></span>{images}<small>Photos matched to each shot</small></div></div>'
         f'<details class="toolsV5"><summary>Media maintenance</summary><div class="row">{maintenance}<small>Remove retrieved media while keeping the transcript and plan.</small></div></details></section>'
     )
-    html = html.replace('<div class="grid"><aside class="rail">', panel + '<section class="panel workflowSceneHeaderV44" data-workflow-step-v42="5"><h2 id="sceneWorkspaceHeading">5 · Visual beats · testo e B-roll</h2></section><div class="grid"><aside class="rail">', 1)
-    html = html.replace('<h2>Source</h2>', '<h2>1 · Source &amp; analysis <span id="analysisCompleteV12" class="stepStatusV12" hidden></span></h2>', 1)
-    html = html.replace('<h2>Editorial Plan</h2>', '<h2>3 · Editorial plan <span id="planCompleteV12" class="stepStatusV12" hidden></span></h2>', 1)
+    html = html.replace('<div class="grid"><aside class="rail">', panel + '<section class="panel workflowSceneHeaderV44" data-workflow-step-v42="7"><h2 id="sceneWorkspaceHeading">7 · Visual beats · testo e B-roll</h2></section><div class="grid"><aside class="rail">', 1)
+    html = html.replace('<h2>Source</h2>', '<h2>1 · Source <span id="analysisCompleteV12" class="stepStatusV12" hidden></span></h2>', 1)
+    html = html.replace('<details id="analysisDetails">', '</section><section class="panel" data-workflow-step-v42="2"><h2>2 · Analysis</h2><details id="analysisDetails">', 1)
+    html = html.replace('<h2>Editorial Plan</h2>', '<h2>5 · Editorial plan <span id="planCompleteV12" class="stepStatusV12" hidden></span></h2>', 1)
     html = re.sub(r'(<section class="panel")(?=>\s*<h2>1 ·)', r'\1 data-workflow-step-v42="1"', html, count=1)
-    html = re.sub(r'(<section class="panel")(?=>\s*<h2>3 ·)', r'\1 data-workflow-step-v42="3"', html, count=1)
+    html = re.sub(r'(<section class="panel")(?=>\s*<h2>5 ·)', r'\1 data-workflow-step-v42="5"', html, count=1)
     # Primary Director controls precede the optional manual import/export tools.
     pattern = r'<span class="directorV5">.*?<span id="directorStateV5".*?</span></span>'
     director = re.search(pattern, html, re.S)

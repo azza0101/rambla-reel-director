@@ -16,3 +16,5 @@ def test_magic_controls_show_real_progress_budget_and_manual_apply():
     assert 'prepareBrollViewV24()' in html
     assert 'desktopTargetRevision=target.revision' in html
     assert "history.replaceState(null,'',resultUrl.href)" in html
+    assert 'id="magicRestart"' in html and '/restart' in html
+    assert 'magicCutOpenedRun' in html and 'openMagicOutput(3)' in html

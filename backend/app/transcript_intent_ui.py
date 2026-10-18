@@ -1,8 +1,8 @@
 """Transcript review and persistent phrase-intent controls for Curation V2."""
 
 PANEL = r'''
-<section class="panel transcriptWorkspaceV14" id="transcriptWorkspaceV14" data-workflow-step-v42="2">
-  <div class="top"><div><h2>2 · Transcript review <span id="transcriptCompleteV14" class="stepStatusV12" hidden></span></h2>
+<section class="panel transcriptWorkspaceV14" id="transcriptWorkspaceV14" data-workflow-step-v42="4">
+  <div class="top"><div><h2>4 · Transcript review <span id="transcriptCompleteV14" class="stepStatusV12" hidden></span></h2>
   <p class="muted">Correct the complete transcript, then tag the phrases that need coverage, animation or highlighted Text+.</p></div>
   <span id="intentCountsV14" class="intentCountsV14"></span></div>
   <div id="transcriptPrerequisiteV72" role="status"><b>Trascrizione e selezioni disponibili dopo la conferma</b><p class="muted">Se stai preparando un CUT, premi CONFERMA CUT E CONTINUA per usare il testo pulito. Senza CUT, completa prima la trascrizione del video o dell’audio nella sezione 1.</p><button id="transcriptGoCutV72" type="button">VAI A CONFERMA CUT</button></div>

@@ -111,7 +111,7 @@ def test_confirmed_cut_preview_is_available_without_a_draft_plan():
     harness="const vm=require('vm'),assert=require('assert');const c={$:()=>({}),state:{},draw(){},setInterval(){}};vm.createContext(c);"
     script=harness+'vm.runInContext('+json.dumps(JS)+',c);'+r"""
     assert.equal(c.cutPreviewBlockReason({source:true,plan:false,confirmed:true,workflowBusy:true,busy:false}),'');
-    assert.ok(c.cutPreviewBlockReason({source:true,plan:false,confirmed:false,workflowBusy:false,busy:false}).includes('Analizza CUT'));
+    assert.ok(c.cutPreviewBlockReason({source:true,plan:false,confirmed:false,workflowBusy:false,busy:false}).includes('Auto-cut'));
     assert.ok(c.cutPreviewBlockReason({source:true,plan:true,confirmed:false,workflowBusy:true,busy:false}).includes('analisi'));
     assert.equal(c.cutPreviewBlockReason({source:true,plan:true,confirmed:false,workflowBusy:false,busy:false}),'');
     """

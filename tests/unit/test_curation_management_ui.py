@@ -215,10 +215,10 @@ def test_numbered_workflow_is_collapsed_and_opens_only_the_next_step():
     assert "titleRow.append(chevron,nestedHeading)" in html
     assert "open?'▼':'▶'" in html
     assert "border-radius:8px" in html
-    assert '<section class="panel workflowSceneHeaderV44" data-workflow-step-v42="5"><h2 id="sceneWorkspaceHeading">5 · Visual beats · testo e B-roll</h2></section>' in html
+    assert '<section class="panel workflowSceneHeaderV44" data-workflow-step-v42="7"><h2 id="sceneWorkspaceHeading">7 · Visual beats · testo e B-roll</h2></section>' in html
     assert ".workflowNextV42{border-color" not in html
     assert "linear-gradient(180deg,#0b2427,#081b1e)" in html
-    for step in range(1, 8):
+    for step in range(1, 10):
         assert f'data-workflow-step-v42="{step}"' in html
     assert "else shell.after(bar);" in html
 

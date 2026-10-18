@@ -1592,7 +1592,7 @@ def create_app(
         return {'components': flags, 'counts': counts,
                 'component_availability': {key: not draft_cut for key in ('subtitles', 'highlights', 'broll', 'social', 'generic')},
                 'video_available': available,
-                'video_reason': 'Conferma CUT e continua per aggiungere testo e coperture ai tagli' if draft_cut else '' if available else 'Video disponibile dopo ANALIZZA CUT sul file originale caricato'}
+                'video_reason': 'Conferma CUT e continua per aggiungere testo e coperture ai tagli' if draft_cut else '' if available else 'Video disponibile dopo AUTO-CUT sul file originale caricato'}
 
     @app.put('/api/curation/projects/{project_id}/export-options')
     async def put_export_options(project_id: str, components: ExportComponents):

@@ -35,6 +35,10 @@ def install_magic_routes(app, runner, load_project):
     async def resume_magic(run_id: str):
         return checked(runner.resume, run_id)
 
+    @app.post('/api/curation/magic/{run_id}/restart')
+    async def restart_magic(run_id: str):
+        return checked(runner.restart, run_id)
+
     @app.post('/api/curation/magic/{run_id}/retry-selection')
     async def retry_magic_selection(run_id: str):
         return checked(runner.retry_from, run_id, 'selection')

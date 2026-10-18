@@ -39,6 +39,16 @@ class MagicRunner:
     def resume(self, run_id):
         return self._schedule(self.store.read(run_id))
 
+    def restart(self, run_id):
+        """Start a new MAGICO run while retaining the prior run and its artifacts."""
+        previous = self.store.read(run_id)
+        if run_id in self.tasks and not self.tasks[run_id].done():
+            raise ValueError('MAGICO è ancora in corso: annullalo prima di ripartire da zero')
+        self.store.validate_source(run_id, self.source_signature(previous['source_project_id']))
+        row = self.store.create_or_resume(previous['source_project_id'], previous['source_signature'],
+                                          previous['options'], fresh=True)
+        return self._schedule(row)
+
     def retry_from(self, run_id, phase):
         """Rebuild only the research/selection tail of a durable MAGICO run.
 

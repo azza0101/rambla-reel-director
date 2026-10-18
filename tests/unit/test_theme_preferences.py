@@ -53,4 +53,4 @@ def test_theme_settings_ui_is_at_the_end_and_updates_live():
     assert "/theme-preferences" in html
     assert "SALVA IMPOSTAZIONI" in html
     assert "RIPRISTINA COLORI" in html
-    assert html.index("7 · Export timeline") < html.index("⚙ IMPOSTAZIONI GRAFICHE")
+    assert html.index("9 · Export timeline") < html.index("⚙ IMPOSTAZIONI GRAFICHE")
