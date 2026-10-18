@@ -218,7 +218,13 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
     from .cut_cloud import cloud_context, query_json, pack_items, word_windows
     run = Path(run)
     if query is None:
-        query = lambda prompt,schema,label:query_json(prompt,schema,label,max_output_tokens=2600,thinking_level='low')
+        # Keep the adapter signature compatible with both the selection and
+        # director passes, which may use different bounded output budgets.
+        query = lambda prompt,schema,label,**kwargs: query_json(
+            prompt, schema, label,
+            max_output_tokens=kwargs.get('max_output_tokens', 2600),
+            thinking_level=kwargs.get('thinking_level', 'low'),
+        )
     chunks = normalized_chunks(run)
     if not chunks:
         raise ValueError('La trascrizione del CUT è vuota')
