@@ -131,12 +131,15 @@ def media_duration(path):
 
 
 class MagicProductServices:
-    def __init__(self, projects, root, store, cut_engine, research, prepare, payload, deliver, *, visual_client=configured_visual_client, generics=None):
+    def __init__(self, projects, root, store, cut_engine, research, prepare, payload, deliver, *, visual_client=configured_visual_client, generics=None, media_prepare_timeout_seconds=75):
         self.projects, self.root, self.store = projects, Path(root), store
         self.cut = MagicCutAdapter(projects, root, store, cut_engine)
         self.research, self.prepare, self.payload, self.deliver = research, prepare, payload, deliver
         self.visual_client = visual_client
         self.generics = generics
+        self.media_prepare_timeout_seconds = float(media_prepare_timeout_seconds)
+        if self.media_prepare_timeout_seconds <= 0:
+            raise ValueError('Timeout preparazione media non valido')
         self.check = lambda run_id: None
 
     async def run_phase(self, phase, context, options, report):
@@ -226,12 +229,23 @@ class MagicProductServices:
             if row.get('role') == 'generic':
                 from .stock_export_media import prepare_pexels_video
                 try:
-                    await prepare_pexels_video(run, row['asset_id'].rsplit(':',1)[-1])
+                    await asyncio.wait_for(
+                        prepare_pexels_video(run, row['asset_id'].rsplit(':',1)[-1]),
+                        timeout=self.media_prepare_timeout_seconds,
+                    )
                     issues = []
+                except asyncio.TimeoutError:
+                    issues = [f"{row['asset_id']}: preparazione media scaduta dopo {self.media_prepare_timeout_seconds:g}s"]
                 except (OSError,ValueError,RuntimeError) as exc:
                     issues = [str(exc)]
             else:
-                issues = await self.prepare(pid, [row['asset_id']], None)
+                try:
+                    issues = await asyncio.wait_for(
+                        self.prepare(pid, [row['asset_id']], None),
+                        timeout=self.media_prepare_timeout_seconds,
+                    )
+                except asyncio.TimeoutError:
+                    issues = [f"{row['asset_id']}: preparazione media scaduta dopo {self.media_prepare_timeout_seconds:g}s"]
             if issues:
                 warnings.extend(str(issue) for issue in issues)
                 continue

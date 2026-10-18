@@ -140,3 +140,32 @@ def test_selection_retries_a_transient_visual_provider_failure(tmp_path,monkeypa
     assert len(calls)==2
     assert result['selected']==1
     assert any('riprovata' in warning.lower() for warning in result['warnings'])
+
+
+def test_selection_skips_a_media_preparation_timeout_instead_of_hanging(tmp_path,monkeypatch):
+    from backend.app.magic_product import MagicProductServices
+    from backend.app.magic_models import MagicContext, MagicOptions
+    from backend.app.magic_store import MagicStore
+    from backend.app.curation import CurationCandidate
+    import backend.app.native_cut_export as native
+    import backend.app.curation_artifacts as artifacts
+    import backend.app.editorial_import as editorial
+
+    run=tmp_path/'child'/'run';run.mkdir(parents=True)
+    (run/'visual-plan.json').write_text(json.dumps({'global_topic':'Passport','visual_beats':[
+        dict(id='b',original_text='passaporto',action='BROLL',start=0,end=5,shots=[])]}))
+    image=run/'passport.jpg';image.write_bytes(b'image')
+    candidate=CurationCandidate(asset_id='b--image:1',chunk_id='b',kind='image',provider='google_images',
+        source_page='https://example.test/passport',title='passport close up',description='',score=1,
+        rights_state='review',orientation='landscape',local_asset_path=str(image))
+    monkeypatch.setattr(native,'load_native_cut',lambda *a:dict(fps='30',duration_seconds=5))
+    monkeypatch.setattr(artifacts,'load_curation_run',lambda *a:SimpleNamespace(candidate_index={candidate.asset_id:candidate}))
+    monkeypatch.setattr(editorial,'active_retrieval_root',lambda *a:run)
+    async def never_finishes(*_):
+        await asyncio.Event().wait()
+    services=MagicProductServices(None,tmp_path,MagicStore(tmp_path),None,None,never_finishes,None,None,
+        visual_client=lambda:object(),media_prepare_timeout_seconds=.001)
+    context=MagicContext(source_project_id='source',output_project_id='child',run_id='run',source_signature='s',cut_revision='r')
+    result=asyncio.run(services.select('child',run,context,MagicOptions(),lambda *a:None))
+    assert result['selected']==0
+    assert any('scaduta' in warning.lower() for warning in result['warnings'])
