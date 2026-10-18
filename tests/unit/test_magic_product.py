@@ -13,7 +13,7 @@ def test_canonical_plan_uses_original_text_and_full_geography(tmp_path):
     assert beat['text']=='la polizia turistica in Egitto' and beat['places']==['Egypt']
 
 
-def test_production_selection_writes_normal_selection_and_disabled_image(tmp_path,monkeypatch):
+def test_production_selection_writes_normal_selection_and_active_image(tmp_path,monkeypatch):
     from backend.app.magic_product import MagicProductServices
     from backend.app.magic_models import MagicContext,MagicOptions
     from backend.app.magic_store import MagicStore
@@ -43,7 +43,8 @@ def test_production_selection_writes_normal_selection_and_disabled_image(tmp_pat
     selected=json.loads((run/'selection-plan.json').read_text())
     assert selected['chunks']['b']['selected_assets'][0]['asset_id']==candidate.asset_id
     decision=json.loads((run/'magic-coverage.json').read_text())['decisions'][0]
-    assert not decision['enabled'] and decision['role']=='fallback_image'
+    assert decision['enabled'] and decision['role']=='image_coverage'
+    assert result['enabled_images']==1
 
 
 def test_selection_orders_an_image_fallback_before_second_video_option(tmp_path):
@@ -74,3 +75,29 @@ def test_product_server_registers_real_magic_services(tmp_path):
     app=create_app(project_root=tmp_path)
     assert hasattr(app.state,'magic_runner')
     assert any(getattr(route,'path','').endswith('/{pid}/magic') for route in app.routes)
+
+
+def test_explicit_passport_and_sri_lanka_are_never_lost_in_generic_director_queries(tmp_path):
+    from backend.app.magic_product import plan_beats
+    plan={'global_topic':'ethical travel','visual_beats':[
+        dict(id='passport',original_text='Il passaporto non apre tutte le porte',
+             action='BROLL',start=0,end=4,shots=[dict(video_queries=['travel'],image_queries=['travel photos'])]),
+        dict(id='sri',original_text='Siamo arrivati in Sri Lanka',
+             action='BROLL',start=4,end=8,shots=[dict(video_queries=['beautiful beach'],image_queries=['holiday'])]),
+    ]}
+    (tmp_path/'visual-plan.json').write_text(json.dumps(plan))
+    passport,sri=plan_beats(tmp_path)
+    assert 'passport' in passport['queries'][0] and 'passport' in passport['image_queries'][0]
+    assert 'Sri Lanka' in sri['queries'][0] and 'Sri Lanka' in sri['image_queries'][0]
+
+
+def test_specific_video_and_image_are_in_front_of_generic_video_during_visual_budget():
+    from backend.app.magic_product import visual_candidate_order
+    rows=[
+        dict(asset_id='generic',chunk_id='b',kind='video',role='generic'),
+        dict(asset_id='photo',chunk_id='b',kind='image'),
+        dict(asset_id='video',chunk_id='b',kind='video',role='coverage'),
+        dict(asset_id='extra',chunk_id='b',kind='video',role='coverage'),
+    ]
+    assert [r['asset_id'] for r in visual_candidate_order([{'id':'b'}],rows)] == [
+        'video','photo','generic','extra']
