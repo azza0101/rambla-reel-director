@@ -214,6 +214,11 @@ async def _default_research_runner(
         raise RuntimeError(f"beat research worker exited with code {state.return_code}")
 
 
+# MAGICO's beat research is a bounded search, not an indefinite manual scrape.
+# The child worker has its own shorter timeout so it can restore media artifacts.
+MAGIC_RESEARCH_TIMEOUT_SECONDS = 210
+
+
 async def _run_research_state(
     state: debug.RunState,
     beat_id: str,
@@ -237,7 +242,16 @@ async def _run_research_state(
         else:
             result = runner(state, beat_id, mode)
         if inspect.isawaitable(result):
-            await result
+            if (state.research_options or {}).get("magic_exact_query"):
+                try:
+                    await asyncio.wait_for(result, timeout=MAGIC_RESEARCH_TIMEOUT_SECONDS)
+                except asyncio.TimeoutError as exc:
+                    raise RuntimeError(
+                        f"Ricerca MAGICO scaduta dopo {MAGIC_RESEARCH_TIMEOUT_SECONDS}s: "
+                        "fonte saltata, risultati precedenti conservati"
+                    ) from exc
+            else:
+                await result
         if state.status != "CANCELLED":
             state.status = "SUCCEEDED"
             state.return_code = 0
@@ -1961,7 +1975,7 @@ def create_app(
         except Exception:
             state.status = 'CANCELLED'
             if state.process:
-                state.process.terminate()
+                await debug._stop_worker(state.process)
             raise
         if state.status != 'SUCCEEDED':
             raise RuntimeError(state.last_message)
