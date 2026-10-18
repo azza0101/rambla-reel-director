@@ -324,7 +324,12 @@ class MagicProductServices:
             batch = prepared[index:index+12]
             for attempt in range(2):
                 try:
-                    verdicts.update(await asyncio.to_thread(judge_batch,batch,client))
+                    verdicts.update(await asyncio.wait_for(
+                        asyncio.to_thread(judge_batch,batch,client), timeout=45))
+                    break
+                except asyncio.TimeoutError:
+                    warnings.append('Verifica visiva scaduta dopo 45s: le coperture non certificate restano fuori dal pacchetto')
+                    batch = []
                     break
                 except MagicBudgetReached:
                     warnings.append('Budget visivo raggiunto: candidati restanti non approvati')
