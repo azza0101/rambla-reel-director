@@ -4,6 +4,7 @@ from dataclasses import asdict
 from fractions import Fraction
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 from .atomic_io import write_json
@@ -37,6 +38,21 @@ def source_signature(projects, root, pid):
     return fingerprint([project.analysis_signature, signatures, state])
 
 
+def _literal_anchor_queries(text, proposed, *, image=False):
+    """Keep explicit objects and named places in sourcing, not only AI paraphrases."""
+    from .geographic_context import places_in
+    proposals = [str(query).strip() for query in proposed if str(query).strip()]
+    anchors = []
+    if re.search(r'\b(passaport\w*|passports?)\b', str(text), re.I) and not any(
+        re.search(r'\b(passaport\w*|passports?)\b', query, re.I) for query in proposals
+    ):
+        anchors.append('passport travel document close up photo' if image else 'passport travel document close up footage')
+    for place in places_in(text):
+        if not any(place.casefold() in query.casefold() for query in proposals + anchors):
+            anchors.append(f'{place} travel documentary photo' if image else f'{place} travel documentary footage')
+    return list(dict.fromkeys(anchors + proposals))
+
+
 def plan_beats(run):
     from .geographic_context import beat_places
     plan = read_json(run/'visual-plan.json', {})
@@ -48,8 +64,8 @@ def plan_beats(run):
         if beat.get('action') == 'BROLL':
             shots = beat.get('shots') or []
             output.append({**beat, 'text':text, 'places':beat_places(text, topic, preceding),
-                'queries':list(dict.fromkeys(q for shot in shots for q in shot.get('video_queries', []))),
-                'image_queries':list(dict.fromkeys(q for shot in shots for q in shot.get('image_queries', [])))})
+                'queries':_literal_anchor_queries(text, (q for shot in shots for q in shot.get('video_queries', []))),
+                'image_queries':_literal_anchor_queries(text, (q for shot in shots for q in shot.get('image_queries', [])), image=True)})
         preceding += ' '+text
     return output
 
@@ -70,20 +86,20 @@ def generic_candidates(beat, items):
 
 
 def visual_candidate_order(beats, candidates):
-    """Give every beat a video attempt and an image fallback before extras.
+    """Verify specific videos and photos before spending budget on topic-level filler.
 
-    The visual verification budget is shared across the whole edit.  Keeping
-    images at the end meant they were never inspected on longer videos, so a
-    beat with no valid video could not receive its disabled image alternative.
+    Each beat gets a first video/photo/generic pass before extras. Images are
+    eligible for visible coverage when specific video evidence is unavailable.
     """
     grouped = {str(beat['id']): [] for beat in beats}
     for candidate in candidates:
         grouped.setdefault(str(candidate['chunk_id']), []).append(candidate)
     lanes = {}
     for beat_id, rows in grouped.items():
-        videos = [row for row in rows if row.get('kind') == 'video']
+        videos = [row for row in rows if row.get('kind') == 'video' and row.get('role') != 'generic']
         images = [row for row in rows if row.get('kind') == 'image']
-        lanes[beat_id] = videos[:1] + images[:1] + videos[1:] + images[1:]
+        generics = [row for row in rows if row.get('role') == 'generic']
+        lanes[beat_id] = videos[:1] + images[:1] + generics[:1] + videos[1:] + images[1:] + generics[1:]
     maximum = max((len(rows) for rows in lanes.values()), default=0)
     return [rows[index] for index in range(maximum) for rows in lanes.values() if index < len(rows)]
 
@@ -178,20 +194,28 @@ class MagicProductServices:
         view = await asyncio.to_thread(load_curation_run, run)
         beats = plan_beats(run)
         candidates, warnings = [], []
-        generics = read_json(run/'generic-coverage.json', {}).get('items', [])
+        generic_state = read_json(run/'generic-coverage.json', {})
+        selected_generic_ids = {str(value) for value in (generic_state.get('selected') or [])}
+        generics = [item for item in (generic_state.get('items') or [])
+                    if str(item.get('provider_id') or '') in selected_generic_ids]
         for beat in beats:
             rows = [asdict(c) for c in view.candidate_index.values() if c.chunk_id == beat['id']]
             rows.extend(generic_candidates(beat, generics))
-            rows.sort(key=lambda r: (0 if r['provider']=='pexels' else 1, -r['score']))
-            # Keep room for an image alternative without letting video pools starve it.
-            videos = shortlist_candidates([r for r in rows if r['kind']=='video'],beat['text'],beat['places'],limit=options.candidates_per_beat)
-            images = shortlist_candidates([r for r in rows if r['kind']=='image'],beat['text'],beat['places'],limit=options.candidates_per_beat)
-            chosen = (videos[:max(1, options.candidates_per_beat-1)] + images[:1])[:options.candidates_per_beat]
+            rows.sort(key=lambda r: (-float(r.get('score') or 0), str(r.get('asset_id') or '')))
+            # Reserve distinct visual lanes so a broad Pexels generic cannot
+            # displace a passport still, a Sri Lanka result or a specific video.
+            videos = shortlist_candidates([r for r in rows if r['kind']=='video' and r.get('role') != 'generic'],
+                                          beat['text'],beat['places'],limit=options.candidates_per_beat)
+            images = shortlist_candidates([r for r in rows if r['kind']=='image'],
+                                          beat['text'],beat['places'],limit=options.candidates_per_beat)
+            filler = shortlist_candidates([r for r in rows if r.get('role') == 'generic'],
+                                          beat['text'],beat['places'],limit=1)
+            free_video_slots = max(1, options.candidates_per_beat - int(bool(images)) - int(bool(filler)))
+            chosen = (videos[:free_video_slots] + images[:1] + filler[:1])[:options.candidates_per_beat]
             for row in chosen:
                 row.update(beat_text=beat['text'],places=beat['places'],visual_target=beat.get('core_meaning') or beat['text'])
                 candidates.append(row)
-        # Interleave beats so the first visual budget serves the entire story,
-        # while reserving an early lane for a disabled image fallback.
+        # Spread the verification budget across specific videos, stills and generics.
         ordered = visual_candidate_order(beats, candidates)
         verdicts = validated_verdicts(candidates, None)
         client = self.visual_client()
@@ -273,9 +297,10 @@ class MagicProductServices:
             selections.set_chunk_selection(decision['beat_id'],[decision['asset_id']],no_broll=False)
         write_json(retrieval/'magic-coverage.json',dict(plan_signature=fingerprint(read_json(run/'visual-plan.json')),
             cut_revision=context.cut_revision,fps=fps,decisions=decisions,verdicts=verdicts))
-        report(1,1,'Coperture selezionate e immagini alternative salvate')
+        report(1,1,'Coperture video e immagini verificate selezionate')
         return dict(selected=len(decisions),
-            verified_videos=sum(d['role']!='fallback_image' for d in decisions),
+            verified_videos=sum(d['role'] in {'coverage','generic'} for d in decisions),
+            enabled_images=sum(d['role']=='image_coverage' for d in decisions),
             disabled_images=sum(d['role']=='fallback_image' for d in decisions),
             uncovered=len(beats)-len(decisions),warnings=warnings,partial=bool(warnings))
 
