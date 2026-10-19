@@ -188,3 +188,10 @@ def test_selection_skips_a_media_preparation_timeout_instead_of_hanging(tmp_path
     result=asyncio.run(services.select('child',run,context,MagicOptions(),lambda *a:None))
     assert result['selected']==0
     assert any('scaduta' in warning.lower() for warning in result['warnings'])
+
+
+
+def test_magic_output_keeps_source_player_on_the_original_parent():
+    from backend.app.magic_ui import JS
+    assert "const sourcePid=cut?.cut_parent_project_id||pid" in JS
+    assert "media/source-video/source" in JS

@@ -142,3 +142,9 @@ def test_cut_undo_redo_preserve_history_on_failed_save_and_clear_redo_on_new_edi
     """
     result=subprocess.run([node,'-e',script],capture_output=True,text=True,encoding='utf-8')
     assert result.returncode==0,result.stderr
+
+
+
+def test_confirming_cut_does_not_replace_the_original_source_view():
+    assert "const next=data.job.result.project_id,p=await api" not in JS
+    assert "Source resta sul video integrale" in JS

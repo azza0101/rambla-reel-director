@@ -117,7 +117,7 @@ def test_manual_exclusion_is_reversible_and_updates_timing():
     assert edited['duration_frames']<base['duration_frames']
     visible=review_words(raw,edited)
     assert visible[0]['text']=='foto' and visible[0]['excluded']
-    assert all(w['index'] not in [4,5] for w in visible)
+    assert all(w['excluded'] for w in visible if w['index'] in [4,5])
     restored=build_cut_plan(raw,duration=12,fps=30,signature='s',groups=groups,excluded_word_indices=[])
     assert clean_transcript(raw,restored)['text']==clean_transcript(raw,base)['text']
 
@@ -142,3 +142,17 @@ def test_tight_pause_pass_changes_only_time_and_reverts_exactly():
     reverted=build_cut_plan(raw,**args,tight_pauses=False)
     assert reverted['segments']==normal['segments']
     assert reverted['revision']==normal['revision']
+
+
+
+def test_review_words_keeps_automatic_discards_visible_and_struck():
+    from backend.app.cut_pass import review_words
+    transcript = {'segments':[{'words':[
+        {'word':'regia','start':0,'end':.2}, {'word':'ciao','start':.3,'end':.5},
+    ]}]}
+    plan = {'automatic_removed_word_indices':[0], 'removed_word_indices':[0],
+            'excluded_word_indices':[], 'groups':[]}
+    rows = review_words(transcript, plan)
+    assert [row['text'] for row in rows] == ['regia', 'ciao']
+    assert rows[0]['automatic_removed'] and rows[0]['excluded']
+    assert not rows[1]['excluded']

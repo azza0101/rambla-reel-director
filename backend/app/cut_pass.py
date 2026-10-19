@@ -218,12 +218,14 @@ def clean_transcript(transcript,plan):
 
 
 def review_words(transcript,plan):
-    """Visible narrative includes manual exclusions, so every edit is reversible."""
+    """Return every source word so AUTO CUT can visibly explain each removal."""
     removed=set(plan.get('automatic_removed_word_indices',plan['removed_word_indices']))
     excluded=set(plan.get('excluded_word_indices',[]))
     result=[]
     for word in words_of(transcript):
-        if word['index'] in removed: continue
+        automatic_removed = word['index'] in removed
         group=next((i for i,g in enumerate(plan['groups']) if any(a<=word['index']<=b for a,b in g['takes'])),None)
-        result.append({**word,'excluded':word['index'] in excluded,'group_index':group})
+        result.append({**word, 'automatic_removed': automatic_removed,
+                       'excluded': word['index'] in excluded or automatic_removed,
+                       'group_index': group})
     return result
