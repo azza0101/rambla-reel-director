@@ -262,15 +262,21 @@ def install_cut_routes(app,store,root,load_project,active_run):
             payload['cut_parent_project_id']=saved_origin['project_id']
             payload['confirmed_duration_seconds']=p.source_video.duration
             payload['original_duration_seconds']=saved_origin['plan']['source_duration_frames']/float(__import__('fractions').Fraction(saved_origin['plan']['fps']))
-        if (folder/'plan.json').is_file():
+        review_pid, review_folder = pid, folder
+        if origin.is_file() and Path(p.source_video.path).resolve()==(root/pid/'source'/'clean.mp4').resolve():
+            saved_origin = read(origin)
+            review_pid = str(saved_origin['project_id'])
+            review_folder = root/review_pid/'cut'
+        if (review_folder/'plan.json').is_file():
             try:
-                _,_,plan=current(pid)
+                _,_,plan=current(review_pid)
             except HTTPException as exc:
                 if exc.status_code!=409:raise
                 payload['source_changed']=True
                 return payload
-            payload['plan']=plan; payload['text']=clean_transcript(timing_read(folder),plan)['text']
-            payload['words']=review_words(timing_read(folder),plan)
+            timing = timing_read(review_folder)
+            payload['plan']=plan; payload['text']=clean_transcript(timing,plan)['text']
+            payload['words']=review_words(timing,plan)
         return payload
 
     @app.post('/api/curation/projects/{pid}/cut/analyze')

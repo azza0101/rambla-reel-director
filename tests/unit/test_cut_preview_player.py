@@ -148,3 +148,9 @@ def test_cut_undo_redo_preserve_history_on_failed_save_and_clear_redo_on_new_edi
 def test_confirming_cut_does_not_replace_the_original_source_view():
     assert "const next=data.job.result.project_id,p=await api" not in JS
     assert "Source resta sul video integrale" in JS
+
+
+
+def test_cut_result_edits_are_routed_back_to_the_parent_plan():
+    assert "cutPid=data.cut_parent_project_id||pid" in JS
+    assert "const pid=cutPid||state.pid;cutBusy=true" in JS
