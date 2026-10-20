@@ -246,6 +246,8 @@ def install_cut_routes(app,store,root,load_project,active_run):
                 result=await asyncio.to_thread(work)
                 job.update(status='succeeded',completed=4,message='Operazione CUT completata',result=result,finished_at=time.time())
             except Exception as exc:
+                reporter=getattr(app.state,'diagnostics',None)
+                if reporter:reporter.capture_exception(exc,component='cut',phase=kind)
                 message=str(exc)
                 if isinstance(exc,subprocess.CalledProcessError):
                     message=(exc.stderr or b'').decode('utf-8',errors='replace')[-1800:]

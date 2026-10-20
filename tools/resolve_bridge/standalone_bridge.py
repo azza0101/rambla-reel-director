@@ -533,8 +533,18 @@ class BridgeApp:
         self._debug_row: dict[str, Any] = {}
         self._destination_explicit = os.environ.get("RAMBLA_BRIDGE_DESTINATION_EXPLICIT") == "1"
         self._brand_images: list[Any] = []
+        self.diagnostics = None
+        self._reported_diagnostic_failure = None
         if build_ui:
+            try:
+                if str(APP_ROOT) not in sys.path:sys.path.insert(0,str(APP_ROOT))
+                from backend.app.diagnostics import Diagnostics
+                self.diagnostics = Diagnostics(APP_ROOT.parent/'rambla-data/diagnostics',app_root=APP_ROOT)
+                self.diagnostics.start()
+            except Exception:pass
             self._build_ui()
+            if self.diagnostics and not self.diagnostics.settings()['choice_made']:
+                self.root.after(1200,self.assistance)
 
     def _build_ui(self) -> None:
         self.root.title(f"RMBL B ROLL {RELEASE_VERSION}")
@@ -568,6 +578,8 @@ class BridgeApp:
                 mark = tk.Canvas(header.body, width=72, height=56, bg="#181d39", highlightthickness=0); mark.pack(side="left", padx=(0, 13)); draw_bridge_mark(mark)
         else:
             mark = tk.Canvas(header.body, width=72, height=56, bg="#181d39", highlightthickness=0); mark.pack(side="left", padx=(0, 13)); draw_bridge_mark(mark)
+        tk.Button(header.body, text="ASSISTENZA", bg="#343e68", fg="#ffffff", relief="flat",
+                  command=self.assistance, padx=9, pady=7).pack(side="right", padx=(8,0))
         tk.Button(header.body, text="SEARCH UPDATE", bg="#343e68", fg="#ffffff", relief="flat",
                   command=self.search_update, padx=9, pady=7).pack(side="right", padx=(8, 0))
         heading = tk.Frame(header.body, bg="#181d39"); heading.pack(side="left", fill="x", expand=True)
@@ -701,6 +713,48 @@ class BridgeApp:
         if self.applying: self._poll_apply()
         else: self._render(self.client.poll_once())
         self.timer = self.root.after(self.POLL_MS, self.poll)
+
+    def assistance(self) -> None:
+        from tkinter import messagebox
+        reporter = getattr(self,'diagnostics',None)
+        if reporter is None:
+            messagebox.showerror('Assistenza','Diagnostica locale non disponibile. Puoi usare COPIA DEBUG nel bridge.')
+            return
+        existing = getattr(self,'_diagnostics_window',None)
+        if existing is not None and existing.winfo_exists():
+            existing.lift();return
+        win=tk.Toplevel(self.root);self._diagnostics_window=win
+        win.title('RMBL · Assistenza e diagnostica');win.geometry('640x500');win.minsize(530,400);win.configure(bg='#181d39')
+        shell=tk.Frame(win,bg='#181d39',padx=18,pady=16);shell.pack(fill='both',expand=True)
+        tk.Label(shell,text='Assistenza e diagnostica',bg='#181d39',fg='#ffffff',font=('Segoe UI Semibold',16)).pack(anchor='w')
+        tk.Label(shell,text='Report nel repository GitHub privato: solo versione, categoria di errore e riferimenti al codice. Nessun video, trascrizione, nome progetto, percorso personale o API.',wraplength=580,justify='left',bg='#181d39',fg='#c7cde5').pack(anchor='w',pady=10)
+        automatic=tk.BooleanVar(value=reporter.settings()['automatic'])
+        tk.Checkbutton(shell,text='Invio automatico dei report tecnici, inclusi quelli in attesa',variable=automatic,
+            command=lambda:reporter.set_automatic(automatic.get()),bg='#181d39',fg='#eef2ff',selectcolor='#343e68',activebackground='#181d39',activeforeground='white').pack(anchor='w')
+        status=tk.Label(shell,text='',wraplength=580,justify='left',bg='#181d39',fg='#d8ff5b');status.pack(anchor='w',pady=10)
+        text=tk.Text(shell,height=11,bg='#0f1428',fg='#eef2ff',relief='flat',wrap='word');text.pack(fill='both',expand=True)
+        actions=tk.Frame(shell,bg='#181d39');actions.pack(fill='x',pady=(12,0))
+        def copy():
+            value=reporter.view().get('last_report') or {'status':'Nessun errore registrato'}
+            win.clipboard_clear();win.clipboard_append(json.dumps(value,indent=2));status.configure(text='✓ Report tecnico copiato.')
+        def login():
+            try:reporter.login()
+            except Exception:messagebox.showerror('GitHub','Accesso GitHub non disponibile: ripara il setup.')
+        def close():
+            if not reporter.settings()['choice_made']:reporter.set_automatic(False)
+            win.destroy()
+        for label,command in [('INVIA DIAGNOSTICA',reporter.submit_async),('COPIA DEBUG',copy),('COLLEGA GITHUB',login),('CHIUDI',close)]:
+            tk.Button(actions,text=label,command=command,bg='#343e68',fg='white',relief='flat',padx=8,pady=8).pack(side='left',padx=(0,6))
+        labels={'idle':'Nessun invio in corso.','sending':'Invio diagnostica a GitHub…','sent':'✓ Segnalazione ricevuta da GitHub.','github_unavailable':'Invio non riuscito: report conservato. Collega GitHub e riprova.','private_repo_required':'Invio bloccato: il repository deve essere privato.','daily_limit':'Limite giornaliero raggiunto: report conservati.','invalid_local_report':'Report non valido: invio bloccato.','local_storage_error':'Diagnostica locale non scrivibile.'}
+        def refresh():
+            if not win.winfo_exists():return
+            row=reporter.view();automatic.set(row['settings']['automatic'])
+            status.configure(text=labels.get(row['delivery_state'],'Report conservato.')+f" · {row['pending_count']} in attesa")
+            value=json.dumps(row['last_report'] or {'status':'Nessun errore registrato. Puoi inviare una diagnostica tecnica di base.'},indent=2)
+            if text.get('1.0','end-1c')!=value:
+                text.configure(state='normal');text.delete('1.0','end');text.insert('1.0',value);text.configure(state='disabled')
+            win.after(1500,refresh)
+        win.protocol('WM_DELETE_WINDOW',close);refresh()
 
     def search_update(self) -> None:
         from tkinter import messagebox
@@ -864,6 +918,11 @@ class BridgeApp:
             self.widgets["cancel_apply"].configure(state="disabled")
         elif status == "failed":
             detail = str(row.get("error") or message)
+            reporter=getattr(self,'diagnostics',None)
+            token=(row.get('package_id'),hashlib.sha256(detail.encode()).hexdigest())
+            if reporter and getattr(self,'_reported_diagnostic_failure',None)!=token:
+                reporter.capture_exception(RuntimeError(detail),component='bridge',phase='apply')
+                self._reported_diagnostic_failure=token
             compact = detail if len(detail) <= 320 else detail[:317] + "…"
             message = "Errore: " + compact + "\nUsa COPIA DEBUG per copiare tutti i dettagli."
             self._set_apply_buttons("normal")
@@ -935,6 +994,8 @@ class BridgeApp:
                 subprocess.Popen([sys.executable, str(launcher), 'start', '--project', project_id], cwd=str(APP_ROOT), stdin=subprocess.DEVNULL, stdout=log, stderr=log, creationflags=0x08000000 if os.name == 'nt' else 0)
 
     def _show_error(self, message: str, target: str = "message") -> None:
+        reporter=getattr(self,'diagnostics',None)
+        if reporter:reporter.capture_exception(RuntimeError(message),component='bridge',phase='capture' if target=='capture_status' else 'apply')
         if self.widgets: self.widgets[target].configure(text="Errore: " + message)
 
     def focus(self) -> None:
@@ -944,6 +1005,8 @@ class BridgeApp:
         self.root.deiconify(); self.root.lift(); self.root.focus_force()
 
     def close(self) -> None:
+        reporter=getattr(self,"diagnostics",None)
+        if reporter:reporter.close()
         self.closed = True
         if self.timer is not None:
             try: self.root.after_cancel(self.timer)
@@ -968,7 +1031,12 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except Exception:
+    except Exception as exc:
+        try:
+            if str(APP_ROOT) not in sys.path:sys.path.insert(0,str(APP_ROOT))
+            from backend.app.diagnostics import Diagnostics
+            Diagnostics(APP_ROOT.parent/'rambla-data/diagnostics',app_root=APP_ROOT).capture_exception(exc,component='startup',phase='startup')
+        except Exception:pass
         import traceback
         log = APP_ROOT / '.curation-logs' / 'bridge-startup.log'
         log.parent.mkdir(exist_ok=True)

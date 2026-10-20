@@ -1,0 +1,27 @@
+{
+  "version": "v0120",
+  "focused_tests_passed": 98,
+  "github_auth_tests_passed": 6,
+  "remote_smoke": {
+    "url": "https://github.com/azza0101/rambla-reel-director/issues/13",
+    "verified": true,
+    "closed_after_test": true,
+    "uploads": 1,
+    "duplicate_uploads": 0,
+    "raw_messages_sent": false
+  },
+  "automatic_default": false,
+  "github_account_token_copied": false,
+  "dedicated_token_provisioning_supported": true,
+  "cloud_ai_calls": 0,
+  "resolve_calls": 0,
+  "dedicated_token_verified": {
+    "private_repo_read": true,
+    "release_download": true,
+    "diagnostic_create": true,
+    "test_issue_closed": true,
+    "test_issue": "https://github.com/azza0101/rambla-reel-director/issues/14",
+    "token_values_logged": false
+  },
+  "personal_github_login_required": false
+}

@@ -1,3 +1,11 @@
+# Diagnostica remota v0120 — 2026-10-20
+
+ASSISTENZA su entrambe le GUI: consenso automatico inizialmente spento, invio manuale, anteprima e copia. Coda sanitizzata condivisa e lock app/bridge; repository privato obbligatorio, deduplica e limite 10/giorno. Agganci agli errori CUT, MAGICO, app e bridge. Non inviare messaggi grezzi o progetti: solo schema allowlist verificato prima di ogni upload. Prova reale issue #13 creata, riletta e chiusa; nessun dato del video inviato.
+
+Preconfigurazione GitHub pronta con token fine-grained dedicato + DPAPI locale. Non copiare il token OAuth attuale dell'account. L'utente ha fornito il token dedicato: salvato solo in .runtime-temp/github-distribution-token.txt e nel provisioning personale ignorato da Git. Verificati download release e apertura issue #14, chiusa dopo la prova. Sul PC corrente e cifrato DPAPI in rambla-data/credentials; le chiamate runtime GitHub usano quello, senza modificare il login CLI usato per pubblicare codice. Non pubblicare quel file o installer personale. In assenza del token si usa il login CLI esistente. Nessun monitoraggio Codex continuo e nessuna patch automatica dal client.
+
+Dettagli: docs/REMOTE_DIAGNOSTICS.md e docs/DIAGNOSTICS_QA_20261020.json. Versione app/bridge v0120. Nessuna modifica a Resolve.
+
 # Windows distribution v0119 — 2026-10-20
 
 SEARCH UPDATE in entrambe le GUI. Repository privato: GitHub CLI autentica l'utente; download release con SHA256 e controllo zip, conferma, blocco durante CUT/MAGICO/ricerca/APPLICA. Sviluppo Git non viene sovrascritto. App riavviata, Resolve mai arrestato. Bridge attende la fine dell'installazione prima di autoricaricarsi.

@@ -173,6 +173,10 @@ if ((Test-Path -LiteralPath $provision) -and -not (Test-Path -LiteralPath $crede
     [IO.File]::WriteAllLines($credentials, [string[]]$lines, (New-Object Text.UTF8Encoding($false)))
     Write-Host 'API preconfigurate dal pacchetto personale. I valori non vengono mostrati.'
 }
+if (Test-Path -LiteralPath $provision) {
+    & $venvPython (Join-Path $InstallRoot 'tools\provision_github_auth.py') $provision
+    if ($LASTEXITCODE -ne 0) { throw 'Preconfigurazione GitHub fallita: serve il token dedicato.' }
+}
 $previousVersion = $installedVersion
 @{
     app_root = $InstallRoot

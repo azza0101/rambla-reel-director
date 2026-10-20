@@ -436,4 +436,6 @@ setInterval(async()=>{try{const target=await api('/desktop-target');if(!target.p
     html = html.replace("filter:'all'", "filter:'broll'")
     html = html.replace('RAMBLA · B-ROLL', 'RMBL B ROLL').replace('RAMBLA - B-ROLL', 'RMBL B ROLL')
     html = re.sub(r'\bRAMBLA\b', 'RMBL B ROLL', html)
+    from .diagnostics_ui import HTML as SUPPORT_HTML
+    html += SUPPORT_HTML
     return html

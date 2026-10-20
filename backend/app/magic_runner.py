@@ -14,9 +14,10 @@ class MagicCancelled(RuntimeError):
 
 
 class MagicRunner:
-    def __init__(self, store, services, source_signature):
+    def __init__(self, store, services, source_signature, *, on_error=None):
         self.store, self.services, self.source_signature = store, services, source_signature
         self.tasks = {}
+        self.on_error = on_error
 
     def start(self, project_id, options):
         row = self.store.create_or_resume(project_id, self.source_signature(project_id), options)
@@ -155,5 +156,8 @@ class MagicRunner:
         except MagicBudgetReached as exc:
             self.store.transition(run_id, status='partial', message=str(exc), error=str(exc))
         except Exception as exc:
+            if self.on_error:
+                try:self.on_error(exc,component='magic',phase=locals().get('phase','unknown'))
+                except Exception:pass
             self.store.transition(run_id, status='failed', message=str(exc), error=str(exc),
                                   diagnostics={'traceback': traceback.format_exc()})

@@ -491,6 +491,9 @@ def create_app(
         audio_command_runner=audio_command_runner,
     )
 
+    from .diagnostics_routes import install_diagnostics_routes
+    diagnostics = install_diagnostics_routes(app, root.parent/'diagnostics', app_root=Path(__file__).resolve().parents[2])
+
     @app.post("/api/curation/software-update")
     async def software_update(request: Request):
         if request.client.host not in {"127.0.0.1", "::1", "testclient"} or request.headers.get("X-RMBL-Update") != "1":
@@ -2189,7 +2192,7 @@ def create_app(
         asyncio.create_task(operation())
         return {'status':'started'}
 
-    magic_runner = MagicRunner(magic_store, magic_services, lambda pid:source_signature(store,root,pid))
+    magic_runner = MagicRunner(magic_store, magic_services, lambda pid:source_signature(store,root,pid), on_error=diagnostics.capture_exception if diagnostics else None)
     magic_services.check = magic_runner.check
     install_magic_routes(app, magic_runner, load_project)
     return app
