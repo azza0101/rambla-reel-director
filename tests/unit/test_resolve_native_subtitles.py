@@ -43,7 +43,10 @@ def test_subtitle_frames_are_rebuilt_for_the_actual_resolve_timeline_fps():
 class NativeItem:
     def __init__(self, name, start, end):
         self.name, self.start, self.end = name, start, end
+        self.enabled = True
 
+    def SetClipEnabled(self, value): self.enabled = value; return True
+    def GetClipEnabled(self): return self.enabled
     def GetName(self): return self.name
     def GetStart(self): return self.start
     def GetEnd(self): return self.end
@@ -95,8 +98,10 @@ def test_verify_native_subtitles_rejects_wrong_text_or_range():
         verify_native_subtitles(timeline, ROWS, fps=30, base_frame=108000)
 
 
-def test_insert_native_subtitles_imports_srt_and_appends_native_media():
+@pytest.mark.parametrize('with_states', [False, True])
+def test_insert_native_subtitles_imports_srt_and_appends_native_media(with_states):
     timeline = Timeline()
+    timeline.locked = True
 
     class Clip:
         def GetClipProperty(self, key):
@@ -134,7 +139,10 @@ def test_insert_native_subtitles_imports_srt_and_appends_native_media():
     class Project:
         def GetMediaPool(self): return pool
 
-    inserted = insert_native_subtitles(None, Project(), timeline, ROWS, fps=30, base_frame=108000)
+    rows = [{**row, 'enabled': i != 0} for i,row in enumerate(ROWS)] if with_states else ROWS
+    inserted = insert_native_subtitles(None, Project(), timeline, rows, fps=30, base_frame=108000)
+    assert timeline.locked is True
+    assert [item.enabled for item in inserted] == ([False, True] if with_states else [True, True])
 
     assert timeline.added == ["subtitle"]
     assert pool.srt.startswith("1\n00:00:00,000")
@@ -458,3 +466,28 @@ def test_srt_import_path_changes_with_timing_or_text_to_avoid_resolve_cache():
     assert subtitle_content_path(path,old)!=subtitle_content_path(path,changed)
     assert subtitle_content_path(path,old)==subtitle_content_path(path,old)
     assert subtitle_content_path(path,old).suffix=='.srt'
+
+
+def test_subtitle_enabled_states_match_by_timing_not_append_order():
+    from backend.app.resolve_native_subtitles import apply_subtitle_enabled_states
+    class Item(NativeItem):
+        enabled = True
+        def SetClipEnabled(self, value): self.enabled = value; return True
+        def GetClipEnabled(self): return self.enabled
+    rows = [{**ROWS[0], 'enabled': False}, {**ROWS[1], 'enabled': True}]
+    first = Item('Uno due', 108000, 108030)
+    second = Item('tre', 108033, 108060)
+    apply_subtitle_enabled_states([second, first], rows, 108000)
+    assert first.enabled is False and second.enabled is True
+    verify_native_subtitles(Timeline([first, second]), rows, 30, 108000)
+    first.enabled = True
+    with pytest.raises(RuntimeError, match='enabled'):
+        verify_native_subtitles(Timeline([first, second]), rows, 30, 108000)
+
+
+def test_subtitle_enabled_states_reject_wrong_clip_before_mutating():
+    from backend.app.resolve_native_subtitles import apply_subtitle_enabled_states
+    class Item(NativeItem):
+        def SetClipEnabled(self, value): raise AssertionError('Must validate first')
+    with pytest.raises(RuntimeError, match='verification'):
+        apply_subtitle_enabled_states([Item('wrong',0,30)], [{**ROWS[0], 'enabled':False}], 0)

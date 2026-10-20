@@ -565,7 +565,7 @@ def build_textplus_export(run: Path, project_id: str, *, fps: int = 25, track_hi
 
 
 def build_combined_resolve_export(run: Path, project_id: str, *, fps: int = 25, include_highlights: bool = True) -> dict[str, Any]:
-    """Build title rows plus native-subtitle rows without duplicating highlights."""
+    """Build titles and the complete native subtitle track, disabling highlighted cues."""
     if fps <= 0:
         raise ValueError("Timeline fps must be positive")
     title_rows = selected_word_ranges(run, "highlight", max_words=3) if include_highlights else []
@@ -588,9 +588,8 @@ def build_combined_resolve_export(run: Path, project_id: str, *, fps: int = 25, 
         highlighted = set(completed.get(chunk_id, [])) if include_highlights else set()
         groups: list[list[int]] = []
         for index in range(len(words)):
-            if index in highlighted:
-                continue
-            if not groups or index != groups[-1][-1] + 1 or len(groups[-1]) >= 3:
+            if (not groups or len(groups[-1]) >= 3
+                    or (index in highlighted) != (groups[-1][-1] in highlighted)):
                 groups.append([])
             groups[-1].append(index)
         for group in groups:
@@ -602,6 +601,7 @@ def build_combined_resolve_export(run: Path, project_id: str, *, fps: int = 25, 
                 continue
             subtitles.append({
                 "kind": "SUBTITLE",
+                "enabled": group[0] not in highlighted,
                 "phrase_id": chunk_id,
                 "text": text,
                 "word_start_index": group[0],

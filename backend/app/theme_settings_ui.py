@@ -16,7 +16,7 @@ CSS = r'''<style id="theme-settings-v45-style">
 </style>'''
 
 JS = r'''
-const themeDefaultsV45={canvas:{mode:'solid',color_a:'#0b2427',color_b:'#081b1e'},sections:Object.fromEntries(Array.from({length:7},(_,i)=>[String(i+1),{mode:'solid',color_a:'#242743',color_b:'#20233d'}]))};
+const themeDefaultsV45={canvas:{mode:'solid',color_a:'#0b0e10',color_b:'#0b0e10'},sections:Object.fromEntries(Array.from({length:7},(_,i)=>[String(i+1),{mode:'solid',color_a:'#13171b',color_b:'#171c21'}]))};
 let themePreferencesV45=JSON.parse(JSON.stringify(themeDefaultsV45));
 function themeBackgroundV45(paint){return paint.mode==='gradient'?`linear-gradient(145deg,${paint.color_a},${paint.color_b})`:paint.color_a}
 function applyThemePreferencesV45(theme){

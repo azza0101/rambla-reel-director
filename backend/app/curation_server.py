@@ -1609,6 +1609,7 @@ def create_app(
         defaults = {'video': True} if draft_cut else None
         flags = normalize_components(saved.get('components', defaults), has_native_cut=available)
         counts = {key: 0 for key in flags}
+        media_warning = ''
         run = run_root(project_id)
         origin = _read_json(root / project_id / 'cut-origin.json', {})
         cut = origin.get('plan') or _read_json(root / project_id / 'cut' / 'plan.json', {})
@@ -1621,14 +1622,19 @@ def create_app(
             counts['subtitles'], counts['highlights'] = text['subtitle_count'], text['title_count']
             from .curation_artifacts import load_curation_run
             from .export_components import SOCIAL
-            view = load_curation_run(run)
+            try:
+                view = load_curation_run(run)
+            except ValueError:
+                # A stale media plan must not prevent restoring the transcript UI.
+                view = None
+                media_warning = 'Piano coperture da aggiornare: aggiorna le parti modificate prima di esportare i media.'
             selection = _read_json(active_retrieval_root(run) / 'selection-plan.json', {})
             for choice in (selection.get('chunks') or {}).values():
                 for selected in choice.get('selected_assets') or []:
-                    candidate = view.candidate_index.get(str(selected.get('asset_id')))
+                    candidate = view.candidate_index.get(str(selected.get('asset_id'))) if view is not None else None
                     if candidate:
                         counts['social' if candidate.provider in SOCIAL else 'broll'] += 1
-        return {'components': flags, 'counts': counts,
+        return {'components': flags, 'counts': counts, 'media_warning': media_warning,
                 'component_availability': {key: not draft_cut for key in ('subtitles', 'highlights', 'broll', 'social', 'generic')},
                 'video_available': available,
                 'video_reason': 'Conferma CUT e continua per aggiungere testo e coperture ai tagli' if draft_cut else '' if available else 'Video disponibile dopo AUTO-CUT sul file originale caricato'}

@@ -285,6 +285,9 @@ def insert_native_subtitles(
             )
             if not appended:
                 raise RuntimeError("Resolve could not place the native Subtitle clips on the timeline")
+            new_target = [item for item in _subtitle_items(timeline, wanted_track) if _identity(item) not in before]
+            new_items = new_target or [item for item in _subtitle_items(timeline) if _identity(item) not in before]
+            apply_subtitle_enabled_states(new_items, rows, base_frame)
         finally:
             if set_enabled is not None:
                 for track, was_enabled in subtitle_enabled_states.items():
@@ -353,3 +356,27 @@ def verify_native_subtitles(
     )
     if not matches:
         raise RuntimeError(f"Resolve native Subtitle verification failed: expected {expected}, got {actual}")
+    ordered_items = sorted(source_items, key=lambda item:(str(item.GetName()).strip(), int(item.GetStart()), int(item.GetEnd())))
+    ordered_rows = sorted(rows, key=lambda row:(str(row['text']).strip(), int(row['start_frame']), int(row['end_frame'])))
+    for item, row in zip(ordered_items, ordered_rows):
+        if 'enabled' in row:
+            getter = getattr(item, 'GetClipEnabled', None)
+            if not callable(getter) or getter() != bool(row['enabled']):
+                raise RuntimeError('Resolve native Subtitle enabled state verification failed')
+
+
+def apply_subtitle_enabled_states(items: list[Any], rows: list[dict[str, Any]], base_frame: int) -> None:
+    """Match only the newly imported cues before changing their native enabled state."""
+    if not any('enabled' in row for row in rows):
+        return
+    verify_native_subtitles(None, [{k:v for k,v in row.items() if k != 'enabled'} for row in rows],
+                            fps=1, base_frame=base_frame, items=items)
+    ordered_items = sorted(items, key=lambda item:(str(item.GetName()).strip(), int(item.GetStart()), int(item.GetEnd())))
+    ordered_rows = sorted(rows, key=lambda row:(str(row['text']).strip(), int(row['start_frame']), int(row['end_frame'])))
+    for item, row in zip(ordered_items, ordered_rows):
+        if 'enabled' not in row:
+            continue
+        setter = getattr(item, 'SetClipEnabled', None)
+        if not callable(setter) or setter(bool(row['enabled'])) is not True:
+            raise RuntimeError('Resolve could not set native Subtitle enabled state')
+    verify_native_subtitles(None, rows, fps=1, base_frame=base_frame, items=items)

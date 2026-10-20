@@ -54,3 +54,19 @@ def test_theme_settings_ui_is_at_the_end_and_updates_live():
     assert "SALVA IMPOSTAZIONI" in html
     assert "RIPRISTINA COLORI" in html
     assert html.index("9 · Export timeline") < html.index("⚙ IMPOSTAZIONI GRAFICHE")
+
+
+def test_legacy_default_palette_migrates_but_custom_paints_survive(tmp_path):
+    import json
+    from pathlib import Path
+    from backend.app.theme_preferences import load_theme_preferences
+    path=tmp_path/'theme.json'
+    old={'canvas':{'mode':'solid','color_a':'#0b2427','color_b':'#081b1e'},
+         'sections':{str(i):{'mode':'solid','color_a':'#242743','color_b':'#20233d'} for i in range(1,8)}}
+    custom={'mode':'gradient','color_a':'#123456','color_b':'#abcdef'}
+    old['sections']['5']=custom
+    path.write_text(json.dumps(old),'utf-8')
+    theme=load_theme_preferences(path)
+    assert theme['canvas']['color_a']=='#0b0e10'
+    assert theme['sections']['1']['color_a']=='#13171b'
+    assert theme['sections']['5']==custom

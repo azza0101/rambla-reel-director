@@ -1,3 +1,13 @@
+# Main application reference theme v0121 — 2026-10-20
+
+Main app only: charcoal surfaces, compact controls, restrained aqua/violet accents, consistent workflow headers and smaller previews. Bridge GUI unchanged. Existing custom paints remain saved and active; factory defaults migrate only on exact former factory values. RIPRISTINA COLORI previews the new defaults; SALVA IMPOSTAZIONI persists them.
+
+Combined export retains the full native subtitle transcript. Highlight words, including expanded compound names, form separate disabled cues. Native import matches newly created cues by text and frame range before applying and verifying SetClipEnabled; existing clips are untouched. State is applied before restoring track locks. Text-only export without highlights keeps all cues enabled. No Resolve timeline modified during this task; mock integration verified, actual APPLICA remains user-controlled.
+
+A stale visual plan no longer turns export-options into HTTP 500 / false project-restore error. Counts for text remain readable, media warning is shown, and existing export validation remains authoritative. No plan regenerated or selections changed.
+
+Verification: 111 focused unit tests passed. Browser checks at 1440 and 720 px: no JavaScript errors, no horizontal overflow, accordion and unsaved live-color preview working. Old custom preferences were not overwritten (automatic review rejected that proposal).
+
 # Diagnostica remota v0120 — 2026-10-20
 
 ASSISTENZA su entrambe le GUI: consenso automatico inizialmente spento, invio manuale, anteprima e copia. Coda sanitizzata condivisa e lock app/bridge; repository privato obbligatorio, deduplica e limite 10/giorno. Agganci agli errori CUT, MAGICO, app e bridge. Non inviare messaggi grezzi o progetti: solo schema allowlist verificato prima di ogni upload. Prova reale issue #13 creata, riletta e chiusa; nessun dato del video inviato.

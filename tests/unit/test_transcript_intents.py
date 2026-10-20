@@ -337,5 +337,8 @@ def test_compound_highlight_is_complete_and_not_duplicated_in_subtitles(workdir)
     assert result['titles'][0]['text']=='National Geographic'
     assert result['titles'][0]['start_frame']==9
     assert result['titles'][0]['duration_seconds']>=.95
-    assert 'National' not in ' '.join(r['text'] for r in result['subtitles'])
-    assert 'Geographic' not in ' '.join(r['text'] for r in result['subtitles'])
+    assert ' '.join(r['text'] for r in result['subtitles']) == 'leggo National Geographic oggi'
+    assert [(r['text'], r['enabled']) for r in result['subtitles']] == [('leggo', True), ('National Geographic', False), ('oggi', True)]
+    plain = build_combined_resolve_export(run, 'p', fps=30, include_highlights=False)
+    assert all(r['enabled'] for r in plain['subtitles'])
+    assert ' '.join(r['text'] for r in plain['subtitles']) == 'leggo National Geographic oggi'
