@@ -19,6 +19,7 @@ from typing import Any, Callable
 import tkinter as tk
 
 APP_ROOT = Path(__file__).resolve().parents[2]
+os.environ["PATH"] = str(APP_ROOT / "runtime" / "bin") + os.pathsep + os.environ.get("PATH", "")
 def current_desktop_name() -> str:
     if os.name != 'nt':
         return 'Default'
@@ -567,6 +568,8 @@ class BridgeApp:
                 mark = tk.Canvas(header.body, width=72, height=56, bg="#181d39", highlightthickness=0); mark.pack(side="left", padx=(0, 13)); draw_bridge_mark(mark)
         else:
             mark = tk.Canvas(header.body, width=72, height=56, bg="#181d39", highlightthickness=0); mark.pack(side="left", padx=(0, 13)); draw_bridge_mark(mark)
+        tk.Button(header.body, text="SEARCH UPDATE", bg="#343e68", fg="#ffffff", relief="flat",
+                  command=self.search_update, padx=9, pady=7).pack(side="right", padx=(8, 0))
         heading = tk.Frame(header.body, bg="#181d39"); heading.pack(side="left", fill="x", expand=True)
         wordmark_path = APP_ROOT / "backend" / "assets" / "branding" / "rmbl_wordmark_white.png"
         if wordmark_path.is_file():
@@ -699,7 +702,30 @@ class BridgeApp:
         else: self._render(self.client.poll_once())
         self.timer = self.root.after(self.POLL_MS, self.poll)
 
+    def search_update(self) -> None:
+        from tkinter import messagebox
+        if self.applying:
+            messagebox.showinfo("RMBL", "Attendi la fine dell'applicazione prima di aggiornare.")
+            return
+        try:
+            try:
+                status = self.client.request_json('/api/curation/software-update/status')
+            except (OSError, urllib.error.URLError):
+                status = {}
+            if status.get('busy'):
+                messagebox.showinfo('RMBL', 'Attendi la fine delle elaborazioni prima di aggiornare.')
+                return
+            import sys
+            if str(APP_ROOT) not in sys.path:
+                sys.path.insert(0, str(APP_ROOT))
+            from backend.app.software_update import launch_update
+            launch_update(APP_ROOT)
+        except Exception as exc:
+            messagebox.showerror("SEARCH UPDATE", str(exc))
+
     def _maybe_update(self) -> bool:
+        if (APP_ROOT / ".update-in-progress").exists():
+            return False
         if self.applying or (self.client.current_package or {}).get('status') == 'applying':
             return False
         try:

@@ -1,0 +1,20 @@
+Metadata-Version: 2.4
+Name: rambla-reel-director
+Version: 0.1.0
+Requires-Python: <3.13,>=3.12
+Requires-Dist: fastapi<0.116,>=0.115
+Requires-Dist: starlette<0.47,>=0.46
+Requires-Dist: uvicorn
+Requires-Dist: pydantic
+Requires-Dist: pydantic-settings
+Requires-Dist: rfc8785
+Requires-Dist: httpx<0.28,>=0.27
+Requires-Dist: Pillow<14,>=11
+Requires-Dist: playwright<2,>=1.54
+Requires-Dist: yt-dlp>=2025.8.22
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: pytest-asyncio; extra == "dev"
+Requires-Dist: hypothesis; extra == "dev"
+Requires-Dist: anyio<4.15,>=4; extra == "dev"
+Requires-Dist: jsonschema<5,>=4; extra == "dev"

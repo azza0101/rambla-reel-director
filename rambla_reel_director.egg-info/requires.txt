@@ -1,0 +1,17 @@
+fastapi<0.116,>=0.115
+starlette<0.47,>=0.46
+uvicorn
+pydantic
+pydantic-settings
+rfc8785
+httpx<0.28,>=0.27
+Pillow<14,>=11
+playwright<2,>=1.54
+yt-dlp>=2025.8.22
+
+[dev]
+pytest
+pytest-asyncio
+hypothesis
+anyio<4.15,>=4
+jsonschema<5,>=4

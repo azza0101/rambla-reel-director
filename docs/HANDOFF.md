@@ -1,3 +1,11 @@
+# Windows distribution v0119 — 2026-10-20
+
+SEARCH UPDATE in entrambe le GUI. Repository privato: GitHub CLI autentica l'utente; download release con SHA256 e controllo zip, conferma, blocco durante CUT/MAGICO/ricerca/APPLICA. Sviluppo Git non viene sovrascritto. App riavviata, Resolve mai arrestato. Bridge attende la fine dell'installazione prima di autoricaricarsi.
+
+Installer: wheel offline, FFmpeg + DLL, GitHub CLI, template Fusion, collegamenti standalone/bridge. Bootstrap Python 3.12 via winget se assente. Installazione e aggiornamento v0118->v0119 provati in directory isolate: dati, .env.local e preferenze conservati; backup codice e script rollback. HTTP health/UI/stato update della copia installata verificati. Nessun test su un secondo PC fisico ancora.
+
+EXE standard e ZIP aggiornamenti non contengono chiavi. Su esplicita richiesta utente viene prodotto un EXE PERSONALE solo locale, con 3 API preconfigurate. Mai pubblicare dist/personal o private-provision.json. Copia provisioning verificata senza stampare valori. Gateway FreeLLMAPI sperimentale esterno non incluso; provider nativi utilizzabili.
+
 # RMBL B ROLL — handoff v0118
 
 2026-10-20. Branch: fix/magico-images-specific-generics-v0094. Non fare merge automatico.

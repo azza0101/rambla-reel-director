@@ -1,7 +1,7 @@
-param([string]$OutputDirectory = (Join-Path $PSScriptRoot 'dist'))
+﻿param([string]$OutputDirectory = (Join-Path $PSScriptRoot 'dist'), [string]$ProvisionFile)
 $ErrorActionPreference = 'Stop'
 
-& (Join-Path $PSScriptRoot 'BUILD_WINDOWS_PACKAGE.ps1') -OutputDirectory $OutputDirectory
+& (Join-Path $PSScriptRoot 'BUILD_WINDOWS_PACKAGE.ps1') -OutputDirectory $OutputDirectory -ProvisionFile $ProvisionFile
 $version = (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'RAMBLA_VERSION') -Raw).Trim()
 $archiveName = "RMBL-B-ROLL-Windows-$version.zip"
 $archive = Join-Path $OutputDirectory $archiveName
@@ -66,7 +66,7 @@ FILE1="INSTALL_FROM_ARCHIVE.ps1"
 FILE2="$archiveName"
 "@
     [IO.File]::WriteAllText($sedPath, $sed, [Text.Encoding]::ASCII)
-    $process = Start-Process -FilePath $iexpress -ArgumentList @('/N', $sedPath) -Wait -PassThru
+    $process = Start-Process -FilePath $iexpress -ArgumentList @('/N', $sedPath) -Wait -PassThru -WindowStyle Hidden
     if ($process.ExitCode -ne 0) {
         throw "IExpress terminato con codice $($process.ExitCode)."
     }

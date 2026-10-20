@@ -86,6 +86,7 @@ def build_server_env(root,port,token,*,base_env=None):
     data_root=root.parent/'rambla-data'
     return {**(base_env or os.environ),
         'RAMBLA_BUILD_TOKEN':token,'PYTHONPATH':str(root),
+        'PATH':str(root/'runtime'/'bin')+os.pathsep+(base_env or os.environ).get('PATH',''),
         'RAMBLA_RUNTIME_MODE':'desktop_api','RAMBLA_RETRIEVAL_RANKING':'provider',
         'RAMBLA_PROJECT_ROOT':str(data_root/'projects'),
         'RAMBLA_ENABLE_VERTICAL_SOCIAL':'1','RAMBLA_ENABLE_SOCIAL_BROWSER':'1',

@@ -10,7 +10,7 @@ def discover_app_root():
     config = Path(os.environ.get("LOCALAPPDATA", "")) / "RMBL B ROLL" / "install.json"
     if config.is_file():
         try:
-            configured = Path(json.loads(config.read_text(encoding="utf-8"))["app_root"])
+            configured = Path(json.loads(config.read_text(encoding="utf-8-sig"))["app_root"])
             if (configured / "launch_local_v5.py").is_file():
                 return configured
         except (OSError, KeyError, ValueError, TypeError):

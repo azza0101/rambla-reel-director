@@ -175,6 +175,7 @@ def render_cut(source, target, plan, *, preview=False):
 
 def install_cut_routes(app,store,root,load_project,active_run):
     jobs={}; tasks=set();installed_at=time.time()
+    app.state.cut_jobs = jobs
 
     def paths(pid):
         p=load_project(pid)

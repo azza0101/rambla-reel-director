@@ -491,6 +491,40 @@ def create_app(
         audio_command_runner=audio_command_runner,
     )
 
+    @app.post("/api/curation/software-update")
+    async def software_update(request: Request):
+        if request.client.host not in {"127.0.0.1", "::1", "testclient"} or request.headers.get("X-RMBL-Update") != "1":
+            raise HTTPException(403, "Local update request required")
+        origin = request.headers.get("origin")
+        if origin and origin.rstrip("/") != str(request.base_url).rstrip("/"):
+            raise HTTPException(403, "Origin mismatch")
+        if software_busy():
+            raise HTTPException(409, "Attendi la fine di CUT, MAGICO, ricerca o APPLICA prima di aggiornare.")
+        from .software_update import launch_update
+        try:
+            return launch_update(Path(__file__).resolve().parents[2])
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    def software_busy():
+        if handoff_jobs.is_applying or prepare_jobs.tasks:
+            return True
+        if any(not task.done() for task in magic_runner.tasks.values()):
+            return True
+        if any(row.get('status') == 'running' for row in getattr(app.state, 'cut_jobs', {}).values()):
+            return True
+        if any(row.status in {'QUEUED', 'RUNNING'} for row in debug.RUNS.values()):
+            return True
+        for path in root.glob('*/run/cut-reconciliation.json'):
+            row = _read_json(path, {})
+            if row.get('status') == 'running' and row.get('job_owner_pid') == os.getpid():
+                return True
+        return False
+
+    @app.get("/api/curation/software-update/status")
+    async def software_update_status():
+        return {"busy": software_busy()}
+
     # Replace the core page route with the augmented product UI while retaining
     # every existing core API/run endpoint.
     app.router.routes[:] = [route for route in app.router.routes if getattr(route, "path", None) != "/curation"]
