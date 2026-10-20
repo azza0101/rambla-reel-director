@@ -310,6 +310,9 @@ def selected_word_ranges(run: Path, intent: str, *, max_words: int | None = None
     chunks = normalized_chunks(run)
     state = load_phrase_intents(run)
     field = WORD_FIELDS[intent]
+    if intent == 'highlight':
+        from .highlight_phrases import highlight_ranges
+        return highlight_ranges([{**row,'words':_row_words(row)} for row in chunks],state['phrases'],max_words=max_words or 3)
     ranges: list[dict[str, Any]] = []
     for row in chunks:
         chunk_id = str(row["id"])
@@ -576,11 +579,13 @@ def build_combined_resolve_export(run: Path, project_id: str, *, fps: int = 25, 
             "start_frame": round(start * fps), "end_frame": round(end * fps), "track_hint": 3,
         })
     intents = load_phrase_intents(run).get("phrases", {})
+    from .highlight_phrases import expanded_highlight_indices
+    completed = expanded_highlight_indices([{**c,'words':_row_words(c)} for c in normalized_chunks(run)],intents) if include_highlights else {}
     subtitles: list[dict[str, Any]] = []
     for chunk in normalized_chunks(run):
         chunk_id = str(chunk["id"])
         words = _row_words(chunk)
-        highlighted = set(intents.get(chunk_id, {}).get("highlighted_word_indices", [])) if include_highlights else set()
+        highlighted = set(completed.get(chunk_id, [])) if include_highlights else set()
         groups: list[list[int]] = []
         for index in range(len(words)):
             if index in highlighted:

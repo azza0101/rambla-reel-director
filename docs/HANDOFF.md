@@ -1,3 +1,17 @@
+# RMBL B ROLL — handoff v0118
+
+2026-10-20. Branch: fix/magico-images-specific-generics-v0094. Non fare merge automatico.
+
+Ultimi interventi: riconciliazione CUT incrementale, ripristino/esclusioni manuali, preview ridotta, verifica sorgenti native VFR, sottotitoli senza sovrapposizioni, coperture distribuite e fill del quadro, nomi composti evidenziati interamente. FreeLLMAPI opzionale locale per tavole di tre fotogrammi.
+
+Verifica reale coperture: docs/COVERAGE_QA_20261019.json e docs/LOCAL_COVERAGE_AUDIT_20261019.json. La selezione reale precedente è stata revisionata manualmente; non confonderla con una verifica cloud. Prova gateway separata: docs/VISUAL_GATEWAY_TRIAL_20261020.json. Nessuna credenziale inclusa nel repository. Il gateway sperimentale esterno non è ancora incluso nell'installer.
+
+Test mirati recenti: 43 per gateway/vision/product/usage/launcher; 35 per highlight e selezioni. Due test editoriali preesistenti restano da correggere (deduplicazione e mock max_output_tokens). Non dichiarare verde l'intera suite.
+
+Progetti, media e chiavi restano fuori Git. APPLICA in Resolve rimane esplicito. Installer e aggiornamento GitHub sono il prossimo lavoro, non ancora collaudati su un altro PC.
+
+---
+
 # RMBL B ROLL — handoff tecnico
 
 Aggiornato: 2026-10-17  Versione: `v0078`  Branch di consegna: `feat/api-first-text-first-v1`

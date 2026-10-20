@@ -67,3 +67,15 @@ def test_cut_child_finds_parent_video_receipt_only_for_frozen_revision(tmp_path)
     assert find_native_cut_receipt(child,tmp_path,cut)['timeline_id']=='existing-cut'
     assert find_native_cut_receipt(child,tmp_path,{**cut,'revision':'changed'}) is None
     assert find_native_cut_receipt(child,tmp_path,{**cut,'source_identity':{'size':124}}) is None
+
+
+def test_export_guard_rejects_child_older_than_current_manual_exclusions(tmp_path):
+    import json
+    from backend.app.native_cut_export import assert_current_cut
+    child=tmp_path/'child';child.mkdir()
+    parent=tmp_path/'parent'/'cut';parent.mkdir(parents=True)
+    (child/'cut-origin.json').write_text(json.dumps({'project_id':'parent','plan':{'revision':'old'}}))
+    plan=parent/'plan.json';plan.write_text(json.dumps({'revision':'new','clean_project_id':'latest'}))
+    with pytest.raises(ValueError,match='latest'):assert_current_cut(child,tmp_path)
+    plan.write_text(json.dumps({'revision':'old'}))
+    assert_current_cut(child,tmp_path)

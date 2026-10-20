@@ -88,6 +88,7 @@ from backend.app.resolve_textplus_timeline import (
 
 
 def test_textplus_wraps_at_word_boundaries_to_vertical_safe_lines():
+    assert wrap_textplus_text("National Geographic") == "National\nGeographic"
     assert wrap_textplus_text("turismo sostenibile") == "turismo\nsostenibile"
     assert wrap_textplus_text("viaggio in treno") == "viaggio in\ntreno"
     assert wrap_textplus_text("dieci char") == "dieci char"
@@ -1089,3 +1090,12 @@ def test_resolve_helper_cancellation_checkpoint_raises_when_cancel_file_exists(t
 
     cancel.unlink()
     raise_if_cancelled({"handoff_cancel_path": str(cancel)})
+
+
+def test_broll_scaling_fills_the_frame_instead_of_overlaying_a_horizontal_strip():
+    from backend.app.resolve_textplus_timeline import configure_broll_scaling
+    from types import SimpleNamespace
+    calls=[]
+    item=SimpleNamespace(SetProperty=lambda values:calls.append(values) or True)
+    configure_broll_scaling(item)
+    assert calls==[{'Scaling':3}]

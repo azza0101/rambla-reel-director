@@ -111,10 +111,13 @@ def plan_beats(run):
 
 
 def configured_visual_client():
+    if os.environ.get('RAMBLA_VISUAL_BACKEND','').casefold()=='freellmapi':
+        from .visual_gateway import FreeLLMVisualClient
+        return FreeLLMVisualClient(os.environ.get('RAMBLA_FREELLM_API_KEY',''),endpoint=os.environ.get('RAMBLA_FREELLM_URL','http://127.0.0.1:8831/v1/chat/completions'),model=os.environ.get('RAMBLA_FREELLM_MODEL','auto'))
     from .gemini_interactions import GeminiInteractionsClient, DEFAULT_GEMINI_MODEL
     key = os.environ.get('GEMINI_API_KEY', '').strip()
     return GeminiInteractionsClient(key, model=os.environ.get('RAMBLA_DIRECTOR_MODEL', DEFAULT_GEMINI_MODEL),
-        thinking_level='low', max_retries_per_model=0, fallback_models=()) if key else None
+        thinking_level='low', max_retries_per_model=0) if key else None
 
 
 def generic_candidates(beat, items):
@@ -142,6 +145,36 @@ def visual_candidate_order(beats, candidates):
         lanes[beat_id] = videos[:1] + images[:1] + generics[:1] + videos[1:] + images[1:] + generics[1:]
     maximum = max((len(rows) for rows in lanes.values()), default=0)
     return [rows[index] for index in range(maximum) for rows in lanes.values() if index < len(rows)]
+
+
+def spread_visual_candidates(ordered, limit):
+    """Spend a small visual budget across the whole edit, not only its opening."""
+    if limit<=0:return []
+    first={}
+    for row in ordered:first.setdefault(row['chunk_id'],row)
+    leaders=list(first.values())
+    if len(leaders)>limit:
+        positions=[len(leaders)//2] if limit==1 else [round(i*(len(leaders)-1)/(limit-1)) for i in range(limit)]
+        return [leaders[i] for i in positions]
+    seen={row['asset_id'] for row in leaders}
+    return (leaders+[row for row in ordered if row['asset_id'] not in seen])[:limit]
+
+
+def coverage_upgrade_scope(beats, selections, decisions):
+    """Retry uncovered scenes and automatic stills; protect manual choices/videos."""
+    automatic={d['beat_id']:d for d in decisions}
+    output=[]
+    for beat in beats:
+        if beat['end']-beat['start']<1.5:
+            continue
+        selected=selections.get(beat['id'],{})
+        if selected.get('no_broll'):
+            continue
+        assets=[a['asset_id'] for a in selected.get('selected_assets',[])]
+        old=automatic.get(beat['id'],{})
+        if not assets or (assets==[old.get('asset_id')] and old.get('role') in {'image_coverage','fallback_image'}):
+            output.append(beat['id'])
+    return output
 
 
 def automatic_generic_selection(items, *, limit=4):
@@ -230,7 +263,7 @@ class MagicProductServices:
                 return await self.deliver(pid, payload, context.run_id, report)
             raise ValueError('Fase MAGICO sconosciuta')
 
-    async def select(self, pid, run, context, options, report):
+    async def select(self, pid, run, context, options, report, *, beat_ids=None):
         from .curation_artifacts import load_curation_run
         from .curation_selection import SelectionStore
         from .editorial_import import active_retrieval_root
@@ -242,6 +275,9 @@ class MagicProductServices:
         total = round(float(cut['duration_seconds'])*fps)
         view = await asyncio.to_thread(load_curation_run, run)
         beats = plan_beats(run)
+        if beat_ids is not None:
+            scope=set(beat_ids)
+            beats=[beat for beat in beats if beat['id'] in scope]
         candidates, warnings = [], []
         generic_state = read_json(run/'generic-coverage.json', {})
         selected_generic_ids = {str(value) for value in (generic_state.get('selected') or [])}
@@ -271,7 +307,9 @@ class MagicProductServices:
         # Keep the automatic pass responsive: visual preparation can involve a
         # download and frame extraction per candidate. visual_candidate_order already
         # spreads this small budget across beats and media types.
-        maximum = min(12, options.max_visual_requests * 12) if client is not None else 0
+        batch_size=min(12,max(1,int(getattr(client,'max_candidates_per_batch',12))))
+        maximum = min(48, options.max_visual_requests * batch_size) if client is not None else 0
+        ordered=spread_visual_candidates(ordered,maximum)
         prepared = []
         for index,row in enumerate(ordered[:maximum]):
             check_current()
@@ -319,9 +357,9 @@ class MagicProductServices:
             except (OSError,ValueError,subprocess.SubprocessError) as exc:
                 warnings.append(f"{row['asset_id']}: campioni non disponibili ({type(exc).__name__})")
             report(index+1,max(1,len(ordered[:maximum])*2),'Preparo i campioni delle coperture')
-        for index in range(0,len(prepared),12):
+        for index in range(0,len(prepared),batch_size):
             check_current()
-            batch = prepared[index:index+12]
+            batch = prepared[index:index+batch_size]
             for attempt in range(2):
                 try:
                     verdicts.update(await asyncio.wait_for(
@@ -354,6 +392,13 @@ class MagicProductServices:
             report(min(len(ordered[:maximum])*2,len(ordered[:maximum])+index+len(batch)),
                 max(1,len(ordered[:maximum])*2),'Coerenza visiva verificata')
         decisions, used_sources = [], set()
+        if beat_ids is not None:
+            existing=read_json(active_retrieval_root(run)/'selection-plan.json',{}).get('chunks',{})
+            for bid,choice in existing.items():
+                if bid in scope:continue
+                for selected in choice.get('selected_assets',[]):
+                    candidate=view.candidate_index.get(selected.get('asset_id'))
+                    if candidate and candidate.source_page:used_sources.add(candidate.source_page)
         for beat in beats:
             local_candidates = [c for c in candidates if c['chunk_id'] == beat['id'] and c.get('source_page') not in used_sources]
             result = choose_coverage(beat['id'],local_candidates,verdicts,start=round(float(beat['start'])*fps),
@@ -373,8 +418,15 @@ class MagicProductServices:
         selections = SelectionStore(retrieval,{c['asset_id']:{'chunk_id':c['chunk_id']} for c in candidates},[b['id'] for b in beats])
         for decision in decisions:
             selections.set_chunk_selection(decision['beat_id'],[decision['asset_id']],no_broll=False)
+        saved_decisions=decisions
+        saved_verdicts=verdicts
+        if beat_ids is not None:
+            old=read_json(retrieval/'magic-coverage.json',{})
+            replaced={d['beat_id'] for d in decisions}
+            saved_decisions=[d for d in old.get('decisions',[]) if d['beat_id'] not in replaced]+decisions
+            saved_verdicts={**old.get('verdicts',{}),**verdicts}
         write_json(retrieval/'magic-coverage.json',dict(plan_signature=fingerprint(read_json(run/'visual-plan.json')),
-            cut_revision=context.cut_revision,fps=fps,decisions=decisions,verdicts=verdicts))
+            cut_revision=context.cut_revision,fps=fps,decisions=saved_decisions,verdicts=saved_verdicts))
         report(1,1,'Coperture video e immagini verificate selezionate')
         return dict(selected=len(decisions),
             verified_videos=sum(d['role'] in {'coverage','generic'} for d in decisions),

@@ -1,0 +1,26 @@
+{
+  "version": "v0116",
+  "project": "TEST Egitto",
+  "timeline": "RMBL CUT 20261019 181253 0a8757",
+  "timeline_id": "9fb82d55-aa4a-4d24-a5dd-64ed3294dd9d",
+  "package_id": "handoff-20261019-181228-129327-0ba6c42f",
+  "cut_revision": "15d2932766d3f5b0061a4d27",
+  "cut_video": 61,
+  "cut_audio": 61,
+  "in_text_video": 20,
+  "in_text_images": 3,
+  "generic_tail_video": 4,
+  "coverage_by_third": [
+    10,
+    6,
+    7
+  ],
+  "subtitles": 158,
+  "individual_fusion_titles": 64,
+  "coverage_fill_count": 27,
+  "frame_comparison_issues": [],
+  "previous_timeline_preserved": true,
+  "saved": true,
+  "visual_review": "Actual three-frame video samples inspected by Codex. Gemini primary and fallback both returned 503; no automated verification success was fabricated. Final Resolve stills inspected, title output visible, coverage fill corrected.",
+  "limits": "Sampled visual inspection and frame-map verification; not a full end-to-end audio/video playback."
+}

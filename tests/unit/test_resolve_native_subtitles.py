@@ -438,3 +438,23 @@ def test_cleanup_stale_subtitle_media_preserves_current_source():
     pool = Pool()
     assert cleanup_stale_subtitle_media(pool, keep=keep) == 1
     assert pool.deleted == [stale]
+
+
+def test_overlapping_subtitles_preserve_all_text_on_separate_frames():
+    rows=[{'text':'prima','start_seconds':0,'end_seconds':1},
+          {'text':'seconda','start_seconds':.95,'end_seconds':.98},
+          {'text':'terza','start_seconds':.96,'end_seconds':1.1}]
+    normalized=normalize_subtitle_rows(rows,fps=30)
+    assert [r['text'] for r in normalized]==['prima','seconda','terza']
+    assert all(r['end_frame']>r['start_frame'] for r in normalized)
+    assert all(a['end_frame']<=b['start_frame'] for a,b in zip(normalized,normalized[1:]))
+
+
+def test_srt_import_path_changes_with_timing_or_text_to_avoid_resolve_cache():
+    from backend.app.resolve_native_subtitles import subtitle_content_path
+    path=Path('subtitles.srt')
+    old=render_filtered_srt(ROWS)
+    changed=render_filtered_srt([{**ROWS[0],'start_seconds':.1},ROWS[1]])
+    assert subtitle_content_path(path,old)!=subtitle_content_path(path,changed)
+    assert subtitle_content_path(path,old)==subtitle_content_path(path,old)
+    assert subtitle_content_path(path,old).suffix=='.srt'

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import hashlib
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -28,19 +29,24 @@ def render_filtered_srt(rows: list[dict[str, Any]]) -> str:
     return "\n\n".join(blocks) + ("\n" if blocks else "")
 
 
+def subtitle_content_path(requested_path: Path, content: str) -> Path:
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:20]
+    return requested_path.with_name(requested_path.stem + "-" + digest + requested_path.suffix)
+
+
 def normalize_subtitle_rows(rows: list[dict[str, Any]], *, fps: int) -> list[dict[str, Any]]:
     if fps <= 0:
         raise ValueError("subtitle fps must be positive")
-    return [
-        {
-            **row,
-            "start_frame": round(float(row["start_seconds"]) * fps),
-            "end_frame": max(round(float(row["start_seconds"]) * fps) + 1, round(float(row["end_seconds"]) * fps)),
-            "start_seconds": round(float(row["start_seconds"]) * fps) / fps,
-            "end_seconds": max(round(float(row["start_seconds"]) * fps) + 1, round(float(row["end_seconds"]) * fps)) / fps,
-        }
-        for row in rows
-    ]
+    normalized=[]
+    previous_end=0
+    for row in sorted(rows,key=lambda r:float(r['start_seconds'])):
+        start=max(previous_end,round(float(row['start_seconds'])*fps))
+        end=max(start+1,round(float(row['end_seconds'])*fps))
+        normalized.append({**row,'start_frame':start,'end_frame':end,
+                           'start_seconds':start/fps,'end_seconds':end/fps})
+        previous_end=end
+    return normalized
+
 
 
 def _subtitle_items(timeline: Any, track_index: int | None = None) -> list[Any]:
@@ -213,9 +219,14 @@ def insert_native_subtitles(
         with os.fdopen(handle, "w", encoding="utf-8-sig", newline="\n") as stream:
             stream.write(render_filtered_srt(srt_rows))
     else:
-        path = Path(srt_path)
+        requested_path = Path(srt_path)
+        content = render_filtered_srt(srt_rows)
+        # Resolve caches captions at ImportMedia time. Rewriting an already
+        # imported path does not refresh its native Subtitle media.
+        path = subtitle_content_path(requested_path, content)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(render_filtered_srt(srt_rows), encoding="utf-8-sig", newline="\n")
+        if not path.is_file():
+            path.write_text(content, encoding="utf-8-sig", newline="\n")
     try:
         pool = project.GetMediaPool()
         get_current_timecode = getattr(timeline, "GetCurrentTimecode", None)

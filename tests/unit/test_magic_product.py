@@ -195,3 +195,45 @@ def test_magic_output_keeps_source_player_on_the_original_parent():
     from backend.app.magic_ui import JS
     assert "const sourcePid=cut?.cut_parent_project_id||pid" in JS
     assert "media/source-video/source" in JS
+
+
+def test_incremental_selection_preserves_other_choices_and_certified_placements(tmp_path,monkeypatch):
+    from backend.app.magic_product import MagicProductServices
+    from backend.app.magic_models import MagicContext,MagicOptions
+    import backend.app.native_cut_export as native
+    import backend.app.curation_artifacts as artifacts
+    import backend.app.editorial_import as editorial
+    run=tmp_path/'child'/'run';run.mkdir(parents=True)
+    plan={'global_topic':'Egypt','visual_beats':[dict(id=bid,original_text='Egypt travel',action='BROLL',start=0,end=4,shots=[]) for bid in ['kept','changed']]}
+    (run/'visual-plan.json').write_text(json.dumps(plan))
+    (run/'selection-plan.json').write_text(json.dumps({'chunks':{'kept':{'selected_assets':[{'asset_id':'kept--original'}]}}}))
+    (run/'magic-coverage.json').write_text(json.dumps({'decisions':[{'beat_id':'kept','asset_id':'kept--original'}],'verdicts':{}}))
+    monkeypatch.setattr(native,'load_native_cut',lambda *a:dict(fps='30',duration_seconds=5))
+    monkeypatch.setattr(artifacts,'load_curation_run',lambda *a:SimpleNamespace(candidate_index={}))
+    monkeypatch.setattr(editorial,'active_retrieval_root',lambda *a:run)
+    services=MagicProductServices(None,tmp_path,None,None,None,None,None,None,visual_client=lambda:None)
+    context=MagicContext(source_project_id='source',output_project_id='child',run_id='r',source_signature='s',cut_revision='c')
+    result=asyncio.run(services.select('child',run,context,MagicOptions(max_visual_requests=0),lambda *a:None,beat_ids=['changed']))
+    assert result['uncovered']==1
+    assert json.loads((run/'selection-plan.json').read_text())['chunks']['kept']['selected_assets'][0]['asset_id']=='kept--original'
+    assert json.loads((run/'magic-coverage.json').read_text())['decisions']==[{'beat_id':'kept','asset_id':'kept--original'}]
+    asyncio.run(services.select('child',run,context,MagicOptions(max_visual_requests=0),lambda *a:None,beat_ids=['kept']))
+    assert json.loads((run/'magic-coverage.json').read_text())['decisions']==[{'beat_id':'kept','asset_id':'kept--original'}]
+
+
+def test_visual_client_keeps_configured_transport_fallback(monkeypatch):
+    monkeypatch.delenv('RAMBLA_VISUAL_BACKEND',raising=False)
+    from backend.app.magic_product import configured_visual_client
+    from backend.app.gemini_interactions import DEFAULT_FALLBACK_MODELS
+    monkeypatch.setenv('GEMINI_API_KEY','test-key-not-sent')
+    client=configured_visual_client()
+    assert client.fallback_models==DEFAULT_FALLBACK_MODELS
+    assert client.max_retries_per_model==0
+
+
+def test_coverage_upgrade_scope_includes_full_scenes_and_preserves_manual_choices():
+    from backend.app.magic_product import coverage_upgrade_scope
+    beats=[dict(id=k,start=0,end=d) for k,d in [('photo',3),('empty',3),('manual',3),('video',3),('tiny',.4)]]
+    selections={k:{'selected_assets':[{'asset_id':a}]} for k,a in [('photo','p'),('manual','m'),('video','v')]}
+    decisions=[dict(beat_id='photo',asset_id='p',role='image_coverage'),dict(beat_id='video',asset_id='v',role='coverage')]
+    assert coverage_upgrade_scope(beats,selections,decisions)==['photo','empty']

@@ -156,3 +156,14 @@ def test_review_words_keeps_automatic_discards_visible_and_struck():
     assert [row['text'] for row in rows] == ['regia', 'ciao']
     assert rows[0]['automatic_removed'] and rows[0]['excluded']
     assert not rows[1]['excluded']
+
+
+def test_manual_restore_overrides_automatic_removal_but_explicit_exclusion_wins():
+    from backend.app.cut_pass import review_words
+    raw=transcript([(0,2,'prima frase'),(3,5,'ultima frase')])
+    kwargs=dict(duration=6,fps=30,signature='restore',groups=[{'takes':[[0,1],[2,3]],'selected_take':1,'confidence':.99}])
+    plan=build_cut_plan(raw,**kwargs,restored_word_indices=[0,1])
+    assert clean_transcript(raw,plan)['text']=='prima frase ultima frase'
+    assert not review_words(raw,plan)[0]['excluded']
+    excluded=build_cut_plan(raw,**kwargs,restored_word_indices=[0,1],excluded_word_indices=[0])
+    assert review_words(raw,excluded)[0]['excluded']

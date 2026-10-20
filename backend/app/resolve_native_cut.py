@@ -136,8 +136,20 @@ def verify_native_cut_base(timeline, cut, base_frame):
             raise RuntimeError(f'Verifica CUT {kind} fallita: tagli o sincronizzazione non corrispondono')
         for item, segment in zip(sorted(items, key=lambda c: c.GetStart()), cut['segments']):
             source_start = getattr(item, 'GetSourceStartFrame', None)
-            if callable(source_start) and source_start() != segment['source_in_frame']:
-                raise RuntimeError(f'Verifica CUT {kind} fallita: IN sorgente diverso dal piano')
+            if callable(source_start):
+                actual_in = source_start()
+                expected_in = segment['source_in_frame']
+                if actual_in != expected_in:
+                    # Resolve can report the preceding decoded frame for VFR media.
+                    # Accept only a one-frame discrepancy corroborated by the exact
+                    # trim offset; destination bounds and source identity stay strict.
+                    left_offset = getattr(item, 'GetLeftOffset', None)
+                    corroborated = (isinstance(actual_in, (int, float))
+                                    and abs(actual_in - expected_in) <= 1
+                                    and callable(left_offset) and left_offset() == expected_in)
+                    if not corroborated:
+                        raise RuntimeError(f'Verifica CUT {kind} fallita: IN sorgente diverso dal piano '
+                                           f'(atteso {expected_in}, letto {actual_in})')
             # For VFR phone media GetSourceEndFrame can report the last decoded
             # source frame rather than the CFR cut boundary (one fewer frame).
             # OUT is checked by the append's verified destination length; IN

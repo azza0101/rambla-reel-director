@@ -126,3 +126,18 @@ def test_alternative_stops_at_corresponding_chosen_phrase_after_pause_cuts():
     assert alternative_duration(cut,alt)==80
     assert alternative_duration(cut,{**alt,'source_out_frame':20})==20
     assert alternative_duration(cut,{**alt,'edited_in_frame':90})==0
+
+
+@pytest.mark.parametrize('reported,left,valid',[(983,984,True),(983,983,False),(982,984,False)])
+def test_native_cut_checks_vfr_source_start_against_exact_left_offset(reported,left,valid):
+    from types import SimpleNamespace
+    from backend.app.resolve_native_cut import verify_native_cut_base
+    item=SimpleNamespace(GetStart=lambda:100,GetEnd=lambda:120,
+                         GetSourceStartFrame=lambda:reported,GetLeftOffset=lambda:left)
+    timeline=SimpleNamespace(GetItemListInTrack=lambda *a:[item])
+    cut={'segments':[dict(source_in_frame=984,source_out_frame=1004,edited_in_frame=0,edited_out_frame=20)]}
+    if valid:
+        assert verify_native_cut_base(timeline,cut,100)=={'video_count':1,'audio_count':1}
+    else:
+        with pytest.raises(RuntimeError,match='IN sorgente'):
+            verify_native_cut_base(timeline,cut,100)

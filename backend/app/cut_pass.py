@@ -48,7 +48,7 @@ def prepare_suggestions(suggestion):
     return groups,discards,warnings
 
 
-def build_cut_plan(transcript, *, duration, fps, signature, groups, discards=(), pause_threshold=1.2, breathing=.18, excluded_word_indices=(), tight_pauses=False, pause_mode="soft", silence_intervals=(), end_margin_ms=0):
+def build_cut_plan(transcript, *, duration, fps, signature, groups, discards=(), pause_threshold=1.2, breathing=.18, excluded_word_indices=(), restored_word_indices=(), tight_pauses=False, pause_mode="soft", silence_intervals=(), end_margin_ms=0):
     if transcript.get('timing_basis') != 'cloud_asr_word_timestamps':
         raise ValueError('CUT richiede timestamp misurati per parola')
     rate = Fraction(str(fps)).limit_denominator(100000)
@@ -148,6 +148,10 @@ def build_cut_plan(transcript, *, duration, fps, signature, groups, discards=(),
     excluded=set(excluded_word_indices)
     if any(type(i) is not int or not 0<=i<len(words) for i in excluded):
         raise ValueError('Parole escluse non valide')
+    restored=set(restored_word_indices)
+    if any(type(i) is not int or not 0<=i<len(words) for i in restored):
+        raise ValueError("Parole ripristinate non valide")
+    removed.difference_update(restored)
     removed.update(excluded)
     if not isinstance(end_margin_ms, (int,float)) or not 0 <= end_margin_ms <= 400:
         raise ValueError('Margine finale non valido')
@@ -180,7 +184,7 @@ def build_cut_plan(transcript, *, duration, fps, signature, groups, discards=(),
     plan={'schema_version':'rmbl-cut-1','render_version':2,'source_signature':signature,'fps':str(rate),
           'source_duration_frames':total,'duration_frames':cursor,'duration_seconds':cursor/float(rate),
           'segments':segments,'groups':normalized,'discards':normalized_discards,'alternatives':alternatives,
-          'excluded_word_indices':sorted(excluded),'automatic_removed_word_indices':automatic_removed,'protected_passages':protected,'removed_word_indices':sorted(removed),'pause_threshold':normal_pause_threshold,'breathing':normal_breathing,'tight_pauses':tight_pauses,'pause_mode':pause_mode,'pause_algorithm_version':3,'end_margin_ms':end_margin_ms,'silence_intervals':list(silence_intervals),'status':'draft'}
+          'restored_word_indices':sorted(restored),'excluded_word_indices':sorted(excluded),'automatic_removed_word_indices':automatic_removed,'protected_passages':protected,'removed_word_indices':sorted(removed),'pause_threshold':normal_pause_threshold,'breathing':normal_breathing,'tight_pauses':tight_pauses,'pause_mode':pause_mode,'pause_algorithm_version':3,'end_margin_ms':end_margin_ms,'silence_intervals':list(silence_intervals),'status':'draft'}
     for alt in alternatives:
         word=words[alt.pop('anchor_word_index')]
         anchor=word['start']*rate
@@ -188,7 +192,7 @@ def build_cut_plan(transcript, *, duration, fps, signature, groups, discards=(),
         if seg is None: seg=min(segments,key=lambda s:abs(s['source_in_frame']-anchor))
         alt['edited_in_frame']=seg['edited_in_frame']+min(seg['edited_out_frame']-seg['edited_in_frame'],max(0,round(anchor-seg['source_in_frame'])))
     if tight_pauses:
-        normal=build_cut_plan(transcript,duration=duration,fps=fps,signature=signature,groups=groups,discards=discards,pause_threshold=normal_pause_threshold,breathing=normal_breathing,end_margin_ms=end_margin_ms,excluded_word_indices=excluded_word_indices)
+        normal=build_cut_plan(transcript,duration=duration,fps=fps,signature=signature,groups=groups,discards=discards,pause_threshold=normal_pause_threshold,breathing=normal_breathing,end_margin_ms=end_margin_ms,excluded_word_indices=excluded_word_indices,restored_word_indices=restored_word_indices)
         plan['pause_seconds_removed']=max(0,normal['duration_seconds']-plan['duration_seconds'])
     else:plan['pause_seconds_removed']=0
     plan['revision']=hashlib.sha256(json.dumps(plan,sort_keys=True).encode()).hexdigest()[:24]
@@ -223,7 +227,7 @@ def review_words(transcript,plan):
     excluded=set(plan.get('excluded_word_indices',[]))
     result=[]
     for word in words_of(transcript):
-        automatic_removed = word['index'] in removed
+        automatic_removed = word['index'] in removed and word['index'] not in plan.get('restored_word_indices',[])
         group=next((i for i,g in enumerate(plan['groups']) if any(a<=word['index']<=b for a,b in g['takes'])),None)
         result.append({**word, 'automatic_removed': automatic_removed,
                        'excluded': word['index'] in excluded or automatic_removed,

@@ -1416,6 +1416,8 @@ def create_app(
     def editing_resolve_payload(project_id: str, components=None) -> dict[str, Any]:
         from .transcript_intents import has_selected_intent
         components = normalize_components(components)
+        from .native_cut_export import assert_current_cut
+        assert_current_cut(root / project_id, root, allow_pending=not (components['broll'] or components['social']))
         native_cut = None
         native_reference = None
         if components['video']:
@@ -1598,7 +1600,9 @@ def create_app(
     async def put_export_options(project_id: str, components: ExportComponents):
         load_project(project_id)
         try:
+            from .native_cut_export import assert_current_cut
             flags = normalize_components(components)
+            assert_current_cut(root / project_id, root, allow_pending=not (flags['broll'] or flags['social']))
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         from .atomic_io import write_json
@@ -1632,7 +1636,9 @@ def create_app(
     async def start_resolve_preparation(project_id: str, components: ExportComponents | None = None):
         load_project(project_id)
         try:
+            from .native_cut_export import assert_current_cut
             flags = normalize_components(components)
+            assert_current_cut(root / project_id, root, allow_pending=not (flags['broll'] or flags['social']))
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         if (root / project_id / 'cut-origin.json').is_file() and not flags['video']:
@@ -1956,6 +1962,52 @@ def create_app(
             "resolve_calls": 0,
         }
 
+    @app.post('/api/curation/projects/{project_id}/cut-update')
+    async def update_cut_changed_parts(project_id: str):
+        p=load_project(project_id);run=run_root(project_id)
+        path=run/'cut-reconciliation.json'
+        if not path.is_file():raise HTTPException(409,'Conferma prima il CUT modificato')
+        report=_read_json(path,{})
+        if report.get('status')=='running':return {'status':'running'}
+        if _active_run_for(run):raise HTTPException(409,'Attendi la ricerca in corso')
+        from .atomic_io import write_json
+        report.update(auto_coverage=True,status='running',phase='plan',progress=0,job_owner_pid=os.getpid(),started_at=time.time(),updated_at=time.time(),message='Aggiorno solo il piano delle frasi modificate…')
+        write_json(path,report)
+        async def operation():
+            try:
+                from .cut_reconciliation import update_changed_plan
+                await asyncio.to_thread(update_changed_plan,run,project_id,p.source_video.duration)
+                row=_read_json(path,{})
+                ids=row.get('research_beat_ids',[]);done=set(row.get('completed_research',[]))
+                errors=[]
+                for i,bid in enumerate(ids):
+                    if bid in done:continue
+                    row.update(status='running',phase='research',progress=20+int(75*i/max(1,len(ids))),current_beat=i+1,total_beats=len(ids),updated_at=time.time(),message=f'Cerco nuove coperture: {i+1}/{len(ids)}')
+                    write_json(path,row)
+                    result=await research_beat_route(project_id,bid,BeatResearchRequest(mode='append',providers=('pexels','youtube_shorts','images')))
+                    job=debug.RUNS[result['run_id']]
+                    job.research_options={**(job.research_options or {}),'magic_exact_query':True}
+                    while job.status in {'QUEUED','RUNNING'}:
+                        progress=job.total()
+                        row.update(progress=round(20+75*(i+min(99,float(progress))/100)/max(1,len(ids)),1),
+                                   detail=job.last_message,updated_at=time.time())
+                        write_json(path,row)
+                        await asyncio.sleep(1)
+                    if job.status=='SUCCEEDED':done.add(bid)
+                    else:errors.append(bid)
+                    row['completed_research']=sorted(done);write_json(path,row)
+                row.update(status='needs_choice' if not errors else 'failed',phase='completed' if not errors else 'failed',progress=100,updated_at=time.time(),
+                           message='Ricerche aggiornate: scegli le nuove coperture. Le scelte conservate restano attive.' if not errors else 'Alcune ricerche non sono riuscite: puoi riprendere senza rifare le altre.',
+                           research_errors=errors)
+                write_json(path,row)
+                if not errors and row.get('auto_coverage'):
+                    await auto_select_revision(project_id)
+            except Exception as exc:
+                row=_read_json(path,{})
+                row.update(status='failed',message=str(exc));write_json(path,row)
+        asyncio.create_task(operation())
+        return {'status':'started'}
+
     from .magic_store import MagicStore
     from .magic_runner import MagicRunner
     from .magic_product import MagicProductServices, source_signature
@@ -2022,6 +2074,87 @@ def create_app(
     magic_services = MagicProductServices(store, root, magic_store, cut_engine, magic_research, magic_prepare,
         lambda pid:editing_resolve_payload(pid, {'video':True,'subtitles':True,'highlights':True,'broll':True,'social':True,'generic':True}), magic_deliver,
         generics=magic_generics)
+    async def auto_select_revision(project_id):
+        from .atomic_io import write_json
+        from .magic_models import MagicOptions,MagicContext
+        from .magic_usage import provider_scope
+        from .magic_store import fingerprint
+        from .cut_reconciliation import rebase_magic_placements
+        run=run_root(project_id);path=run/'cut-reconciliation.json'
+        row=_read_json(path,{})
+        if row.get('pending_beat_ids') or row.get('research_errors'):
+            raise ValueError('Aggiorna prima piano e ricerche delle parti modificate.')
+        retrieval=active_retrieval_root(run)
+        selected=_read_json(retrieval/'selection-plan.json',{}).get('chunks',{})
+        from .magic_product import coverage_upgrade_scope,plan_beats
+        scope=coverage_upgrade_scope(plan_beats(run),selected,_read_json(retrieval/'magic-coverage.json',{}).get('decisions',[]))
+        if not scope:
+            row.update(status='ready',phase='completed',progress=100,message='✓ Auto-coperture aggiornate: tutte le nuove frasi hanno già una scelta.')
+            write_json(path,row);return
+        options=MagicOptions(max_cloud_requests=8,max_visual_requests=4)
+        # A separate journal accounts only for this incremental visual pass;
+        # it cannot replace or restart the user's complete MAGICO run.
+        usage=MagicStore(root/'cut-auto-usage')
+        signature=fingerprint({'project':project_id,'plan':_read_json(run/'visual-plan.json',{}),'beats':scope})
+        audit=usage.create_or_resume(project_id,signature,options)
+        usage.transition(audit['run_id'],status='running')
+        origin=_read_json(root/project_id/'cut-origin.json',{})
+        context=MagicContext(source_project_id=project_id,output_project_id=project_id,source_signature=signature,
+                             cut_revision=origin.get('plan',{}).get('revision'),run_id=audit['run_id'])
+        row.update(status='running',phase='selection',job_owner_pid=os.getpid(),progress=90,
+                   message='Verifico e scelgo automaticamente le nuove coperture…',detail='Le coperture già scelte vengono conservate.')
+        write_json(path,row)
+        rebase_magic_placements(retrieval,_read_json(run/'visual-plan.json',{}))
+        def progress(done,total,message):
+            row.update(progress=round(90+9*min(1,done/max(1,total)),1),detail=message,updated_at=time.time())
+            write_json(path,row)
+        try:
+            with provider_scope(usage,audit['run_id'],'selection',lambda:None):
+                result=await magic_services.select(project_id,run,context,options,progress,beat_ids=scope)
+            complete=result['uncovered']==0
+            row.update(status='ready' if complete else 'partial',phase='completed',progress=100,
+                       automatic_result=result,auto_uncovered=result['uncovered'],
+                       message=f"{'✓' if complete else '⚠'} Auto-coperture {'aggiornate' if complete else 'incomplete'}: {result['selected']} nuove selezioni; {result['uncovered']} passaggi senza copertura verificata.",
+                       detail=" · ".join(result.get("warnings",[])[:2]))
+            usage.transition(audit['run_id'],status='completed',result=result)
+            write_json(path,row)
+        except Exception as exc:
+            usage.transition(audit['run_id'],status='failed',message=str(exc))
+            row.update(status='failed',phase='selection',message=str(exc));write_json(path,row)
+            raise
+
+    @app.post('/api/curation/projects/{project_id}/cut-auto-coverage')
+    async def automatic_revision_coverage(project_id: str):
+        from .atomic_io import write_json
+        load_project(project_id);run=run_root(project_id);path=run/'cut-reconciliation.json'
+        if not path.is_file():raise HTTPException(409,'Conferma prima il CUT modificato')
+        row=_read_json(path,{})
+        if row.get('status')=='running':
+            row['auto_coverage']=True;write_json(path,row)
+            return {'status':'running'}
+        if row.get('pending_beat_ids') or row.get('research_errors'):
+            return await update_cut_changed_parts(project_id)
+        from .magic_product import coverage_upgrade_scope,plan_beats
+        from .curation_artifacts import load_curation_run
+        retrieval=active_retrieval_root(run)
+        selections=_read_json(retrieval/'selection-plan.json',{}).get('chunks',{})
+        scope=coverage_upgrade_scope(plan_beats(run),selections,_read_json(retrieval/'magic-coverage.json',{}).get('decisions',[]))
+        view=await asyncio.to_thread(load_curation_run,run)
+        with_video={c.chunk_id for c in view.candidate_index.values() if c.kind=='video' and c.provider=='pexels'}
+        missing=[bid for bid in scope if bid not in with_video]
+        if missing:
+            row.update(research_beat_ids=missing,completed_research=[],research_errors=missing,auto_coverage=True)
+            write_json(path,row)
+            return await update_cut_changed_parts(project_id)
+        if _active_run_for(run):raise HTTPException(409,'Attendi la ricerca in corso')
+        row.update(status='running',phase='selection',job_owner_pid=os.getpid(),progress=90,message='Avvio selezione automatica coperture…')
+        write_json(path,row)
+        async def operation():
+            try:await auto_select_revision(project_id)
+            except Exception:pass  # Error is persisted by the selection helper.
+        asyncio.create_task(operation())
+        return {'status':'started'}
+
     magic_runner = MagicRunner(magic_store, magic_services, lambda pid:source_signature(store,root,pid))
     magic_services.check = magic_runner.check
     install_magic_routes(app, magic_runner, load_project)

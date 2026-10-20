@@ -80,6 +80,9 @@ def selection_changes(chunks, rows):
                 raise ValueError('Parole evidenziate: massimo tre parole consecutive')
             previous = index
         output[str(chunk['id'])] = result
+    from .highlight_phrases import expanded_highlight_indices
+    completed = expanded_highlight_indices(chunks,output)
+    for cid,indices in completed.items():output[cid]['highlighted_word_indices']=indices
     return output
 
 
@@ -248,6 +251,8 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
         for index, batch in enumerate(batches):
             prompt = ('Sei il montatore di un reel e devi PRODURRE le selezioni editoriali, non solo classificare il tema. '
                 'Compila coverage_word_indices e highlighted_word_indices usando i numeri davanti alle parole. '
+                'Evidenzia espressioni complete: nomi propri, marchi, luoghi e concetti composti sono indivisibili. '
+                'Per esempio National Geographic, Steve McCurry e polizia turistica: seleziona tutte le parole del concetto, mai solo il cognome o l’aggettivo. '
                 'coverage_word_indices: seleziona passaggi completi che descrivono oggetti, luoghi, persone, azioni o fatti '
                 'mostrabili con video o immagini. Includi tutte le parole del passaggio, non solo il nome del soggetto. '
                 'Alterna volto e coperture: in un testo adatto circa 20-45% del parlato, senza forzare una quota o inventare immagini. '

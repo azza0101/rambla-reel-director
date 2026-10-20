@@ -322,3 +322,20 @@ def test_added_lines_stay_ordered_inside_source_duration(workdir):
     assert chunks[0]["start"] == 0.0
     assert chunks[-1]["end"] == 5.0
     assert all(a["end"] <= b["start"] for a, b in zip(chunks, chunks[1:]))
+
+
+def test_compound_highlight_is_complete_and_not_duplicated_in_subtitles(workdir):
+    from backend.app.transcript_intents import build_combined_resolve_export
+    run=_run(workdir)
+    chunks=[{'id':'name','start':0,'end':2,'text':'leggo National Geographic oggi','words':[
+        {'text':'leggo','start':0,'end':.3},{'text':'National','start':.3,'end':.6},
+        {'text':'Geographic','start':.6,'end':1.1},{'text':'oggi','start':1.1,'end':2}]}]
+    (run/'semantic-chunks.json').write_text(json.dumps(chunks),encoding='utf-8')
+    state=load_phrase_intents(run)
+    save_phrase_intents(run,{'name':{'highlighted_word_indices':[2]}},state['transcript_signature'])
+    result=build_combined_resolve_export(run,'p',fps=30)
+    assert result['titles'][0]['text']=='National Geographic'
+    assert result['titles'][0]['start_frame']==9
+    assert result['titles'][0]['duration_seconds']>=.95
+    assert 'National' not in ' '.join(r['text'] for r in result['subtitles'])
+    assert 'Geographic' not in ' '.join(r['text'] for r in result['subtitles'])
