@@ -62,3 +62,8 @@ Apply uses a styled dialog: new timeline, or current timeline. The current-timel
 The duplicate synchronous Workflow SDK call before Apply was removed; the isolated apply process still validates current project/timeline before mutation. VFR duration checks use original-file identity, untrimmed offsets and actual retained-frame availability rather than requiring exact agreement between container duration and Resolve decoded duration.
 
 GUI, source-adapter and engine regressions are tested locally. Real selected-audio extraction is verified without new cloud calls. Physical current-timeline application remains user-triggered; no automatic Apply was performed during implementation.
+
+
+## 0.1.8 / v0130 — reapply from memory
+
+Current-timeline Apply now checks the live timeline before mutation. An edited timeline (including disabled source clips) requires a styled OK/Cancel confirmation. OK preserves the complete current timeline as a disabled nested reference after the new CUT; its editable backup remains in BCK / timeline name, numbered with date/time. Reapply uses the saved CUT and pause choices without reimporting or reanalyzing. A fingerprint prevents applying an outdated confirmation after additional edits. Cancel performs no apply request. The new CUT itself remains native clips. Existing loose BCK entries are retained unchanged. Physical application remains user-triggered.

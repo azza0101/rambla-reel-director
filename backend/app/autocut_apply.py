@@ -30,10 +30,14 @@ def apply_payload(resolve,payload,progress=lambda *args:None):
     if not project or project.GetName()!=context['project_name']:raise RuntimeError('Progetto Resolve cambiato: nessun taglio applicato')
     timeline=project.GetCurrentTimeline()
     if not timeline or timeline.GetUniqueId()!=context['timeline_id']:raise RuntimeError('Timeline Resolve cambiata: nessun taglio applicato')
-    # The native engine owns only a new CUT timeline and rolls it back on failure.
+    if payload.get('check_only'):
+        from .autocut_reapply import inspect_timeline
+        return inspect_timeline(timeline,payload['native_cut'])
     destination=payload.get('destination','new')
     if destination not in ('new','active'):raise ValueError('Destinazione CUT non valida')
     options={'target':timeline} if destination=='active' else {}
+    if destination=='active' and payload.get('timeline_signature'):options['expected_signature']=payload['timeline_signature']
+    if destination=='active' and payload.get('allow_modified'):options['allow_modified']=True
     result=create_native_cut_base(resolve,project,{'native_cut':payload['native_cut']},progress=progress,**options)
     return {key:value for key,value in result.items() if key!='timeline'}
 

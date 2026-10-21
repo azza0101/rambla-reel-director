@@ -44,6 +44,15 @@ $('cutAnalyze').onclick=async()=>{
 };
 $('cutConfirm').onclick=()=>{if(!cutBusy&&!integrationApplying&&cutData?.plan)$('integrationApplyDialog').showModal()};
 $('integrationApplyCancel').onclick=()=>{$('integrationApplyDialog').close()};
+function confirmModifiedTimeline(){
+ const dialog=$('integrationReapplyDialog');dialog.returnValue='cancel';
+ return new Promise(resolve=>{
+  dialog.onclose=()=>{dialog.onclose=null;resolve(dialog.returnValue==='ok')};
+  $('integrationReapplyCancel').onclick=()=>dialog.close('cancel');
+  $('integrationReapplyOk').onclick=()=>dialog.close('ok');
+  dialog.showModal();
+ });
+}
 $('integrationApplyGo').onclick=async()=>{
  if(!state.pid||!cutData?.plan||integrationApplying)return;
  try{
@@ -54,7 +63,14 @@ $('integrationApplyGo').onclick=async()=>{
   const destination=document.querySelector('input[name=applyDestination]:checked').value;
   $('integrationApplyDialog').close();
   integrationApplying=true;$('cutPassPanel').inert=true;$('integrationImport').disabled=true;
-  let job=await integrationRequest('/projects/'+state.pid+'/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:cutData.plan.revision,destination})});
+  const revision=cutData.plan.revision;let allow_modified=false,timeline_signature=null;
+  if(destination==='active'){
+   $('integrationApplyStatus').textContent='Controllo le modifiche della timeline…';
+   const check=await integrationRequest('/projects/'+state.pid+'/apply-check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision,destination})});
+   timeline_signature=check.timeline_signature;
+   if(check.modified){if(!await confirmModifiedTimeline()){$('integrationApplyStatus').textContent='Annullato · timeline invariata';return}allow_modified=true}
+  }
+  let job=await integrationRequest('/projects/'+state.pid+'/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision,destination,allow_modified,timeline_signature})});
   while(job.status==='running'){
    $('integrationStatus').textContent=(job.progress||0)+'% · '+job.message;
    $('integrationApplyStatus').textContent=$('integrationStatus').textContent;
@@ -84,7 +100,12 @@ APPLY_DIALOG = """<dialog id="integrationApplyDialog" aria-labelledby="integrati
 <label class="applyDestination"><input type="radio" name="applyDestination" value="active"><span><b>Timeline attuale</b><small>CUT a sinistra; originale intero disattivato a destra. Backup in BCK e IN OUT sul solo CUT.</small></span></label>
 <label class="applyDestination"><input type="radio" name="applyDestination" value="new" checked><span><b>Nuova timeline</b><small>Crea una timeline CUT separata. L'originale resta intatta.</small></span></label>
 <div class="row" style="justify-content:flex-end;margin-top:22px"><button id="integrationApplyCancel">ANNULLA</button><button id="integrationApplyGo" class="primary">APPLICA CUT</button></div>
-</dialog><style>#integrationApplyDialog::backdrop{background:#0009;backdrop-filter:blur(3px)}.applyDestination{display:flex;align-items:flex-start;gap:12px;padding:16px;margin:10px 0;border:1px solid var(--line,#3b4850);border-radius:12px;cursor:pointer}.applyDestination:has(input:checked){border-color:#58bda5;background:#58bda514}.applyDestination small{display:block;margin-top:7px;line-height:1.5}.applyDestination input{accent-color:#58bda5;margin-top:3px}</style>"""
+</dialog><dialog id="integrationReapplyDialog" aria-labelledby="integrationReapplyTitle" style="background:var(--panel,#14191e);color:var(--ink,#edf1f5);border:1px solid var(--line,#3b4850);border-radius:18px;padding:26px;width:510px;max-width:calc(100vw - 32px)">
+<h2 id="integrationReapplyTitle">La timeline è stata modificata</h2>
+<p>Il video originale è stato modificato. Vuoi conservare il contenuto attuale a destra e applicare il CUT in memoria?</p>
+<p class="muted">Creo prima un backup in BCK / nome della timeline. Il montaggio precedente resta come blocco disattivato, con effetti e audio conservati. Il video non verrà rianalizzato.</p>
+<div class="row" style="justify-content:flex-end"><button id="integrationReapplyCancel">ANNULLA</button><button id="integrationReapplyOk" class="primary">OK</button></div>
+</dialog><style>#integrationReapplyDialog::backdrop,#integrationApplyDialog::backdrop{background:#0009;backdrop-filter:blur(3px)}.applyDestination{display:flex;align-items:flex-start;gap:12px;padding:16px;margin:10px 0;border:1px solid var(--line,#3b4850);border-radius:12px;cursor:pointer}.applyDestination:has(input:checked){border-color:#58bda5;background:#58bda514}.applyDestination small{display:block;margin-top:7px;line-height:1.5}.applyDestination input{accent-color:#58bda5;margin-top:3px}</style>"""
 
 
 def render_autocut():
@@ -96,6 +117,6 @@ def render_autocut():
         '<meta http-equiv="Content-Security-Policy" content="default-src &#39;self&#39;; script-src &#39;self&#39; &#39;unsafe-inline&#39;; style-src &#39;self&#39; &#39;unsafe-inline&#39;; img-src &#39;self&#39; data:; media-src &#39;self&#39; blob:; connect-src &#39;self&#39;; object-src &#39;none&#39;; base-uri &#39;none&#39;">'
         '<title>RMBL Auto-Cut</title>'+THEME+CSS+REFERENCE+
         '<style>*{box-sizing:border-box}body{margin:0}main{max-width:1100px;padding:22px}header{display:flex;align-items:center;justify-content:space-between;gap:16px}h1{font-size:24px;margin:0}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}button{color:var(--ink);border:1px solid var(--line);cursor:pointer}.muted,small{color:var(--muted)}#integrationStatus{line-height:1.6;overflow-wrap:anywhere}#cutConfirm{min-width:200px}#cutRevisionReport{display:none}#cutTakeDialog{max-width:calc(100vw - 32px)}[hidden]{display:none!important}</style>'
-        '</head><body><main><header><div><small>RAMBLA · RESOLVE WORKFLOW</small><h1>Auto-Cut</h1></div><div class="row"><small>Auto-Cut 0.1.7 · motore '+RELEASE_VERSION+'</small><button id="integrationUpdate">AGGIORNA</button></div></header>'
+        '</head><body><main><header><div><small>RAMBLA · RESOLVE WORKFLOW</small><h1>Auto-Cut</h1></div><div class="row"><small>Auto-Cut 0.1.8 · motore '+RELEASE_VERSION+'</small><button id="integrationUpdate">AGGIORNA</button></div></header>'
         '<section class="panel"><div class="row"><button id="integrationImport" class="primary">RILEGGI TIMELINE E IN–OUT</button><b id="integrationSource">Nessuna sorgente collegata</b></div><p id="integrationRange" class="muted" role="status"></p><p id="integrationStatus" role="status">Apri la timeline con il video completo. Nessun taglio viene applicato automaticamente.</p><small>Prima versione: una sola clip video integrale. Trascrizione e revisione usano le API già configurate.</small></section>'
         +panel+placeholders+APPLY_DIALOG+'</main><script>'+BOOT+JS+AFTER+'</script>'+SUPPORT_HTML+'</body></html>')

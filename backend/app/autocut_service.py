@@ -39,6 +39,8 @@ class ApplyRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     revision: str = Field(min_length=1,max_length=100)
     destination: Literal['new','active'] = 'new'
+    allow_modified: bool = Field(default=False,strict=True)
+    timeline_signature: str | None = Field(default=None,pattern=r'^[a-f0-9]{64}$')
 
 
 def create_app(data_root: Path, *, token: str, probe_runner=None, enable_automatic_diagnostics=False) -> FastAPI:
@@ -167,6 +169,20 @@ def create_app(data_root: Path, *, token: str, probe_runner=None, enable_automat
     @app.get('/autocut/projects/{pid}/native-cut')
     async def native(pid:str,revision:str):return await asyncio.to_thread(native_payload,pid,revision)
 
+    @app.post('/autocut/projects/{pid}/apply-check')
+    async def apply_check(pid:str,request:ApplyRequest):
+        payload=await asyncio.to_thread(native_payload,pid,request.revision)
+        payload['check_only']=True
+        process=await asyncio.create_subprocess_exec(sys.executable,'-m','backend.app.autocut_apply',
+            stdin=asyncio.subprocess.PIPE,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.DEVNULL)
+        try:output,_=await asyncio.wait_for(process.communicate(json.dumps(payload).encode()),timeout=20)
+        except asyncio.TimeoutError:
+            process.kill();await process.wait();raise HTTPException(504,'Resolve non risponde: nessun contenuto modificato')
+        rows=[json.loads(line) for line in output.splitlines() if line.strip()]
+        result=next((row['result'] for row in rows if row.get('type')=='result'),None)
+        if process.returncode or result is None:raise HTTPException(409,next((r['message'] for r in rows if r.get('type')=='error'),'Controllo timeline non riuscito'))
+        return result
+
     @app.post('/autocut/projects/{pid}/apply')
     async def apply(pid:str,request:ApplyRequest):
         if any(j['status']=='running' for j in app.state.autocut_apply_jobs.values()):raise HTTPException(409,'Applicazione già in corso')
@@ -174,8 +190,11 @@ def create_app(data_root: Path, *, token: str, probe_runner=None, enable_automat
         if any(j['status']=='running' for j in app.state.autocut_apply_jobs.values()):raise HTTPException(409,'Applicazione già in corso')
         if json.loads((root/pid/'cut'/'plan.json').read_text('utf-8'))['revision']!=request.revision:raise HTTPException(409,'CUT modificato durante la preparazione')
         payload['destination']=request.destination
+        payload['allow_modified']=request.allow_modified
+        payload['timeline_signature']=request.timeline_signature
+        if request.allow_modified and (request.destination!='active' or not request.timeline_signature):raise HTTPException(422,'Conferma della timeline mancante')
         previous=app.state.autocut_apply_jobs.get(pid,{})
-        if previous.get('revision')==request.revision and previous.get('destination','new')==request.destination and previous.get('status')=='succeeded':return previous
+        if not request.allow_modified and previous.get('revision')==request.revision and previous.get('destination','new')==request.destination and previous.get('status')=='succeeded':return previous
         job={'status':'running','destination':request.destination,'revision':request.revision,'message':'Creo timeline CUT nativa…','progress':0}
         app.state.autocut_apply_jobs[pid]=job
         async def run():

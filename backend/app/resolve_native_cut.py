@@ -203,14 +203,15 @@ def park_original(pool,timeline,source,cut,backup,base,convention):
     start=cut['duration_frames']+round(float(Fraction(cut['fps']))*2)
     duration=backup['source_duration_frames']
     row=dict(source_in_frame=0,source_out_frame=duration,edited_in_frame=start,edited_out_frame=start+duration)
-    clips,_=append_exact_segment(pool,timeline,source,row,base,convention=convention)
+    retained=backup.get('archive_media') or source
+    clips,_=append_exact_segment(pool,timeline,retained,row,base,convention=None if backup.get('archive_media') else convention)
     if backup['properties'] and clips[0].SetProperty(backup['properties']) is False:
         raise RuntimeError('Impossibile conservare le proprietà del video originale')
     if not all(item.SetClipEnabled(False) for item in clips):
         raise RuntimeError('Impossibile disattivare video e audio originali conservati')
     if not timeline.SetClipsLinked(clips,True):raise RuntimeError('Impossibile collegare audio e video originali')
     occupied=set(timeline.GetMarkers() or {})
-    for position,name,color in [(0,'CUT','Green'),(start,'ORIGINALE · disattivato','Blue')]:
+    for position,name,color in [(0,'CUT','Green'),(start,'MONTAGGIO PRECEDENTE · disattivato' if backup.get('archive_media') else 'ORIGINALE · disattivato','Blue')]:
         while position in occupied:position+=1
         if not timeline.AddMarker(position,color,name,'RMBL Auto-Cut',1):raise RuntimeError('Impossibile aggiungere marker '+name)
         occupied.add(position)
@@ -219,14 +220,23 @@ def park_original(pool,timeline,source,cut,backup,base,convention):
             'export_in_frame':base,'export_out_frame':base+cut['duration_frames']}
 
 
-def prepare_active_cut(project,pool,timeline,cut):
+def prepare_active_cut(project,pool,timeline,cut,*,allow_modified=False,expected_signature=None):
     """Reject unrelated edits before creating the required backup or removing clips."""
     items={kind:[c for track in range(1,int(timeline.GetTrackCount(kind))+1)
         for c in (timeline.GetItemListInTrack(kind,track) or [])] for kind in ('video','audio','subtitle')}
-    if len(items['video'])!=1 or len(items['audio'])!=1 or items['subtitle']:
-        raise RuntimeError('La timeline attuale deve contenere soltanto il video integrale e il suo audio. Usa Nuova timeline.')
-    base=int(timeline.GetStartFrame())
-    validate_active_source(items['video']+items['audio'],base,cut)
+    modified=len(items['video'])!=1 or len(items['audio'])!=1 or bool(items['subtitle'])
+    if not modified:
+        modified=any(callable(getattr(c,'GetClipEnabled',None)) and not c.GetClipEnabled() for c in items['video']+items['audio'])
+    base=int(timeline.GetStartFrame()) if not modified else None
+    if not modified:
+        try:validate_active_source(items['video']+items['audio'],base,cut)
+        except RuntimeError:modified=True
+    if modified and not allow_modified:
+        raise RuntimeError('Il video integrale è stato modificato: serve conferma per conservare il contenuto e applicare il CUT in memoria.')
+    if expected_signature is not None or allow_modified:
+        from .autocut_reapply import timeline_snapshot
+        if timeline_snapshot(timeline)['signature']!=expected_signature:
+            raise RuntimeError('La timeline è cambiata nuovamente: ripeti la conferma prima di applicare')
     settings=timeline.GetSetting()
     if abs(float(settings['timelineFrameRate'])-float(Fraction(cut['fps'])))>.002:
         raise RuntimeError('FPS della timeline diversi dalla sorgente. Usa Nuova timeline.')
@@ -235,15 +245,23 @@ def prepare_active_cut(project,pool,timeline,cut):
     name=next_backup_name(project,timeline.GetName())
     _,backup=create_active_backup(timeline,name)
     backup_item=backup.GetMediaPoolItem()
-    if not backup_item or not pool.MoveClips([backup_item],ensure_media_pool_folder(pool,'BCK')):
+    bck=ensure_media_pool_folder(pool,'BCK')
+    children=bck.GetSubFolderList() or []
+    children=list(children.values()) if isinstance(children,dict) else list(children)
+    timeline_folder=next((child for child in children if child.GetName()==timeline.GetName()),None)
+    if timeline_folder is None:timeline_folder=pool.AddSubFolder(bck,timeline.GetName())
+    if not timeline_folder:raise RuntimeError('Impossibile creare BCK / '+timeline.GetName())
+    if not backup_item or not pool.MoveClips([backup_item],timeline_folder):
         project.SetCurrentTimeline(timeline)
         raise RuntimeError('Backup creato ma non archiviato in BCK: nessun taglio applicato')
     if not project.SetCurrentTimeline(timeline):raise RuntimeError('Impossibile tornare alla timeline originale; backup '+name)
-    return {'name':name,'timeline':backup,'clips':items['video']+items['audio'],'markers':dict(timeline.GetMarkers() or {}),
-            'properties':items['video'][0].GetProperty(),'source_duration_frames':items['video'][0].GetEnd()-items['video'][0].GetStart()}
+    return {'name':name,'timeline':backup,'clips':items['video']+items['audio']+items['subtitle'],'markers':dict(timeline.GetMarkers() or {}),
+            'properties':{} if modified else items['video'][0].GetProperty(),
+            'archive_media':backup_item if modified else None,
+            'source_duration_frames':int(backup.GetEndFrame()-backup.GetStartFrame()) if modified else items['video'][0].GetEnd()-items['video'][0].GetStart()}
 
 
-def create_native_cut_base(resolve, project, payload, *, progress=None, target=None):
+def create_native_cut_base(resolve, project, payload, *, progress=None, target=None, allow_modified=False, expected_signature=None):
     cut = payload['native_cut']
     validate_native_cut(cut)
     source_path = verify_source_identity(cut)
@@ -275,7 +293,8 @@ def create_native_cut_base(resolve, project, payload, *, progress=None, target=N
         if target is None:
             timeline = pool.CreateEmptyTimeline(name)
         else:
-            backup=prepare_active_cut(project,pool,target,cut)
+            options={'allow_modified':True,'expected_signature':expected_signature} if allow_modified else ({'expected_signature':expected_signature} if expected_signature else {})
+            backup=prepare_active_cut(project,pool,target,cut,**options)
             timeline=target;name=target.GetName()
             if not target.DeleteClips(backup['clips'],False):raise RuntimeError('Impossibile rimuovere le clip originali')
         if timeline and checkpoint:

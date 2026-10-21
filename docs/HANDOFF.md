@@ -1,3 +1,13 @@
+# v0130 / Auto-Cut 0.1.8
+
+Apply the in-memory CUT repeatedly on an edited current timeline without source import or analysis. Read-only apply-check detects edits and returns a SHA256 fingerprint. A styled OK/Cancel dialog explicitly authorizes preservation of existing content; Apply checks that the fingerprint is unchanged before backup/deletion. Cancel sends no apply request.
+
+Edited current content is preserved as a disabled nested timeline reference after the new CUT, retaining its effects/audio/titles. The fully editable snapshot lives in `BCK/<timeline name>/<timeline name> · BCK · date · time · number`. Existing BCK contents are not migrated. New CUT stays native separate clips. Same project/timeline identity and original source identity checks remain mandatory. Failed apply activates the complete backup; original timeline is never deleted.
+
+Actual current Resolve read-only check verified; no automatic Apply and no cloud requests. GUI smoke covers OK/Cancel. No source/project/cache deletion.
+
+--- Previous handoff ---
+
 # v0129 / Auto-Cut 0.1.7
 
 Fix IN/OUT import from restored sessions. `RILEGGI TIMELINE E IN–OUT` calls an authenticated backend endpoint that reads Resolve in a disposable process, with a 20-second timeout. `AVVIA AUTO-CUT` always refreshes live source/range before analysis, and refuses to analyze if that read fails. No native SDK call in the Electron UI import path. Zero IN is valid; inclusive OUT maps to a half-open source range. No live timeline mutations during verification.
