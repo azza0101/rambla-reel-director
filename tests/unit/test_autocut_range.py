@@ -52,3 +52,14 @@ def test_audio_extraction_requests_only_the_selected_duration():
     assert calls[0][calls[0].index('-ss')+1]=='10.0'
     assert calls[0][calls[0].index('-t')+1]=='2.0'
     assert words_of(result)[0]['start']==10
+
+
+def test_native_cut_preserves_pause_until_user_explicitly_removes_it():
+    raw=transcript([(0,1,'prima frase'),(8,9,'seconda frase')])
+    raw['pause_removal_opt_in']=True
+    initial=build_cut_plan(raw,duration=10,fps=30,signature='s',groups=[])
+    assert len(initial['segments'])==1
+    tightened=build_cut_plan(raw,duration=10,fps=30,signature='s',groups=[],tight_pauses=True)
+    assert len(tightened['segments'])==2
+    restored=build_cut_plan(raw,duration=10,fps=30,signature='s',groups=[],tight_pauses=False)
+    assert restored['segments']==initial['segments']

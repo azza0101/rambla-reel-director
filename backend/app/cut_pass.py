@@ -162,7 +162,7 @@ def build_cut_plan(transcript, *, duration, fps, signature, groups, discards=(),
     for w in kept:
         a = max(0,math.floor((w['start']-breathing)*rate))
         b = min(total,math.ceil((w['end']+max(breathing,end_margin_ms/1000))*rate))
-        if ranges and (a <= ranges[-1][1] or (w['index']==ranges[-1][2]+1 and (a-ranges[-1][1])/float(rate) <= pause_threshold-2*breathing)):
+        if ranges and (a <= ranges[-1][1] or (w['index']==ranges[-1][2]+1 and ((transcript.get('pause_removal_opt_in') and not tight_pauses) or (a-ranges[-1][1])/float(rate) <= pause_threshold-2*breathing))):
             ranges[-1][1] = max(ranges[-1][1],b)
             ranges[-1][2] = w['index']
         else:

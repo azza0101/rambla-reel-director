@@ -1,3 +1,13 @@
+# v0131 / Auto-Cut 0.1.9
+
+Visible preparation loader (indeterminate progress, phase, elapsed time) before timeline/range import and ASR launch. Startup controls are locked during the request, with a 30-second request timeout and explicit error display. The existing CUT progress follows once the job is accepted.
+
+Native pause removal is now strictly optional: `ELIMINA PAUSE`, presets and restore are available without Edit mode. Initial CUT merges unremoved consecutive-word pauses; only explicit tight_pauses removes them. Metadata is persisted in native transcripts so all manual rebuilds and restore retain this choice. Main MAGICO behavior is unchanged.
+
+Current project 6e3fe3e96c3d finished successfully in about 21s. Its text/take choices were preserved; pause-opt-in metadata applied with backup, duration 104.47s -> 105.47s, tight_pauses false. No new AI or Resolve mutations.
+
+--- Previous handoff ---
+
 # v0130 / Auto-Cut 0.1.8
 
 Apply the in-memory CUT repeatedly on an edited current timeline without source import or analysis. Read-only apply-check detects edits and returns a SHA256 fingerprint. A styled OK/Cancel dialog explicitly authorizes preservation of existing content; Apply checks that the fingerprint is unchanged before backup/deletion. Cancel sends no apply request.

@@ -30,6 +30,9 @@ def analyze_cut_project(project, folder, progress, *, transcribe, propose, choos
             raw = transcribe(Path(p.source_video.path), folder)
         write_json(cached, raw)
         write_json(signature, {'signature': p.analysis_signature})
+    if (folder.parent/'resolve-context.json').is_file():
+        raw['pause_removal_opt_in']=True
+        write_json(cached,raw)
     progress(1, 'Trascrizione pronta · riconosco ripartenze e take…')
     proposal_signature = folder / 'suggestions-signature.json'
     if proposal_signature.is_file() and (folder / 'suggestions.json').is_file() and read(proposal_signature).get('signature') == p.analysis_signature and read(proposal_signature).get('review_version') == REVIEW_VERSION:
