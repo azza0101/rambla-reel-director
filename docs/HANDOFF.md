@@ -1,3 +1,7 @@
+# Auto-Cut v0126 / 0.1.4 - 2026-10-21
+
+Fixed invalid selected_take indices during merge: keep alternatives for review. Sorting preserves selected take identity. Real recovery succeeded: project 80e60d811461, 27 segments, 11 groups, 221.97 seconds, 645 kept words. Full backup saved before recovery; no Resolve mutations. 94 targeted tests passed. Sanitized automatic diagnostics confirmed by private issue #16.
+
 # Provider JSON recovery + Auto-Cut diagnostics v0125 / 0.1.3 — 2026-10-21
 
 The 0.1.2 user run advanced past block 1 but failed in block 2 with HTTP400 Failed to validate JSON. cut_cloud now recognizes generated-output validation errors separately from invalid request schemas, retries a full JSON-object document with schema instructions and local Draft202012 validation, lower reasoning and bounded quota. Original failed_generation is never consumed. Existing valid block-1 cache and measured-word transcript remain reusable.

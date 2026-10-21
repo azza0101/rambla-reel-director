@@ -62,14 +62,17 @@ def merge_suggestions(replies):
     groups=[];discards={}
     for reply in replies:
         for source in reply.get('groups',[]):
-            row={**source,'takes':sorted([list(t) for t in source['takes']])}
+            original=[list(t) for t in source['takes']]
+            index=source.get('selected_take',-1)
+            selected=original[index] if isinstance(index,int) and 0<=index<len(original) else None
+            row={**source,'takes':sorted(original)}
+            if 'selected_take' in source:row['selected_take']=row['takes'].index(selected) if selected else -1
             match=next((g for g in groups if set(map(tuple,g['takes'])).intersection(map(tuple,row['takes']))),None)
             if match:
                 ranges=sorted(set(map(tuple,match['takes']))|set(map(tuple,row['takes'])))
                 if any(a<=ranges[i-1][1] for i,(a,b) in enumerate(ranges) if i):continue
-                selected=row['takes'][row['selected_take']] if row.get('selected_take',-1)>=0 else None
                 match['takes']=[list(t) for t in ranges]
-                if selected:match['selected_take']=match['takes'].index(selected)
+                if 'selected_take' in row:match['selected_take']=match['takes'].index(selected) if selected else -1
             else:
                 occupied=set(i for g in groups for a,b in g['takes'] for i in range(a,b+1))
                 if any(occupied.intersection(range(a,b+1)) for a,b in row['takes']):continue

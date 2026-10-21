@@ -155,3 +155,16 @@ def test_provider_diagnostic_identifies_json_without_transcript(tmp_path):
     assert 'SECRET-TEXT' not in json.dumps(report)
 
 from tests.unit.test_cut_pass_routes import tmp_path
+
+
+def test_merge_invalid_take_index_keeps_all_alternatives():
+    one={'groups':[{'takes':[[1,2],[5,6]],'selected_take':1}]}
+    two={'groups':[{'takes':[[5,6],[9,10]],'selected_take':7}]}
+    group=merge_suggestions([one,two])['groups'][0]
+    assert group['takes']==[[1,2],[5,6],[9,10]]
+    assert group['selected_take']==-1
+
+
+def test_merge_sorting_preserves_selected_take_identity():
+    group=merge_suggestions([{'groups':[{'takes':[[5,6],[1,2]],'selected_take':0}]}])['groups'][0]
+    assert group['takes'][group['selected_take']]==[5,6]
