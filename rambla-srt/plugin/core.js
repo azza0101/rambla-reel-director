@@ -26,13 +26,9 @@ function renderSrt(t,captions,ranges,{original=true,context=false}={}){
   const time=f=>original?base+(f-t.start)*1000/t.fps:(offsets[row.ri]+f-merged[row.ri].a)*1000/t.fps;
   return `${i+1}\r\n${srtTime(time(row.a))} --> ${srtTime(time(row.b))}\r\n${row.content}\r\n\r\n`;
  }).join('');
- if(context){let origin=0;try{origin=startMs(t)}catch{}const time=f=>srtTime(origin+(f-t.start)*1000/t.fps);
-  output+='\r\n# RAMBLA_CONTEXT_BEGIN\r\n# EXPERIMENTAL: metadata for GPT/APP REEL, NOT standard SRT.\r\n# Do not generate B-roll for text outside selected intervals.\r\n';
-  output+='# TIMELINE: '+t.name.replace(/[\r\n]/g,' ')+'\r\n# SELECTED_RANGES:\r\n';
-  merged.forEach((r,i)=>{output+=`# RANGE ${i+1}: ${time(r.a)} --> ${time(r.b)}\r\n`});
-  output+='# FULL_TIMELINE_TRANSCRIPT (context only):\r\n';
-  all.forEach(row=>{output+=`# [${time(row.a)}] ${row.content.replace(/[\r\n]+/g,' / ')}\r\n`});
-  output+='# RAMBLA_CONTEXT_END\r\n';
+ if(context){
+  const transcript=all.map(row=>row.content.replace(/\s+/g,' ').trim()).filter(Boolean).join(' ');
+  output+='\r\n# RAMBLA_CONTEXT_BEGIN\r\n# Contesto completo della timeline: solo per comprendere il discorso.\r\n# '+transcript+'\r\n# RAMBLA_CONTEXT_END\r\n';
  }return output;
 }
 function fileName(value,timeline,mode){

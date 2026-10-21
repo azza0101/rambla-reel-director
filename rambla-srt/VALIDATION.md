@@ -24,3 +24,6 @@ La candidata non è una release finale validata su entrambe le piattaforme. Ness
 COPIA SRT con validazione timeline/IN-OUT identica all’export e senza destinazione obbligatoria. Test IPC clipboard e GUI aggiunti. AGGIORNA usa il login GitHub CLI esistente se manca il token dedicato; verifica online sul repository riuscita, stato `unpublished` perché non esistono ancora release SRT. Messaggi Electron ripuliti dal prefisso tecnico. Nessuna release AutoCut selezionata.
 
 Verifica nativa 3.2.1: AGGIORNA mostra «Nessun aggiornamento SRT pubblicato» dopo accesso riuscito; COPIA SRT mostra «SRT copiato negli appunti» senza cartella impostata. Installer 3.2.1 eseguito con backup del solo SRT.
+
+## Modifica 3.2.2 — contesto fluido
+Richiesta esplicita utente: rimosse dal footer le righe di timecode e gli intervalli. Trascrizione completa in un unico paragrafo, con spazi e a-capo normalizzati. Test dedicato per ordine, assenza di metadati temporali e corpo SRT invariato. I confronti V3.1 da questa versione verificano il corpo sottotitoli, non il footer modificato intenzionalmente. 66 test Node superati.

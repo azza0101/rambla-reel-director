@@ -1,4 +1,4 @@
-# RAMBLA SRT 3.2.1 — candidata al collaudo
+# RAMBLA SRT 3.2.2 — candidata al collaudo
 
 Workflow Integration autonoma `com.rambla.srt`. AutoCut e lo script Utility V3.1 non vengono sostituiti. Nessun cloud/AI/ASR, Python, Node o download di dipendenze richiesto all'utente: usa Electron e SDK già inclusi in Resolve Studio 21.
 
@@ -20,7 +20,7 @@ La riparazione ripete lo stesso installer. Il codice precedente è conservato in
 3. Per più intervalli, passa a **MULTI RANGE**, aggiungi ciascun IN/OUT e rimuovi/svuota quelli indesiderati. L'export ordina e unisce intervalli adiacenti o sovrapposti.
 4. Scegli cartella e nome facoltativo. Un file già esistente non viene sovrascritto: cambia nome.
 5. Timecode originali attivi per default; disattivali per partire da zero. In MULTI i segmenti si concatenano senza le pause tra intervalli, come V3.1.
-6. Il contesto opzionale aggiunge nello stesso SRT l'intera trascrizione con commenti `#`. È sperimentale e non standard: alcuni parser inglobano il contesto nell’ultimo sottotitolo (verificato con FFmpeg). Per reimportare in un editor, lascialo disattivato.
+6. Il contesto opzionale aggiunge nello stesso SRT l'intera trascrizione in un unico paragrafo, senza timecode o elenco intervalli, delimitata da commenti `#`. È sperimentale e non standard: alcuni parser inglobano il contesto nell’ultimo sottotitolo (verificato con FFmpeg). Per reimportare in un editor, lascialo disattivato.
 7. Premi **ESPORTA SRT**, poi **APRI CARTELLA**. **COPIA SRT** copia negli appunti lo stesso SRT con le opzioni correnti, senza creare file o richiedere una cartella.
 
 Le opzioni e gli intervalli sono salvati atomicamente per ID di progetto/timeline. Il cambio di timeline, dei tempi o dei sottotitoli viene rilevato prima dell'export. La UI indica errori di salvataggio; non considera un salvataggio fallito come riuscito.
@@ -51,3 +51,5 @@ Il Lua originale è in `reference/v3.1`, immutato. Confronto automatico su 40 ou
 `node --test tests/*.test.cjs` esegue logica, adapter, stato, updater e installer Windows in directory temporanee. `python tests/generate_oracle.py` richiede `lupa` solo nell'ambiente test e rigenera le fixture eseguendo il Lua originale, con UI/Resolve simulati. `tests/ui-smoke.cjs` richiede Playwright e un browser Edge di test; usa la Session reale, un adapter di prova e directory QA.
 
 `node tools/build-release.cjs` genera `dist/` da una allowlist. Il modulo nativo Blackmagic, i salvataggi, i media, i log, i token e le trascrizioni reali non entrano nel pacchetto. Vedi `VALIDATION.md` per le verifiche eseguite e quelle ancora necessarie.
+
+Dalla 3.2.2, su richiesta dell’utente, il contesto differisce dalla V3.1: testo continuo in ordine temporale, spazi normalizzati, senza timecode generati. Il corpo SRT selezionato resta invariato. Vale anche per COPIA SRT.

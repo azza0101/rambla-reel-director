@@ -1,6 +1,6 @@
 # RAMBLA SRT Range Exporter — handoff Codex
 
-## Candidata Workflow Integration 3.2.1
+## Candidata Workflow Integration 3.2.2
 
 Implementazione separata in `plugin/`, installer Windows/Mac in `install/`, test regressivi contro il Lua originale in `tests/`. Vedi [USAGE.md](USAGE.md) per uso e installazione, [VALIDATION.md](VALIDATION.md) per risultati e gate ancora aperti. Il resto di questo documento conserva il contratto di handoff originale. AutoCut è invariato.
 

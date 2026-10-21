@@ -19,6 +19,6 @@ for original in [True,False]:
    assert lua.globals().output,lua.globals().lastPrint
    case['ranges']=[{'a':start+r['a'],'b':start+r['b']} for r in marks];case['expected']=lua.globals().output;cases.append(case)
 (qa/'live-oracle.json').write_text(json.dumps(cases,ensure_ascii=False),'utf-8')
-js="const fs=require('fs'),assert=require('assert/strict'),{renderSrt}=require('./rambla-srt/plugin/core');for(const c of JSON.parse(fs.readFileSync('_qa/live-oracle.json')))assert.equal(renderSrt(c.timeline,c.captions,c.ranges,c),c.expected);console.log('8 live-caption parity cases PASS');"
+js="const fs=require('fs'),assert=require('assert/strict'),{renderSrt}=require('./rambla-srt/plugin/core');for(const c of JSON.parse(fs.readFileSync('_qa/live-oracle.json')))assert.equal(renderSrt(c.timeline,c.captions,c.ranges,c).split(String.fromCharCode(13,10)+'# RAMBLA_CONTEXT_BEGIN')[0],c.expected.split(String.fromCharCode(13,10)+'# RAMBLA_CONTEXT_BEGIN')[0]);console.log('8 live-caption subtitle-body parity cases PASS');"
 subprocess.run(['node','-e',js],cwd=root.parent,check=True)
 (qa/'live-result.json').write_text(json.dumps({'captions':len(live['captions']),'cases':8,'byteParity':True,'resolveMutations':0,'rangeSource':'local test intervals; live timeline had no IN/OUT'},indent=2),'utf-8')
