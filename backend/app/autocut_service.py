@@ -165,6 +165,10 @@ def create_app(data_root: Path, *, token: str, probe_runner=None, enable_automat
         try:cut=load_native_cut(root/pid,root)
         except (ValueError,OSError,SubprocessError) as exc:raise HTTPException(409,str(exc)) from exc
         if cut.get('revision')!=revision:raise HTTPException(409,'CUT cambiato durante la preparazione: riprova dalla revisione aggiornata')
+        from .autocut_subtitles import read_cut_transcript
+        from .cut_timing_guard import assert_timing_quality
+        try:assert_timing_quality(read_cut_transcript(root/pid,plan),plan)
+        except (ValueError,OSError) as exc:raise HTTPException(409,str(exc)) from exc
         return {'native_cut':cut,'context':json.loads((root/pid/'resolve-context.json').read_text('utf-8'))}
 
     @app.get('/autocut/projects/{pid}/subtitles/{revision}')

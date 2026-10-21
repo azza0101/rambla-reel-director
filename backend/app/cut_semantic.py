@@ -3,7 +3,7 @@ import re
 import json
 from .cut_pass import words_of
 
-REVIEW_VERSION = 5
+REVIEW_VERSION = 6
 
 
 def _tokens(text):
@@ -71,6 +71,13 @@ Non tenere versioni precedenti solo perche complete: se la battuta viene rifatta
 Un blocco può contenere insieme regia e una battuta valida: non tenerlo intero. Commenti su quale prima/seconda parte era migliore e istruzioni su enfasi, accento, ritmo o parole da sottolineare sono regia; conserva soltanto il racconto successivo con trim_blocks.
 Prima della risposta rileggi il montaggio simulato: niente doppioni e niente regia. Non riscrivere il testo. Valuta tutti i blocchi, anche se un blocco e solo un pezzo di frase.
 BLOCCHI:\n"""+'\n'.join(f"{i}: "+' '.join(w['text'] for w in unit) for i,unit in enumerate(units))
+    quiet=[]
+    from statistics import median
+    for i,unit in enumerate(units):
+        levels=[w['relative_speech_db'] for w in unit if 'relative_speech_db' in w]
+        if levels and median(levels)<-12:quiet.append(str(i))
+    if quiet:
+        prompt+='\nSEGNALE AUDIO LOCALE: blocchi '+', '.join(quiet)+' hanno volume nettamente inferiore alla voce principale. È solo un indizio di possibili note fuori scena: valuta contenuto e contesto, conserva ogni battuta narrativa valida anche se detta piano. Non scartare per il solo volume.'
     cost=(len(json.dumps({'prompt':prompt,'schema':schema},ensure_ascii=False).encode('utf-8'))+2)//3+128
     output=min(5500,7500-cost)
     if output<2000:raise ValueError('Contesto CUT troppo lungo per la quota')

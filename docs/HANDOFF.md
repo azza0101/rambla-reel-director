@@ -1,3 +1,17 @@
+# v0133 / Auto-Cut 0.1.11 — measured timestamp recovery
+
+Root cause: ASR assigned 13.4 seconds to one word, hiding a failed take and its complete retry. Alignment accepted the long span; CUT and caption exports consequently inherited it. The Resolve importer matched the saved source map.
+
+New analysis detects implausibly long word spans before editorial selection, re-recognizes only short cached source windows with the existing Groq ASR, validates the result, and invalidates indexed proposal caches by transcript fingerprint. It never fixes unknown speech by shortening a timestamp. Alignment refuses anomalous measured updates. Native delivery (including without captions) and captions reject unresolved retained anomalies; discarded anomalies do not block export. Source word fingerprint prevents mixing an old CUT map with changed words. A short word crossing an extraction boundary remains available; uncertain manual index remapping raises instead of silently discarding user choices.
+
+Relative audio levels are measured locally and supplied only as an editorial hint for quieter off-camera direction. Low volume alone never excludes speech. No additional provider or audio upload is introduced for this measurement. Missing optional measurement preserves text. Semantic cache version 6.
+
+Current project was recovered from the specifically authorized audio windows only, without another cloud editorial call or Resolve mutation. Its explicit manual exclusions/restorations and selections outside repaired regions were verified unchanged. Full previous CUT artifacts are in autocut-data/repair-backups with a local report. Private transcript/audio/recovery scripts are excluded from GitHub and update ZIP. Reapply is manual. Existing manually restored closing fragments remain as the user chose; this targeted repair does not declare the entire edit approved.
+
+Validation: 224 Python tests passed, including anomalous retained/discarded spans, cache reuse, rollback on ASR failure, alignment protection, word-boundary preservation, manual remapping, quiet-volume context, subtitles and native delivery. Rollback: managed code backup from apply_archive plus the project repair-backup; restore the whole paired transcript/plan folder with the service stopped.
+
+--- Previous handoff ---
+
 # v0132 / Auto-Cut 0.1.10
 
 Apply dialog now has Crea sottotitoli checked by default. Explicit Apply locally generates revision-specific SRT and short native caption rows from the final reviewed source-to-edited map. It uses aligned transcript only when its signature matches; no new ASR/AI. Omitted source spans never become end-of-timeline captions. SRT timings are bounded by CUT duration and do not overlap.

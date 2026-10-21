@@ -200,6 +200,8 @@ def build_cut_plan(transcript, *, duration, fps, signature, groups, discards=(),
         normal=build_cut_plan(transcript,duration=duration,fps=fps,signature=signature,groups=groups,discards=discards,pause_threshold=normal_pause_threshold,breathing=normal_breathing,end_margin_ms=end_margin_ms,excluded_word_indices=excluded_word_indices,restored_word_indices=restored_word_indices)
         plan['pause_seconds_removed']=max(0,normal['duration_seconds']-plan['duration_seconds'])
     else:plan['pause_seconds_removed']=0
+    from .cut_timing_guard import transcript_fingerprint
+    plan['transcript_fingerprint']=transcript_fingerprint(transcript)
     plan['revision']=hashlib.sha256(json.dumps(plan,sort_keys=True).encode()).hexdigest()[:24]
     return plan
 

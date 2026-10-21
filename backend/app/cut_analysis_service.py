@@ -1,5 +1,6 @@
 """Shared CUT analysis; called by both manual routes and MAGICO adapters."""
 import json
+import hashlib
 import asyncio
 from pathlib import Path
 from .atomic_io import write_json
@@ -30,12 +31,21 @@ def analyze_cut_project(project, folder, progress, *, transcribe, propose, choos
             raw = transcribe(Path(p.source_video.path), folder)
         write_json(cached, raw)
         write_json(signature, {'signature': p.analysis_signature})
+    from .cut_timing_guard import repair_anomalies
+    raw=repair_anomalies(raw,Path(p.source_video.path),folder,transcribe,
+        notify=lambda message:progress(0,message))
+    from .cut_audio_context import annotate_relative_volume
+    if raw.get('volume_context_version')!=1:
+        progress(0,'Misuro il volume relativo della voce · controllo locale…')
+        raw=annotate_relative_volume(raw,Path(p.source_video.path))
+    write_json(cached,raw)
+    timing_signature=hashlib.sha256(json.dumps(raw['segments'],sort_keys=True).encode()).hexdigest()
     if (folder.parent/'resolve-context.json').is_file():
         raw['pause_removal_opt_in']=True
         write_json(cached,raw)
     progress(1, 'Trascrizione pronta · riconosco ripartenze e take…')
     proposal_signature = folder / 'suggestions-signature.json'
-    if proposal_signature.is_file() and (folder / 'suggestions.json').is_file() and read(proposal_signature).get('signature') == p.analysis_signature and read(proposal_signature).get('review_version') == REVIEW_VERSION:
+    if proposal_signature.is_file() and (folder / 'suggestions.json').is_file() and read(proposal_signature).get('signature') == p.analysis_signature and read(proposal_signature).get('review_version') == REVIEW_VERSION and read(proposal_signature).get('timing_signature') == timing_signature:
         suggestion = read(folder / 'suggestions.json')
         progress(1, 'Gruppi già riconosciuti · riprendo dalla verifica delle take')
     else:
@@ -43,7 +53,7 @@ def analyze_cut_project(project, folder, progress, *, transcribe, propose, choos
         if not isinstance(suggestion, dict):
             suggestion = {'groups': suggestion, 'discards': []}
         write_json(folder / 'suggestions.json', suggestion)
-        write_json(proposal_signature, {'signature': p.analysis_signature, 'review_version': REVIEW_VERSION})
+        write_json(proposal_signature, {'signature': p.analysis_signature, 'review_version': REVIEW_VERSION, 'timing_signature':timing_signature})
     groups, discards, warnings = prepare_suggestions(suggestion)
     progress(2, 'Verifico l’ultima take completa di ciascuna frase…')
     groups = choose(raw, groups)

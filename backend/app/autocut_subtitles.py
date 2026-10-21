@@ -6,6 +6,8 @@ from .resolve_native_subtitles import normalize_subtitle_rows,render_filtered_sr
 
 
 def subtitle_rows(raw,plan):
+    from .cut_timing_guard import assert_timing_quality
+    assert_timing_quality(raw,plan)
     cleaned=clean_transcript(raw,plan);rows=[];batch=[];rate=float(Fraction(plan['fps']))
     def flush():
         if batch:
@@ -28,13 +30,22 @@ def subtitle_rows(raw,plan):
     return normalized
 
 
-def prepare_subtitles(project_root,plan):
+def read_cut_transcript(project_root,plan):
     import json
     folder=Path(project_root)/'cut'
     aligned=folder/'transcript-aligned.json'
     valid=(aligned.is_file() and (folder/'alignment-signature.json').is_file()
         and json.loads((folder/'alignment-signature.json').read_text('utf-8')).get('signature')==plan['source_signature'])
     raw=json.loads((aligned if valid else folder/'transcript-original.json').read_text('utf-8'))
+    from .cut_timing_guard import transcript_fingerprint
+    if plan.get('transcript_fingerprint') and plan['transcript_fingerprint']!=transcript_fingerprint(raw):
+        raise ValueError('Trascrizione cambiata rispetto al CUT: completa il ricontrollo prima di esportare')
+    return raw
+
+
+def prepare_subtitles(project_root,plan):
+    folder=Path(project_root)/'cut'
+    raw=read_cut_transcript(project_root,plan)
     rows=subtitle_rows(raw,plan)
     if not rows:raise ValueError('Nessun sottotitolo da generare per il CUT corrente')
     path=folder/('autocut-subs-'+plan['revision']+'.srt')

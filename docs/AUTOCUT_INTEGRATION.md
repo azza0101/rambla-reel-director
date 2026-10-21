@@ -72,3 +72,17 @@ Current-timeline Apply now checks the live timeline before mutation. An edited t
 ## 0.1.10 / v0132 — optional native subtitles
 
 Crea sottotitoli is checked by default in the Apply dialog. The saved aligned transcript and final CUT map produce short captions and a revision-specific local SRT. Removed words and source spans outside actual kept video are excluded; no new ASR or AI. Caption times incorporate pause edits and IN/OUT selection, remain inside CUT duration, and do not overlap. The existing native SRT importer creates verified Subtitle clips; its failure uses the same CUT rollback/backup handling. Current-timeline reapply preserves previous captions in the complete BCK/nested snapshot rather than duplicating them over the new CUT. Uncheck to skip captions. SCARICA SRT appears after successful Apply.
+
+
+# v0133 / Auto-Cut 0.1.11 — measured timestamp recovery
+
+Root cause: ASR assigned 13.4 seconds to one word, hiding a failed take and its complete retry. Alignment accepted the long span; CUT and caption exports consequently inherited it. The Resolve importer matched the saved source map.
+
+New analysis detects implausibly long word spans before editorial selection, re-recognizes only short cached source windows with the existing Groq ASR, validates the result, and invalidates indexed proposal caches by transcript fingerprint. It never fixes unknown speech by shortening a timestamp. Alignment refuses anomalous measured updates. Native delivery (including without captions) and captions reject unresolved retained anomalies; discarded anomalies do not block export. Source word fingerprint prevents mixing an old CUT map with changed words. A short word crossing an extraction boundary remains available; uncertain manual index remapping raises instead of silently discarding user choices.
+
+Relative audio levels are measured locally and supplied only as an editorial hint for quieter off-camera direction. Low volume alone never excludes speech. No additional provider or audio upload is introduced for this measurement. Missing optional measurement preserves text. Semantic cache version 6.
+
+Current project was recovered from the specifically authorized audio windows only, without another cloud editorial call or Resolve mutation. Its explicit manual exclusions/restorations and selections outside repaired regions were verified unchanged. Full previous CUT artifacts are in autocut-data/repair-backups with a local report. Private transcript/audio/recovery scripts are excluded from GitHub and update ZIP. Reapply is manual. Existing manually restored closing fragments remain as the user chose; this targeted repair does not declare the entire edit approved.
+
+Validation: 224 Python tests passed, including anomalous retained/discarded spans, cache reuse, rollback on ASR failure, alignment protection, word-boundary preservation, manual remapping, quiet-volume context, subtitles and native delivery. Rollback: managed code backup from apply_archive plus the project repair-backup; restore the whole paired transcript/plan folder with the service stopped.
+
