@@ -130,3 +130,41 @@ def test_autocut_has_private_diagnostics_and_respects_automatic_optout(tmp_path)
     client=TestClient(again);client.headers['X-Autocut-Session']=TOKEN
     assert client.get('/api/curation/diagnostics').status_code==200
     assert 'rmblSupportOpen' in client.get('/autocut').text
+
+
+def test_apply_ui_uses_isolated_backend_validation_not_blocking_native_sdk():
+    from backend.app.autocut_ui import AFTER
+    handler=AFTER.split("$('integrationApplyGo').onclick=async()=>{",1)[1].split("$('integrationUpdate').onclick",1)[0]
+    assert '.snapshot(' not in handler
+    assert "'/projects/'+state.pid+'/apply'" in handler
+
+
+def test_apply_destination_is_validated_and_defaults_to_new():
+    from backend.app.autocut_service import ApplyRequest
+    from pydantic import ValidationError
+    assert ApplyRequest(revision='r').destination=='new'
+    assert ApplyRequest(revision='r',destination='active').destination=='active'
+    with pytest.raises(ValidationError):ApplyRequest(revision='r',destination='anything')
+
+
+def test_apply_popup_is_styled_and_offers_both_destinations():
+    from backend.app.autocut_ui import render_autocut,AFTER
+    html=render_autocut()
+    assert 'id="integrationApplyDialog"' in html
+    assert 'name="applyDestination" value="active"' in html
+    assert 'name="applyDestination" value="new"' in html
+    assert 'if(!confirm(' not in AFTER
+
+
+def test_source_ranges_have_distinct_projects_and_do_not_overwrite_full_video(tmp_path):
+    client=client_for(tmp_path);client.headers['X-Autocut-Session']=TOKEN
+    source=tmp_path/'original.mp4';source.write_bytes(b'original')
+    context={'path':str(source),'project_name':'TEST','timeline_id':'timeline','timeline_name':'Full'}
+    full=client.post('/autocut/source',json=context).json()
+    selected=client.post('/autocut/source',json={**context,'source_range':{'in_frame':30,'out_frame':180,'fps':'30'}}).json()
+    assert full['project_id']!=selected['project_id']
+    assert selected['source_video']['path']==full['source_video']['path']
+    again=client.post('/autocut/source',json=context).json()
+    assert again['project_id']==full['project_id']
+    invalid=client.post('/autocut/source',json={**context,'source_range':{'in_frame':200,'out_frame':400,'fps':'30'}})
+    assert invalid.status_code==422

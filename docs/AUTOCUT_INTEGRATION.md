@@ -51,3 +51,14 @@ On 2026-10-21 the user explicitly authorized automatic GitHub debugging for Auto
 ## v0.1.5 editorial review
 
 CUT uses Groq for contextual ASR-block selection and local measured-word reconciliation for nearby retakes. Proposals are versioned separately from measured ASR cache. `cut/editorial-review.json` stores original and kept text, decisions, and warnings locally, excluded from GitHub support reports. Partial generated output is never used as a CUT result.
+
+
+## 0.1.6 / v0128 — selected range and retained source
+
+Use `USA VIDEO DELLA TIMELINE` after setting Resolve IN/OUT. Video/audio marks must agree. Resolve marks are relative to timeline start and OUT is inclusive; the stored source range is half-open. With no marks the entire source is analyzed. A changed range creates/reuses a separate project, preserving the full-video project and original file. Only selected audio is sent to Groq; ASR words are offset to absolute original-file times. All CUT rebuilds clamp breathing handles to that range.
+
+Apply uses a styled dialog: new timeline, or current timeline. The current-timeline path requires one untrimmed full source video/audio, creates a numbered backup in BCK, compacts the CUT at the start, then retains the full original reference after a two-second gap with both video and audio disabled. It sets IN/OUT to the CUT only and adds CUT/ORIGINALE markers without overwriting existing markers. A failure activates the complete BCK and reports its name; the partially edited timeline is never deleted. The original file is never modified. The scripting API reconstructs references to the original media; this does not preserve the identity of the old TimelineItem objects. Timeline identity is preserved.
+
+The duplicate synchronous Workflow SDK call before Apply was removed; the isolated apply process still validates current project/timeline before mutation. VFR duration checks use original-file identity, untrimmed offsets and actual retained-frame availability rather than requiring exact agreement between container duration and Resolve decoded duration.
+
+GUI, source-adapter and engine regressions are tested locally. Real selected-audio extraction is verified without new cloud calls. Physical current-timeline application remains user-triggered; no automatic Apply was performed during implementation.

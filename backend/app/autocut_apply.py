@@ -31,7 +31,10 @@ def apply_payload(resolve,payload,progress=lambda *args:None):
     timeline=project.GetCurrentTimeline()
     if not timeline or timeline.GetUniqueId()!=context['timeline_id']:raise RuntimeError('Timeline Resolve cambiata: nessun taglio applicato')
     # The native engine owns only a new CUT timeline and rolls it back on failure.
-    result=create_native_cut_base(resolve,project,{'native_cut':payload['native_cut']},progress=progress)
+    destination=payload.get('destination','new')
+    if destination not in ('new','active'):raise ValueError('Destinazione CUT non valida')
+    options={'target':timeline} if destination=='active' else {}
+    result=create_native_cut_base(resolve,project,{'native_cut':payload['native_cut']},progress=progress,**options)
     return {key:value for key,value in result.items() if key!='timeline'}
 
 

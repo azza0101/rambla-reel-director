@@ -3,7 +3,7 @@ import re
 import json
 from .cut_pass import words_of
 
-REVIEW_VERSION = 4
+REVIEW_VERSION = 5
 
 
 def _tokens(text):
@@ -68,6 +68,7 @@ def propose_semantic_groups(transcript):
     prompt="""Monta il parlato italiano grezzo. Tieni OGNI informazione unica e soltanto l'ULTIMA take riuscita delle frasi ripetute. Scarta regia, indicazioni su come dire le frasi, conferme fuori scena, errori e ripartenze sostituiti. Non riassumere o correggere grammatica/ASR.
 Ogni blocco ASR sotto deve comparire UNA volta in keep_blocks (tutto buono), discard_blocks (tutto da togliere), oppure trim_blocks (misto). Per trim_blocks copia in keep_text SOLO le parti buone testuali esatte del blocco, nell'ordine; il software trova le parole e i tempi originali.
 Non tenere versioni precedenti solo perche complete: se la battuta viene rifatta, scegli l'ultima. Conserva premesse e completamenti unici. Aneddoti, luoghi, spiegazioni, domande e risposte utili restano. Le istruzioni rivolte a chi recita e i commenti alla ripresa non fanno parte del racconto.
+Un blocco può contenere insieme regia e una battuta valida: non tenerlo intero. Commenti su quale prima/seconda parte era migliore e istruzioni su enfasi, accento, ritmo o parole da sottolineare sono regia; conserva soltanto il racconto successivo con trim_blocks.
 Prima della risposta rileggi il montaggio simulato: niente doppioni e niente regia. Non riscrivere il testo. Valuta tutti i blocchi, anche se un blocco e solo un pezzo di frase.
 BLOCCHI:\n"""+'\n'.join(f"{i}: "+' '.join(w['text'] for w in unit) for i,unit in enumerate(units))
     cost=(len(json.dumps({'prompt':prompt,'schema':schema},ensure_ascii=False).encode('utf-8'))+2)//3+128
@@ -92,15 +93,37 @@ BLOCCHI:\n"""+'\n'.join(f"{i}: "+' '.join(w['text'] for w in unit) for i,unit in
     return _finalize_selection(transcript,selected)
 
 
+def direction_word_indices(words):
+    """Only explicit production instructions, bounded by sentence punctuation.
+
+    Ordinary narrative mentions of a part, weight, or preference are preserved.
+    The original words remain in the review and can be restored manually.
+    """
+    text=' '.join(w['text'] for w in words)
+    patterns=[
+        r"\b(?:la\s+)?(?:prima|seconda|terza|ultima)\s+parte\s+(?:era|è|e)\s+meglio\s+(?:la\s+)?(?:prima|seconda|terza|ultima|questa|quella)\b[^.!?]{0,180}[.!?]",
+        r"\b(?:mettimi|metti|dammi|dai)\s+(?:il\s+)?(?:peso|enfasi|accento)\s+su\b[^.!?]{0,160}[.!?]",
+    ]
+    spans=[m.span() for pattern in patterns for m in re.finditer(pattern,text,re.I)]
+    removed=set();offset=0
+    for word in words:
+        end=offset+len(word['text'])
+        if any(offset<b and end>a for a,b in spans):removed.add(word['index'])
+        offset=end+1
+    return removed
+
+
 def _finalize_selection(transcript,selected):
     words=words_of(transcript)
     from .cut_restart_reconcile import reconcile_selected_words
     selected,groups=reconcile_selected_words(transcript,selected)
+    direction=direction_word_indices(words)
+    selected.difference_update(direction)
     owned={i for group in groups for a,b in group['takes'] for i in range(a,b+1)}
     discards=[]
     for word in words:
         i=word['index']
-        if i in selected or i in owned:continue
+        if i in selected or (i in owned and i not in direction):continue
         if discards and discards[-1]['range'][1]+1==i:discards[-1]['range'][1]=i
         else:discards.append({'range':[i,i],'reason':'Regia o tentativo escluso dalla revisione del parlato.','confidence':.95})
     return {'groups':groups,'discards':discards,'selected_word_indices':sorted(selected),'warnings':[],'semantic_review_version':REVIEW_VERSION}

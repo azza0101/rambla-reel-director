@@ -141,3 +141,67 @@ def test_native_cut_checks_vfr_source_start_against_exact_left_offset(reported,l
     else:
         with pytest.raises(RuntimeError,match='IN sorgente'):
             verify_native_cut_base(timeline,cut,100)
+
+
+def test_active_preflight_rejects_edited_timeline_without_backup_or_deletion():
+    from types import SimpleNamespace as Obj
+    from backend.app.resolve_native_cut import prepare_active_cut
+    calls=[]
+    timeline=Obj(GetTrackCount=lambda kind:1 if kind=='video' else 0,
+        GetItemListInTrack=lambda *a:[object(),object()],DuplicateTimeline=lambda *a:calls.append('backup'))
+    with pytest.raises(RuntimeError,match='integrale'):
+        prepare_active_cut(Obj(),Obj(),timeline,{'fps':'30','source_path':'source.mov'})
+    assert not calls
+
+
+def test_active_engine_reuses_same_timeline_and_backs_up_before_deleting(monkeypatch):
+    from types import SimpleNamespace as Obj
+    import backend.app.resolve_native_cut as native
+    calls=[]
+    timeline=Obj(GetStartFrame=lambda:100,GetName=lambda:'SOURCE',GetUniqueId=lambda:'same-id',
+        GetMarkers=lambda:{},DeleteClips=lambda clips,ripple:calls.append(('delete',ripple)) or True)
+    pool=Obj(GetCurrentFolder=lambda:None,ImportMedia=lambda paths:[object()],SetCurrentFolder=lambda f:True,
+        CreateEmptyTimeline=lambda *a:pytest.fail('Must keep the actual timeline'))
+    project=Obj(GetMediaPool=lambda:pool,GetCurrentTimeline=lambda:timeline,SetCurrentTimeline=lambda t:True)
+    monkeypatch.setattr(native,'verify_source_identity',lambda cut:'source.mov')
+    def backup(*args):
+        calls.append('backup');return {'name':'BCK 001','timeline':object(),'clips':[object()], 'properties':{},'markers':{}}
+    monkeypatch.setattr(native,'prepare_active_cut',backup)
+    monkeypatch.setattr(native,'park_original',lambda *a:{})
+    monkeypatch.setattr(native,'append_exact_segment',lambda *a,**k:([],0))
+    monkeypatch.setattr(native,'verify_native_cut_base',lambda *a:{'video_count':1,'audio_count':1})
+    cut={'fps':'30','source_duration_frames':30,'duration_frames':10,
+         'segments':[{'source_in_frame':10,'source_out_frame':20,'edited_in_frame':0,'edited_out_frame':10}]}
+    result=native.create_native_cut_base(None,project,{'native_cut':cut},target=timeline)
+    assert result['timeline_id']=='same-id' and result['backup_name']=='BCK 001'
+    assert calls==['backup',('delete',False)]
+
+
+def test_active_failed_apply_never_deletes_original_timeline(monkeypatch):
+    from types import SimpleNamespace as Obj
+    import backend.app.resolve_native_cut as native
+    target=Obj(GetName=lambda:'Original',DeleteClips=lambda *a:False)
+    backup=object();activated=[]
+    pool=Obj(GetCurrentFolder=lambda:None,SetCurrentFolder=lambda *a:True,ImportMedia=lambda *a:[object()],
+        DeleteTimelines=lambda *a:pytest.fail('Must never delete active timeline'))
+    project=Obj(GetMediaPool=lambda:pool,GetCurrentTimeline=lambda:target,SetCurrentTimeline=lambda t:activated.append(t))
+    monkeypatch.setattr(native,'verify_source_identity',lambda cut:'source.mov')
+    monkeypatch.setattr(native,'prepare_active_cut',lambda *a:{'name':'Backup 001','timeline':backup,'clips':[object()]})
+    cut={'fps':'30','source_duration_frames':30,'duration_frames':10,
+         'segments':[{'source_in_frame':10,'source_out_frame':20,'edited_in_frame':0,'edited_out_frame':10}]}
+    with pytest.raises(RuntimeError,match='Backup 001'):
+        native.create_native_cut_base(None,project,{'native_cut':cut},target=target)
+    assert activated==[backup]
+
+
+@pytest.mark.parametrize('left,right,out,valid',[(0,0,11690,True),(3,0,11690,False),(0,3,11690,False),(0,0,11747,False)])
+def test_active_source_accepts_full_vfr_duration_but_not_trimmed_or_unavailable_frames(left,right,out,valid):
+    from types import SimpleNamespace as Obj
+    from backend.app.resolve_native_cut import validate_active_source
+    media=Obj(GetClipProperty=lambda key:'source.mov')
+    clip=Obj(GetMediaPoolItem=lambda:media,GetStart=lambda:108000,GetEnd=lambda:119744,
+             GetLeftOffset=lambda:left,GetRightOffset=lambda:right)
+    cut={'source_path':'source.mov','source_duration_frames':11747,'segments':[{'source_out_frame':out}]}
+    if valid:validate_active_source([clip,clip],108000,cut)
+    else:
+        with pytest.raises(RuntimeError):validate_active_source([clip,clip],108000,cut)

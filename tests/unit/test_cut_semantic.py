@@ -92,3 +92,17 @@ def test_mixed_asr_block_is_trimmed_using_source_words(monkeypatch):
     monkeypatch.setattr(cloud,'query_editorial_json',lambda *a,**k:{'keep_blocks':[],'discard_blocks':[],'trim_blocks':[{'block':0,'keep_text':['una volta corretta']}]})
     result=propose_semantic_groups(raw)
     assert result['selected_word_indices']==[4,5,6]
+
+
+def test_explicit_direction_removed_even_when_mixed_with_narration():
+    raw=transcript([(0,3,'La prima parte era meglio la prima, la seconda parte era meglio questa. Io viaggio spesso.'),(4,6,'Mettimi il peso su solo e su riconoscere. Noi viaggiamo con cura.')])
+    result=_finalize_selection(raw,set(range(len(words_of(raw)))))
+    plan=build_cut_plan(raw,duration=7,fps=30,signature='s',**{k:result[k] for k in ('groups','discards')})
+    assert clean_transcript(raw,plan)['text']=='Io viaggio spesso. Noi viaggiamo con cura.'
+
+
+def test_direction_filter_preserves_story_about_parts_and_weight():
+    text='La prima parte del viaggio era meglio della seconda. Mettimi il peso nello zaino.'
+    raw=transcript([(0,4,text)])
+    result=_finalize_selection(raw,set(range(len(words_of(raw)))))
+    assert len(result['selected_word_indices'])==len(words_of(raw))

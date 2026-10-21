@@ -176,6 +176,10 @@ def build_cut_plan(transcript, *, duration, fps, signature, groups, discards=(),
     if tight_pauses and silence_intervals:
         from .cut_silence import trim_silence_ranges
         ranges=trim_silence_ranges(ranges,silence_intervals,float(rate),pause_mode,kept,end_margin_ms=end_margin_ms)
+    selection=transcript.get('analysis_range_frames')
+    if selection:
+        if Fraction(selection['fps'])!=rate or not 0<=selection['in_frame']<selection['out_frame']<=total:raise ValueError('Intervallo IN OUT CUT non valido')
+        ranges=[[max(a,selection['in_frame']),min(b,selection['out_frame']),i] for a,b,i in ranges]
     segments=[]; cursor=0
     for a,b,_ in ranges:
         if b<=a: continue
@@ -185,6 +189,7 @@ def build_cut_plan(transcript, *, duration, fps, signature, groups, discards=(),
           'source_duration_frames':total,'duration_frames':cursor,'duration_seconds':cursor/float(rate),
           'segments':segments,'groups':normalized,'discards':normalized_discards,'alternatives':alternatives,
           'restored_word_indices':sorted(restored),'excluded_word_indices':sorted(excluded),'automatic_removed_word_indices':automatic_removed,'protected_passages':protected,'removed_word_indices':sorted(removed),'pause_threshold':normal_pause_threshold,'breathing':normal_breathing,'tight_pauses':tight_pauses,'pause_mode':pause_mode,'pause_algorithm_version':3,'end_margin_ms':end_margin_ms,'silence_intervals':list(silence_intervals),'status':'draft'}
+    if selection:plan['analysis_range_frames']=dict(selection)
     for alt in alternatives:
         word=words[alt.pop('anchor_word_index')]
         anchor=word['start']*rate

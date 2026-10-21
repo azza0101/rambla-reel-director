@@ -180,7 +180,70 @@ def set_alternative_color(item):
     return bool(item.SetClipColor('Red') or item.SetClipColor('Pink'))
 
 
-def create_native_cut_base(resolve, project, payload, *, progress=None):
+def validate_active_source(clips,base,cut):
+    # Phone VFR files can have a slightly different container duration from
+    # Resolve's decoded frame count. File identity + zero trim offsets prove
+    # full-source provenance; every retained OUT must still fit the real clip.
+    ends=[]
+    for clip in clips:
+        media=clip.GetMediaPoolItem()
+        if (not media or Path(media.GetClipProperty('File Path')).resolve()!=Path(cut['source_path']).resolve()
+            or clip.GetStart()!=base or clip.GetEnd()<=base
+            or clip.GetLeftOffset()>1 or clip.GetRightOffset()>1):
+            raise RuntimeError('Il video integrale nella timeline è cambiato. Usa Nuova timeline o ricollega la sorgente.')
+        ends.append(clip.GetEnd()-base)
+    if max(ends)-min(ends)>1:
+        raise RuntimeError('Audio e video della sorgente non sono allineati')
+    if max(row['source_out_frame'] for row in cut['segments'])>min(ends):
+        raise RuntimeError('Un taglio supera i frame disponibili della sorgente in Resolve')
+
+
+def park_original(pool,timeline,source,cut,backup,base,convention):
+    """Keep the full original reference after a two-second gap, disabled A/V."""
+    start=cut['duration_frames']+round(float(Fraction(cut['fps']))*2)
+    duration=backup['source_duration_frames']
+    row=dict(source_in_frame=0,source_out_frame=duration,edited_in_frame=start,edited_out_frame=start+duration)
+    clips,_=append_exact_segment(pool,timeline,source,row,base,convention=convention)
+    if backup['properties'] and clips[0].SetProperty(backup['properties']) is False:
+        raise RuntimeError('Impossibile conservare le proprietà del video originale')
+    if not all(item.SetClipEnabled(False) for item in clips):
+        raise RuntimeError('Impossibile disattivare video e audio originali conservati')
+    if not timeline.SetClipsLinked(clips,True):raise RuntimeError('Impossibile collegare audio e video originali')
+    occupied=set(timeline.GetMarkers() or {})
+    for position,name,color in [(0,'CUT','Green'),(start,'ORIGINALE · disattivato','Blue')]:
+        while position in occupied:position+=1
+        if not timeline.AddMarker(position,color,name,'RMBL Auto-Cut',1):raise RuntimeError('Impossibile aggiungere marker '+name)
+        occupied.add(position)
+    if not timeline.SetMarkInOut(0,cut['duration_frames']-1):raise RuntimeError('Impossibile impostare IN OUT sul solo CUT')
+    return {'original_start_frame':base+start,'original_end_frame':base+start+duration,
+            'export_in_frame':base,'export_out_frame':base+cut['duration_frames']}
+
+
+def prepare_active_cut(project,pool,timeline,cut):
+    """Reject unrelated edits before creating the required backup or removing clips."""
+    items={kind:[c for track in range(1,int(timeline.GetTrackCount(kind))+1)
+        for c in (timeline.GetItemListInTrack(kind,track) or [])] for kind in ('video','audio','subtitle')}
+    if len(items['video'])!=1 or len(items['audio'])!=1 or items['subtitle']:
+        raise RuntimeError('La timeline attuale deve contenere soltanto il video integrale e il suo audio. Usa Nuova timeline.')
+    base=int(timeline.GetStartFrame())
+    validate_active_source(items['video']+items['audio'],base,cut)
+    settings=timeline.GetSetting()
+    if abs(float(settings['timelineFrameRate'])-float(Fraction(cut['fps'])))>.002:
+        raise RuntimeError('FPS della timeline diversi dalla sorgente. Usa Nuova timeline.')
+    from .resolve_textplus_timeline import next_backup_name,create_active_backup
+    from .resolve_native_subtitles import ensure_media_pool_folder
+    name=next_backup_name(project,timeline.GetName())
+    _,backup=create_active_backup(timeline,name)
+    backup_item=backup.GetMediaPoolItem()
+    if not backup_item or not pool.MoveClips([backup_item],ensure_media_pool_folder(pool,'BCK')):
+        project.SetCurrentTimeline(timeline)
+        raise RuntimeError('Backup creato ma non archiviato in BCK: nessun taglio applicato')
+    if not project.SetCurrentTimeline(timeline):raise RuntimeError('Impossibile tornare alla timeline originale; backup '+name)
+    return {'name':name,'timeline':backup,'clips':items['video']+items['audio'],'markers':dict(timeline.GetMarkers() or {}),
+            'properties':items['video'][0].GetProperty(),'source_duration_frames':items['video'][0].GetEnd()-items['video'][0].GetStart()}
+
+
+def create_native_cut_base(resolve, project, payload, *, progress=None, target=None):
     cut = payload['native_cut']
     validate_native_cut(cut)
     source_path = verify_source_identity(cut)
@@ -196,29 +259,38 @@ def create_native_cut_base(resolve, project, payload, *, progress=None):
                 raise RuntimeError(f"Timeline CUT parziale ancora presente: {previous['timeline_name']}. Rimuovila prima di riprovare.")
         checkpoint.unlink()
     if cut.get('resolve_source'):
+        if target is not None:raise RuntimeError('CUT multitraccia: usa Nuova timeline')
         from .resolve_native_multitrack import create_multitrack_cut
         return create_multitrack_cut(resolve,project,payload,progress=progress)
     original = project.GetCurrentTimeline()
     folder = pool.GetCurrentFolder()
     timeline = None
+    backup = None
     try:
         source_items = pool.ImportMedia([str(source_path)]) or []
         if len(source_items) != 1:
             raise RuntimeError('Resolve non riesce a importare il video lungo originale')
         source = source_items[0]
         name = f"RMBL CUT {datetime.now():%Y%m%d %H%M%S} {uuid.uuid4().hex[:6]}"
-        timeline = pool.CreateEmptyTimeline(name)
+        if target is None:
+            timeline = pool.CreateEmptyTimeline(name)
+        else:
+            backup=prepare_active_cut(project,pool,target,cut)
+            timeline=target;name=target.GetName()
+            if not target.DeleteClips(backup['clips'],False):raise RuntimeError('Impossibile rimuovere le clip originali')
         if timeline and checkpoint:
             from .atomic_io import write_json
             write_json(checkpoint, {'project': project.GetName(), 'timeline_id': timeline.GetUniqueId(),
                                     'timeline_name': name, 'revision': cut['revision']})
         if not timeline or not project.SetCurrentTimeline(timeline):
             raise RuntimeError('Impossibile attivare la nuova timeline CUT')
-        configure_native_timeline(timeline, cut)
+        if target is None:configure_native_timeline(timeline, cut)
         base = int(timeline.GetStartFrame())
         convention = None
         for index, segment in enumerate(cut['segments']):
             clips, convention = append_exact_segment(pool, timeline, source, segment, base, convention=convention)
+            if backup and backup['properties']:
+                if clips[0].SetProperty(backup['properties']) is False:raise RuntimeError('Impossibile conservare le proprietà video')
             linker = getattr(timeline, 'SetClipsLinked', None)
             if callable(linker) and not linker(clips, True):
                 raise RuntimeError('Resolve non riesce a collegare video e audio del CUT')
@@ -251,10 +323,18 @@ def create_native_cut_base(resolve, project, payload, *, progress=None):
                 or not set_alternative_color(items[0])):
                 raise RuntimeError('Verifica della take alternativa disattivata non riuscita')
             timeline.SetTrackName('video', track, 'RMBL TAKE ALTERNATIVA')
-        return dict(timeline=timeline, fps=cut['fps'], base_frame=base,
-                    timeline_id=timeline.GetUniqueId(), timeline_name=name, **counts)
-    except Exception:
-        if timeline:
+        parked={}
+        if backup:
+            from .resolve_textplus_timeline import verify_timeline_markers
+            verify_timeline_markers(timeline,backup['markers'])
+            parked=park_original(pool,timeline,source,cut,backup,base,convention)
+        return dict(timeline=timeline, backup_name=backup['name'] if backup else None, fps=cut['fps'], base_frame=base,
+                    timeline_id=timeline.GetUniqueId(), timeline_name=name, **counts, **parked)
+    except Exception as exc:
+        if target is not None and backup:
+            project.SetCurrentTimeline(backup['timeline'])
+            raise RuntimeError('Applicazione alla timeline interrotta. Originale completo nel backup '+backup['name']+'. '+str(exc)) from exc
+        if timeline and target is None:
             delete_owned_native_cut(project, pool, timeline, original, payload)
         raise
     finally:

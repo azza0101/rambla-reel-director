@@ -1,3 +1,15 @@
+# Latest update — v0128 / Auto-Cut 0.1.6
+
+Current branch: fix/magico-images-specific-generics-v0094. Prior verified remote parent: eb6c7d93026c29cb11f0fe276be448042c52b51d.
+
+Selected IN/OUT source import, bounded ASR with absolute source timings, range-safe manual CUT rebuilds, styled Apply destination dialog, backup plus disabled full original parked after CUT on active timeline. No automatic Resolve Apply. See docs/AUTOCUT_INTEGRATION.md for behavior, checks and limitations.
+
+Also includes post-v0127 corrections: explicit recitation direction filtering, take dialog opens from read-only review, Apply bypasses blocking native SDK read, VFR full-clip validation and errors adjacent to Apply.
+
+Original projects, source files and previous repair backups are retained. No secrets/media/transcripts in source or update archive. Rollback: previous 0.1.5 package plus installer update-backups; active timeline backup in BCK.
+
+--- Previous handoff ---
+
 # Auto-Cut v0127 / 0.1.5 - 2026-10-21
 
 Production CUT stays Groq; Gemini comparison timed out and is not a production dependency. Complete ASR-block decisions are validated locally, then whole-retake reconciliation selects the latest and prevents nested restarts reappearing. Preserve unique premises and named-place differences; reject incomplete decisions. The full editorial report stays local in cut/editorial-review.json, excluded from GitHub diagnostics.

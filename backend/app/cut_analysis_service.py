@@ -19,7 +19,15 @@ def analyze_cut_project(project, folder, progress, *, transcribe, propose, choos
     if cached.is_file() and signature.is_file() and read(signature).get('signature') == p.analysis_signature:
         raw = read(cached)
     else:
-        raw = transcribe(Path(p.source_video.path), folder)
+        context_path=folder.parent/'resolve-context.json'
+        selection=read(context_path).get('source_range') if context_path.is_file() else None
+        if selection:
+            from .autocut_range import transcribe_range,validate_range
+            selection=validate_range(selection,p.source_video.duration,p.source_video.fps)
+            progress(0,'Trascrivo soltanto IN OUT · tempi riferiti al video originale…')
+            raw=transcribe_range(Path(p.source_video.path),folder,selection,transcribe)
+        else:
+            raw = transcribe(Path(p.source_video.path), folder)
         write_json(cached, raw)
         write_json(signature, {'signature': p.analysis_signature})
     progress(1, 'Trascrizione pronta · riconosco ripartenze e take…')

@@ -7,6 +7,7 @@ import json
 import os
 import secrets
 import sys
+from typing import Literal
 from subprocess import SubprocessError
 
 from fastapi import FastAPI, HTTPException, Request
@@ -18,9 +19,17 @@ from .curation_project import ProjectStore
 from .cut_pass_routes import install_cut_routes
 
 
+class SourceRange(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    in_frame: int = Field(ge=0,strict=True)
+    out_frame: int = Field(gt=0,strict=True)
+    fps: str = Field(min_length=1,max_length=32)
+
+
 class SourceRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     path: str
+    source_range: SourceRange | None = None
     project_name: str = Field(min_length=1,max_length=200)
     timeline_id: str = Field(min_length=1,max_length=200)
     timeline_name: str = Field(min_length=1,max_length=200)
@@ -29,6 +38,7 @@ class SourceRequest(BaseModel):
 class ApplyRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     revision: str = Field(min_length=1,max_length=100)
+    destination: Literal['new','active'] = 'new'
 
 
 def create_app(data_root: Path, *, token: str, probe_runner=None, enable_automatic_diagnostics=False) -> FastAPI:
@@ -83,6 +93,8 @@ def create_app(data_root: Path, *, token: str, probe_runner=None, enable_automat
         if not path.is_file():raise HTTPException(422,'Video originale non disponibile su questo computer')
         stat=path.stat()
         key=hashlib.sha256(f'{request.project_name}|{request.timeline_id}|{path}|{stat.st_size}|{stat.st_mtime_ns}'.encode()).hexdigest()
+        if request.source_range:
+            key=hashlib.sha256((key+'|'+request.source_range.model_dump_json()).encode()).hexdigest()
         index_path=data_root/'sources.json'
         index=json.loads(index_path.read_text('utf-8')) if index_path.is_file() else {}
         if key in index:
@@ -92,8 +104,11 @@ def create_app(data_root: Path, *, token: str, probe_runner=None, enable_automat
             try:project=await asyncio.to_thread(store.register_local_video,project.project_id,path)
             except (ValueError,OSError,KeyError,SubprocessError) as exc:raise HTTPException(422,'Sorgente non leggibile: '+str(exc)) from exc
             if not project.source_video.has_audio:raise HTTPException(422,'La sorgente non contiene audio')
+            from .autocut_range import validate_range
+            try:validate_range(request.source_range,project.source_video.duration,project.source_video.fps)
+            except (ValueError,ZeroDivisionError) as exc:raise HTTPException(422,str(exc)) from exc
             index[key]=project.project_id;write_json(index_path,index)
-            write_json(root/project.project_id/'resolve-context.json',request.model_dump())
+            write_json(root/project.project_id/'resolve-context.json',request.model_dump(exclude_none=True))
         write_json(data_root/'last-session.json',{'project_id':project.project_id})
         return asdict(project)
 
@@ -142,9 +157,10 @@ def create_app(data_root: Path, *, token: str, probe_runner=None, enable_automat
         payload=await asyncio.to_thread(native_payload,pid,request.revision)
         if any(j['status']=='running' for j in app.state.autocut_apply_jobs.values()):raise HTTPException(409,'Applicazione già in corso')
         if json.loads((root/pid/'cut'/'plan.json').read_text('utf-8'))['revision']!=request.revision:raise HTTPException(409,'CUT modificato durante la preparazione')
+        payload['destination']=request.destination
         previous=app.state.autocut_apply_jobs.get(pid,{})
-        if previous.get('revision')==request.revision and previous.get('status')=='succeeded':return previous
-        job={'status':'running','revision':request.revision,'message':'Creo timeline CUT nativa…','progress':0}
+        if previous.get('revision')==request.revision and previous.get('destination','new')==request.destination and previous.get('status')=='succeeded':return previous
+        job={'status':'running','destination':request.destination,'revision':request.revision,'message':'Creo timeline CUT nativa…','progress':0}
         app.state.autocut_apply_jobs[pid]=job
         async def run():
             try:
@@ -160,7 +176,7 @@ def create_app(data_root: Path, *, token: str, probe_runner=None, enable_automat
                 code=await process.wait()
                 if reported_error:raise RuntimeError(reported_error)
                 if code or 'result' not in job:raise RuntimeError('Applicazione interrotta: apri Diagnostica CUT')
-                job.update(status='succeeded',progress=100,message='CUT applicato · timeline originale conservata')
+                job.update(status='succeeded',progress=100,message=('CUT applicato · backup in BCK' if request.destination=='active' else 'CUT applicato · timeline originale conservata'))
             except Exception as exc:
                 if reporter:reporter.capture_exception(exc,component='cut',phase='apply')
                 job.update(status='failed',message=str(exc))
