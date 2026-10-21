@@ -1,3 +1,11 @@
+# v0129 / Auto-Cut 0.1.7
+
+Fix IN/OUT import from restored sessions. `RILEGGI TIMELINE E IN–OUT` calls an authenticated backend endpoint that reads Resolve in a disposable process, with a 20-second timeout. `AVVIA AUTO-CUT` always refreshes live source/range before analysis, and refuses to analyze if that read fails. No native SDK call in the Electron UI import path. Zero IN is valid; inclusive OUT maps to a half-open source range. No live timeline mutations during verification.
+
+Previous full-source project stays intact; selected-range import creates/reuses a separate project. Real current marks verified: [0,10477) source frames at 30 fps. No AI invoked during debugging. User must start analysis of the selected-range project.
+
+--- Previous handoff ---
+
 # Latest update — v0128 / Auto-Cut 0.1.6
 
 Current branch: fix/magico-images-specific-generics-v0094. Prior verified remote parent: eb6c7d93026c29cb11f0fe276be448042c52b51d.

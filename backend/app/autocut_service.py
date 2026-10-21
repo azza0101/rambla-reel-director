@@ -112,6 +112,22 @@ def create_app(data_root: Path, *, token: str, probe_runner=None, enable_automat
         write_json(data_root/'last-session.json',{'project_id':project.project_id})
         return asdict(project)
 
+    @app.post('/autocut/source/current')
+    async def current_source():
+        if (await busy())['busy']:raise HTTPException(409,'Attendi la fine del CUT o di APPLICA')
+        process=await asyncio.create_subprocess_exec(sys.executable,'-m','backend.app.autocut_source',
+            stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.DEVNULL)
+        try:output,_=await asyncio.wait_for(process.communicate(),timeout=20)
+        except asyncio.TimeoutError:
+            process.kill();await process.wait()
+            raise HTTPException(504,'Resolve non risponde alla lettura IN OUT. Nessuna analisi avviata.')
+        try:reply=json.loads(output)
+        except (ValueError,TypeError):raise HTTPException(502,'Lettura timeline non riuscita: nessuna analisi avviata')
+        if process.returncode or reply.get('error'):raise HTTPException(409,reply.get('error') or 'Resolve non risponde')
+        request=SourceRequest.model_validate(reply['source'])
+        project=await source(request)
+        return {'project':project,'context':request.model_dump(exclude_none=True)}
+
     @app.get('/autocut/session')
     async def session():
         saved=data_root/'last-session.json'

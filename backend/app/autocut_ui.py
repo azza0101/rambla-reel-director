@@ -17,25 +17,30 @@ function showIntegrationSource(context){
  const r=context.source_range;
  const fps=r?Number(r.fps.split('/')[0])/Number(r.fps.split('/')[1]||1):1;
  const time=frame=>{const seconds=frame/fps;return Math.floor(seconds/60)+':'+(seconds%60).toFixed(2).padStart(5,'0')};
- $('integrationRange').textContent=r?'IN '+time(r.in_frame)+' → OUT '+time(r.out_frame)+' · '+((r.out_frame-r.in_frame)/fps).toFixed(2)+' s · solo questa selezione':'VIDEO INTERO · nessun IN OUT impostato';
+ $('integrationRange').textContent=r?'IN '+time(r.in_frame)+' → OUT '+time(r.out_frame)+' · '+((r.out_frame-r.in_frame)/fps).toFixed(2)+' s · solo questa selezione':'SELEZIONE IMPORTATA · video intero. Rileggi per aggiornare IN OUT.';
 }
 async function hydrate(){if(state.pid){state.project=await api('/projects/'+state.pid);draw()}}
 '''
 AFTER = r'''
 const integrationDrawBase=drawCut;drawCut=function(){integrationDrawBase();$('cutConfirm').textContent='APPLICA CUT IN RESOLVE';$('cutConfirm').disabled=integrationApplying||cutBusy||!cutData?.plan||cutData?.job?.status==='running';$('cutEditStatus').textContent=cutEditMode?'Modifica attiva · le scelte si salvano automaticamente':'Revisione in lettura · attiva Modifica per cambiare i tagli'};
 $('cutPassFold').open=true;
-$('integrationImport').onclick=async()=>{
+async function importCurrentTimeline(){
  try{
-  if(!window.rmblAutoCut)throw Error('Apri questo pannello da Resolve → Workspace → Workflow Integrations → RMBL Auto-Cut');
   if(cutBusy||cutData?.job?.status==='running'||integrationApplying)throw Error('Attendi la fine dell’operazione in corso');
   $('integrationImport').disabled=true;$('integrationStatus').textContent='Leggo la timeline attiva…';
-  const context=await window.rmblAutoCut.snapshot();
-  const project=await integrationRequest('/source',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(context)});
+  const loaded=await integrationRequest('/source/current',{method:'POST'});
+  const context=loaded.context,project=loaded.project;
   integrationContext=context;state.pid=project.project_id;state.project=project;
   showIntegrationSource(context);
   $('integrationStatus').textContent='Sorgente collegata · premi AVVIA AUTO-CUT. La trascrizione usa il motore configurato.';
   draw();
- }catch(error){reportError(error)}finally{$('integrationImport').disabled=false}
+ }finally{$('integrationImport').disabled=false}
+}
+$('integrationImport').onclick=async()=>{try{await importCurrentTimeline()}catch(error){reportError(error)}};
+$('cutAnalyze').onclick=async()=>{
+ if(cutBusy||integrationApplying||cutData?.job?.status==='running')return;
+ try{$('cutAnalyze').disabled=true;await importCurrentTimeline();await cutAction('analyze')}
+ catch(error){reportError(error)}finally{drawCut()}
 };
 $('cutConfirm').onclick=()=>{if(!cutBusy&&!integrationApplying&&cutData?.plan)$('integrationApplyDialog').showModal()};
 $('integrationApplyCancel').onclick=()=>{$('integrationApplyDialog').close()};
@@ -91,6 +96,6 @@ def render_autocut():
         '<meta http-equiv="Content-Security-Policy" content="default-src &#39;self&#39;; script-src &#39;self&#39; &#39;unsafe-inline&#39;; style-src &#39;self&#39; &#39;unsafe-inline&#39;; img-src &#39;self&#39; data:; media-src &#39;self&#39; blob:; connect-src &#39;self&#39;; object-src &#39;none&#39;; base-uri &#39;none&#39;">'
         '<title>RMBL Auto-Cut</title>'+THEME+CSS+REFERENCE+
         '<style>*{box-sizing:border-box}body{margin:0}main{max-width:1100px;padding:22px}header{display:flex;align-items:center;justify-content:space-between;gap:16px}h1{font-size:24px;margin:0}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}button{color:var(--ink);border:1px solid var(--line);cursor:pointer}.muted,small{color:var(--muted)}#integrationStatus{line-height:1.6;overflow-wrap:anywhere}#cutConfirm{min-width:200px}#cutRevisionReport{display:none}#cutTakeDialog{max-width:calc(100vw - 32px)}[hidden]{display:none!important}</style>'
-        '</head><body><main><header><div><small>RAMBLA · RESOLVE WORKFLOW</small><h1>Auto-Cut</h1></div><div class="row"><small>Auto-Cut 0.1.6 · motore '+RELEASE_VERSION+'</small><button id="integrationUpdate">AGGIORNA</button></div></header>'
-        '<section class="panel"><div class="row"><button id="integrationImport" class="primary">USA VIDEO DELLA TIMELINE</button><b id="integrationSource">Nessuna sorgente collegata</b></div><p id="integrationRange" class="muted" role="status"></p><p id="integrationStatus" role="status">Apri la timeline con il video completo. Nessun taglio viene applicato automaticamente.</p><small>Prima versione: una sola clip video integrale. Trascrizione e revisione usano le API già configurate.</small></section>'
+        '</head><body><main><header><div><small>RAMBLA · RESOLVE WORKFLOW</small><h1>Auto-Cut</h1></div><div class="row"><small>Auto-Cut 0.1.7 · motore '+RELEASE_VERSION+'</small><button id="integrationUpdate">AGGIORNA</button></div></header>'
+        '<section class="panel"><div class="row"><button id="integrationImport" class="primary">RILEGGI TIMELINE E IN–OUT</button><b id="integrationSource">Nessuna sorgente collegata</b></div><p id="integrationRange" class="muted" role="status"></p><p id="integrationStatus" role="status">Apri la timeline con il video completo. Nessun taglio viene applicato automaticamente.</p><small>Prima versione: una sola clip video integrale. Trascrizione e revisione usano le API già configurate.</small></section>'
         +panel+placeholders+APPLY_DIALOG+'</main><script>'+BOOT+JS+AFTER+'</script>'+SUPPORT_HTML+'</body></html>')
