@@ -46,3 +46,8 @@ First plugin registration or a future native SDK/host compatibility change can s
 CUT requests recover provider output-validation failures by requesting a new complete json_object document with the full schema in the instructions, then validating against that schema locally before accepting/cache-writing it. Request/schema errors are not treated as recoverable output errors. Truncated output retains the bounded quota-aware recovery. No failed_generation fragment is used as a plan.
 
 On 2026-10-21 the user explicitly authorized automatic GitHub debugging for Auto-Cut. Its dedicated diagnostics settings enable automatic reporting only on the first authorized start; a later opt-out stays off. ASSISTENZA exposes the current sanitized report, delivery status, copy and automatic toggle. The existing private-repository requirement, allowlist, deduplication, retries and daily budget are reused. Categories distinguish PROVIDER_JSON and PROVIDER_OUTPUT_TRUNCATED. Transcripts, media, API keys and local paths are excluded. No continuous Codex monitoring or automatic patching is implied. Original failure was submitted as private GitHub issue #16.
+
+
+## v0.1.5 editorial review
+
+CUT uses Groq for contextual ASR-block selection and local measured-word reconciliation for nearby retakes. Proposals are versioned separately from measured ASR cache. `cut/editorial-review.json` stores original and kept text, decisions, and warnings locally, excluded from GitHub support reports. Partial generated output is never used as a CUT result.

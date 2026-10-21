@@ -168,3 +168,29 @@ def test_merge_invalid_take_index_keeps_all_alternatives():
 def test_merge_sorting_preserves_selected_take_identity():
     group=merge_suggestions([{'groups':[{'takes':[[5,6],[1,2]],'selected_take':0}]}])['groups'][0]
     assert group['takes'][group['selected_take']]==[5,6]
+
+
+def test_editorial_recovery_can_preserve_reasoning(monkeypatch):
+    from types import SimpleNamespace
+    import backend.app.cut_cloud as cloud
+    import backend.app.groq_api as groq
+    levels=[]
+    class Client:
+        def __init__(self,*args,**kwargs):levels.append(kwargs['thinking_level'])
+        def generate_json(self,*args):
+            if len(levels)==1:raise groq.GroqAPIError('Groq output truncated: completion token limit reached')
+            return SimpleNamespace(data={'ok':True},usage={'total_tokens':1})
+    monkeypatch.setattr(groq,'GroqDirectorClient',Client)
+    monkeypatch.setattr(cloud,'_QUOTA',cloud.TokenWindow(limit=100000))
+    assert cloud.query_json('text',{},'review',preserve_reasoning=True)=={'ok':True}
+    assert levels==['medium','medium']
+
+
+def test_provider_hidden_token_exhaustion_is_reported_without_partial_text():
+    from backend.app.groq_api import GroqDirectorClient
+    class Response:
+        def json(self):return {'error':{'message':'Failed to generate JSON','failed_generation':'max completion tokens reached before generating a valid document'}}
+    assert 'max completion tokens reached' in GroqDirectorClient._error_detail(Response())
+    class PrivateResponse:
+        def json(self):return {'error':{'message':'Failed to generate JSON','failed_generation':'private transcript words here'}}
+    assert 'private transcript' not in GroqDirectorClient._error_detail(PrivateResponse())

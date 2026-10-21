@@ -1,3 +1,11 @@
+# Auto-Cut v0127 / 0.1.5 - 2026-10-21
+
+Production CUT stays Groq; Gemini comparison timed out and is not a production dependency. Complete ASR-block decisions are validated locally, then whole-retake reconciliation selects the latest and prevents nested restarts reappearing. Preserve unique premises and named-place differences; reject incomplete decisions. The full editorial report stays local in cut/editorial-review.json, excluded from GitHub diagnostics.
+
+Real project 80e60d811461 restored with full backup and prior manual exclusion preserved. Delivery revision 576bf454b3bfe362b36ee7f5: 414 kept words, 147.63 seconds, 11 segments, 8 selectable alternate groups. Exact retained-word match to a human-read reference, never provided to runtime. Low-resolution preview ready. No Resolve mutations. 124 targeted tests and browser smoke passed before final metadata changes.
+
+Backups: autocut-data/repair-backups. AGGIORNA restarts only the native integration and loads saved result. No automatic APPLICA.
+
 # Auto-Cut v0126 / 0.1.4 - 2026-10-21
 
 Fixed invalid selected_take indices during merge: keep alternatives for review. Sorting preserves selected take identity. Real recovery succeeded: project 80e60d811461, 27 segments, 11 groups, 221.97 seconds, 645 kept words. Full backup saved before recovery; no Resolve mutations. 94 targeted tests passed. Sanitized automatic diagnostics confirmed by private issue #16.

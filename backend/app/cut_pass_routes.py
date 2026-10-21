@@ -34,69 +34,21 @@ class CutReview(BaseModel):
 
 
 def propose_groups(transcript):
-    from .groq_api import GroqDirectorClient
-    words=words_of(transcript)
-    prompt='''Monta il parlato di una registrazione grezza con riprese ripetute e conversazioni
-tra autore e regista. Il risultato è SOLO il testo realmente recitato, con l'ultima
-take completa per ciascuna frase e senza conversazioni sul come recitarlo.
-Devi esaminare TUTTE le parole dalla prima all'ultima: non lasciare regia o errori
-prima, fra o dopo le take. Battute come "vai", "allora vai", "più piano", "molto
-meglio", "non va bene", "puoi fare un'altra versione", "fammelo con...", discussioni
-sulla formulazione e commenti a chi registra vanno in discards quando il contesto
-dimostra che sono fuori scena. Domande alternative abbandonate e frammenti non
-completati vanno in discards. Non accorciare la versione valida arbitrariamente.
-Trova ripartenze e tentativi della STESSA frase: il parlante prova, sbaglia e ripete.
-Non tagliare ripetizioni intenzionali, enfasi o frasi con informazioni nuove realmente recitate.
-Le indicazioni di regia fra le riprese NON interrompono un gruppo: includi TUTTE
-le esecuzioni della stessa frase e scegli l'ultima completa, anche se cambia una
-parola ('ora parto' / 'adesso parto'). Ogni take è un intervallo di indici parola
-inclusivi [prima,ultima]. Includi tutte le parole della take, anche quelle sbagliate,
-senza inglobare frasi uniche. Take e gruppi non possono sovrapporsi. L'ultima take
-deve essere completa. Se l'ultimo tentativo è incompleto, lascia come ultima take
-quello completo precedente e proponi il frammento successivo in discards.
-Proponi anche discards per battute fuori scena, indicazioni di regia, commenti
-sull'esecuzione, tentativi abbandonati senza sostituto e sporcature inequivocabili.
-Non scartare testo utile al racconto, presentazioni o altre frasi complete perché
-sono un argomento diverso: conservare l'ultima versione completa di OGNI frase.
-Un gruppo deve contenere almeno DUE take; una frase detta una sola volta resta.
-Non mettere in discards le vecchie take: le rappresenti solo nei gruppi.
-Ogni scarto ha range [prima,ultima], reason e confidence.
-Gli scarti non possono sovrapporsi alle take o ad altri scarti.
-La confidenza misura se è davvero una correzione: sotto .85
-richiede revisione. Non inventare parole né tempi. Non eliminare parti solo perché
-suonano informali. Restituisci groups con takes, reason in italiano e confidence.
-Trascrizione: indice:parola, [PAUSA] indica una pausa superiore a 1.2 secondi.\n'''+ ' '.join(
-        ('[PAUSA] ' if i and w['start']-words[i-1]['end']>1.2 else '')+f"{w['index']}:{w['text']}"
-        for i,w in enumerate(words))
-    prompt+='\nCHECK FINALE OBBLIGATORIO: simula il testo risultante dopo i tuoi tagli. Deve essere una recitazione pulita coerente. Se rimangono regia, commenti o versioni precedenti della stessa frase, correggi groups/discards prima di rispondere. Conserva le presentazioni valide del parlante.'
-    schema={'type':'object','additionalProperties':False,'required':['groups','discards'],'properties':{
-        'discards':{'type':'array','items':{'type':'object','additionalProperties':False,
-            'required':['range','reason','confidence'],'properties':{
-                'range':{'type':'array','items':{'type':'integer'}},'reason':{'type':'string'},'confidence':{'type':'number'}}}},
-        'groups':{'type':'array','items':{'type':'object','additionalProperties':False,
-            'required':['takes','reason','confidence'],'properties':{
-                'takes':{'type':'array','minItems':2,'items':{'type':'array','minItems':2,'maxItems':2,'items':{'type':'integer'}}},
-                'reason':{'type':'string'},'confidence':{'type':'number'}}}}}}
-    from .cut_cloud import word_windows,query_json,merge_suggestions
-    windows=word_windows(words)
-    header=prompt.split('Trascrizione:')[0]+'Trascrizione con INDICI ORIGINALI: non rinumerare.\n'
-    replies=[]
-    for i,window in enumerate(windows):
-        text=' '.join(f"{w['index']}:{w['text']}" for w in window)
-        replies.append(query_json(header+text,schema,f'Riconosco take · blocco {i+1}/{len(windows)}'))
-    return merge_suggestions(replies)
+    from .cut_semantic import propose_semantic_groups
+    return propose_semantic_groups(transcript)
 
 
 def choose_complete_takes(transcript,groups):
     """A separate editorial check chooses the last *valid* take, not the last fragment."""
     from .groq_api import GroqDirectorClient
     from .cut_boundaries import review_take_boundaries
+    if groups and all(g.get('semantic_reviewed') for g in groups):return groups
     groups=review_take_boundaries(transcript,groups)
     words=words_of(transcript)
     context=' '.join(w['text'] for w in words)
     candidates=[{'group':i,'takes':[' '.join(w['text'] for w in words[a:b+1]) for a,b in g['takes']]} for i,g in enumerate(groups)]
     prompt='''Controlla un montaggio di registrazione grezza. Per OGNI gruppo scegli
-l'ULTIMA TAKE COMPLETA e grammaticalmente recitata, non semplicemente l'ultima:
+l'ULTIMA TAKE COMPLETA realmente recitata, non semplicemente l'ultima. Colloquialismi ed errori ASR non sono motivi per conservare tutte le take:
 un frammento, una ripartenza, una frase mescolata a commenti di regia o due versioni
 incollate NON sono validi. Se l'ultima è sbagliata torna all'ultima corretta precedente.
 Se il contesto mostra che quel gruppo è una domanda/formulazione proposta e poi

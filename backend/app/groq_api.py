@@ -83,6 +83,11 @@ class GroqDirectorClient:
             payload = response.json()
             error = payload.get("error") if isinstance(payload, dict) else None
             if isinstance(error, dict):
+                # Recognize only the provider's literal exhaustion sentinel.
+                # Never parse or expose generated partial JSON/transcript text.
+                failed=str(error.get('failed_generation') or '').strip().casefold()
+                if failed=='max completion tokens reached before generating a valid document':
+                    return 'Groq output truncated: max completion tokens reached before generating a valid document'
                 return " ".join(str(error.get("message") or "").split())[:300]
         except Exception:
             pass

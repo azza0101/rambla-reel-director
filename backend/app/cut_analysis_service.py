@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 from .atomic_io import write_json
 from .cut_pass import build_cut_plan, prepare_suggestions
+from .cut_semantic import REVIEW_VERSION
 
 
 def analyze_cut_project(project, folder, progress, *, transcribe, propose, choose, align):
@@ -23,7 +24,7 @@ def analyze_cut_project(project, folder, progress, *, transcribe, propose, choos
         write_json(signature, {'signature': p.analysis_signature})
     progress(1, 'Trascrizione pronta · riconosco ripartenze e take…')
     proposal_signature = folder / 'suggestions-signature.json'
-    if proposal_signature.is_file() and (folder / 'suggestions.json').is_file() and read(proposal_signature).get('signature') == p.analysis_signature:
+    if proposal_signature.is_file() and (folder / 'suggestions.json').is_file() and read(proposal_signature).get('signature') == p.analysis_signature and read(proposal_signature).get('review_version') == REVIEW_VERSION:
         suggestion = read(folder / 'suggestions.json')
         progress(1, 'Gruppi già riconosciuti · riprendo dalla verifica delle take')
     else:
@@ -31,7 +32,7 @@ def analyze_cut_project(project, folder, progress, *, transcribe, propose, choos
         if not isinstance(suggestion, dict):
             suggestion = {'groups': suggestion, 'discards': []}
         write_json(folder / 'suggestions.json', suggestion)
-        write_json(proposal_signature, {'signature': p.analysis_signature})
+        write_json(proposal_signature, {'signature': p.analysis_signature, 'review_version': REVIEW_VERSION})
     groups, discards, warnings = prepare_suggestions(suggestion)
     progress(2, 'Verifico l’ultima take completa di ciascuna frase…')
     groups = choose(raw, groups)
@@ -39,12 +40,25 @@ def analyze_cut_project(project, folder, progress, *, transcribe, propose, choos
     progress(2, 'Take verificate · calcolo tagli e tempi del montaggio…')
     plan = build_cut_plan(raw, duration=p.source_video.duration, fps=p.source_video.fps,
                          signature=p.analysis_signature, groups=groups, discards=discards)
-    plan['warnings'] = warnings
+    plan['warnings'] = warnings + suggestion.get('warnings', [])
     progress(2, 'Verifico ripartenze parziali rimaste nel testo…')
     from .cut_residual import review_residual_takes
-    plan = review_residual_takes(raw, plan)
+    if suggestion.get('semantic_review_version') != REVIEW_VERSION:
+        plan = review_residual_takes(raw, plan)
+    else:
+        write_json(folder / 'semantic-review.json', {'source_signature': p.analysis_signature, 'review_version': REVIEW_VERSION, 'groups': plan['groups'], 'discards': plan['discards'], 'removed_word_indices': plan['removed_word_indices'], 'warnings': plan['warnings']})
     plan = align(p, folder, plan, progress)
     write_json(folder / 'plan.json', plan)
+    from .cut_pass import clean_transcript, words_of
+    # This detailed editorial report stays in the local project. It is never
+    # part of automatic GitHub diagnostics, which remain sanitized.
+    write_json(folder / 'editorial-review.json', {
+        'source_signature': p.analysis_signature, 'revision': plan['revision'],
+        'original_text': ' '.join(w['text'] for w in words_of(raw)),
+        'kept_text': clean_transcript(raw, plan)['text'],
+        'groups': plan['groups'], 'discards': plan['discards'],
+        'removed_word_indices': plan['removed_word_indices'],
+        'warnings': plan.get('warnings', [])})
     progress(3, 'Proposta salvata · preparo la revisione')
     return {'revision': plan['revision'], 'groups': len(plan['groups'])}
 

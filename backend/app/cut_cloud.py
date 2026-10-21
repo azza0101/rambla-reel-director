@@ -81,17 +81,19 @@ def merge_suggestions(replies):
     return {'groups':groups,'discards':list(discards.values())}
 
 
-def query_json(prompt,schema,label,*,max_output_tokens=2600,thinking_level='medium'):
+def query_json(prompt,schema,label,*,max_output_tokens=2600,thinking_level='medium',json_mode=False,preserve_reasoning=False,input_token_budget=None):
     from .groq_api import GroqDirectorClient,GroqAPIError
     context=_CONTEXT.get();notify=context[1] if context else lambda message:None
     cache_input={'v':1,'prompt':prompt,'schema':schema}
     if max_output_tokens != 2600:cache_input['max_output_tokens']=max_output_tokens
     if thinking_level != 'medium':cache_input['thinking_level']=thinking_level
+    if json_mode:cache_input['json_mode']=True
+    if preserve_reasoning:cache_input['preserve_reasoning']=True
     key=hashlib.sha256(json.dumps(cache_input,sort_keys=True).encode()).hexdigest()
     cache=context[0]/'api-cache'/f'{key}.json' if context else None
     if cache and cache.is_file():notify(label+' · risultato salvato');return json.loads(cache.read_text(encoding='utf-8'))
-    input_budget=math.ceil(len(json.dumps({'prompt':prompt,'schema':schema},ensure_ascii=False))/2)
-    json_mode=False
+    input_budget=math.ceil(len(json.dumps({'prompt':prompt,'schema':schema},ensure_ascii=False))/2) if input_token_budget is None else input_token_budget
+    if type(input_budget) is not int or input_budget<1:raise ValueError('Budget input CUT non valido')
     with _LOCK:
         for attempt in range(3):
             budget=input_budget+max_output_tokens
@@ -105,7 +107,8 @@ def query_json(prompt,schema,label,*,max_output_tokens=2600,thinking_level='medi
                 truncated=any(marker in str(exc).casefold() for marker in ('max completion tokens reached','output was truncated','output truncated','completion token limit reached'))
                 malformed=any(marker in str(exc).casefold() for marker in ('failed to validate json','failed to generate json','generated json does not match','invalid structured json','json outside expected schema'))
                 if malformed and attempt<2:
-                    json_mode=True;thinking_level='low'
+                    json_mode=True
+                    if not preserve_reasoning:thinking_level='low'
                     ceiling=max_output_tokens if input_budget>=_QUOTA.limit else _QUOTA.limit-input_budget
                     max_output_tokens=max(max_output_tokens,min(ceiling,3900))
                     notify(label+' · JSON non conforme, rigenero e verifico il documento completo')
@@ -115,7 +118,7 @@ def query_json(prompt,schema,label,*,max_output_tokens=2600,thinking_level='medi
                     # document, never the provider's incomplete failed_generation.
                     ceiling=max_output_tokens if input_budget>=_QUOTA.limit else _QUOTA.limit-input_budget
                     max_output_tokens=max(max_output_tokens,min(ceiling,max_output_tokens+max(1024,max_output_tokens//2)))
-                    thinking_level='low'
+                    if not preserve_reasoning:thinking_level='low'
                     notify(label+' · risposta incompleta, riprovo con più spazio per il risultato')
                     continue
                 if '(429)' not in str(exc) or attempt==2:raise
@@ -129,3 +132,8 @@ def query_json(prompt,schema,label,*,max_output_tokens=2600,thinking_level='medi
                 stamp,_=_QUOTA.events.pop();_QUOTA.record(reply.usage['total_tokens'],stamp)
             if cache:cache.parent.mkdir(parents=True,exist_ok=True);write_json(cache,reply.data)
             return reply.data
+
+
+def query_editorial_json(prompt,schema,label,**kwargs):
+    """Production CUT uses Groq even when a Gemini key is configured."""
+    return query_json(prompt,schema,label,**kwargs)
