@@ -74,3 +74,38 @@ def test_magic_can_bound_reasoning_without_changing_manual_defaults(monkeypatch)
     monkeypatch.setattr(cloud,'_QUOTA',TokenWindow())
     cloud.query_json('small',{'type':'object'},'magic',max_output_tokens=2600,thinking_level='low')
     assert calls[0]['thinking_level']=='low' and calls[0]['max_output_tokens']==2600
+
+
+def test_truncated_json_retries_with_more_output_and_less_reasoning(monkeypatch):
+    from types import SimpleNamespace
+    import backend.app.cut_cloud as cloud
+    import backend.app.groq_api as groq
+    calls=[];messages=[]
+    class Quota(TokenWindow):
+        def wait_seconds(self,tokens,now):
+            assert tokens<=self.limit
+            return 0
+    class Client:
+        def __init__(self,*a,**kw):calls.append(kw)
+        def generate_json(self,*a):
+            if len(calls)==1:raise groq.GroqAPIError('Groq request failed (400): max completion tokens reached; output was truncated')
+            return SimpleNamespace(data={'groups':[],'discards':[]},usage={'total_tokens':100})
+    monkeypatch.setattr(groq,'GroqDirectorClient',Client);monkeypatch.setattr(cloud,'_QUOTA',Quota())
+    result=cloud.query_json('test',{'type':'object'},'take')
+    assert result=={'groups':[],'discards':[]}
+    assert len(calls)==2
+    assert calls[1]['max_output_tokens']>calls[0]['max_output_tokens']
+    assert calls[1]['thinking_level']=='low'
+
+
+def test_other_bad_requests_are_not_retried(monkeypatch):
+    import pytest
+    import backend.app.cut_cloud as cloud
+    import backend.app.groq_api as groq
+    calls=[]
+    class Client:
+        def __init__(self,*a,**kw):calls.append(kw)
+        def generate_json(self,*a):raise groq.GroqAPIError('Groq request failed (400): invalid schema')
+    monkeypatch.setattr(groq,'GroqDirectorClient',Client);monkeypatch.setattr(cloud,'_QUOTA',TokenWindow())
+    with pytest.raises(groq.GroqAPIError):cloud.query_json('test',{},'take')
+    assert len(calls)==1

@@ -1,3 +1,9 @@
+# Auto-Cut truncated Groq output fix v0124 / 0.1.2 — 2026-10-21
+
+Real integration run on project 80e60d811461 failed at 25% while proposing take groups, first of three word windows. Groq returned HTTP 400 max completion tokens reached. Original measured-word transcript remains cached in autocut-data; no CUT plan or timeline edits were completed by the failed run.
+
+cut_cloud.query_json now recognizes only output-truncation failures, retries a complete JSON document with lower reasoning and a larger completion allowance within the existing 7500-token pacing budget, max three attempts total. It never consumes failed_generation as a partial plan. Other HTTP 400 errors are not retried. Existing transcript and successful per-request cache remain reusable. New tests reproduce truncation and distinguish malformed requests. No live AI retry or Resolve mutation was performed during diagnosis/unit verification. User should AGGIORNA the integration, then AVVIA AUTO-CUT; transcription is reused if source unchanged.
+
 # Auto-Cut in-plugin updates v0123 / 0.1.1 — 2026-10-21
 
 AGGIORNA added to the integration, with idle checks, clean worker shutdown, code-only updater and Electron app.relaunch (guard refuses if host executable is Resolve). No Resolve process termination. Last project/context restores after relaunch. Developer checkout reloads local source/plugin JS; registered installs fetch dedicated autocut-* prerelease assets, not the RMBL main latest release. Loaded native SDK and runtime are excluded; dependency changes require installer. Main RMBL must be closed if sharing its runtime/code before a production update.

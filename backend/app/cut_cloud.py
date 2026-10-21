@@ -87,9 +87,10 @@ def query_json(prompt,schema,label,*,max_output_tokens=2600,thinking_level='medi
     key=hashlib.sha256(json.dumps(cache_input,sort_keys=True).encode()).hexdigest()
     cache=context[0]/'api-cache'/f'{key}.json' if context else None
     if cache and cache.is_file():notify(label+' · risultato salvato');return json.loads(cache.read_text(encoding='utf-8'))
-    budget=math.ceil(len(json.dumps({'prompt':prompt,'schema':schema},ensure_ascii=False))/2)+max_output_tokens
+    input_budget=math.ceil(len(json.dumps({'prompt':prompt,'schema':schema},ensure_ascii=False))/2)
     with _LOCK:
         for attempt in range(3):
+            budget=input_budget+max_output_tokens
             while (delay:=_QUOTA.wait_seconds(budget,time.monotonic()))>0:
                 notify(f'{label} · attendo quota Groq: {math.ceil(delay)} s');time.sleep(min(1,delay))
             notify(label+' · analisi in corso')
@@ -97,6 +98,15 @@ def query_json(prompt,schema,label,*,max_output_tokens=2600,thinking_level='medi
             client=GroqDirectorClient(os.environ.get('GROQ_API_KEY',''),model='openai/gpt-oss-120b',fallback_models=(),thinking_level=thinking_level,max_retries_per_model=0,max_output_tokens=max_output_tokens)
             try:reply=client.generate_json(prompt,schema)
             except GroqAPIError as exc:
+                truncated=any(marker in str(exc).casefold() for marker in ('max completion tokens reached','output was truncated','output truncated','completion token limit reached'))
+                if truncated and attempt<2:
+                    # Reasoning also consumes the completion allowance. Retry a full
+                    # document, never the provider's incomplete failed_generation.
+                    ceiling=max_output_tokens if input_budget>=_QUOTA.limit else _QUOTA.limit-input_budget
+                    max_output_tokens=max(max_output_tokens,min(ceiling,max_output_tokens+max(1024,max_output_tokens//2)))
+                    thinking_level='low'
+                    notify(label+' · risposta incompleta, riprovo con più spazio per il risultato')
+                    continue
                 if '(429)' not in str(exc) or attempt==2:raise
                 match=re.search(r'try again in ([\d.]+)',str(exc),re.I)
                 delay=min(120,max(1,float(match.group(1))+1)) if match else 61
