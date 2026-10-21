@@ -38,7 +38,8 @@ def apply_payload(resolve,payload,progress=lambda *args:None):
     options={'target':timeline} if destination=='active' else {}
     if destination=='active' and payload.get('timeline_signature'):options['expected_signature']=payload['timeline_signature']
     if destination=='active' and payload.get('allow_modified'):options['allow_modified']=True
-    result=create_native_cut_base(resolve,project,{'native_cut':payload['native_cut']},progress=progress,**options)
+    engine_payload={key:payload[key] for key in ('native_cut','subtitle_rows','subtitle_path') if key in payload}
+    result=create_native_cut_base(resolve,project,engine_payload,progress=progress,**options)
     return {key:value for key,value in result.items() if key!='timeline'}
 
 

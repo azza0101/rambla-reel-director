@@ -40,6 +40,7 @@ class ApplyRequest(BaseModel):
     revision: str = Field(min_length=1,max_length=100)
     destination: Literal['new','active'] = 'new'
     allow_modified: bool = Field(default=False,strict=True)
+    create_subtitles: bool = Field(default=True,strict=True)
     timeline_signature: str | None = Field(default=None,pattern=r'^[a-f0-9]{64}$')
 
 
@@ -166,6 +167,15 @@ def create_app(data_root: Path, *, token: str, probe_runner=None, enable_automat
         if cut.get('revision')!=revision:raise HTTPException(409,'CUT cambiato durante la preparazione: riprova dalla revisione aggiornata')
         return {'native_cut':cut,'context':json.loads((root/pid/'resolve-context.json').read_text('utf-8'))}
 
+    @app.get('/autocut/projects/{pid}/subtitles/{revision}')
+    async def download_subtitles(pid:str,revision:str):
+        import re
+        load_project(pid)
+        if not re.fullmatch(r'[a-f0-9]{24}',revision):raise HTTPException(404,'SRT non disponibile')
+        path=root/pid/'cut'/('autocut-subs-'+revision+'.srt')
+        if not path.is_file():raise HTTPException(404,'SRT non ancora generato: applica con Crea sottotitoli')
+        return FileResponse(path,media_type='application/x-subrip',filename='AutoCut-'+revision+'.srt')
+
     @app.get('/autocut/projects/{pid}/native-cut')
     async def native(pid:str,revision:str):return await asyncio.to_thread(native_payload,pid,revision)
 
@@ -189,13 +199,18 @@ def create_app(data_root: Path, *, token: str, probe_runner=None, enable_automat
         payload=await asyncio.to_thread(native_payload,pid,request.revision)
         if any(j['status']=='running' for j in app.state.autocut_apply_jobs.values()):raise HTTPException(409,'Applicazione già in corso')
         if json.loads((root/pid/'cut'/'plan.json').read_text('utf-8'))['revision']!=request.revision:raise HTTPException(409,'CUT modificato durante la preparazione')
+        payload['create_subtitles']=request.create_subtitles
+        if request.create_subtitles:
+            from .autocut_subtitles import prepare_subtitles
+            payload.update(await asyncio.to_thread(prepare_subtitles,root/pid,payload['native_cut']))
+            if json.loads((root/pid/'cut'/'plan.json').read_text('utf-8'))['revision']!=request.revision:raise HTTPException(409,'CUT modificato durante la generazione SRT: riprova')
         payload['destination']=request.destination
         payload['allow_modified']=request.allow_modified
         payload['timeline_signature']=request.timeline_signature
         if request.allow_modified and (request.destination!='active' or not request.timeline_signature):raise HTTPException(422,'Conferma della timeline mancante')
         previous=app.state.autocut_apply_jobs.get(pid,{})
-        if not request.allow_modified and previous.get('revision')==request.revision and previous.get('destination','new')==request.destination and previous.get('status')=='succeeded':return previous
-        job={'status':'running','destination':request.destination,'revision':request.revision,'message':'Creo timeline CUT nativa…','progress':0}
+        if not request.allow_modified and previous.get('create_subtitles',False)==request.create_subtitles and previous.get('revision')==request.revision and previous.get('destination','new')==request.destination and previous.get('status')=='succeeded':return previous
+        job={'status':'running','create_subtitles':request.create_subtitles,'destination':request.destination,'revision':request.revision,'message':'Creo timeline CUT nativa…','progress':0}
         app.state.autocut_apply_jobs[pid]=job
         async def run():
             try:

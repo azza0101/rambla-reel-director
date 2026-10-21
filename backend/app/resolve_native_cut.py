@@ -347,7 +347,10 @@ def create_native_cut_base(resolve, project, payload, *, progress=None, target=N
             from .resolve_textplus_timeline import verify_timeline_markers
             verify_timeline_markers(timeline,backup['markers'])
             parked=park_original(pool,timeline,source,cut,backup,base,convention)
-        return dict(timeline=timeline, backup_name=backup['name'] if backup else None, fps=cut['fps'], base_frame=base,
+        from .autocut_subtitles import apply_subtitles
+        if payload.get('subtitle_rows') and progress:progress(90,'Creo sottotitoli allineati al CUT finale…')
+        subtitle_count=apply_subtitles(resolve,project,timeline,payload,base)
+        return dict(subtitle_count=subtitle_count,srt_path=payload.get('subtitle_path'),timeline=timeline, backup_name=backup['name'] if backup else None, fps=cut['fps'], base_frame=base,
                     timeline_id=timeline.GetUniqueId(), timeline_name=name, **counts, **parked)
     except Exception as exc:
         if target is not None and backup:

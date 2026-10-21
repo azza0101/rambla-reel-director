@@ -67,3 +67,8 @@ GUI, source-adapter and engine regressions are tested locally. Real selected-aud
 ## 0.1.8 / v0130 — reapply from memory
 
 Current-timeline Apply now checks the live timeline before mutation. An edited timeline (including disabled source clips) requires a styled OK/Cancel confirmation. OK preserves the complete current timeline as a disabled nested reference after the new CUT; its editable backup remains in BCK / timeline name, numbered with date/time. Reapply uses the saved CUT and pause choices without reimporting or reanalyzing. A fingerprint prevents applying an outdated confirmation after additional edits. Cancel performs no apply request. The new CUT itself remains native clips. Existing loose BCK entries are retained unchanged. Physical application remains user-triggered.
+
+
+## 0.1.10 / v0132 — optional native subtitles
+
+Crea sottotitoli is checked by default in the Apply dialog. The saved aligned transcript and final CUT map produce short captions and a revision-specific local SRT. Removed words and source spans outside actual kept video are excluded; no new ASR or AI. Caption times incorporate pause edits and IN/OUT selection, remain inside CUT duration, and do not overlap. The existing native SRT importer creates verified Subtitle clips; its failure uses the same CUT rollback/backup handling. Current-timeline reapply preserves previous captions in the complete BCK/nested snapshot rather than duplicating them over the new CUT. Uncheck to skip captions. SCARICA SRT appears after successful Apply.

@@ -1,3 +1,13 @@
+# v0132 / Auto-Cut 0.1.10
+
+Apply dialog now has Crea sottotitoli checked by default. Explicit Apply locally generates revision-specific SRT and short native caption rows from the final reviewed source-to-edited map. It uses aligned transcript only when its signature matches; no new ASR/AI. Omitted source spans never become end-of-timeline captions. SRT timings are bounded by CUT duration and do not overlap.
+
+The existing insert_native_subtitles engine imports captions on empty ST1, verifies text/frame bounds and identifies the generated track. This runs inside native CUT rollback handling. Reapply first backs up/preserves the previous whole timeline (including captions), clears the authorized old content, and produces one caption set on the new CUT, avoiding duplicates. Unchecking skips caption generation/import. Download SRT becomes available after a successful application.
+
+Local current CUT proof: 71 rows, 73.067 seconds, last subtitle exactly at CUT end; no AI/Resolve mutations. Actual Apply remains user-triggered. Private transcript and SRT are local only and excluded from releases.
+
+--- Previous handoff ---
+
 # v0131 / Auto-Cut 0.1.9
 
 Visible preparation loader (indeterminate progress, phase, elapsed time) before timeline/range import and ASR launch. Startup controls are locked during the request, with a 30-second request timeout and explicit error display. The existing CUT progress follows once the job is accepted.

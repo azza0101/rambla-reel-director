@@ -84,20 +84,22 @@ $('integrationApplyGo').onclick=async()=>{
   const destination=document.querySelector('input[name=applyDestination]:checked').value;
   $('integrationApplyDialog').close();
   integrationApplying=true;$('cutPassPanel').inert=true;$('integrationImport').disabled=true;
-  const revision=cutData.plan.revision;let allow_modified=false,timeline_signature=null;
+  const revision=cutData.plan.revision,create_subtitles=$('integrationCreateSubtitles').checked;let allow_modified=false,timeline_signature=null;
   if(destination==='active'){
    $('integrationApplyStatus').textContent='Controllo le modifiche della timeline…';
    const check=await integrationRequest('/projects/'+state.pid+'/apply-check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision,destination})});
    timeline_signature=check.timeline_signature;
    if(check.modified){if(!await confirmModifiedTimeline()){$('integrationApplyStatus').textContent='Annullato · timeline invariata';return}allow_modified=true}
   }
-  let job=await integrationRequest('/projects/'+state.pid+'/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision,destination,allow_modified,timeline_signature})});
+  let job=await integrationRequest('/projects/'+state.pid+'/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision,destination,allow_modified,timeline_signature,create_subtitles})});
   while(job.status==='running'){
    $('integrationStatus').textContent=(job.progress||0)+'% · '+job.message;
    $('integrationApplyStatus').textContent=$('integrationStatus').textContent;
    await new Promise(resolve=>setTimeout(resolve,700));job=await integrationRequest('/projects/'+state.pid+'/apply');
   }
   if(job.status!=='succeeded')throw Error(job.message);
+  $('integrationSrtDownload').hidden=!job.result.subtitle_count;
+  if(job.result.subtitle_count){$('integrationSrtDownload').href='/autocut/projects/'+state.pid+'/subtitles/'+revision;$('integrationSrtDownload').hidden=false}
   $('integrationStatus').textContent='✓ '+job.message+' · '+job.result.timeline_name;
   $('integrationApplyStatus').textContent=$('integrationStatus').textContent;
  }catch(error){reportError(error)}finally{integrationApplying=false;$('cutPassPanel').inert=false;$('integrationImport').disabled=false;drawCut()}
@@ -120,7 +122,7 @@ APPLY_DIALOG = """<dialog id="integrationApplyDialog" aria-labelledby="integrati
 <p class="muted">Applica i tagli e le take scelte al video originale.</p>
 <label class="applyDestination"><input type="radio" name="applyDestination" value="active"><span><b>Timeline attuale</b><small>CUT a sinistra; originale intero disattivato a destra. Backup in BCK e IN OUT sul solo CUT.</small></span></label>
 <label class="applyDestination"><input type="radio" name="applyDestination" value="new" checked><span><b>Nuova timeline</b><small>Crea una timeline CUT separata. L'originale resta intatta.</small></span></label>
-<div class="row" style="justify-content:flex-end;margin-top:22px"><button id="integrationApplyCancel">ANNULLA</button><button id="integrationApplyGo" class="primary">APPLICA CUT</button></div>
+<label style="display:flex;align-items:center;gap:10px;margin-top:18px;cursor:pointer"><input id="integrationCreateSubtitles" type="checkbox" checked style="accent-color:#58bda5"><span><b>Crea sottotitoli</b><small style="display:block;margin-top:4px">Allineati al CUT finale · salva anche SRT · nessuna nuova trascrizione</small></span></label><div class="row" style="justify-content:flex-end;margin-top:22px"><button id="integrationApplyCancel">ANNULLA</button><button id="integrationApplyGo" class="primary">APPLICA CUT</button></div>
 </dialog><dialog id="integrationReapplyDialog" aria-labelledby="integrationReapplyTitle" style="background:var(--panel,#14191e);color:var(--ink,#edf1f5);border:1px solid var(--line,#3b4850);border-radius:18px;padding:26px;width:510px;max-width:calc(100vw - 32px)">
 <h2 id="integrationReapplyTitle">La timeline è stata modificata</h2>
 <p>Il video originale è stato modificato. Vuoi conservare il contenuto attuale a destra e applicare il CUT in memoria?</p>
@@ -130,7 +132,7 @@ APPLY_DIALOG = """<dialog id="integrationApplyDialog" aria-labelledby="integrati
 
 
 def render_autocut():
-    panel=PANEL.replace('3 · Auto-cut','Revisione Auto-Cut').replace('<p id="cutPreviewAvailability"','<p id="integrationApplyStatus" role="status" aria-live="polite"></p><p id="cutPreviewAvailability"')
+    panel=PANEL.replace('3 · Auto-cut','Revisione Auto-Cut').replace('<p id="cutPreviewAvailability"','<p id="integrationApplyStatus" role="status" aria-live="polite"></p><a id="integrationSrtDownload" hidden download>SCARICA SRT</a><p id="cutPreviewAvailability"')
     # The shared component references editorial-only controls; keep inert placeholders,
     # never the actual editorial UI or its scripts/routes.
     placeholders='<div hidden>'+''.join('<div id="'+key+'"></div>' for key in ['cutAutoCoverage','magicAutoCoverageBox','magicAutoCoverageStatus','magicAutoCoverageProgress','magicAutoCoverageDetail'])+'</div>'
@@ -138,6 +140,6 @@ def render_autocut():
         '<meta http-equiv="Content-Security-Policy" content="default-src &#39;self&#39;; script-src &#39;self&#39; &#39;unsafe-inline&#39;; style-src &#39;self&#39; &#39;unsafe-inline&#39;; img-src &#39;self&#39; data:; media-src &#39;self&#39; blob:; connect-src &#39;self&#39;; object-src &#39;none&#39;; base-uri &#39;none&#39;">'
         '<title>RMBL Auto-Cut</title>'+THEME+CSS+REFERENCE+
         '<style>*{box-sizing:border-box}body{margin:0}main{max-width:1100px;padding:22px}header{display:flex;align-items:center;justify-content:space-between;gap:16px}h1{font-size:24px;margin:0}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}button{color:var(--ink);border:1px solid var(--line);cursor:pointer}.muted,small{color:var(--muted)}#integrationStatus{line-height:1.6;overflow-wrap:anywhere}#cutConfirm{min-width:200px}#cutRevisionReport{display:none}#cutTakeDialog{max-width:calc(100vw - 32px)}[hidden]{display:none!important}</style>'
-        '</head><body><main><header><div><small>RAMBLA · RESOLVE WORKFLOW</small><h1>Auto-Cut</h1></div><div class="row"><small>Auto-Cut 0.1.9 · motore '+RELEASE_VERSION+'</small><button id="integrationUpdate">AGGIORNA</button></div></header>'
+        '</head><body><main><header><div><small>RAMBLA · RESOLVE WORKFLOW</small><h1>Auto-Cut</h1></div><div class="row"><small>Auto-Cut 0.1.10 · motore '+RELEASE_VERSION+'</small><button id="integrationUpdate">AGGIORNA</button></div></header>'
         '<section class="panel"><div class="row"><button id="integrationImport" class="primary">RILEGGI TIMELINE E IN–OUT</button><b id="integrationSource">Nessuna sorgente collegata</b></div><div id="integrationLoading" role="status" aria-live="polite" hidden style="border:1px solid var(--line);border-radius:10px;padding:12px;margin-top:14px"><div class="row"><strong id="integrationLoadingLabel"></strong><small id="integrationLoadingElapsed">0:00 trascorsi</small></div><progress id="integrationLoadingBar" aria-label="Preparazione Auto-Cut" style="width:100%;height:8px;accent-color:#58bda5;margin-top:10px"></progress></div><p id="integrationRange" class="muted" role="status"></p><p id="integrationStatus" role="status">Apri la timeline con il video completo. Nessun taglio viene applicato automaticamente.</p><small>Prima versione: una sola clip video integrale. Trascrizione e revisione usano le API già configurate.</small></section>'
         +panel+placeholders+APPLY_DIALOG+'</main><script>'+BOOT+JS+AFTER+'</script>'+SUPPORT_HTML+'</body></html>')
