@@ -1,3 +1,9 @@
+# Provider JSON recovery + Auto-Cut diagnostics v0125 / 0.1.3 — 2026-10-21
+
+The 0.1.2 user run advanced past block 1 but failed in block 2 with HTTP400 Failed to validate JSON. cut_cloud now recognizes generated-output validation errors separately from invalid request schemas, retries a full JSON-object document with schema instructions and local Draft202012 validation, lower reasoning and bounded quota. Original failed_generation is never consumed. Existing valid block-1 cache and measured-word transcript remain reusable.
+
+Auto-Cut now installs the existing sanitized diagnostics routes/reporting. Production startup enables automatic reporting on first use as explicitly authorized by user on 2026-10-21, preserves later opt-out; test apps default off. CUT/app/apply failures go to the private GitHub reporter, with new PROVIDER_JSON and PROVIDER_OUTPUT_TRUNCATED categories. ASSISTENZA is included. Original failure report received as issue #16; no video/transcript/keys/paths uploaded. 92 focused tests passed; synthetic browser review/preview still passed. Live recovery test running in a separate scratch project copy, no Resolve mutation; results will be recorded separately.
+
 # Auto-Cut truncated Groq output fix v0124 / 0.1.2 — 2026-10-21
 
 Real integration run on project 80e60d811461 failed at 25% while proposing take groups, first of three word windows. Groq returned HTTP 400 max completion tokens reached. Original measured-word transcript remains cached in autocut-data; no CUT plan or timeline edits were completed by the failed run.

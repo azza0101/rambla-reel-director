@@ -3,6 +3,7 @@ from .cut_pass_ui import PANEL, CSS, JS
 from .curation_theme import CSS as THEME
 from .curation_reference_theme import CSS as REFERENCE
 from .release_version import RELEASE_VERSION
+from .diagnostics_ui import HTML as SUPPORT_HTML
 
 BOOT = r'''const $=id=>document.getElementById(id);
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -68,6 +69,6 @@ def render_autocut():
         '<meta http-equiv="Content-Security-Policy" content="default-src &#39;self&#39;; script-src &#39;self&#39; &#39;unsafe-inline&#39;; style-src &#39;self&#39; &#39;unsafe-inline&#39;; img-src &#39;self&#39; data:; media-src &#39;self&#39; blob:; connect-src &#39;self&#39;; object-src &#39;none&#39;; base-uri &#39;none&#39;">'
         '<title>RMBL Auto-Cut</title>'+THEME+CSS+REFERENCE+
         '<style>*{box-sizing:border-box}body{margin:0}main{max-width:1100px;padding:22px}header{display:flex;align-items:center;justify-content:space-between;gap:16px}h1{font-size:24px;margin:0}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}button{color:var(--ink);border:1px solid var(--line);cursor:pointer}.muted,small{color:var(--muted)}#integrationStatus{line-height:1.6;overflow-wrap:anywhere}#cutConfirm{min-width:200px}#cutRevisionReport{display:none}#cutTakeDialog{max-width:calc(100vw - 32px)}[hidden]{display:none!important}</style>'
-        '</head><body><main><header><div><small>RAMBLA · RESOLVE WORKFLOW</small><h1>Auto-Cut</h1></div><div class="row"><small>Auto-Cut 0.1.2 · motore '+RELEASE_VERSION+'</small><button id="integrationUpdate">AGGIORNA</button></div></header>'
+        '</head><body><main><header><div><small>RAMBLA · RESOLVE WORKFLOW</small><h1>Auto-Cut</h1></div><div class="row"><small>Auto-Cut 0.1.3 · motore '+RELEASE_VERSION+'</small><button id="integrationUpdate">AGGIORNA</button></div></header>'
         '<section class="panel"><div class="row"><button id="integrationImport" class="primary">USA VIDEO DELLA TIMELINE</button><b id="integrationSource">Nessuna sorgente collegata</b></div><p id="integrationStatus" role="status">Apri la timeline con il video completo. Nessun taglio viene applicato automaticamente.</p><small>Prima versione: una sola clip video integrale. Trascrizione e revisione usano le API già configurate.</small></section>'
-        +panel+placeholders+'</main><script>'+BOOT+JS+AFTER+'</script></body></html>')
+        +panel+placeholders+'</main><script>'+BOOT+JS+AFTER+'</script>'+SUPPORT_HTML+'</body></html>')

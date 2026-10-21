@@ -39,3 +39,10 @@ AGGIORNA in the Auto-Cut header refuses during CUT/APPLICA or an unsaved word-ra
 On this development checkout, AGGIORNA reloads local source changes and synchronizes the plugin JavaScript. Registered installed copies check dedicated GitHub autocut-* releases using the preconfigured GitHub access; code-only ZIP is SHA256 checked, path/size/symlink validated, dependency changes require a new installer, and code files have backups with a local path manifest plus automatic rollback on write failures. Close a separate RMBL main application before updating its shared engine, if it is running; Resolve stays open.
 
 First plugin registration or a future native SDK/host compatibility change can still require restarting Resolve. The normal update does not replace the loaded native SDK. Relaunch was verified with an Electron lifecycle mock and actual worker restart tests; the real Resolve integration host still needs the user's opening/update test.
+
+
+## Provider JSON recovery and automatic support (0.1.3)
+
+CUT requests recover provider output-validation failures by requesting a new complete json_object document with the full schema in the instructions, then validating against that schema locally before accepting/cache-writing it. Request/schema errors are not treated as recoverable output errors. Truncated output retains the bounded quota-aware recovery. No failed_generation fragment is used as a plan.
+
+On 2026-10-21 the user explicitly authorized automatic GitHub debugging for Auto-Cut. Its dedicated diagnostics settings enable automatic reporting only on the first authorized start; a later opt-out stays off. ASSISTENZA exposes the current sanitized report, delivery status, copy and automatic toggle. The existing private-repository requirement, allowlist, deduplication, retries and daily budget are reused. Categories distinguish PROVIDER_JSON and PROVIDER_OUTPUT_TRUNCATED. Transcripts, media, API keys and local paths are excluded. No continuous Codex monitoring or automatic patching is implied. Original failure was submitted as private GitHub issue #16.

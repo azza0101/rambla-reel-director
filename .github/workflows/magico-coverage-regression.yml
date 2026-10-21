@@ -28,6 +28,7 @@ jobs:
             tests/unit/test_diagnostics.py \
             tests/unit/test_github_auth.py \
             tests/unit/test_software_update.py \
+            tests/unit/test_cut_cloud.py \
             tests/unit/test_cut_residual.py \
             tests/unit/test_magic_coverage.py \
             tests/unit/test_magic_research_watchdog.py \

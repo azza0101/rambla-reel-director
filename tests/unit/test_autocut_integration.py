@@ -116,3 +116,17 @@ def test_session_restores_the_same_saved_project_after_worker_restart(tmp_path):
     restored=second.get('/autocut/session').json()
     assert restored['project']['project_id']==project['project_id']
     assert restored['context']==context
+
+
+def test_autocut_has_private_diagnostics_and_respects_automatic_optout(tmp_path):
+    from backend.app.autocut_service import create_app
+    from fastapi.testclient import TestClient
+    app=create_app(tmp_path,token=TOKEN,probe_runner=lambda _: {},enable_automatic_diagnostics=True)
+    reporter=app.state.diagnostics
+    assert reporter.settings()['automatic'] is True
+    reporter.set_automatic(False,start_worker=False)
+    again=create_app(tmp_path,token=TOKEN,probe_runner=lambda _: {},enable_automatic_diagnostics=True)
+    assert again.state.diagnostics.settings()['automatic'] is False
+    client=TestClient(again);client.headers['X-Autocut-Session']=TOKEN
+    assert client.get('/api/curation/diagnostics').status_code==200
+    assert 'rmblSupportOpen' in client.get('/autocut').text

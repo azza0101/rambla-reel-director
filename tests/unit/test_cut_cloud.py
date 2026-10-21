@@ -109,3 +109,49 @@ def test_other_bad_requests_are_not_retried(monkeypatch):
     monkeypatch.setattr(groq,'GroqDirectorClient',Client);monkeypatch.setattr(cloud,'_QUOTA',TokenWindow())
     with pytest.raises(groq.GroqAPIError):cloud.query_json('test',{},'take')
     assert len(calls)==1
+
+
+def test_provider_json_validation_failure_uses_json_object_recovery(monkeypatch):
+    from types import SimpleNamespace
+    import backend.app.cut_cloud as cloud
+    import backend.app.groq_api as groq
+    calls=[]
+    class Quota(TokenWindow):
+        def wait_seconds(self,tokens,now):assert tokens<=self.limit;return 0
+    class Client:
+        def __init__(self,*a,**kw):calls.append(kw)
+        def generate_json(self,*a):
+            if len(calls)==1:raise groq.GroqAPIError('Groq request failed (400): Failed to validate JSON. Please adjust your prompt.')
+            return SimpleNamespace(data={'groups':[],'discards':[]},usage={'total_tokens':100})
+    monkeypatch.setattr(groq,'GroqDirectorClient',Client);monkeypatch.setattr(cloud,'_QUOTA',Quota())
+    assert cloud.query_json('test',{'type':'object'},'take')=={'groups':[],'discards':[]}
+    assert len(calls)==2 and calls[1]['json_mode'] is True and calls[1]['thinking_level']=='low'
+
+
+def test_json_object_recovery_checks_the_complete_local_schema():
+    import json,pytest
+    from backend.app.groq_api import GroqDirectorClient,GroqAPIError
+    class Response:
+        status_code=200;headers={}
+        def raise_for_status(self):pass
+        def json(self):return {'choices':[{'finish_reason':'stop','message':{'content':'{"groups":[]}'}}]}
+    class HTTP:
+        calls=[]
+        def post(self,*args,**kw):self.calls.append(kw['json']);return Response()
+    http=HTTP();schema={'type':'object','required':['groups','discards'],'properties':{'groups':{'type':'array'},'discards':{'type':'array'}}}
+    client=GroqDirectorClient('placeholder',fallback_models=(),http_client=http,json_mode=True)
+    with pytest.raises(GroqAPIError,match='schema'):client.generate_json('take',schema)
+    assert http.calls[0]['response_format']=={'type':'json_object'}
+    assert 'discards' in http.calls[0]['messages'][0]['content']
+
+
+def test_provider_diagnostic_identifies_json_without_transcript(tmp_path):
+    from backend.app.diagnostics import Diagnostics
+    from backend.app.groq_api import GroqAPIError
+    import json
+    reporter=Diagnostics(tmp_path/'diagnostics',app_root=__import__('pathlib').Path.cwd())
+    report=reporter.capture_exception(GroqAPIError('Failed to validate JSON private transcript SECRET-TEXT'),component='cut',phase='analyze')
+    assert report['category']=='PROVIDER_JSON'
+    assert 'SECRET-TEXT' not in json.dumps(report)
+
+from tests.unit.test_cut_pass_routes import tmp_path

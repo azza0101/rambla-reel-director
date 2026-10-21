@@ -43,10 +43,12 @@ class GroqDirectorClient:
         event_callback: Callable[[str, dict[str, Any]], None] | None = None,
         http_client: Any | None = None,
         max_output_tokens: int | None = None,
+        json_mode: bool = False,
     ) -> None:
         clean_key = str(api_key or "").strip()
         if not clean_key:
             raise ValueError("GROQ_API_KEY is required")
+        self.json_mode = bool(json_mode)
         self.max_output_tokens = max_output_tokens
         if max_output_tokens is not None and (type(max_output_tokens) is not int or max_output_tokens<1):raise ValueError('max_output_tokens must be positive')
         self._api_key = clean_key
@@ -198,6 +200,10 @@ class GroqDirectorClient:
                     },
                 }
 
+                if self.json_mode:
+                    body['response_format'] = {'type':'json_object'}
+                    body['messages'] = [{'role':'user','content':effective_prompt+
+                        '\nRestituisci esclusivamente un oggetto JSON completo conforme a questo schema, senza markdown. Includi tutti i campi required.\nJSON SCHEMA:\n'+json.dumps(schema,ensure_ascii=False)}]
                 try:
                     response = self._post(body, headers)
                 except httpx.RequestError as exc:
@@ -243,6 +249,7 @@ class GroqDirectorClient:
                     generation_failed = status == 400 and any(
                         marker in detail.casefold() for marker in (
                             "failed to generate json",
+                            "failed to validate json",
                             "generated json does not match the expected schema",
                         )
                     )
@@ -311,6 +318,10 @@ class GroqDirectorClient:
                 if not isinstance(data, dict):
                     raise GroqAPIError("Groq structured output must be a JSON object")
 
+                if self.json_mode:
+                    from jsonschema import Draft202012Validator
+                    if not Draft202012Validator(schema).is_valid(data):
+                        raise GroqAPIError('Groq returned JSON outside expected schema')
                 usage_raw = payload.get("usage")
                 usage: dict[str, int] = {}
                 if isinstance(usage_raw, dict):

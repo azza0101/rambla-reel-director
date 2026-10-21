@@ -88,6 +88,7 @@ def query_json(prompt,schema,label,*,max_output_tokens=2600,thinking_level='medi
     cache=context[0]/'api-cache'/f'{key}.json' if context else None
     if cache and cache.is_file():notify(label+' · risultato salvato');return json.loads(cache.read_text(encoding='utf-8'))
     input_budget=math.ceil(len(json.dumps({'prompt':prompt,'schema':schema},ensure_ascii=False))/2)
+    json_mode=False
     with _LOCK:
         for attempt in range(3):
             budget=input_budget+max_output_tokens
@@ -95,10 +96,17 @@ def query_json(prompt,schema,label,*,max_output_tokens=2600,thinking_level='medi
                 notify(f'{label} · attendo quota Groq: {math.ceil(delay)} s');time.sleep(min(1,delay))
             notify(label+' · analisi in corso')
             _QUOTA.record(budget,time.monotonic())
-            client=GroqDirectorClient(os.environ.get('GROQ_API_KEY',''),model='openai/gpt-oss-120b',fallback_models=(),thinking_level=thinking_level,max_retries_per_model=0,max_output_tokens=max_output_tokens)
+            client=GroqDirectorClient(os.environ.get('GROQ_API_KEY',''),model='openai/gpt-oss-120b',fallback_models=(),thinking_level=thinking_level,max_retries_per_model=0,max_output_tokens=max_output_tokens,**({'json_mode':True} if json_mode else {}))
             try:reply=client.generate_json(prompt,schema)
             except GroqAPIError as exc:
                 truncated=any(marker in str(exc).casefold() for marker in ('max completion tokens reached','output was truncated','output truncated','completion token limit reached'))
+                malformed=any(marker in str(exc).casefold() for marker in ('failed to validate json','failed to generate json','generated json does not match','invalid structured json','json outside expected schema'))
+                if malformed and attempt<2:
+                    json_mode=True;thinking_level='low'
+                    ceiling=max_output_tokens if input_budget>=_QUOTA.limit else _QUOTA.limit-input_budget
+                    max_output_tokens=max(max_output_tokens,min(ceiling,3900))
+                    notify(label+' · JSON non conforme, rigenero e verifico il documento completo')
+                    continue
                 if truncated and attempt<2:
                     # Reasoning also consumes the completion allowance. Retry a full
                     # document, never the provider's incomplete failed_generation.

@@ -26,6 +26,8 @@ COMPONENTS = {'app','bridge','magic','cut','research','export','startup'}
 PHASES = {'unknown','manual','startup','analyze','analysis','cut','editorial','research','selection','preparation','delivery','preview','confirm','residual','boundaries','apply','capture'}
 ERROR_TYPES = {'Exception','RuntimeError','ValueError','TypeError','OSError','PermissionError','FileNotFoundError','TimeoutError','ConnectionError','HTTPException','HTTPStatusError','RequestError','GeminiAPIError','GroqAPIError','CalledProcessError','JSONDecodeError','ValidationError','KeyError','IndexError','AssertionError','Manual','AttributeError','ImportError','ModuleNotFoundError','MemoryError','OverflowError','UnicodeDecodeError','ConnectionResetError','BrokenPipeError','ProcessLookupError'}
 CATEGORIES = [
+    ('PROVIDER_OUTPUT_TRUNCATED', ('max completion tokens reached','output was truncated','output truncated','completion token limit reached')),
+    ('PROVIDER_JSON', ('failed to validate json','failed to generate json','json outside expected schema','invalid structured json','generated json does not match')),
     ('TEMPLATE_UNAVAILABLE', ('fusion title', 'template is unavailable', 'kura_paper')),
     ('SUBTITLE_IMPORT', ('no native subtitle', 'imported the srt')),
     ('RATE_LIMIT', ('429', 'rate limit', 'tokens per minute', 'request too large')),

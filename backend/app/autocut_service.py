@@ -31,7 +31,7 @@ class ApplyRequest(BaseModel):
     revision: str = Field(min_length=1,max_length=100)
 
 
-def create_app(data_root: Path, *, token: str, probe_runner=None) -> FastAPI:
+def create_app(data_root: Path, *, token: str, probe_runner=None, enable_automatic_diagnostics=False) -> FastAPI:
     if len(token)<16: raise ValueError('Auto-Cut requires a private session token')
     data_root=Path(data_root).resolve();root=data_root/'projects';root.mkdir(parents=True,exist_ok=True)
     if probe_runner is None:
@@ -40,6 +40,10 @@ def create_app(data_root: Path, *, token: str, probe_runner=None) -> FastAPI:
     store=ProjectStore(root,probe_runner=probe_runner)
     app=FastAPI(docs_url=None,redoc_url=None,openapi_url=None)
     app.state.autocut_apply_jobs={};tasks=set()
+    from .diagnostics_routes import install_diagnostics_routes
+    reporter=install_diagnostics_routes(app,data_root/'diagnostics',app_root=Path(__file__).resolve().parents[2])
+    if reporter and enable_automatic_diagnostics and not reporter.settings()['choice_made']:
+        reporter.set_automatic(True,start_worker=False)
 
     @app.middleware('http')
     async def authenticate(request:Request,call_next):
@@ -157,7 +161,9 @@ def create_app(data_root: Path, *, token: str, probe_runner=None) -> FastAPI:
                 if reported_error:raise RuntimeError(reported_error)
                 if code or 'result' not in job:raise RuntimeError('Applicazione interrotta: apri Diagnostica CUT')
                 job.update(status='succeeded',progress=100,message='CUT applicato · timeline originale conservata')
-            except Exception as exc:job.update(status='failed',message=str(exc))
+            except Exception as exc:
+                if reporter:reporter.capture_exception(exc,component='cut',phase='apply')
+                job.update(status='failed',message=str(exc))
             write_json(root/pid/'last-apply.json',job)
         task=asyncio.create_task(run());tasks.add(task);task.add_done_callback(tasks.discard)
         return dict(job)
@@ -176,7 +182,7 @@ def main():
     args=parser.parse_args()
     from .project_config import load_project_credentials
     load_project_credentials(Path(__file__).resolve().parents[2])
-    app=create_app(args.data_root,token=os.environ.get('RMBL_AUTOCUT_SESSION',''))
+    app=create_app(args.data_root,token=os.environ.get('RMBL_AUTOCUT_SESSION',''),enable_automatic_diagnostics=True)
     server=uvicorn.Server(uvicorn.Config(app,host='127.0.0.1',port=args.port,access_log=False))
     app.state.server=server
     server.run()
