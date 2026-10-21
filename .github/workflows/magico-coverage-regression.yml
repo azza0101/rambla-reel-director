@@ -19,6 +19,8 @@ jobs:
       - name: MAGICO and B-roll tests
         run: |
           pytest -q \
+            tests/unit/test_autocut_update.py \
+            tests/unit/test_autocut_integration.py \
             tests/unit/test_theme_preferences.py \
             tests/unit/test_transcript_intents.py \
             tests/unit/test_resolve_native_subtitles.py \
@@ -37,5 +39,7 @@ jobs:
             tests/unit/test_magic_generic.py \
             tests/unit/test_magic_research.py \
             tests/unit/test_broll_timeline_export.py
+      - name: Auto-Cut native source adapter tests
+        run: node --test tools/autocut_integration/test_source_adapter.js tools/autocut_integration/test_update_lifecycle.js
       - name: Compile changed Python modules
         run: python -m compileall -q backend/app

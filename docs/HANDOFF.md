@@ -1,3 +1,19 @@
+# Auto-Cut in-plugin updates v0123 / 0.1.1 — 2026-10-21
+
+AGGIORNA added to the integration, with idle checks, clean worker shutdown, code-only updater and Electron app.relaunch (guard refuses if host executable is Resolve). No Resolve process termination. Last project/context restores after relaunch. Developer checkout reloads local source/plugin JS; registered installs fetch dedicated autocut-* prerelease assets, not the RMBL main latest release. Loaded native SDK and runtime are excluded; dependency changes require installer. Main RMBL must be closed if sharing its runtime/code before a production update.
+
+Updater tests cover allowed paths, traversal rejection, native SDK/data/credential preservation, SHA mismatch. Node lifecycle mock proves only integration/worker restart and busy rejection. Actual installed worker startup/UI/auth/shutdown and synthetic review/preview verified. Real Resolve host opening/relaunch still pending user test; never claim it was exercised. First registration can require Resolve restart. Packaging and Mac hardware verification remain pending.
+
+# Auto-Cut Workflow Integration v0122 — 2026-10-21
+
+New independent integration com.rambla.autocut / version 0.1.0 installed in the local Resolve Workflow Integration Plugins folder. Native SDK copied from this machine's installed Resolve, not committed. Main app/bridge remain usable independently; only shared CUT UI change is making its optional Analysis button nullable.
+
+Worker: backend/app/autocut_service.py, loopback + random per-session token, dedicated ../autocut-data. Shared install_cut_routes/CUT UI/native export/native apply engine. No bridge routes, heartbeat or outbox. Explicit source import and explicit Apply; Apply creates a new owned timeline and leaves original intact. Current revision/source identity/current Resolve project+timeline checks. No native timeline mutations or AI calls in the completed smoke tests.
+
+Window lifecycle/SDK source adapter: tools/autocut_integration. Installer: tools/install_autocut_integration.py, INSTALL_RMBL_AUTO_CUT.ps1/.command. Windows installed-worker boot/auth/UI/shutdown and synthetic browser review/preview tested; 49 focused Python tests + 3 Node adapter tests passed before final verification. Await real Resolve menu opening/source snapshot and real Apply. Existing Python runtime is reused; self-contained runtime packaging, Mac hardware test and native Resolve transcript reading are NOT complete. Studio + Local scripting required for existing native Apply helper.
+
+Full instructions and exact limitations: docs/AUTOCUT_INTEGRATION.md. No keys copied to plugin source/runtime config; existing .env.local allowlist loader reused. Do not publish credentials or local SDK binary. Original project data untouched.
+
 # Main application reference theme v0121 — 2026-10-20
 
 Main app only: charcoal surfaces, compact controls, restrained aqua/violet accents, consistent workflow headers and smaller previews. Bridge GUI unchanged. Existing custom paints remain saved and active; factory defaults migrate only on exact former factory values. RIPRISTINA COLORI previews the new defaults; SALVA IMPOSTAZIONI persists them.
