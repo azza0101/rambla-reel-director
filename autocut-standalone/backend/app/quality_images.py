@@ -1,0 +1,149 @@
+"""Tiered photo retrieval with bounded fallback and per-shot quality decisions."""
+import asyncio
+from dataclasses import asdict
+import hashlib
+import json
+import os
+from pathlib import Path
+import time
+import httpx
+from .atomic_io import write_json
+from .image_sources import PexelsPhotoSource,GoogleImageSource,WikimediaImageSource
+from .media_quality import image_quality,diverse_candidates,other_media_history,cross_chunk_duplicate_rate,balance_shots
+from .project_config import load_project_credentials,provider_status
+from .retrieval_quality import VERSION,expand_queries,QualityRanker
+from .editorial_relevance import build_retrieval_spec,encode_retrieval_intent
+
+
+def image_queries_for_shot(shot, generated, options=None):
+    options = options or {}
+    overrides = options.get('query_overrides') or {}
+    override = str(overrides.get(str(shot.get('shot_id') or ''), overrides.get('*', '')) or '').strip()
+    return ([override], True) if override else (list(generated), False)
+
+
+def image_variants_for_search(queries, manual, options=None):
+    variants = list(queries) if manual else expand_queries(list(queries), 'image')
+    if manual or len(variants) < 2:
+        return variants
+    round_no = max(0, int((options or {}).get('variation_round') or 0))
+    shift = round_no % len(variants)
+    return variants[shift:] + variants[:shift]
+
+
+def configured_sources():
+    load_project_credentials()
+    sources=[]
+    if os.environ.get('PEXELS_API_KEY'): sources.append(PexelsPhotoSource(os.environ['PEXELS_API_KEY']))
+    if os.environ.get('GOOGLE_API_KEY') and os.environ.get('GOOGLE_CSE_ID'):
+        sources.append(GoogleImageSource(os.environ['GOOGLE_API_KEY'],os.environ['GOOGLE_CSE_ID']))
+    sources.append(WikimediaImageSource())
+    return sources
+
+
+async def source_images(chunks,output,plan,ranker,client_id,*,sources=None,fetcher=None,event_callback=None):
+    started=time.perf_counter();output.mkdir(parents=True,exist_ok=True)
+    providers=configured_sources() if sources is None else sources
+    ranker=ranker or QualityRanker()
+    history=[]; result={'schema_version':VERSION,'chunks':{},'active_providers':[getattr(p,'provider_name',type(p).__name__) for p in providers],
+        'provider_status':provider_status(),'errors':[],'duplicates_rejected':0,'cache_reused_chunks':0,'retried_chunks':0}
+    if event_callback:event_callback('image_search',0,'Photo provider configuration',**result['provider_status'])
+    path=output/'image-candidates.json'
+    try: cached=json.loads(path.read_text(encoding='utf-8'))
+    except (OSError,ValueError): cached={}
+    try: search_options=json.loads(os.environ.get('RAMBLA_SOCIAL_SEARCH_OPTIONS','{}'))
+    except (TypeError,ValueError): search_options={}
+    signature=hashlib.sha256(json.dumps({'plan':plan,'version':VERSION,'providers':result['active_providers'],'ranking':type(ranker).__name__,'visual':bool(getattr(ranker,'visual',None)),'search_options':search_options},sort_keys=True).encode()).hexdigest()
+    result['quality_signature']=signature
+    async def fetch(url):
+        if fetcher: return await fetcher(url)
+        async with httpx.AsyncClient(timeout=20,follow_redirects=True,headers={'User-Agent':'RAMBLA-Reel-Director/0.4 (https://github.com/azza0101/rambla-reel-director)'}) as client:
+            response=await client.get(url);response.raise_for_status();return response.content
+    for index,chunk in enumerate(chunks):
+        bid=chunk['id']; beat=plan['chunks'][bid]; cross=other_media_history(output,'video',bid)
+        row={'quality_version':VERSION,'status':'searched','visual_action':beat.get('visual_action','BROLL'),'candidates':[],'rejected_candidates':[],
+            'search_attempts':[],'queries':[],'raw_count':0,'accepted_count':0,'errors':[],'active_providers':[]}
+        result['chunks'][bid]=row
+        counts={'raw':0,'hd':0,'preview':0,'preview_failed':0,'rejected':0,'duplicates':0,'requests_failed':0}
+        row['counts']=counts
+        if row['visual_action']!='BROLL':
+            row.update(status='not_requested',zero_result_reason=row['visual_action']);continue
+        old=cached.get('chunks',{}).get(bid,{})
+        if cached.get('quality_signature')==signature and old.get('candidates') and all(Path(c.get('preview_path','missing')).is_file() for c in old['candidates']):
+            row.update(old);row['quality_version']=VERSION;row['candidates'],n=diverse_candidates(old['candidates'],history+cross,limit=4)
+            row['accepted_count']=len(row['candidates']);row['cache_status']='reused';history.extend(row['candidates']);result['duplicates_rejected']+=n;result['cache_reused_chunks']+=1;continue
+        result['retried_chunks']+=1
+        for shot in (beat['shots'][:1] if search_options.get('magic_exact_query') else beat['shots']):
+            accepted=[];seen=set()
+            spec=build_retrieval_spec(beat,shot,'image')
+            requested_queries,manual_query=image_queries_for_shot(shot,spec['queries'],search_options)
+            row['queries'].extend(q for q in requested_queries if q not in row['queries'])
+            variants=image_variants_for_search(requested_queries,manual_query,search_options)
+            editorial_intent=encode_retrieval_intent(beat,shot)
+            # Finish the primary source (including expansions) before secondary/fallback.
+            for provider in providers:
+                provider_name=getattr(provider,'provider_name',type(provider).__name__)
+                row['active_providers'].append(provider_name)
+                for query in variants:
+                    attempt={'provider':provider_name,'query':query,'shot_id':shot['shot_id'],'manual_query':manual_query,'expanded':not manual_query and query not in shot['image_queries'],'expanded_from':shot['image_queries'] if not manual_query and query not in shot['image_queries'] else None,
+                        'contextual_fallback':query not in shot['image_queries'] and query in spec['queries'],'generic_shot_demoted':spec['generic_shot_demoted']}
+                    row['search_attempts'].append(attempt)
+                    if event_callback:event_callback('image_search',100*index/max(1,len(chunks)),'Searching photos',chunk_id=bid,**attempt)
+                    try: remote=await provider.search(query,limit=12)
+                    except Exception as exc:
+                        attempt['error']=getattr(exc,'code',type(exc).__name__);row['errors'].append(attempt.copy());counts['requests_failed']+=1;continue
+                    attempt['hits']=len(remote);row['raw_count']+=len(remote)
+                    counts['raw']+=len(remote)
+                    pool=[]
+                    for c in remote:
+                        if (c.provider,c.provider_id) in seen:continue
+                        seen.add((c.provider,c.provider_id))
+                        if max(c.width,c.height)<1024 or min(c.width,c.height)<480:continue
+                        counts['hd']+=1
+                        cache=output/'image-cache';cache.mkdir(exist_ok=True)
+                        local=cache/(hashlib.sha256((c.provider+':'+c.provider_id).encode()).hexdigest()[:24]+'.jpg')
+                        try:
+                            if not local.exists():local.write_bytes(await fetch(c.thumbnail_url))
+                            quality=image_quality(local)
+                            counts['preview']+=1
+                            pool.append({**asdict(c),**quality,'id':c.provider+':'+c.provider_id,'client_id':client_id,'path':str(local),'preview_path':str(local),'kind':'image','source':c.provider,'description':c.description or c.title,'shot_id':shot['shot_id'],'shot_description':shot['description'],'matched_query':query,'retrieval_query':query,
+                                'editorial_positive':spec['positive'],'editorial_negatives':spec['negatives'],'generic_shot_demoted':spec['generic_shot_demoted']})
+                        except Exception as exc:
+                            dimension_failure=isinstance(exc,ValueError) and str(exc)=='image below usable dimensions'
+                            if dimension_failure:counts['hd']-=1
+                            else:counts['preview_failed']+=1
+                            row['errors'].append({'provider':c.provider,'code':'no_hd_candidates' if dimension_failure else 'preview_failed','error_type':type(exc).__name__})
+                    ranked=ranker.rank(editorial_intent,pool)
+                    # A missing local Qwen model must not turn a successful provider
+                    # search into an empty shelf.  In that case retain the best
+                    # metadata-ranked results and clearly mark them for review.
+                    if getattr(ranker,'visual',None) is None:
+                        usable=[r for r in ranked if not any(
+                            reason.startswith(('unsupported generic visual:', 'negative visual evidence'))
+                            for reason in r.get('quality_reasons',[])
+                        )]
+                        strong=[{**r,'score':max(.40,float(r.get('score',0))),
+                                 'quality_state':'needs_review'} for r in usable[:4]]
+                    else:
+                        strong=[r for r in ranked if r.get('quality_state')!='rejected' and r.get('score',0)>=.40]
+                    counts['rejected']+=len(ranked)-len(strong)
+                    row['rejected_candidates'].extend({k:r.get(k) for k in ('id','provider','title','source_page','matched_query','score','embedding_score','shot_embedding_score','query_embedding_score','negative_embedding_score','condition_counter_score','metadata_score','quality_reasons','editorial_positive','editorial_negatives')} for r in ranked if r not in strong)
+                    accepted,n=diverse_candidates(accepted+strong,history+cross+row['candidates'],limit=2)
+                    result['duplicates_rejected']+=n;attempt['accepted']=len(accepted)
+                    counts['duplicates']+=n
+                    if len(accepted)>=2:break
+                if len(accepted)>=2:break
+            row['candidates'].extend(accepted)
+        row['candidates'],n=diverse_candidates(balance_shots(row['candidates']),history+cross,limit=4)
+        result['duplicates_rejected']+=n;history.extend(row['candidates']);row['accepted_count']=len(row['candidates'])
+        from .retrieval_diagnostics import empty_reason
+        counts['ranker_unavailable']=bool(getattr(ranker,'warning',None)) or getattr(ranker,'visual',None) is None
+        counts['accepted']=len(row['candidates'])
+        row['diagnostics']=empty_reason(counts)
+        row['zero_result_reason']=None if row['candidates'] else row['diagnostics']['message']
+        row['ranking_warning']=getattr(ranker,'warning',None)
+        write_json(path,result)
+        if event_callback:event_callback('image_search',100*(index+1)/len(chunks),'Photo quality gate complete',chunk_id=bid,accepted=row['accepted_count'],raw=row['raw_count'],errors=row['errors'],zero_reason=row['zero_result_reason'])
+    result['cross_chunk_duplicate_rate']=cross_chunk_duplicate_rate([r['candidates'] for r in result['chunks'].values()])
+    result['sourcing_seconds']=round(time.perf_counter()-started,3);write_json(path,result)
+    return result
