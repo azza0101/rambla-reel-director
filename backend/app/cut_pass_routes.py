@@ -21,80 +21,34 @@ from .cut_pass import build_cut_plan, clean_transcript, words_of, prepare_sugges
 class CutReview(BaseModel):
     model_config = ConfigDict(extra='forbid')
     revision: str
+    previous_project_id: str | None = Field(default=None, pattern="^[a-f0-9]{12}$")
     selected_takes: dict[str, int] = Field(default_factory=dict, max_length=1000)
     keep_discards: dict[str, bool] = Field(default_factory=dict, max_length=1000)
     tight_pauses: bool | None = None
     pause_mode: str | None = Field(default=None, pattern="^(soft|medium|strong)$")
     excluded_word_indices: list[int] | None = Field(default=None, max_length=100000)
+    restored_word_indices: list[int] | None = Field(default=None, max_length=100000)
     pause_threshold: float = Field(default=1.2, ge=.5, le=5)
     breathing: float = Field(default=.18, ge=.05, le=.5)
     end_margin_ms: int | None = Field(default=None, ge=0, le=400)
 
 
 def propose_groups(transcript):
-    from .groq_api import GroqDirectorClient
-    words=words_of(transcript)
-    prompt='''Monta il parlato di una registrazione grezza con riprese ripetute e conversazioni
-tra autore e regista. Il risultato è SOLO il testo realmente recitato, con l'ultima
-take completa per ciascuna frase e senza conversazioni sul come recitarlo.
-Devi esaminare TUTTE le parole dalla prima all'ultima: non lasciare regia o errori
-prima, fra o dopo le take. Battute come "vai", "allora vai", "più piano", "molto
-meglio", "non va bene", "puoi fare un'altra versione", "fammelo con...", discussioni
-sulla formulazione e commenti a chi registra vanno in discards quando il contesto
-dimostra che sono fuori scena. Domande alternative abbandonate e frammenti non
-completati vanno in discards. Non accorciare la versione valida arbitrariamente.
-Trova ripartenze e tentativi della STESSA frase: il parlante prova, sbaglia e ripete.
-Non tagliare ripetizioni intenzionali, enfasi o frasi con informazioni nuove realmente recitate.
-Le indicazioni di regia fra le riprese NON interrompono un gruppo: includi TUTTE
-le esecuzioni della stessa frase e scegli l'ultima completa, anche se cambia una
-parola ('ora parto' / 'adesso parto'). Ogni take è un intervallo di indici parola
-inclusivi [prima,ultima]. Includi tutte le parole della take, anche quelle sbagliate,
-senza inglobare frasi uniche. Take e gruppi non possono sovrapporsi. L'ultima take
-deve essere completa. Se l'ultimo tentativo è incompleto, lascia come ultima take
-quello completo precedente e proponi il frammento successivo in discards.
-Proponi anche discards per battute fuori scena, indicazioni di regia, commenti
-sull'esecuzione, tentativi abbandonati senza sostituto e sporcature inequivocabili.
-Non scartare testo utile al racconto, presentazioni o altre frasi complete perché
-sono un argomento diverso: conservare l'ultima versione completa di OGNI frase.
-Un gruppo deve contenere almeno DUE take; una frase detta una sola volta resta.
-Non mettere in discards le vecchie take: le rappresenti solo nei gruppi.
-Ogni scarto ha range [prima,ultima], reason e confidence.
-Gli scarti non possono sovrapporsi alle take o ad altri scarti.
-La confidenza misura se è davvero una correzione: sotto .85
-richiede revisione. Non inventare parole né tempi. Non eliminare parti solo perché
-suonano informali. Restituisci groups con takes, reason in italiano e confidence.
-Trascrizione: indice:parola, [PAUSA] indica una pausa superiore a 1.2 secondi.\n'''+ ' '.join(
-        ('[PAUSA] ' if i and w['start']-words[i-1]['end']>1.2 else '')+f"{w['index']}:{w['text']}"
-        for i,w in enumerate(words))
-    prompt+='\nCHECK FINALE OBBLIGATORIO: simula il testo risultante dopo i tuoi tagli. Deve essere una recitazione pulita coerente. Se rimangono regia, commenti o versioni precedenti della stessa frase, correggi groups/discards prima di rispondere. Conserva le presentazioni valide del parlante.'
-    schema={'type':'object','additionalProperties':False,'required':['groups','discards'],'properties':{
-        'discards':{'type':'array','items':{'type':'object','additionalProperties':False,
-            'required':['range','reason','confidence'],'properties':{
-                'range':{'type':'array','items':{'type':'integer'}},'reason':{'type':'string'},'confidence':{'type':'number'}}}},
-        'groups':{'type':'array','items':{'type':'object','additionalProperties':False,
-            'required':['takes','reason','confidence'],'properties':{
-                'takes':{'type':'array','minItems':2,'items':{'type':'array','minItems':2,'maxItems':2,'items':{'type':'integer'}}},
-                'reason':{'type':'string'},'confidence':{'type':'number'}}}}}}
-    from .cut_cloud import word_windows,query_json,merge_suggestions
-    windows=word_windows(words)
-    header=prompt.split('Trascrizione:')[0]+'Trascrizione con INDICI ORIGINALI: non rinumerare.\n'
-    replies=[]
-    for i,window in enumerate(windows):
-        text=' '.join(f"{w['index']}:{w['text']}" for w in window)
-        replies.append(query_json(header+text,schema,f'Riconosco take · blocco {i+1}/{len(windows)}'))
-    return merge_suggestions(replies)
+    from .cut_semantic import propose_semantic_groups
+    return propose_semantic_groups(transcript)
 
 
 def choose_complete_takes(transcript,groups):
     """A separate editorial check chooses the last *valid* take, not the last fragment."""
     from .groq_api import GroqDirectorClient
     from .cut_boundaries import review_take_boundaries
+    if groups and all(g.get('semantic_reviewed') for g in groups):return groups
     groups=review_take_boundaries(transcript,groups)
     words=words_of(transcript)
     context=' '.join(w['text'] for w in words)
     candidates=[{'group':i,'takes':[' '.join(w['text'] for w in words[a:b+1]) for a,b in g['takes']]} for i,g in enumerate(groups)]
     prompt='''Controlla un montaggio di registrazione grezza. Per OGNI gruppo scegli
-l'ULTIMA TAKE COMPLETA e grammaticalmente recitata, non semplicemente l'ultima:
+l'ULTIMA TAKE COMPLETA realmente recitata, non semplicemente l'ultima. Colloquialismi ed errori ASR non sono motivi per conservare tutte le take:
 un frammento, una ripartenza, una frase mescolata a commenti di regia o due versioni
 incollate NON sono validi. Se l'ultima è sbagliata torna all'ultima corretta precedente.
 Se il contesto mostra che quel gruppo è una domanda/formulazione proposta e poi
@@ -151,7 +105,7 @@ def render_cut(source, target, plan, *, preview=False):
     selected='+'.join(f"gte(n,{s['source_in_frame']})*lt(n,{s['source_out_frame']})" for s in plan['segments'])
     # fps establishes a 1/fps timebase: integer N avoids floating point losing a tick.
     video=f"[0:v]fps={plan['fps']},select='{selected}',setpts=N"
-    if preview:video+=',scale=-2:540'
+    if preview:video+=",scale=w='min(iw,640)':h='min(ih,640)':force_original_aspect_ratio=decrease:force_divisible_by=2"
     filters=[video+'[v]']; inputs=[]
     for i,s in enumerate(plan['segments']):
         a,b=s['source_in_frame'],s['source_out_frame']
@@ -162,7 +116,7 @@ def render_cut(source, target, plan, *, preview=False):
     temporary = target.with_name(target.stem + '-' + uuid.uuid4().hex + '.partial.mp4')
     try:
         subprocess.run(['ffmpeg','-v','error','-y','-i',str(source),'-filter_complex_script',str(graph),
-            '-map','[v]','-map','[a]','-r',plan['fps'],'-fps_mode','cfr','-c:v','libx264','-preset','veryfast','-crf','23' if preview else '18',
+            '-map','[v]','-map','[a]','-r',plan['fps'],'-fps_mode','cfr','-c:v','libx264','-preset','ultrafast' if preview else 'veryfast','-crf','28' if preview else '18',
             '-pix_fmt','yuv420p','-c:a','aac','-movflags','+faststart',str(temporary)],
             check=True,capture_output=True,timeout=900)
         verify_cut_render(temporary, plan)
@@ -172,7 +126,8 @@ def render_cut(source, target, plan, *, preview=False):
 
 
 def install_cut_routes(app,store,root,load_project,active_run):
-    jobs={}; tasks=set()
+    jobs={}; tasks=set();installed_at=time.time()
+    app.state.cut_jobs = jobs
 
     def paths(pid):
         p=load_project(pid)
@@ -198,7 +153,7 @@ def install_cut_routes(app,store,root,load_project,active_run):
         write_json(folder/'alignment-signature.json',{'signature':p.analysis_signature})
         adjusted=build_cut_plan(aligned,duration=p.source_video.duration,fps=p.source_video.fps,
             signature=p.analysis_signature,groups=plan['groups'],discards=plan.get('discards',[]),
-            pause_threshold=plan['pause_threshold'],breathing=plan['breathing'],excluded_word_indices=plan.get('excluded_word_indices',[]),tight_pauses=plan.get('tight_pauses',False),pause_mode=plan.get('pause_mode','soft'),silence_intervals=plan.get('silence_intervals',[]),end_margin_ms=plan.get('end_margin_ms',0))
+            pause_threshold=plan['pause_threshold'],breathing=plan['breathing'],excluded_word_indices=plan.get('excluded_word_indices',[]),restored_word_indices=plan.get('restored_word_indices',[]),tight_pauses=plan.get('tight_pauses',False),pause_mode=plan.get('pause_mode','soft'),silence_intervals=plan.get('silence_intervals',[]),end_margin_ms=plan.get('end_margin_ms',0))
         adjusted['warnings']=list(dict.fromkeys([w for w in plan.get('warnings',[]) if not w.startswith('Take ')]+warnings))
         return adjusted
 
@@ -243,6 +198,8 @@ def install_cut_routes(app,store,root,load_project,active_run):
                 result=await asyncio.to_thread(work)
                 job.update(status='succeeded',completed=4,message='Operazione CUT completata',result=result,finished_at=time.time())
             except Exception as exc:
+                reporter=getattr(app.state,'diagnostics',None)
+                if reporter:reporter.capture_exception(exc,component='cut',phase=kind)
                 message=str(exc)
                 if isinstance(exc,subprocess.CalledProcessError):
                     message=(exc.stderr or b'').decode('utf-8',errors='replace')[-1800:]
@@ -260,17 +217,35 @@ def install_cut_routes(app,store,root,load_project,active_run):
             payload['confirmed_preview_url']=f'/api/curation/projects/{pid}/media/source-video/source'
             saved_origin=read(origin)
             payload['cut_parent_project_id']=saved_origin['project_id']
+            payload['confirmed_revision']=saved_origin['plan']['revision']
             payload['confirmed_duration_seconds']=p.source_video.duration
             payload['original_duration_seconds']=saved_origin['plan']['source_duration_frames']/float(__import__('fractions').Fraction(saved_origin['plan']['fps']))
-        if (folder/'plan.json').is_file():
+        review_pid, review_folder = pid, folder
+        if origin.is_file() and Path(p.source_video.path).resolve()==(root/pid/'source'/'clean.mp4').resolve():
+            saved_origin = read(origin)
+            review_pid = str(saved_origin['project_id'])
+            review_folder = root/review_pid/'cut'
+            payload['job']=state(review_pid)
+        if (review_folder/'plan.json').is_file():
             try:
-                _,_,plan=current(pid)
+                _,_,plan=current(review_pid)
             except HTTPException as exc:
                 if exc.status_code!=409:raise
                 payload['source_changed']=True
                 return payload
-            payload['plan']=plan; payload['text']=clean_transcript(timing_read(folder),plan)['text']
-            payload['words']=review_words(timing_read(folder),plan)
+            timing = timing_read(review_folder)
+            payload['plan']=plan; payload['text']=clean_transcript(timing,plan)['text']
+            payload['words']=review_words(timing,plan)
+        report_path=root/pid/'run'/'cut-reconciliation.json'
+        if report_path.is_file():
+            report=read(report_path)
+            owner=report.get('job_owner_pid')
+            if report.get('status')=='running' and ((owner is not None and owner!=os.getpid()) or (owner is None and report_path.stat().st_mtime<installed_at)):
+                done=set(report.get('completed_research',[]))
+                report.update(status='failed',message='Aggiornamento interrotto dal riavvio: riprendi solo le ricerche mancanti.',
+                              research_errors=[bid for bid in report.get('research_beat_ids',[]) if bid not in done])
+                write_json(report_path,report)
+            payload['reconciliation']=report
         return payload
 
     @app.post('/api/curation/projects/{pid}/cut/analyze')
@@ -322,10 +297,17 @@ def install_cut_routes(app,store,root,load_project,active_run):
     @app.post('/api/curation/projects/{pid}/cut/residual')
     async def repair_residual(pid:str):
         def operation(p,folder,progress):
-            from .cut_residual import review_residual_takes
+            from .cut_residual import review_residual_takes, reconcile_exact_nearby_restarts
             _,_,old=current(pid)
             progress(1,'Cerco frasi interrotte e ripartenze nel testo mantenuto…')
-            new=review_residual_takes(timing_read(folder),old)
+            # If the preceding cloud pass already proved incoherent, retrying it
+            # only spends quota and leaves the editor waiting.  Expand the safe
+            # deterministic audit instead.
+            if any('Verifica AI delle ripartenze non disponibile o incoerente' in str(w) for w in old.get('warnings',[])):
+                new=reconcile_exact_nearby_restarts(timing_read(folder),old)
+                new['warnings']=new.get('warnings',[])+['Seconda verifica locale completata senza una nuova chiamata Groq.']
+            else:
+                new=review_residual_takes(timing_read(folder),old)
             progress(3,'Ripartenze verificate · conservo scelte e tempi originali…')
             write_json(folder/('plan-backup-residual-'+str(time.time_ns())+'.json'),old)
             write_json(folder/'plan.json',new)
@@ -344,7 +326,7 @@ def install_cut_routes(app,store,root,load_project,active_run):
             new=build_cut_plan(raw,duration=p.source_video.duration,fps=p.source_video.fps,
                 signature=p.analysis_signature,groups=groups,discards=old.get('discards',[]),
                 pause_threshold=old['pause_threshold'],breathing=old['breathing'],
-                excluded_word_indices=old.get('excluded_word_indices',[]),tight_pauses=old.get('tight_pauses',False),pause_mode=old.get('pause_mode','soft'),silence_intervals=old.get('silence_intervals',[]),end_margin_ms=old.get('end_margin_ms',0))
+                excluded_word_indices=old.get('excluded_word_indices',[]),restored_word_indices=old.get('restored_word_indices',[]),tight_pauses=old.get('tight_pauses',False),pause_mode=old.get('pause_mode','soft'),silence_intervals=old.get('silence_intervals',[]),end_margin_ms=old.get('end_margin_ms',0))
             new['warnings']=old.get('warnings',[])
             write_json(folder/('plan-backup-boundaries-'+str(time.time_ns())+'.json'),old)
             write_json(folder/'boundary-review.json',{'source_signature':p.analysis_signature,'groups':groups})
@@ -377,6 +359,7 @@ def install_cut_routes(app,store,root,load_project,active_run):
                 fps=p.source_video.fps,signature=p.analysis_signature,groups=groups,discards=discards,
                 pause_threshold=request.pause_threshold,breathing=request.breathing,
                 excluded_word_indices=plan.get("excluded_word_indices",[]) if request.excluded_word_indices is None else request.excluded_word_indices,
+                restored_word_indices=plan.get("restored_word_indices",[]) if request.restored_word_indices is None else request.restored_word_indices,
                 tight_pauses=plan.get("tight_pauses",False) if request.tight_pauses is None else request.tight_pauses,
                 pause_mode=request.pause_mode or plan.get("pause_mode","soft"),silence_intervals=silences,end_margin_ms=request.end_margin_ms if request.end_margin_ms is not None else plan.get('end_margin_ms',0))
         except (ValueError,IndexError,KeyError) as exc: raise HTTPException(422,str(exc)) from exc
@@ -408,7 +391,9 @@ def install_cut_routes(app,store,root,load_project,active_run):
         if origin_path.is_file():
             origin = read(origin_path)
             plan = origin['plan']
-            # The confirmed child's source is its own full-resolution CUT render.
+            if origin.get('preview_only'):
+                # Full-resolution MP4 is generated only on explicit download.
+                return plan, Path(origin['source_path']), root/origin['project_id']/'cut', False
             p, folder = paths(pid)
             return plan, Path(p.source_video.path), folder, True
         p, folder, plan = current(pid)
@@ -459,10 +444,18 @@ def install_cut_routes(app,store,root,load_project,active_run):
             from .debug_run_cli import build_short_outline,analysis_input_signature
             if plan.get('clean_project_id'):
                 existing=store.load(plan['clean_project_id'])
+                if request.previous_project_id and request.previous_project_id!=existing.project_id:
+                    previous_root=root/request.previous_project_id
+                    previous_origin=previous_root/'cut-origin.json'
+                    if not previous_origin.is_file() or read(previous_origin).get('project_id')!=pid:
+                        raise ValueError('Il risultato precedente appartiene a una sorgente CUT diversa')
+                    from .cut_reconciliation import reconcile_cut
+                    if not (root/existing.project_id/'run'/'cut-reconciliation.json').is_file():
+                        reconcile_cut(previous_root/'run',root/existing.project_id/'run',project_id=existing.project_id,duration=plan['duration_seconds'])
                 return {'project_id':existing.project_id}
-            progress(0,'Creo il video pulito alla risoluzione originale…')
-            target=folder/('clean-'+plan['revision']+'.mp4')
-            if not target.is_file(): render_cut(Path(p.source_video.path),target,plan)
+            progress(0,'Creo anteprima CUT leggera · massimo 640 px…')
+            target=folder/('preview-'+plan['revision']+'.mp4')
+            if not target.is_file(): render_cut(Path(p.source_video.path),target,plan,preview=True)
             if store.load(pid).analysis_signature!=p.analysis_signature:
                 raise ValueError('La sorgente è cambiata durante il render: rianalizza CUT')
             progress(1,'Video pronto · preparo la versione CUT del progetto…')
@@ -482,8 +475,16 @@ def install_cut_routes(app,store,root,load_project,active_run):
             write_json(run/'analysis-signature.json',{'analysis_signature':child.analysis_signature})
             source_stat = Path(p.source_video.path).stat()
             write_json(root/child.project_id/'cut-origin.json',{'project_id':pid,'plan':plan,'source_path':p.source_video.path,
-                'source_signature': p.source_video.signature,
+                'preview_only':True,'source_signature': p.source_video.signature,
                 'source_identity': {'size': source_stat.st_size, 'mtime_ns': source_stat.st_mtime_ns}})
+            if request.previous_project_id:
+                previous_root=root/request.previous_project_id
+                previous_origin=previous_root/'cut-origin.json'
+                if not previous_origin.is_file() or read(previous_origin).get('project_id')!=pid:
+                    raise ValueError('Il risultato precedente appartiene a una sorgente CUT diversa')
+                from .cut_reconciliation import reconcile_cut
+                progress(2,'Confronto frasi e riallineo le coperture conservate…')
+                reconcile_cut(previous_root/'run',run,project_id=child.project_id,duration=plan['duration_seconds'])
             progress(3,'Testo pulito e tempi salvati · progetto originale conservato')
             plan.update(status='confirmed',clean_project_id=child.project_id)
             write_json(folder/'plan.json',plan)

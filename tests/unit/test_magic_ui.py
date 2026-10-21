@@ -10,3 +10,16 @@ def test_magic_controls_show_real_progress_budget_and_manual_apply():
     assert 'id="magicOpenResult"' in html
     assert "magicSend.id='magicSend'" in html and 'INVIA AL BRIDGE' in html
     assert '/send' in html
+    assert 'id="magicPhases"' in html
+    assert 'renderMagicPhases' in html
+    assert 'await hydrate()' in html
+    assert 'prepareBrollViewV24()' in html
+    assert 'desktopTargetRevision=target.revision' in html
+    assert "history.replaceState(null,'',resultUrl.href)" in html
+    assert 'id="magicRestart"' in html and '/restart' in html
+    assert 'ensureMagicAnalysis' in html
+    assert 'await ensureMagicAnalysis(pid)' in html
+    assert '/projects/${pid}/analyze' in html
+    # MAGICO may create a result, but must never navigate Source to it by itself.
+    assert 'magicCutOpenedRun' not in html
+    assert 'await openMagicOutput(3)' not in html

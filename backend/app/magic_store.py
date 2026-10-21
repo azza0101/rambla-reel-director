@@ -44,11 +44,11 @@ class MagicStore:
         rows = [json.loads(p.read_text(encoding='utf-8')) for p in paths]
         return max(rows, key=lambda row: row['created_at'], default=None)
 
-    def create_or_resume(self, project_id, signature, options):
+    def create_or_resume(self, project_id, signature, options, *, fresh=False):
         options = MagicOptions.model_validate(options).model_dump()
         with self.lock:
             old = self.latest(project_id)
-            if old and old['source_signature'] == signature and old['options'] == options and old['status'] != 'cancelled':
+            if not fresh and old and old['source_signature'] == signature and old['options'] == options and old['status'] != 'cancelled':
                 return old
             if old and old['status'] in {'queued', 'running', 'waiting_input'}:
                 raise ValueError('Un run MAGICO è già aperto: annullalo prima di cambiare sorgente o opzioni')

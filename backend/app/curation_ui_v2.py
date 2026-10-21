@@ -51,30 +51,30 @@ function workflowStepNodesV42(){return [...document.querySelectorAll('[data-work
 function workflowHeaderV42(node){if(node.matches('h2'))return node;return node.querySelector(':scope > .top')||node.querySelector(':scope > h2')||node.querySelector(':scope > details > summary')}
 function setWorkflowOpenV42(node,open){
  const step=Number(node.dataset.workflowStepV42),header=workflowHeaderV42(node),chevron=header?.querySelector('.workflowChevronV42');
- if(step===5){node.classList.toggle('workflowStepFiveClosedV42',!open);node.classList.toggle('workflowStepFiveOpenV42',open)}
- else if(step===6){const details=node.querySelector(':scope > details');if(details)details.open=!!open}
+ if(step===7){node.classList.toggle('workflowStepFiveClosedV42',!open);node.classList.toggle('workflowStepFiveOpenV42',open)}
+ else if(step===3||step===8){const details=node.querySelector(':scope > details');if(details)details.open=!!open}
  else node.classList.toggle('workflowCollapsedV42',!open);
  if(header){header.setAttribute('aria-expanded',String(!!open));if(chevron)chevron.textContent=open?'▼':'▶'}
 }
-function workflowIsOpenV42(node){const step=Number(node.dataset.workflowStepV42);if(step===5)return node.classList.contains('workflowStepFiveOpenV42');if(step===6)return !!node.querySelector(':scope > details')?.open;return !node.classList.contains('workflowCollapsedV42')}
+function workflowIsOpenV42(node){const step=Number(node.dataset.workflowStepV42);if(step===7)return node.classList.contains('workflowStepFiveOpenV42');if(step===3||step===8)return !!node.querySelector(':scope > details')?.open;return !node.classList.contains('workflowCollapsedV42')}
 function installWorkflowAccordionV42(){
  for(const node of workflowStepNodesV42()){
   if(node.dataset.workflowAccordionV42)continue;node.dataset.workflowAccordionV42='1';const step=Number(node.dataset.workflowStepV42),header=workflowHeaderV42(node);if(!header)continue;
-  if(step!==5&&step!==6){const body=document.createElement('div');body.className='workflowBodyV42';for(const child of [...node.children])if(child!==header)body.appendChild(child);node.appendChild(body)}
+  if(step!==3&&step!==7&&step!==8){const body=document.createElement('div');body.className='workflowBodyV42';for(const child of [...node.children])if(child!==header)body.appendChild(child);node.appendChild(body)}
   header.classList.add('workflowHeaderV42');header.tabIndex=0;header.setAttribute('role','button');const chevron=document.createElement('button');chevron.type='button';chevron.className='workflowChevronV42';chevron.tabIndex=-1;chevron.setAttribute('aria-label',`Apri o chiudi sezione ${step}`);const nestedHeading=header.querySelector(':scope > div > h2');if(nestedHeading){const titleRow=document.createElement('div');titleRow.className='workflowTitleRowV43';nestedHeading.before(titleRow);titleRow.append(chevron,nestedHeading)}else header.prepend(chevron);
   const toggle=event=>{if(event.type==='keydown'&&!['Enter',' '].includes(event.key))return;if(event.target.closest('button')&&event.target!==chevron)return;event.preventDefault();setWorkflowOpenV42(node,!workflowIsOpenV42(node))};header.addEventListener('click',toggle);header.addEventListener('keydown',toggle);setWorkflowOpenV42(node,false);
  }
 }
 function openOnlyWorkflowStepV42(step,scroll=true){installWorkflowAccordionV42();for(const node of workflowStepNodesV42()){const open=Number(node.dataset.workflowStepV42)===Number(step);setWorkflowOpenV42(node,open);node.classList.toggle('workflowNextV42',open)}const target=document.querySelector(`[data-workflow-step-v42="${step}"]`);if(scroll)target?.scrollIntoView({behavior:'smooth',block:'start'})}
 function nextWorkflowStepV42(){
- if(!state.pid)return 0;if(!state.data.analysis_ready)return 1;if(!state.data.editorial_plan_ready)return transcriptConfirmedProjectV42===state.pid?3:2;
+ if(!state.pid)return 0;if(!state.data.analysis_ready)return 2;if(!state.data.editorial_plan_ready)return transcriptConfirmedProjectV42===state.pid?5:4;
  const chunks=state.data.chunks||[],attempts=chunks.flatMap(c=>c.retrieval_diagnostics?.video_attempts||[]);if(!attempts.length)return 4;
- const broll=chunks.filter(c=>c.action==='BROLL'),unresolved=broll.some(c=>{const value=state.sel.get(c.id);return value!=='NO_BROLL'&&value!=='CONTINUE'&&(!Array.isArray(value)||!value.length)});if(unresolved)return 5;
- if(!(genericCoverageV33?.selected||[]).length)return 6;return 7;
+ const broll=chunks.filter(c=>c.action==='BROLL'),unresolved=broll.some(c=>{const value=state.sel.get(c.id);return value!=='NO_BROLL'&&value!=='CONTINUE'&&(!Array.isArray(value)||!value.length)});if(unresolved)return 7;
+ if(!(genericCoverageV33?.selected||[]).length)return 8;return 9;
 }
 function syncWorkflowAccordionV42(force=false){installWorkflowAccordionV42();const next=nextWorkflowStepV42();if(!next)return;const projectChanged=workflowProjectV42!==state.pid;if(projectChanged){workflowProjectV42=state.pid;workflowSuggestedV42=next;openOnlyWorkflowStepV42(next,false);return}if(force||next!==workflowSuggestedV42){workflowSuggestedV42=next;openOnlyWorkflowStepV42(next,force)}}
-document.addEventListener('click',event=>{if(event.target.closest('#continueWorkflowV15')){transcriptConfirmedProjectV42=state.pid;workflowSuggestedV42=3;setTimeout(()=>openOnlyWorkflowStepV42(3),0)}});
-const workflowTerminalBaseV42=window.ramblaRunTerminal;window.ramblaRunTerminal=(run)=>{if(workflowTerminalBaseV42)workflowTerminalBaseV42(run);if(run?.status!=='SUCCEEDED')return;const kind=workflowKindV12(run.stage_type);if(kind==='analyze')openOnlyWorkflowStepV42(2);else if(kind==='director_api')openOnlyWorkflowStepV42(4);else if(['videos','social','images'].includes(kind))openOnlyWorkflowStepV42(5)};
+document.addEventListener('click',event=>{if(event.target.closest('#continueWorkflowV15')){transcriptConfirmedProjectV42=state.pid;workflowSuggestedV42=5;setTimeout(()=>openOnlyWorkflowStepV42(5),0)}});
+const workflowTerminalBaseV42=window.ramblaRunTerminal;window.ramblaRunTerminal=(run)=>{if(workflowTerminalBaseV42)workflowTerminalBaseV42(run);if(run?.status!=='SUCCEEDED')return;const kind=workflowKindV12(run.stage_type);if(kind==='analyze')openOnlyWorkflowStepV42(3);else if(kind==='director_api')openOnlyWorkflowStepV42(6);else if(['videos','social','images'].includes(kind))openOnlyWorkflowStepV42(7)};
 const workflowDrawBaseV42=draw;draw=()=>{workflowDrawBaseV42();syncWorkflowAccordionV42(false)};
 installWorkflowAccordionV42();
 """
@@ -178,7 +178,7 @@ async function restoreWorkspaceSessionV13(){
  let saved={};try{saved=await api('/workspace-session')}catch(_){saved={}}
  const pid=new URLSearchParams(location.search).get('project')||saved.project_id||localStorage.getItem('rambla-project');if(!pid)return;
  try{state.pid=pid;state.active=saved.project_id===pid?saved.active_chunk_id:null;const p=await api(`/projects/${pid}`);show(p,p.source_video?.path?.split(/[\\/]/).pop()||'Reel',`/api/curation/projects/${pid}/media/source-video/source`);await hydrate();localStorage.setItem('rambla-project',pid);saveWorkspaceSessionV13()}
- catch(e){state.pid=null;state.active=null;localStorage.removeItem('rambla-project');$('projectStatus').textContent='Saved project not found. Open a RAMBLA project file or create a new project.'}
+ catch(e){const missing=/\b404\b|not found/i.test(String(e?.message||e));if(missing){state.pid=null;state.active=null;localStorage.removeItem('rambla-project');$('projectStatus').textContent='Saved project not found. Open a RAMBLA project file or create a new project.'}else{$('projectStatus').textContent='Ripristino progetto momentaneamente non disponibile; ritento…';setTimeout(restoreWorkspaceSessionV13,3000)}}
 }
 const showBaseV13=show;show=(...args)=>{showBaseV13(...args);syncProjectNameV25();syncResolveArrivalV30();saveWorkspaceSessionV13()};
 const projectBaseV25=project;project=async(...args)=>{const result=await projectBaseV25(...args);syncProjectNameV25();return result};
@@ -202,7 +202,7 @@ function shelfAssetsV2(chunk,id){if(!chunk)return[];if(id==='verticalVideos')ret
 function bindCardsV2(chunk){document.querySelectorAll('.card').forEach(node=>{const media=node.querySelector('video,img'),select=node.querySelector('.select'),source=node.querySelector('.copy>a'),a=(chunk.assets||[]).find(x=>x.asset_id===node.dataset.a);if(media)media.onclick=()=>['tiktok','instagram','youtube_shorts'].includes(a?.provider)?showSocialGifV9(a):a?.provider==='envato'?window.open(a.source_page,'_blank','noopener'):inspectMedia(media);if(source){source.textContent='Apri fonte ↗';source.classList.add('sourceButtonV9')}if(select)select.onclick=()=>pick(chunk.id,node.dataset.a)})}
 function installShelfExpansionV2(chunk,id){const container=$(id),assets=shelfAssetsV2(chunk,id),limit=shelfLimitsV2[id],key=`${chunk.id}:${id}`;if(!container)return;let button=document.getElementById(`moreV2-${id}`);if(assets.length<=limit){if(button)button.remove();return}if(!button){button=document.createElement('button');button.id=`moreV2-${id}`;button.className='ghost showMoreV2';container.insertAdjacentElement('afterend',button)}const expanded=expandedShelvesV2.has(key);button.textContent=expanded?'SHOW LESS':`SHOW MORE (${assets.length-limit})`;button.onclick=()=>{expanded?expandedShelvesV2.delete(key):expandedShelvesV2.add(key);draw()};if(expanded){container.innerHTML=assets.map(card).join('');bindCardsV2(chunk)}}
 async function refreshProjectsV2(){const payload=await api('/projects'),rows=payload.projects||[],box=$('projectRowsV2');$('libraryTotalV2').textContent=`${rows.length} projects · ${formatBytesV2(rows.reduce((n,r)=>n+Number(r.size_bytes||0),0))}`;box.innerHTML=rows.length?rows.map(r=>`<article class="projectRowV2" data-project-v2="${esc(r.project_id)}"><div><strong>${esc(r.name||'Untitled project')}</strong><small>${esc(r.project_id)} · ${esc(r.source_filename||'No source')}</small></div><div><small>${r.has_transcript?'Transcript ready':'No transcript'} · ${r.has_editorial_plan?'Plan ready':'No plan'}</small><small>${esc(r.modified_at||'')}</small></div><div class="storageV2"><b>${formatBytesV2(r.size_bytes)}</b><small>${esc(r.retrieved_media_count||0)} media</small></div><div class="actionsV2"><button data-open-v2="${esc(r.project_id)}">OPEN</button><button data-rename-v2="${esc(r.project_id)}">RENAME</button><button class="dangerV2" data-delete-v2="${esc(r.project_id)}">DELETE</button></div></article>`).join(''):'<p class="muted">No saved projects.</p>';box.querySelectorAll('[data-open-v2]').forEach(b=>b.onclick=()=>openProjectV2(b.dataset.openV2));box.querySelectorAll('[data-rename-v2]').forEach(b=>b.onclick=()=>renameProjectV2(b.dataset.renameV2));box.querySelectorAll('[data-delete-v2]').forEach(b=>b.onclick=()=>deleteProjectV2(b.dataset.deleteV2))}
-async function openProjectV2(pid){const p=await api(`/projects/${pid}`);state.pid=pid;localStorage.setItem('rambla-project',pid);show(p,p.source_video?.path?.split(/[\\/]/).pop()||p.name||'Reel',`/api/curation/projects/${pid}/media/source-video/source`);await hydrate();$('projectLibraryV2').close()}
+async function openProjectV2(pid){const p=await api(`/projects/${pid}`);state.pid=pid;localStorage.setItem('rambla-project',pid);await showProjectWithOriginalSource(p);await hydrate();$('projectLibraryV2').close()}
 async function renameProjectV2(pid){const row=(await api('/projects')).projects.find(x=>x.project_id===pid),name=prompt('Rename project',row?.name||'');if(name==null)return;const p=await api(`/projects/${pid}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});if(state.pid===pid){state.project=p;$('projectStatus').textContent=`Project ${pid} · ${p.name} · autosaved locally`}await refreshProjectsV2()}
 async function deleteProjectV2(pid){const listing=await api('/projects'),row=listing.projects.find(x=>x.project_id===pid);if(!confirm(`This will permanently delete “${row?.name||pid}” and free about ${formatBytesV2(row?.size_bytes||0)}. Continue?`))return;await api(`/projects/${pid}`,{method:'DELETE'});if(state.pid===pid){localStorage.removeItem('rambla-project');state.pid=null;state.project=null;resetProjectView();$('projectStatus').textContent='Project deleted. Choose or create another project.'}await refreshProjectsV2()}
 async function cleanBeatMediaV2(beatId){if(state.run||!state.pid)return;if(!confirm('Cancellare risultati e selezioni solo di questa frase? Potrai rilanciare la ricerca.'))return;await api(`/projects/${state.pid}/beats/${encodeURIComponent(beatId)}/media/clean`,{method:'POST'});const prefix=state.pid+':'+beatId+':';for(const map of [galleryV9,searchesV9])for(const key of map.keys())if(key.startsWith(prefix))map.delete(key);for(const key of Object.keys(localStorage))if(key.startsWith('round:'+prefix))localStorage.removeItem(key);await hydrate();$('beatResearchStateV2').textContent='Media della frase rimossi. Avvia una nuova ricerca.'}
@@ -266,12 +266,13 @@ def _organize_workflow(html: str) -> str:
         html = html[:found.start()] + html[found.end():]
         return found.group()
 
+    analyze = take("analyze")
     video, social, images = (take(key) for key in ("findVideos", "findSocial", "findImages"))
     logins = ''.join(take(key) for key in ("tiktokLoginV2", "instagramLoginV2", "envatoLoginV2"))
     login_status = take("socialLoginStateV2", "span")
     maintenance = take("cleanMediaV2")
     panel = (
-        '<section class="panel workflowV5" id="mediaWorkflowV5" data-workflow-step-v42="4"><h2>4 · Find media</h2>'
+        '<section class="panel workflowV5" id="mediaWorkflowV5" data-workflow-step-v42="6"><h2>6 · Find media</h2>'
         '<p class="muted">These searches cover all B-roll beats. Use the controls inside a beat to search only that beat.</p>'
         '<details class="toolsV5 providerLoginV29" id="socialConnectionsV5"><summary>LOGIN PROVIDER ESTERNI</summary>'
         f'<p class="muted">TikTok, Instagram ed Envato si aprono in una nuova finestra del profilo Chrome attivo. I download ufficiali Envato vengono associati automaticamente.</p><div class="row">{logins}</div>{login_status}</details>'
@@ -281,11 +282,12 @@ def _organize_workflow(html: str) -> str:
         f'<div><b>Still images</b><span id="imagesCompleteV12" class="stepStatusV12" hidden></span>{images}<small>Photos matched to each shot</small></div></div>'
         f'<details class="toolsV5"><summary>Media maintenance</summary><div class="row">{maintenance}<small>Remove retrieved media while keeping the transcript and plan.</small></div></details></section>'
     )
-    html = html.replace('<div class="grid"><aside class="rail">', panel + '<section class="panel workflowSceneHeaderV44" data-workflow-step-v42="5"><h2 id="sceneWorkspaceHeading">5 · Visual beats · testo e B-roll</h2></section><div class="grid"><aside class="rail">', 1)
-    html = html.replace('<h2>Source</h2>', '<h2>1 · Source &amp; analysis <span id="analysisCompleteV12" class="stepStatusV12" hidden></span></h2>', 1)
-    html = html.replace('<h2>Editorial Plan</h2>', '<h2>3 · Editorial plan <span id="planCompleteV12" class="stepStatusV12" hidden></span></h2>', 1)
+    html = html.replace('<div class="grid"><aside class="rail">', panel + '<section class="panel workflowSceneHeaderV44" data-workflow-step-v42="7"><h2 id="sceneWorkspaceHeading">7 · Visual beats · testo e B-roll</h2></section><div class="grid"><aside class="rail">', 1)
+    html = html.replace('<h2>Source</h2>', '<h2>1 · Source <span id="analysisCompleteV12" class="stepStatusV12" hidden></span></h2>', 1)
+    html = html.replace('<details id="analysisDetails">', f'</section><section class="panel" data-workflow-step-v42="2"><h2>2 · Analysis</h2><div class="row">{analyze}</div><details id="analysisDetails">', 1)
+    html = html.replace('<h2>Editorial Plan</h2>', '<h2>5 · Editorial plan <span id="planCompleteV12" class="stepStatusV12" hidden></span></h2>', 1)
     html = re.sub(r'(<section class="panel")(?=>\s*<h2>1 ·)', r'\1 data-workflow-step-v42="1"', html, count=1)
-    html = re.sub(r'(<section class="panel")(?=>\s*<h2>3 ·)', r'\1 data-workflow-step-v42="3"', html, count=1)
+    html = re.sub(r'(<section class="panel")(?=>\s*<h2>5 ·)', r'\1 data-workflow-step-v42="5"', html, count=1)
     # Primary Director controls precede the optional manual import/export tools.
     pattern = r'<span class="directorV5">.*?<span id="directorStateV5".*?</span></span>'
     director = re.search(pattern, html, re.S)
@@ -303,10 +305,21 @@ def render_curation_page_v2(build_token: str | None = None) -> str:
     mark = _brand_data_uri("rmbl_mark_white.png")
     html = re.sub(
         r'<h1>.*?</h1>',
-        f'<h1 class="brandHeaderV41"><img class="brandWordmarkV41" src="{wordmark}" alt="RMBL"><span class="brandTextV41"><span class="brandProductV41">RMBL B ROLL</span><span class="releaseVersionV35">{RELEASE_VERSION}</span></span></h1>',
+        f'<h1 class="brandHeaderV41"><img class="brandWordmarkV41" src="{wordmark}" alt="RMBL"><span class="brandTextV41"><span class="brandProductV41">RMBL B ROLL</span><span class="releaseVersionV35">{RELEASE_VERSION}</span></span></h1><button id="searchSoftwareUpdate" class="ghost" type="button">SEARCH UPDATE</button>',
         html,
         count=1,
     )
+    html = html + """<script>
+    document.getElementById('searchSoftwareUpdate')?.addEventListener('click',async()=>{
+      const b=document.getElementById('searchSoftwareUpdate');
+      if(typeof state!=='undefined'&&state.run){alert('Attendi la fine della lavorazione prima di aggiornare.');return}
+      b.disabled=true;try{
+        const r=await fetch('/api/curation/software-update',{method:'POST',headers:{'X-RMBL-Update':'1'}});
+        const j=await r.json();if(!r.ok)throw Error(j.detail||'Aggiornamento non disponibile');
+        alert(j.message);
+      }catch(e){alert(e.message)}finally{b.disabled=false}
+    });
+    </script>"""
     html = html.replace('<meta name="rambla-build"', f'<link rel="icon" type="image/png" href="{mark}"><meta name="rambla-build"', 1)
     html = html.replace('CURATION V1 · build', 'CURATION · build', 1)
     html = html.replace(
@@ -383,7 +396,7 @@ def render_curation_page_v2(build_token: str | None = None) -> str:
         raise RuntimeError('curation V1 bootstrap marker changed; management UI injection aborted')
     desktop_target_js = r"""
 let desktopTargetRevision=0,desktopProjectSwitchBusy=false;
-setInterval(async()=>{try{const target=await api('/desktop-target');if(!target.revision||target.revision===desktopTargetRevision||desktopProjectSwitchBusy)return;desktopTargetRevision=target.revision;const next=new URL(target.url||('/curation?project='+encodeURIComponent(target.project_id)),location.href);if(next.hostname!=='127.0.0.1')return;const versionChanged=next.searchParams.get('build')&&next.searchParams.get('build')!==new URL(location.href).searchParams.get('build');if(target.project_id&&(target.project_id!==state.pid||next.origin!==location.origin||versionChanged)){desktopProjectSwitchBusy=true;if(state.pid){await saveWorkspaceSessionV13();await api(`/projects/${state.pid}/workspace-backup`,{method:'POST'})}location.replace(next.href)}}catch(_){desktopProjectSwitchBusy=false;desktopTargetRevision=0}},900);
+setInterval(async()=>{try{const target=await api('/desktop-target');if(!target.project_id)return;if(!target.revision||target.revision===desktopTargetRevision||desktopProjectSwitchBusy)return;const next=new URL(target.url||('/curation?project='+encodeURIComponent(target.project_id)),location.href);if(next.hostname!=='127.0.0.1')return;const versionChanged=next.searchParams.get('build')&&next.searchParams.get('build')!==new URL(location.href).searchParams.get('build');if(!(target.project_id!==state.pid||next.origin!==location.origin||versionChanged)){desktopTargetRevision=target.revision;return}await api(`/projects/${target.project_id}`);desktopTargetRevision=target.revision;desktopProjectSwitchBusy=true;if(state.pid){await saveWorkspaceSessionV13();await api(`/projects/${state.pid}/workspace-backup`,{method:'POST'})}location.replace(next.href)}catch(_){desktopProjectSwitchBusy=false}},900);
 """
     html = html.replace(needle, GALLERY_JS + _MANAGEMENT_JS + TRANSCRIPT_INTENT_JS + TIMELINE_EXPORT_JS + THEME_SETTINGS_JS + desktop_target_js + needle, 1)
     from .runtime_mode import current_mode
@@ -423,4 +436,7 @@ setInterval(async()=>{try{const target=await api('/desktop-target');if(!target.r
     html = html.replace("filter:'all'", "filter:'broll'")
     html = html.replace('RAMBLA · B-ROLL', 'RMBL B ROLL').replace('RAMBLA - B-ROLL', 'RMBL B ROLL')
     html = re.sub(r'\bRAMBLA\b', 'RMBL B ROLL', html)
+    from .diagnostics_ui import HTML as SUPPORT_HTML
+    from .curation_reference_theme import CSS as REFERENCE_CSS
+    html += REFERENCE_CSS + SUPPORT_HTML
     return html

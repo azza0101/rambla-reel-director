@@ -18,10 +18,24 @@ class MagicCutAdapter:
         if journal.is_file():
             return journal, json.loads(journal.read_text(encoding='utf-8'))
         source = self.projects.load(context.source_project_id)
+        if source.source_video is None:
+            raise MagicWaitingInput('Carica un video con audio per avviare MAGICO')
         origin_path = self.root / source.project_id / 'cut-origin.json'
-        origin = json.loads(origin_path.read_text(encoding='utf-8')) if origin_path.is_file() else None
+        stored_origin = json.loads(origin_path.read_text(encoding='utf-8')) if origin_path.is_file() else None
         bridge = self.root / source.project_id / 'resolve-bridge.json'
         bridge_data = json.loads(bridge.read_text(encoding='utf-8')) if bridge.is_file() else {}
+        # A project can be the child of an older CUT.  That historical record
+        # must never replace the video the user currently sees in Source.
+        # Reuse it only when it names the exact same source file.
+        source_path = Path(source.source_video.path)
+        origin = stored_origin
+        if origin:
+            try:
+                same_source = Path(origin.get('source_path', '')).resolve() == source_path.resolve()
+            except (OSError, TypeError, ValueError):
+                same_source = False
+            if not same_source:
+                origin = None
         snapshot = bridge_data.get('cut_source') or (origin or {}).get('resolve_source')
         if bridge.is_file() and not origin:
             if not snapshot or not snapshot.get('supported'):
@@ -29,19 +43,17 @@ class MagicCutAdapter:
                 raise MagicWaitingInput('CUT da Resolve: usa RICALCOLA AUDIO per acquisire le clip originali. '+issues)
             from .resolve_cut_source import verify_snapshot_files
             verify_snapshot_files(snapshot)
-        if source.source_video is None:
-            raise MagicWaitingInput('Carica un video con audio per avviare MAGICO')
         from .workspace_backup import backup_project_state
         backup_project_state(self.root / source.project_id, self.root.parent / 'backups')
         # Registering an existing source is read-only: no extra long-video copy.
-        source_path = Path(origin['source_path']) if origin else Path(source.source_video.path)
         if origin and origin.get('source_identity'):
             stat = source_path.stat()
             if origin['source_identity'] != {'size':stat.st_size, 'mtime_ns':stat.st_mtime_ns}:
                 raise ValueError('La sorgente originale del CUT è cambiata')
         work = self.projects.create(source.name + ' · MAGICO sorgente')
         state = dict(work_project_id=work.project_id, initialized=False, steps={},
-                     source_path=str(source_path), inherited_origin=origin, resolve_source=snapshot,
+                     source_path=str(source_path), inherited_origin=origin,
+                     ignored_stale_origin=bool(stored_origin and not origin), resolve_source=snapshot,
                      guide_path=source.guide_audio.path if getattr(source,'guide_audio',None) else None)
         write_json(journal, state)
         return journal, state
@@ -158,6 +170,9 @@ class MagicCutAdapter:
             provenance = json.loads(child.read_text(encoding='utf-8'))
             provenance['resolve_source'] = state['resolve_source']
             write_json(child,provenance)
+        warnings = list(plan.get('warnings', []))
+        if state.get('ignored_stale_origin'):
+            warnings.append('Origine CUT storica ignorata: MAGICO ha usato il video attuale in Source.')
         return dict(output_project_id=state['steps']['confirm']['project_id'],
                     cut_revision=plan['revision'], work_project_id=pid,
-                    warnings=plan.get('warnings', []))
+                    warnings=warnings)

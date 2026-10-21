@@ -161,6 +161,7 @@ def run_api_first_director(
     max_attempts: int = 2,
     activate: bool = False,
     reuse: bool = True,
+    context_text: str | None = None,
 ) -> dict[str, Any]:
     run_dir = Path(run_dir).resolve()
     if not run_dir.is_dir():
@@ -168,6 +169,8 @@ def run_api_first_director(
     project_id = project_id or _infer_project_id(run_dir)
     duration = float(duration) if duration is not None else _duration_from_chunks(run_dir)
     package = transcript_package(run_dir, project_id, duration)
+    if context_text:
+        package['instructions'] += '\nCONTEXT ONLY: use the following complete transcript to understand places and references. Generate decisions ONLY for the requested chunks; do not add other chunks.\n'+context_text
 
     load_project_credentials()
     choice = str(

@@ -80,7 +80,7 @@ def test_page_renders_complete_numbered_workflow():
     assert 'id="socialConnectionsV5" open' not in html
     assert "filter:'broll'" in html
     assert '`r`n' not in html
-    assert html.index('5 · Visual beats')<html.index('6 · Coperture generiche')<html.index('7 · Export timeline')
+    assert html.index('7 · Visual beats')<html.index('8 · Coperture generiche')<html.index('9 · Export timeline')
     assert 'installCompactSources()' in html and 'openSplitScene' in html
     assert 'Cerca immagini per questa frase' in html
     assert 'CERCA ALTRE IMMAGINI' in html

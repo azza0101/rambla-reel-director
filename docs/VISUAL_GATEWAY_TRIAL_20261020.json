@@ -1,0 +1,39 @@
+{
+  "version": "v0118",
+  "gateway": "FreeLLMAPI on localhost:8831",
+  "upstream_used": "groq/qwen/qwen3.8-27b",
+  "real_smoke": {
+    "elapsed_seconds": 1.53,
+    "candidates": 3,
+    "attachments": 3,
+    "verdicts": {
+      "beat_022--pexels:29539459": {
+        "verdict": "verified",
+        "reason": "The video frames clearly show a person opening a camera bag to reveal a camera inside, which directly matches the transcript describing having camera equipment ('fusi' likely a typo for 'fotocamera' or similar) in a bag."
+      },
+      "beat_018--pexels:7326269": {
+        "verdict": "verified",
+        "reason": "The frames depict a man actively using a camera in an outdoor setting, which aligns with the transcript's theme of having the freedom to capture images."
+      },
+      "beat_080--pexels:7982620": {
+        "verdict": "verified",
+        "reason": "The video shows a family posing for a photo in a garden, which matches the transcript describing a family the traveler has built a relationship with who willingly poses."
+      }
+    },
+    "run_id": "abb3526f20e04fccab78f30f2eb008a8"
+  },
+  "recorded_tokens": 3858,
+  "frames": 9,
+  "boards": 3,
+  "requests": 1,
+  "tests_passed": 43,
+  "resolve_modified": false,
+  "default_for_this_local_install": "freellmapi",
+  "rollback": "Change RAMBLA_VISUAL_BACKEND=gemini in the ignored .env.local and restart RMBL. Previous local config is retained outside Git in rambla-data/freellm-trial/rmbl-env-before-trial.txt.",
+  "limits": [
+    "Real smoke used three relevant candidates only; this does not prove quality on arbitrary footage.",
+    "External negative control blocked by automatic approval review and not executed; rejected verdicts covered by local tests.",
+    "Provider quotas still apply; no extra Groq accounts were created.",
+    "Gateway is a separate local trial installation and is not bundled in the portable installer yet."
+  ]
+}

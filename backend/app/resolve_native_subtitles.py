@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import hashlib
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -28,19 +29,24 @@ def render_filtered_srt(rows: list[dict[str, Any]]) -> str:
     return "\n\n".join(blocks) + ("\n" if blocks else "")
 
 
+def subtitle_content_path(requested_path: Path, content: str) -> Path:
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:20]
+    return requested_path.with_name(requested_path.stem + "-" + digest + requested_path.suffix)
+
+
 def normalize_subtitle_rows(rows: list[dict[str, Any]], *, fps: int) -> list[dict[str, Any]]:
     if fps <= 0:
         raise ValueError("subtitle fps must be positive")
-    return [
-        {
-            **row,
-            "start_frame": round(float(row["start_seconds"]) * fps),
-            "end_frame": max(round(float(row["start_seconds"]) * fps) + 1, round(float(row["end_seconds"]) * fps)),
-            "start_seconds": round(float(row["start_seconds"]) * fps) / fps,
-            "end_seconds": max(round(float(row["start_seconds"]) * fps) + 1, round(float(row["end_seconds"]) * fps)) / fps,
-        }
-        for row in rows
-    ]
+    normalized=[]
+    previous_end=0
+    for row in sorted(rows,key=lambda r:float(r['start_seconds'])):
+        start=max(previous_end,round(float(row['start_seconds'])*fps))
+        end=max(start+1,round(float(row['end_seconds'])*fps))
+        normalized.append({**row,'start_frame':start,'end_frame':end,
+                           'start_seconds':start/fps,'end_seconds':end/fps})
+        previous_end=end
+    return normalized
+
 
 
 def _subtitle_items(timeline: Any, track_index: int | None = None) -> list[Any]:
@@ -213,9 +219,14 @@ def insert_native_subtitles(
         with os.fdopen(handle, "w", encoding="utf-8-sig", newline="\n") as stream:
             stream.write(render_filtered_srt(srt_rows))
     else:
-        path = Path(srt_path)
+        requested_path = Path(srt_path)
+        content = render_filtered_srt(srt_rows)
+        # Resolve caches captions at ImportMedia time. Rewriting an already
+        # imported path does not refresh its native Subtitle media.
+        path = subtitle_content_path(requested_path, content)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(render_filtered_srt(srt_rows), encoding="utf-8-sig", newline="\n")
+        if not path.is_file():
+            path.write_text(content, encoding="utf-8-sig", newline="\n")
     try:
         pool = project.GetMediaPool()
         get_current_timecode = getattr(timeline, "GetCurrentTimecode", None)
@@ -274,6 +285,9 @@ def insert_native_subtitles(
             )
             if not appended:
                 raise RuntimeError("Resolve could not place the native Subtitle clips on the timeline")
+            new_target = [item for item in _subtitle_items(timeline, wanted_track) if _identity(item) not in before]
+            new_items = new_target or [item for item in _subtitle_items(timeline) if _identity(item) not in before]
+            apply_subtitle_enabled_states(new_items, rows, base_frame)
         finally:
             if set_enabled is not None:
                 for track, was_enabled in subtitle_enabled_states.items():
@@ -342,3 +356,27 @@ def verify_native_subtitles(
     )
     if not matches:
         raise RuntimeError(f"Resolve native Subtitle verification failed: expected {expected}, got {actual}")
+    ordered_items = sorted(source_items, key=lambda item:(str(item.GetName()).strip(), int(item.GetStart()), int(item.GetEnd())))
+    ordered_rows = sorted(rows, key=lambda row:(str(row['text']).strip(), int(row['start_frame']), int(row['end_frame'])))
+    for item, row in zip(ordered_items, ordered_rows):
+        if 'enabled' in row:
+            getter = getattr(item, 'GetClipEnabled', None)
+            if not callable(getter) or getter() != bool(row['enabled']):
+                raise RuntimeError('Resolve native Subtitle enabled state verification failed')
+
+
+def apply_subtitle_enabled_states(items: list[Any], rows: list[dict[str, Any]], base_frame: int) -> None:
+    """Match only the newly imported cues before changing their native enabled state."""
+    if not any('enabled' in row for row in rows):
+        return
+    verify_native_subtitles(None, [{k:v for k,v in row.items() if k != 'enabled'} for row in rows],
+                            fps=1, base_frame=base_frame, items=items)
+    ordered_items = sorted(items, key=lambda item:(str(item.GetName()).strip(), int(item.GetStart()), int(item.GetEnd())))
+    ordered_rows = sorted(rows, key=lambda row:(str(row['text']).strip(), int(row['start_frame']), int(row['end_frame'])))
+    for item, row in zip(ordered_items, ordered_rows):
+        if 'enabled' not in row:
+            continue
+        setter = getattr(item, 'SetClipEnabled', None)
+        if not callable(setter) or setter(bool(row['enabled'])) is not True:
+            raise RuntimeError('Resolve could not set native Subtitle enabled state')
+    verify_native_subtitles(None, rows, fps=1, base_frame=base_frame, items=items)

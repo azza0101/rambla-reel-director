@@ -103,6 +103,21 @@ def test_semantic_chunking_protects_subordinates_and_short_punchlines():
     assert all(chunk["duration"] <= 8.0 for chunk in chunks)
 
 
+def test_semantic_chunking_normalizes_tiny_boundary_overlaps():
+    words = [
+        {"text": "Prima", "start": 0.0, "end": 0.3},
+        {"text": "frase", "start": 0.3, "end": 0.6},
+        {"text": "qui.", "start": 0.6, "end": 1.0},
+        {"text": "Dopo", "start": 0.97, "end": 1.3},
+        {"text": "frase", "start": 1.3, "end": 1.6},
+        {"text": "ora.", "start": 1.6, "end": 2.0},
+    ]
+    _, chunks = build_short_outline({"segments": [{"words": words}]})
+    assert len(chunks) == 2
+    assert chunks[1]["start"] >= chunks[0]["end"]
+    assert chunks[1]["duration"] > 0
+
+
 def test_semantic_chunking_does_not_orphan_last_word_after_long_enumeration():
     tokens = "Avevo trovato un centro che sembrava perfetto, niente spettacoli, niente cavalcate, solo parole giuste, etico, responsabile, sostenibile.".split()
     words = [{"text": token, "start": i * .48, "end": (i + 1) * .48} for i, token in enumerate(tokens)]

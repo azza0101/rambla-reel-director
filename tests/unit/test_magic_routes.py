@@ -41,3 +41,37 @@ def test_stale_running_status_reports_resume_after_restart(tmp_path):
         state = client.get('/api/curation/magic/'+row['run_id']).json()
         assert state['status'] == 'waiting_input'
         assert 'riprendi' in state['message'].lower()
+
+
+def test_retry_selection_keeps_cut_and_editorial_checkpoints(tmp_path):
+    from backend.app.magic_runner import MagicRunner
+    from backend.app.magic_store import MagicStore
+    from backend.app.magic_models import MagicOptions
+
+    store = MagicStore(tmp_path)
+    row = store.create_or_resume('p', 'v1', MagicOptions())
+    checkpoints = {name: {'input_signature': name, 'result': {}}
+                   for name in ('cut', 'editorial', 'research', 'selection', 'preparation', 'delivery')}
+    store.transition(row['run_id'], checkpoints=checkpoints, status='partial')
+    runner = MagicRunner(store, None, lambda _: 'v1')
+    runner._schedule = lambda value: value
+    result = runner.retry_from(row['run_id'], 'selection')
+    assert set(result['checkpoints']) == {'cut', 'editorial', 'research'}
+
+
+def test_restart_creates_a_new_run_without_deleting_the_previous_one(tmp_path):
+    from backend.app.magic_runner import MagicRunner
+    from backend.app.magic_store import MagicStore
+    from backend.app.magic_models import MagicOptions
+
+    store = MagicStore(tmp_path)
+    first = store.create_or_resume('p', 'v1', MagicOptions())
+    store.transition(first['run_id'], status='failed')
+    runner = MagicRunner(store, None, lambda _: 'v1')
+    runner._schedule = lambda value: value
+
+    restarted = runner.restart(first['run_id'])
+
+    assert restarted['run_id'] != first['run_id']
+    assert store.read(first['run_id'])['status'] == 'failed'
+    assert restarted['status'] == 'queued'

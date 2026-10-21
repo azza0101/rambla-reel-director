@@ -406,13 +406,33 @@ def compile_director_decisions(
                     shot=compiled_shot,
                 )
                 for field in ("image_queries", "video_queries"):
-                    for query in compiled_shot[field]:
+                    for query_index, query in enumerate(compiled_shot[field]):
                         key = query.casefold()
                         previous_beat = used_queries[field].get(key)
                         if previous_beat and previous_beat != beat_id:
-                            raise ValueError(
-                                f"{path}.{field}: query {query!r} reused by another visual beat {previous_beat}"
-                            )
+                            # Providers often add the same broad historical
+                            # fallback (for example "Colombia archive") to
+                            # separate beats. Keep the plan usable by making
+                            # this beat's search intent specific to its own
+                            # spoken scene rather than rejecting everything.
+                            terms = re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ'-]{4,}",
+                                               f"{compiled_shot['description']} {chunk['text']}")
+                            suffix = next((term.casefold() for term in terms
+                                           if term.casefold() not in key.split()), "scene")
+                            # Historical evidence also requires a broad,
+                            # findable two-word query. Preserve that invariant
+                            # when replacing an injected duplicate fallback.
+                            requires_broad = len(query.split()) <= 2
+                            candidate = (f"{suffix} archive" if requires_broad
+                                         else " ".join((query.split() + [suffix])[:10]))
+                            number = 2
+                            while candidate.casefold() in used_queries[field]:
+                                candidate = (f"{suffix} scene{number}" if requires_broad
+                                             else " ".join((query.split() + [suffix, f"scene{number}"])[:10]))
+                                number += 1
+                            query = candidate
+                            compiled_shot[field][query_index] = query
+                            key = query.casefold()
                         used_queries[field][key] = beat_id
                 shots.append(compiled_shot)
         elif raw_shots:

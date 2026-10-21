@@ -64,6 +64,7 @@ def source_build_token(root):
     sources=[
         root/'launch_local_v5.py',
         root/'RAMBLA_VERSION',
+        *([root/'tools'/'freellm_trial_runtime.py'] if (root/'tools'/'freellm_trial_runtime.py').is_file() else []),
         *sorted((root/'tools'/'resolve_bridge').glob('*.py')),
         *([root/'tools'/'focus_rambla_app.ps1'] if (root/'tools'/'focus_rambla_app.ps1').is_file() else []),
         *sorted((root/'backend'/'app').glob('*.py')),
@@ -77,9 +78,15 @@ def source_build_token(root):
 
 
 def build_server_env(root,port,token,*,base_env=None):
+    from tools.freellm_trial_runtime import ensure_gateway
+    try:
+        ensure_gateway(root)
+    except (OSError,RuntimeError) as exc:
+        print(f'FreeLLMAPI trial unavailable: {exc}')
     data_root=root.parent/'rambla-data'
     return {**(base_env or os.environ),
         'RAMBLA_BUILD_TOKEN':token,'PYTHONPATH':str(root),
+        'PATH':str(root/'runtime'/'bin')+os.pathsep+(base_env or os.environ).get('PATH',''),
         'RAMBLA_RUNTIME_MODE':'desktop_api','RAMBLA_RETRIEVAL_RANKING':'provider',
         'RAMBLA_PROJECT_ROOT':str(data_root/'projects'),
         'RAMBLA_ENABLE_VERTICAL_SOCIAL':'1','RAMBLA_ENABLE_SOCIAL_BROWSER':'1',

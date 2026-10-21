@@ -62,14 +62,17 @@ def merge_suggestions(replies):
     groups=[];discards={}
     for reply in replies:
         for source in reply.get('groups',[]):
-            row={**source,'takes':sorted([list(t) for t in source['takes']])}
+            original=[list(t) for t in source['takes']]
+            index=source.get('selected_take',-1)
+            selected=original[index] if isinstance(index,int) and 0<=index<len(original) else None
+            row={**source,'takes':sorted(original)}
+            if 'selected_take' in source:row['selected_take']=row['takes'].index(selected) if selected else -1
             match=next((g for g in groups if set(map(tuple,g['takes'])).intersection(map(tuple,row['takes']))),None)
             if match:
                 ranges=sorted(set(map(tuple,match['takes']))|set(map(tuple,row['takes'])))
                 if any(a<=ranges[i-1][1] for i,(a,b) in enumerate(ranges) if i):continue
-                selected=row['takes'][row['selected_take']] if row.get('selected_take',-1)>=0 else None
                 match['takes']=[list(t) for t in ranges]
-                if selected:match['selected_take']=match['takes'].index(selected)
+                if 'selected_take' in row:match['selected_take']=match['takes'].index(selected) if selected else -1
             else:
                 occupied=set(i for g in groups for a,b in g['takes'] for i in range(a,b+1))
                 if any(occupied.intersection(range(a,b+1)) for a,b in row['takes']):continue
@@ -78,25 +81,46 @@ def merge_suggestions(replies):
     return {'groups':groups,'discards':list(discards.values())}
 
 
-def query_json(prompt,schema,label,*,max_output_tokens=2600,thinking_level='medium'):
+def query_json(prompt,schema,label,*,max_output_tokens=2600,thinking_level='medium',json_mode=False,preserve_reasoning=False,input_token_budget=None):
     from .groq_api import GroqDirectorClient,GroqAPIError
     context=_CONTEXT.get();notify=context[1] if context else lambda message:None
     cache_input={'v':1,'prompt':prompt,'schema':schema}
     if max_output_tokens != 2600:cache_input['max_output_tokens']=max_output_tokens
     if thinking_level != 'medium':cache_input['thinking_level']=thinking_level
+    if json_mode:cache_input['json_mode']=True
+    if preserve_reasoning:cache_input['preserve_reasoning']=True
     key=hashlib.sha256(json.dumps(cache_input,sort_keys=True).encode()).hexdigest()
     cache=context[0]/'api-cache'/f'{key}.json' if context else None
     if cache and cache.is_file():notify(label+' · risultato salvato');return json.loads(cache.read_text(encoding='utf-8'))
-    budget=math.ceil(len(json.dumps({'prompt':prompt,'schema':schema},ensure_ascii=False))/2)+max_output_tokens
+    input_budget=math.ceil(len(json.dumps({'prompt':prompt,'schema':schema},ensure_ascii=False))/2) if input_token_budget is None else input_token_budget
+    if type(input_budget) is not int or input_budget<1:raise ValueError('Budget input CUT non valido')
     with _LOCK:
         for attempt in range(3):
+            budget=input_budget+max_output_tokens
             while (delay:=_QUOTA.wait_seconds(budget,time.monotonic()))>0:
                 notify(f'{label} · attendo quota Groq: {math.ceil(delay)} s');time.sleep(min(1,delay))
             notify(label+' · analisi in corso')
             _QUOTA.record(budget,time.monotonic())
-            client=GroqDirectorClient(os.environ.get('GROQ_API_KEY',''),model='openai/gpt-oss-120b',fallback_models=(),thinking_level=thinking_level,max_retries_per_model=0,max_output_tokens=max_output_tokens)
+            client=GroqDirectorClient(os.environ.get('GROQ_API_KEY',''),model='openai/gpt-oss-120b',fallback_models=(),thinking_level=thinking_level,max_retries_per_model=0,max_output_tokens=max_output_tokens,**({'json_mode':True} if json_mode else {}))
             try:reply=client.generate_json(prompt,schema)
             except GroqAPIError as exc:
+                truncated=any(marker in str(exc).casefold() for marker in ('max completion tokens reached','output was truncated','output truncated','completion token limit reached'))
+                malformed=any(marker in str(exc).casefold() for marker in ('failed to validate json','failed to generate json','generated json does not match','invalid structured json','json outside expected schema'))
+                if malformed and attempt<2:
+                    json_mode=True
+                    if not preserve_reasoning:thinking_level='low'
+                    ceiling=max_output_tokens if input_budget>=_QUOTA.limit else _QUOTA.limit-input_budget
+                    max_output_tokens=max(max_output_tokens,min(ceiling,3900))
+                    notify(label+' · JSON non conforme, rigenero e verifico il documento completo')
+                    continue
+                if truncated and attempt<2:
+                    # Reasoning also consumes the completion allowance. Retry a full
+                    # document, never the provider's incomplete failed_generation.
+                    ceiling=max_output_tokens if input_budget>=_QUOTA.limit else _QUOTA.limit-input_budget
+                    max_output_tokens=max(max_output_tokens,min(ceiling,max_output_tokens+max(1024,max_output_tokens//2)))
+                    if not preserve_reasoning:thinking_level='low'
+                    notify(label+' · risposta incompleta, riprovo con più spazio per il risultato')
+                    continue
                 if '(429)' not in str(exc) or attempt==2:raise
                 match=re.search(r'try again in ([\d.]+)',str(exc),re.I)
                 delay=min(120,max(1,float(match.group(1))+1)) if match else 61
@@ -108,3 +132,8 @@ def query_json(prompt,schema,label,*,max_output_tokens=2600,thinking_level='medi
                 stamp,_=_QUOTA.events.pop();_QUOTA.record(reply.usage['total_tokens'],stamp)
             if cache:cache.parent.mkdir(parents=True,exist_ok=True);write_json(cache,reply.data)
             return reply.data
+
+
+def query_editorial_json(prompt,schema,label,**kwargs):
+    """Production CUT uses Groq even when a Gemini key is configured."""
+    return query_json(prompt,schema,label,**kwargs)

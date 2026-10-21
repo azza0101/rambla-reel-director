@@ -114,3 +114,20 @@ def test_cancel_stops_next_phase_and_source_change_prevents_checkpoint(tmp_path)
         final = runner.store.read(row['run_id'])
         assert final['status'] == 'failed' and not final['checkpoints']
     asyncio.run(run())
+
+
+def test_magic_failure_reports_diagnostics_without_changing_failure_state(tmp_path):
+    from backend.app.magic_runner import MagicRunner
+    from backend.app.magic_store import MagicStore
+    from backend.app.magic_models import MagicOptions
+    seen=[]
+    class Services:
+        async def run_phase(self,phase,*args):
+            raise RuntimeError('private raw error')
+    async def run():
+        def capture(exc,**meta):seen.append((type(exc).__name__,meta))
+        runner=MagicRunner(MagicStore(tmp_path),Services(),lambda _: 's',on_error=capture)
+        row=runner.start('p',MagicOptions());await runner.tasks[row['run_id']]
+        assert runner.store.read(row['run_id'])['status']=='failed'
+        assert seen==[('RuntimeError',{'component':'magic','phase':'cut'})]
+    asyncio.run(run())

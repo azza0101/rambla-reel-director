@@ -17,3 +17,21 @@ def test_short_verified_clip_and_disabled_image_keep_magic_intervals(tmp_path):
     assert video['duration_frames']==90 and video['enabled']
     assert not photo['enabled'] and photo['track_name']=='RMBL IMMAGINI ALTERNATIVE'
     assert photo['clip_color']=='Purple' and photo['record_start_frame']==300
+
+
+def test_active_verified_photo_exports_as_visible_broll_not_disabled_alternative(tmp_path):
+    from backend.app.broll_timeline_export import build_broll_timeline_plan
+    image=tmp_path/'passport.jpg'
+    image.write_bytes(b'image')
+    visual={'visual_beats':[dict(id='passport',start=2,end=6)]}
+    selected={'chunks':{'passport':{'selected_assets':[{'asset_id':'photo'}]}}}
+    assets={'photo':dict(media_path=str(image),kind='image',provider='google_images')}
+    decision=dict(beat_id='passport',asset_id='photo',provider='google_images',
+        role='image_coverage',enabled=True,edited_in_frame=60,edited_out_frame=180,
+        source_in_frame=0,source_out_frame=120,verdict='verified',reason='Passport visible')
+    result=build_broll_timeline_plan(visual,selected,assets,fps=30,magic_decisions=[decision])
+    assert result['clip_count']==1
+    row=result['clips'][0]
+    assert row['kind']=='image' and row['enabled'] is True
+    assert row['role']=='image_coverage' and row['track_name']==''
+    assert row['record_start_frame']==60 and row['record_end_frame']==180

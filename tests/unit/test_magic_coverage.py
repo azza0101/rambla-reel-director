@@ -41,3 +41,13 @@ def test_unknown_duplicate_or_incomplete_judge_reply_is_rejected():
 def test_research_queries_are_bounded_and_contextual():
     from backend.app.magic_coverage import research_queries
     assert research_queries(['police', 'police', 'tourist police', 'officers'], ['Egypt'], limit=2) == ['police Egypt', 'tourist police Egypt']
+
+
+def test_passport_requires_actual_document_not_generic_place_scenery():
+    from backend.app.magic_coverage import shortlist_candidates
+    rows=[
+        dict(asset_id='travel',kind='video',source_page='https://example.test/landscape',title='Sri Lanka beautiful travel landscape'),
+        dict(asset_id='document',kind='image',source_page='https://example.test/passport',title='Passport open with visa stamp'),
+    ]
+    kept=shortlist_candidates(rows,'Un passaporto nello Sri Lanka',['Sri Lanka'])
+    assert [r['asset_id'] for r in kept]==['document']

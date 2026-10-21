@@ -181,3 +181,37 @@ def test_cut_project_cannot_send_compacted_times_to_unchanged_resolve_timeline(t
         response=client.post(f'/api/curation/projects/{p.project_id}/resolve-preparation')
         assert response.status_code==409
         assert response.json()['detail']
+
+
+def test_lightweight_cut_preview_keeps_frames_and_limits_long_side(tmp_path):
+    import shutil,subprocess
+    from backend.app.cut_pass_routes import render_cut
+    if not shutil.which('ffmpeg'):pytest.skip('ffmpeg unavailable')
+    source=tmp_path/'large.mp4'
+    subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','color=c=red:s=720x1280:r=30:d=1',
+        '-f','lavfi','-i','sine=frequency=440:duration=1','-c:v','libx264','-preset','ultrafast','-c:a','aac',str(source)],check=True,capture_output=True)
+    raw=transcript([(.1,.8,'anteprima veloce')])
+    plan=build_cut_plan(raw,duration=1,fps=30,signature='preview',groups=[])
+    target=tmp_path/'preview.mp4';render_cut(source,target,plan,preview=True)
+    probe=subprocess.run(['ffprobe','-v','error','-select_streams','v:0','-show_entries','stream=width,height,nb_frames','-of','json',str(target)],check=True,capture_output=True,text=True)
+    video=json.loads(probe.stdout)['streams'][0]
+    assert max(video['width'],video['height'])<=640
+    assert video['height']>video['width']
+    assert int(video['nb_frames'])==plan['duration_frames']
+
+
+def test_auto_coverage_endpoint_persists_request_without_provider_calls(tmp_path):
+    import ast, asyncio
+    from backend.app.atomic_io import write_json
+    source=Path('backend/app/curation_server.py').read_text(encoding='utf-8')
+    tree=ast.parse(source)
+    handler=next(n for n in ast.walk(tree) if isinstance(n,ast.AsyncFunctionDef) and n.name=='automatic_revision_coverage')
+    handler.decorator_list=[]
+    write_json(tmp_path/'cut-reconciliation.json',{'status':'running'})
+    env={'__name__':'backend.app.curation_server','__package__':'backend.app',
+         'load_project':lambda pid:None,'run_root':lambda pid:tmp_path,
+         '_read_json':lambda path,default:json.loads(path.read_text())}
+    exec(compile(ast.Module(body=[handler],type_ignores=[]),'<endpoint>','exec'),env)
+    result=asyncio.run(env['automatic_revision_coverage']('test'))
+    assert result=={'status':'running'}
+    assert json.loads((tmp_path/'cut-reconciliation.json').read_text())['auto_coverage'] is True

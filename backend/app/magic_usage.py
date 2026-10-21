@@ -60,7 +60,7 @@ def invoke_http(provider, payload, operation, *, visual=False):
         # started entry; recovery marks it unknown rather than charging again.
         raise MagicWaitingInput('Risposta AI non confermata: richiesta conservata, nessun nuovo tentativo automatico') from exc
     headers = {k:v for k,v in response.headers.items()
-               if k.lower() in {'content-type', 'retry-after'} or k.lower().startswith('x-ratelimit')}
+               if k.lower() in {'content-type', 'retry-after', 'x-routed-via', 'x-fallback-attempts'} or k.lower().startswith('x-ratelimit')}
     result = dict(status_code=response.status_code, body=response.text, headers=headers)
     store.finish_call(run_id, call_id, result=result,
                       error=f'HTTP {response.status_code}' if response.status_code >= 400 else None)

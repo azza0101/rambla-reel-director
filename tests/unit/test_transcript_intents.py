@@ -71,6 +71,19 @@ def test_intents_are_independent_and_persisted(workdir):
     }
 
 
+def test_coverage_planning_clips_tiny_asr_overlap_between_adjacent_units():
+    from backend.app.transcript_intents import _normalize_planning_boundaries
+    source = [
+        {'id': 'one', 'start': 42.4333333, 'end': 42.4666667, 'text': 'prima', 'words': [{'text': 'prima'}]},
+        {'id': 'two', 'start': 42.4333333, 'end': 49.018, 'text': 'dopo', 'words': [{'text': 'dopo'}]},
+    ]
+    planned = _normalize_planning_boundaries(source)
+    assert planned[1]['start'] == planned[0]['end']
+    assert planned[1]['end'] == 49.018
+    assert planned[1]['words'] == [{'text': 'dopo'}]
+    assert source[1]['start'] == 42.4333333
+
+
 def test_highlighted_words_are_validated_against_real_word_timing(workdir):
     run = _run(workdir)
     state = load_phrase_intents(run)
@@ -309,3 +322,23 @@ def test_added_lines_stay_ordered_inside_source_duration(workdir):
     assert chunks[0]["start"] == 0.0
     assert chunks[-1]["end"] == 5.0
     assert all(a["end"] <= b["start"] for a, b in zip(chunks, chunks[1:]))
+
+
+def test_compound_highlight_is_complete_and_not_duplicated_in_subtitles(workdir):
+    from backend.app.transcript_intents import build_combined_resolve_export
+    run=_run(workdir)
+    chunks=[{'id':'name','start':0,'end':2,'text':'leggo National Geographic oggi','words':[
+        {'text':'leggo','start':0,'end':.3},{'text':'National','start':.3,'end':.6},
+        {'text':'Geographic','start':.6,'end':1.1},{'text':'oggi','start':1.1,'end':2}]}]
+    (run/'semantic-chunks.json').write_text(json.dumps(chunks),encoding='utf-8')
+    state=load_phrase_intents(run)
+    save_phrase_intents(run,{'name':{'highlighted_word_indices':[2]}},state['transcript_signature'])
+    result=build_combined_resolve_export(run,'p',fps=30)
+    assert result['titles'][0]['text']=='National Geographic'
+    assert result['titles'][0]['start_frame']==9
+    assert result['titles'][0]['duration_seconds']>=.95
+    assert ' '.join(r['text'] for r in result['subtitles']) == 'leggo National Geographic oggi'
+    assert [(r['text'], r['enabled']) for r in result['subtitles']] == [('leggo', True), ('National Geographic', False), ('oggi', True)]
+    plain = build_combined_resolve_export(run, 'p', fps=30, include_highlights=False)
+    assert all(r['enabled'] for r in plain['subtitles'])
+    assert ' '.join(r['text'] for r in plain['subtitles']) == 'leggo National Geographic oggi'

@@ -117,7 +117,7 @@ def test_manual_exclusion_is_reversible_and_updates_timing():
     assert edited['duration_frames']<base['duration_frames']
     visible=review_words(raw,edited)
     assert visible[0]['text']=='foto' and visible[0]['excluded']
-    assert all(w['index'] not in [4,5] for w in visible)
+    assert all(w['excluded'] for w in visible if w['index'] in [4,5])
     restored=build_cut_plan(raw,duration=12,fps=30,signature='s',groups=groups,excluded_word_indices=[])
     assert clean_transcript(raw,restored)['text']==clean_transcript(raw,base)['text']
 
@@ -142,3 +142,28 @@ def test_tight_pause_pass_changes_only_time_and_reverts_exactly():
     reverted=build_cut_plan(raw,**args,tight_pauses=False)
     assert reverted['segments']==normal['segments']
     assert reverted['revision']==normal['revision']
+
+
+
+def test_review_words_keeps_automatic_discards_visible_and_struck():
+    from backend.app.cut_pass import review_words
+    transcript = {'segments':[{'words':[
+        {'word':'regia','start':0,'end':.2}, {'word':'ciao','start':.3,'end':.5},
+    ]}]}
+    plan = {'automatic_removed_word_indices':[0], 'removed_word_indices':[0],
+            'excluded_word_indices':[], 'groups':[]}
+    rows = review_words(transcript, plan)
+    assert [row['text'] for row in rows] == ['regia', 'ciao']
+    assert rows[0]['automatic_removed'] and rows[0]['excluded']
+    assert not rows[1]['excluded']
+
+
+def test_manual_restore_overrides_automatic_removal_but_explicit_exclusion_wins():
+    from backend.app.cut_pass import review_words
+    raw=transcript([(0,2,'prima frase'),(3,5,'ultima frase')])
+    kwargs=dict(duration=6,fps=30,signature='restore',groups=[{'takes':[[0,1],[2,3]],'selected_take':1,'confidence':.99}])
+    plan=build_cut_plan(raw,**kwargs,restored_word_indices=[0,1])
+    assert clean_transcript(raw,plan)['text']=='prima frase ultima frase'
+    assert not review_words(raw,plan)[0]['excluded']
+    excluded=build_cut_plan(raw,**kwargs,restored_word_indices=[0,1],excluded_word_indices=[0])
+    assert review_words(raw,excluded)[0]['excluded']

@@ -18,3 +18,20 @@ def test_research_is_bounded_resumable_and_provider_failures_are_independent(tmp
     assert all('Egypt' in q for _,_,q in calls)
     asyncio.run(research_beats(beats,options,tmp_path,research,lambda *a:None))
     assert len(calls)==3  # no automatic CAPTCHA retries or repeated searches
+
+
+
+def test_magic_first_pass_is_time_bounded_and_spans_the_timeline(tmp_path):
+    from backend.app.magic_research import research_beats, AUTOMATIC_RESEARCH_JOB_BUDGET
+    from backend.app.magic_models import MagicOptions
+    calls=[]
+    async def research(beat, provider, query):
+        calls.append((beat, provider, query))
+        return {'status':'complete'}
+    beats=[dict(id=f'b{index:02d}', text=f'beat {index}', queries=[f'query {index}', 'other'], places=[])
+           for index in range(40)]
+    options=MagicOptions(providers=['pexels','youtube_shorts','google_images'],queries_per_provider=2)
+    result=asyncio.run(research_beats(beats, options, tmp_path, research, lambda *a:None))
+    assert len(calls) <= AUTOMATIC_RESEARCH_JOB_BUDGET
+    assert {beat for beat, _, _ in calls} >= {'b00', 'b39'}
+    assert result['partial']

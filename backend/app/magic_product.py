@@ -4,6 +4,7 @@ from dataclasses import asdict
 from fractions import Fraction
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 from .atomic_io import write_json
@@ -21,6 +22,43 @@ def read_json(path, default=None):
     return json.loads(path.read_text(encoding='utf-8')) if path.is_file() else default
 
 
+def normalize_semantic_chunk_boundaries(run):
+    """Repair tiny adjacent-chunk overlaps left by an older CUT checkpoint.
+
+    Editorial validation requires each beat to begin no earlier than the one
+    before it ends.  Old saved CUTs may be off by one frame at a boundary, so
+    repair the persisted checkpoint before resuming instead of forcing a new
+    CUT (and keep a one-time rollback copy).
+    """
+    path = Path(run) / 'semantic-chunks.json'
+    chunks = read_json(path, [])
+    if not isinstance(chunks, list):
+        return 0
+    previous_end, changed = 0.0, 0
+    for chunk in chunks:
+        if not isinstance(chunk, dict):
+            continue
+        try:
+            start, end = float(chunk['start']), float(chunk['end'])
+        except (KeyError, TypeError, ValueError):
+            continue
+        repaired_start = max(start, previous_end)
+        repaired_end = max(end, repaired_start + 0.001)
+        if repaired_start != start or repaired_end != end:
+            if changed == 0:
+                backup = path.with_name('semantic-chunks.before-boundary-normalization.json')
+                if not backup.exists():
+                    write_json(backup, chunks)
+            chunk['start'] = repaired_start
+            chunk['end'] = repaired_end
+            chunk['duration'] = repaired_end - repaired_start
+            changed += 1
+        previous_end = repaired_end
+    if changed:
+        write_json(path, chunks)
+    return changed
+
+
 def source_signature(projects, root, pid):
     project = projects.load(pid)
     files = [Path(project.source_video.path)] if project.source_video else []
@@ -34,7 +72,25 @@ def source_signature(projects, root, pid):
     if bridge.get('cut_source', {}).get('supported'):
         from .resolve_cut_source import verify_snapshot_files
         verify_snapshot_files(bridge['cut_source'])
-    return fingerprint([project.analysis_signature, signatures, state])
+    # v2 deliberately invalidates runs created before MAGICO was locked to the
+    # active Source file.  A partial run from that older policy must never be
+    # resumed against the wrong inherited CUT lineage.
+    return fingerprint(['magic-current-source-v2', project.analysis_signature, signatures, state])
+
+
+def _literal_anchor_queries(text, proposed, *, image=False):
+    """Keep explicit objects and named places in sourcing, not only AI paraphrases."""
+    from .geographic_context import places_in
+    proposals = [str(query).strip() for query in proposed if str(query).strip()]
+    anchors = []
+    if re.search(r'\b(passaport\w*|passports?)\b', str(text), re.I) and not any(
+        re.search(r'\b(passaport\w*|passports?)\b', query, re.I) for query in proposals
+    ):
+        anchors.append('passport travel document close up photo' if image else 'passport travel document close up footage')
+    for place in places_in(text):
+        if not any(place.casefold() in query.casefold() for query in proposals + anchors):
+            anchors.append(f'{place} travel documentary photo' if image else f'{place} travel documentary footage')
+    return list(dict.fromkeys(anchors + proposals))
 
 
 def plan_beats(run):
@@ -48,17 +104,20 @@ def plan_beats(run):
         if beat.get('action') == 'BROLL':
             shots = beat.get('shots') or []
             output.append({**beat, 'text':text, 'places':beat_places(text, topic, preceding),
-                'queries':list(dict.fromkeys(q for shot in shots for q in shot.get('video_queries', []))),
-                'image_queries':list(dict.fromkeys(q for shot in shots for q in shot.get('image_queries', [])))})
+                'queries':_literal_anchor_queries(text, (q for shot in shots for q in shot.get('video_queries', []))),
+                'image_queries':_literal_anchor_queries(text, (q for shot in shots for q in shot.get('image_queries', [])), image=True)})
         preceding += ' '+text
     return output
 
 
 def configured_visual_client():
+    if os.environ.get('RAMBLA_VISUAL_BACKEND','').casefold()=='freellmapi':
+        from .visual_gateway import FreeLLMVisualClient
+        return FreeLLMVisualClient(os.environ.get('RAMBLA_FREELLM_API_KEY',''),endpoint=os.environ.get('RAMBLA_FREELLM_URL','http://127.0.0.1:8831/v1/chat/completions'),model=os.environ.get('RAMBLA_FREELLM_MODEL','auto'))
     from .gemini_interactions import GeminiInteractionsClient, DEFAULT_GEMINI_MODEL
     key = os.environ.get('GEMINI_API_KEY', '').strip()
     return GeminiInteractionsClient(key, model=os.environ.get('RAMBLA_DIRECTOR_MODEL', DEFAULT_GEMINI_MODEL),
-        thinking_level='low', max_retries_per_model=0, fallback_models=()) if key else None
+        thinking_level='low', max_retries_per_model=0) if key else None
 
 
 def generic_candidates(beat, items):
@@ -70,22 +129,52 @@ def generic_candidates(beat, items):
 
 
 def visual_candidate_order(beats, candidates):
-    """Give every beat a video attempt and an image fallback before extras.
+    """Verify specific videos and photos before spending budget on topic-level filler.
 
-    The visual verification budget is shared across the whole edit.  Keeping
-    images at the end meant they were never inspected on longer videos, so a
-    beat with no valid video could not receive its disabled image alternative.
+    Each beat gets a first video/photo/generic pass before extras. Images are
+    eligible for visible coverage when specific video evidence is unavailable.
     """
     grouped = {str(beat['id']): [] for beat in beats}
     for candidate in candidates:
         grouped.setdefault(str(candidate['chunk_id']), []).append(candidate)
     lanes = {}
     for beat_id, rows in grouped.items():
-        videos = [row for row in rows if row.get('kind') == 'video']
+        videos = [row for row in rows if row.get('kind') == 'video' and row.get('role') != 'generic']
         images = [row for row in rows if row.get('kind') == 'image']
-        lanes[beat_id] = videos[:1] + images[:1] + videos[1:] + images[1:]
+        generics = [row for row in rows if row.get('role') == 'generic']
+        lanes[beat_id] = videos[:1] + images[:1] + generics[:1] + videos[1:] + images[1:] + generics[1:]
     maximum = max((len(rows) for rows in lanes.values()), default=0)
     return [rows[index] for index in range(maximum) for rows in lanes.values() if index < len(rows)]
+
+
+def spread_visual_candidates(ordered, limit):
+    """Spend a small visual budget across the whole edit, not only its opening."""
+    if limit<=0:return []
+    first={}
+    for row in ordered:first.setdefault(row['chunk_id'],row)
+    leaders=list(first.values())
+    if len(leaders)>limit:
+        positions=[len(leaders)//2] if limit==1 else [round(i*(len(leaders)-1)/(limit-1)) for i in range(limit)]
+        return [leaders[i] for i in positions]
+    seen={row['asset_id'] for row in leaders}
+    return (leaders+[row for row in ordered if row['asset_id'] not in seen])[:limit]
+
+
+def coverage_upgrade_scope(beats, selections, decisions):
+    """Retry uncovered scenes and automatic stills; protect manual choices/videos."""
+    automatic={d['beat_id']:d for d in decisions}
+    output=[]
+    for beat in beats:
+        if beat['end']-beat['start']<1.5:
+            continue
+        selected=selections.get(beat['id'],{})
+        if selected.get('no_broll'):
+            continue
+        assets=[a['asset_id'] for a in selected.get('selected_assets',[])]
+        old=automatic.get(beat['id'],{})
+        if not assets or (assets==[old.get('asset_id')] and old.get('role') in {'image_coverage','fallback_image'}):
+            output.append(beat['id'])
+    return output
 
 
 def automatic_generic_selection(items, *, limit=4):
@@ -115,12 +204,15 @@ def media_duration(path):
 
 
 class MagicProductServices:
-    def __init__(self, projects, root, store, cut_engine, research, prepare, payload, deliver, *, visual_client=configured_visual_client, generics=None):
+    def __init__(self, projects, root, store, cut_engine, research, prepare, payload, deliver, *, visual_client=configured_visual_client, generics=None, media_prepare_timeout_seconds=75):
         self.projects, self.root, self.store = projects, Path(root), store
         self.cut = MagicCutAdapter(projects, root, store, cut_engine)
         self.research, self.prepare, self.payload, self.deliver = research, prepare, payload, deliver
         self.visual_client = visual_client
         self.generics = generics
+        self.media_prepare_timeout_seconds = float(media_prepare_timeout_seconds)
+        if self.media_prepare_timeout_seconds <= 0:
+            raise ValueError('Timeout preparazione media non valido')
         self.check = lambda run_id: None
 
     async def run_phase(self, phase, context, options, report):
@@ -132,8 +224,14 @@ class MagicProductServices:
                 raise ValueError('CUT MAGICO non confermato')
             run = self.root/pid/'run'
             if phase == 'editorial':
-                return await asyncio.to_thread(run_magic_editorial, run, pid,
+                repaired = normalize_semantic_chunk_boundaries(run)
+                result = await asyncio.to_thread(run_magic_editorial, run, pid,
                     self.projects.load(pid).source_video.duration, report)
+                if repaired:
+                    result.setdefault('warnings', []).append(
+                        f'Corrette {repaired} micro-sovrapposizioni del CUT salvato prima del piano editoriale.'
+                    )
+                return result
             if phase == 'research':
                 result = await research_beats(plan_beats(run), options, self.store._path(context.run_id).parent,
                     lambda beat,provider,query:self.research(pid,beat,provider,query), report)
@@ -165,7 +263,7 @@ class MagicProductServices:
                 return await self.deliver(pid, payload, context.run_id, report)
             raise ValueError('Fase MAGICO sconosciuta')
 
-    async def select(self, pid, run, context, options, report):
+    async def select(self, pid, run, context, options, report, *, beat_ids=None):
         from .curation_artifacts import load_curation_run
         from .curation_selection import SelectionStore
         from .editorial_import import active_retrieval_root
@@ -177,37 +275,64 @@ class MagicProductServices:
         total = round(float(cut['duration_seconds'])*fps)
         view = await asyncio.to_thread(load_curation_run, run)
         beats = plan_beats(run)
+        if beat_ids is not None:
+            scope=set(beat_ids)
+            beats=[beat for beat in beats if beat['id'] in scope]
         candidates, warnings = [], []
-        generics = read_json(run/'generic-coverage.json', {}).get('items', [])
+        generic_state = read_json(run/'generic-coverage.json', {})
+        selected_generic_ids = {str(value) for value in (generic_state.get('selected') or [])}
+        generics = [item for item in (generic_state.get('items') or [])
+                    if str(item.get('provider_id') or '') in selected_generic_ids]
         for beat in beats:
             rows = [asdict(c) for c in view.candidate_index.values() if c.chunk_id == beat['id']]
             rows.extend(generic_candidates(beat, generics))
-            rows.sort(key=lambda r: (0 if r['provider']=='pexels' else 1, -r['score']))
-            # Keep room for an image alternative without letting video pools starve it.
-            videos = shortlist_candidates([r for r in rows if r['kind']=='video'],beat['text'],beat['places'],limit=options.candidates_per_beat)
-            images = shortlist_candidates([r for r in rows if r['kind']=='image'],beat['text'],beat['places'],limit=options.candidates_per_beat)
-            chosen = (videos[:max(1, options.candidates_per_beat-1)] + images[:1])[:options.candidates_per_beat]
+            rows.sort(key=lambda r: (-float(r.get('score') or 0), str(r.get('asset_id') or '')))
+            # Reserve distinct visual lanes so a broad Pexels generic cannot
+            # displace a passport still, a Sri Lanka result or a specific video.
+            videos = shortlist_candidates([r for r in rows if r['kind']=='video' and r.get('role') != 'generic'],
+                                          beat['text'],beat['places'],limit=options.candidates_per_beat)
+            images = shortlist_candidates([r for r in rows if r['kind']=='image'],
+                                          beat['text'],beat['places'],limit=options.candidates_per_beat)
+            filler = shortlist_candidates([r for r in rows if r.get('role') == 'generic'],
+                                          beat['text'],beat['places'],limit=1)
+            free_video_slots = max(1, options.candidates_per_beat - int(bool(images)) - int(bool(filler)))
+            chosen = (videos[:free_video_slots] + images[:1] + filler[:1])[:options.candidates_per_beat]
             for row in chosen:
                 row.update(beat_text=beat['text'],places=beat['places'],visual_target=beat.get('core_meaning') or beat['text'])
                 candidates.append(row)
-        # Interleave beats so the first visual budget serves the entire story,
-        # while reserving an early lane for a disabled image fallback.
+        # Spread the verification budget across specific videos, stills and generics.
         ordered = visual_candidate_order(beats, candidates)
         verdicts = validated_verdicts(candidates, None)
         client = self.visual_client()
-        maximum = options.max_visual_requests * 12 if client is not None else 0
+        # Keep the automatic pass responsive: visual preparation can involve a
+        # download and frame extraction per candidate. visual_candidate_order already
+        # spreads this small budget across beats and media types.
+        batch_size=min(12,max(1,int(getattr(client,'max_candidates_per_batch',12))))
+        maximum = min(48, options.max_visual_requests * batch_size) if client is not None else 0
+        ordered=spread_visual_candidates(ordered,maximum)
         prepared = []
         for index,row in enumerate(ordered[:maximum]):
             check_current()
             if row.get('role') == 'generic':
                 from .stock_export_media import prepare_pexels_video
                 try:
-                    await prepare_pexels_video(run, row['asset_id'].rsplit(':',1)[-1])
+                    await asyncio.wait_for(
+                        prepare_pexels_video(run, row['asset_id'].rsplit(':',1)[-1]),
+                        timeout=self.media_prepare_timeout_seconds,
+                    )
                     issues = []
+                except asyncio.TimeoutError:
+                    issues = [f"{row['asset_id']}: preparazione media scaduta dopo {self.media_prepare_timeout_seconds:g}s"]
                 except (OSError,ValueError,RuntimeError) as exc:
                     issues = [str(exc)]
             else:
-                issues = await self.prepare(pid, [row['asset_id']], None)
+                try:
+                    issues = await asyncio.wait_for(
+                        self.prepare(pid, [row['asset_id']], None),
+                        timeout=self.media_prepare_timeout_seconds,
+                    )
+                except asyncio.TimeoutError:
+                    issues = [f"{row['asset_id']}: preparazione media scaduta dopo {self.media_prepare_timeout_seconds:g}s"]
             if issues:
                 warnings.extend(str(issue) for issue in issues)
                 continue
@@ -232,26 +357,48 @@ class MagicProductServices:
             except (OSError,ValueError,subprocess.SubprocessError) as exc:
                 warnings.append(f"{row['asset_id']}: campioni non disponibili ({type(exc).__name__})")
             report(index+1,max(1,len(ordered[:maximum])*2),'Preparo i campioni delle coperture')
-        for index in range(0,len(prepared),12):
+        for index in range(0,len(prepared),batch_size):
             check_current()
-            batch = prepared[index:index+12]
-            try:
-                verdicts.update(await asyncio.to_thread(judge_batch,batch,client))
-            except MagicBudgetReached:
-                warnings.append('Budget visivo raggiunto: candidati restanti non approvati')
-                break
-            except ValueError as exc:
-                warnings.append(f'Risposta visiva non valida: {exc}')
-                break
-            except Exception as exc:
-                from .gemini_interactions import GeminiAPIError
-                if not isinstance(exc, GeminiAPIError):
-                    raise
-                warnings.append(f'Verifica visiva non disponibile: {exc}')
+            batch = prepared[index:index+batch_size]
+            for attempt in range(2):
+                try:
+                    verdicts.update(await asyncio.wait_for(
+                        asyncio.to_thread(judge_batch,batch,client), timeout=45))
+                    break
+                except asyncio.TimeoutError:
+                    warnings.append('Verifica visiva scaduta dopo 45s: le coperture non certificate restano fuori dal pacchetto')
+                    batch = []
+                    break
+                except MagicBudgetReached:
+                    warnings.append('Budget visivo raggiunto: candidati restanti non approvati')
+                    batch = []
+                    break
+                except ValueError as exc:
+                    warnings.append(f'Risposta visiva non valida: {exc}')
+                    batch = []
+                    break
+                except Exception as exc:
+                    from .gemini_interactions import GeminiAPIError
+                    if not isinstance(exc, GeminiAPIError):
+                        raise
+                    if attempt == 0:
+                        warnings.append(f'Verifica visiva temporaneamente non disponibile, riprovata: {exc}')
+                        continue
+                    warnings.append(f'Verifica visiva non disponibile: {exc}')
+                    batch = []
+                    break
+            if not batch and any('Budget visivo raggiunto' in warning for warning in warnings):
                 break
             report(min(len(ordered[:maximum])*2,len(ordered[:maximum])+index+len(batch)),
                 max(1,len(ordered[:maximum])*2),'Coerenza visiva verificata')
         decisions, used_sources = [], set()
+        if beat_ids is not None:
+            existing=read_json(active_retrieval_root(run)/'selection-plan.json',{}).get('chunks',{})
+            for bid,choice in existing.items():
+                if bid in scope:continue
+                for selected in choice.get('selected_assets',[]):
+                    candidate=view.candidate_index.get(selected.get('asset_id'))
+                    if candidate and candidate.source_page:used_sources.add(candidate.source_page)
         for beat in beats:
             local_candidates = [c for c in candidates if c['chunk_id'] == beat['id'] and c.get('source_page') not in used_sources]
             result = choose_coverage(beat['id'],local_candidates,verdicts,start=round(float(beat['start'])*fps),
@@ -271,11 +418,19 @@ class MagicProductServices:
         selections = SelectionStore(retrieval,{c['asset_id']:{'chunk_id':c['chunk_id']} for c in candidates},[b['id'] for b in beats])
         for decision in decisions:
             selections.set_chunk_selection(decision['beat_id'],[decision['asset_id']],no_broll=False)
+        saved_decisions=decisions
+        saved_verdicts=verdicts
+        if beat_ids is not None:
+            old=read_json(retrieval/'magic-coverage.json',{})
+            replaced={d['beat_id'] for d in decisions}
+            saved_decisions=[d for d in old.get('decisions',[]) if d['beat_id'] not in replaced]+decisions
+            saved_verdicts={**old.get('verdicts',{}),**verdicts}
         write_json(retrieval/'magic-coverage.json',dict(plan_signature=fingerprint(read_json(run/'visual-plan.json')),
-            cut_revision=context.cut_revision,fps=fps,decisions=decisions,verdicts=verdicts))
-        report(1,1,'Coperture selezionate e immagini alternative salvate')
+            cut_revision=context.cut_revision,fps=fps,decisions=saved_decisions,verdicts=saved_verdicts))
+        report(1,1,'Coperture video e immagini verificate selezionate')
         return dict(selected=len(decisions),
-            verified_videos=sum(d['role']!='fallback_image' for d in decisions),
+            verified_videos=sum(d['role'] in {'coverage','generic'} for d in decisions),
+            enabled_images=sum(d['role']=='image_coverage' for d in decisions),
             disabled_images=sum(d['role']=='fallback_image' for d in decisions),
             uncovered=len(beats)-len(decisions),warnings=warnings,partial=bool(warnings))
 

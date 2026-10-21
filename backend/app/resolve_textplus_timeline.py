@@ -1075,6 +1075,13 @@ def conform_broll_media(clips: list[dict[str, Any]], fps: float, progress=None) 
     return result
 
 
+def configure_broll_scaling(item):
+    """Use Resolve SCALE_FILL (3) so coverage replaces the complete frame."""
+    setter = getattr(item, 'SetProperty', None)
+    if callable(setter) and setter({'Scaling': 3}) is False:
+        raise RuntimeError('Resolve could not fill the frame with the selected coverage')
+
+
 def append_broll_clips(media_pool: Any, timeline: Any, clips: list[dict[str, Any]], *, base_frame: int, fps: float | None = None, progress=None) -> int:
     """Append local B-roll to V2+; the caller owns a disposable TEMP duplicate."""
     if not clips:
@@ -1108,6 +1115,7 @@ def append_broll_clips(media_pool: Any, timeline: Any, clips: list[dict[str, Any
         }]) or []
         if len(result) != 1:
             raise RuntimeError(f"Resolve could not place selected clip: {row['asset_id']}")
+        configure_broll_scaling(result[0])
         if row.get('enabled') is False:
             if result[0].SetClipEnabled(False) is False:
                 raise RuntimeError('Resolve could not disable the alternative image')

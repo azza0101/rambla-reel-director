@@ -102,3 +102,22 @@ def test_bridge_heartbeat_does_not_query_resolve_during_apply(tmp_path, monkeypa
             assert calls == ['read']
     finally:
         gate.set()
+
+
+def test_export_options_remain_readable_when_media_plan_needs_refresh(tmp_path, monkeypatch):
+    import json
+    from fastapi.testclient import TestClient
+    from backend.app.curation_server import create_app
+    from backend.app.curation_project import ProjectStore
+    import backend.app.curation_artifacts as artifacts
+    root=tmp_path/'projects'
+    project=ProjectStore(root,probe_runner=lambda _:{}).create('Text preserved')
+    run=root/project.project_id/'run';run.mkdir(exist_ok=True)
+    (run/'semantic-chunks.json').write_text(json.dumps([{'id':'c1','start':0,'end':1,'text':'Ciao mondo'}]),'utf-8')
+    def invalid(*args): raise ValueError('covered_chunk_ids must cover adjacent chunks')
+    monkeypatch.setattr(artifacts,'load_curation_run',invalid)
+    client=TestClient(create_app(project_root=root,allowed_media_roots=[tmp_path]))
+    response=client.get(f'/api/curation/projects/{project.project_id}/export-options')
+    assert response.status_code==200
+    assert response.json()['counts']['subtitles']>0
+    assert response.json()['media_warning']

@@ -66,3 +66,24 @@ def test_chunk_discard_overlap_is_clipped_while_manual_choices_are_protected():
     plan['groups'][0]['user_selected_take']=True
     protected=merge_residual_suggestions(raw,plan,suggestion)
     assert 'regia estranea' in clean_transcript(raw,protected)['text']
+
+
+def test_residual_invalid_ai_take_index_preserves_every_word_without_crashing():
+    raw=transcript([(0,2,'primo tentativo'),(3,5,'secondo tentativo'),(6,8,'frase buona')])
+    plan=build_cut_plan(raw,duration=9,fps=30,signature='s',groups=[])
+    proposal={'groups':[{'takes':[[0,1],[2,3]],'selected_take':99,
+                          'confidence':.99,'reason':'modello ha sbagliato indice'}], 'discards':[]}
+    new=merge_residual_suggestions(raw,plan,proposal)
+    assert new['groups'][0]['selected_take']==-1
+    assert clean_transcript(raw,new)['text']==clean_transcript(raw,plan)['text']
+    assert any('Indice take residuale non valido' in w for w in new['warnings'])
+
+
+def test_residual_invalid_non_integer_take_index_is_safe():
+    raw=transcript([(0,2,'primo tentativo'),(3,5,'secondo tentativo')])
+    plan=build_cut_plan(raw,duration=6,fps=30,signature='s',groups=[])
+    proposal={'groups':[{'takes':[[0,1],[2,3]],'selected_take':'1',
+                          'confidence':.99,'reason':'indice testuale'}], 'discards':[]}
+    new=merge_residual_suggestions(raw,plan,proposal)
+    assert new['groups'][0]['selected_take']==-1
+    assert new['removed_word_indices']==[]

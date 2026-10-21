@@ -449,6 +449,19 @@ def build_short_outline(
                 continue
         merged.append(group)
     chunks = [_chunk(group, index) for index, group in enumerate(merged)]
+    # Forced alignments can overlap adjacent word boundaries by a few frames.
+    # A visual plan needs a strict timeline, so retain the words and move only
+    # the later chunk start to the preceding end.
+    previous_end = 0.0
+    for chunk in chunks:
+        start = max(float(chunk["start"]), previous_end)
+        end = float(chunk["end"])
+        if end <= start:
+            end = start + 0.001
+        chunk["start"] = start
+        chunk["end"] = end
+        chunk["duration"] = end - start
+        previous_end = end
 
     beats = []
     for row in chunks:

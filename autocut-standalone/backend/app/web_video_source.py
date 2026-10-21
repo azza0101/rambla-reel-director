@@ -1,0 +1,333 @@
+"""Google Videos discovery for news/recent footage with preview/link fallback."""
+from __future__ import annotations
+
+import hashlib
+import inspect
+from dataclasses import dataclass
+from html.parser import HTMLParser
+from typing import Any, Awaitable, Callable
+from urllib.parse import parse_qs, quote_plus, urlencode, urlparse, urlunparse
+
+import httpx
+
+
+DiscoverFn = Callable[[str, int], Awaitable[list[dict[str, Any]]] | list[dict[str, Any]]]
+
+
+@dataclass(frozen=True, slots=True)
+class WebVideoRemoteCandidate:
+    provider: str
+    provider_id: str
+    query: str
+    source_page: str
+    creator_name: str | None
+    creator_page: str | None
+    title: str
+    description: str
+    duration: float
+    width: int
+    height: int
+    orientation: str
+    preview_url: str
+    selected_rendition_url: str
+    rendition_width: int
+    rendition_height: int
+    rights_state: str
+    provider_rank: int
+    scene_evidence: tuple[Any, ...] = ()
+    acquisition_mode: str = "bounded_window"
+    source_duration: float = 0.0
+    source_class: str = "CLOSE_SEMANTIC_EDITORIAL"
+    source_authenticity: float | None = .80
+    preview_rendition_url: str | None = None
+
+
+def _clean_public_url(value: str) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    if raw.startswith("/url?"):
+        raw = "https://www.google.com" + raw
+    try:
+        parsed = urlparse(raw)
+    except ValueError:
+        return None
+    host = (parsed.hostname or "").casefold()
+    if parsed.scheme not in {"http", "https"} or not host:
+        return None
+    if host == "google.com" or host.endswith(".google.com"):
+        if parsed.path != "/url":
+            return None
+        values = parse_qs(parsed.query)
+        raw = (values.get("q") or values.get("url") or [""])[0]
+        try:
+            parsed = urlparse(raw)
+        except ValueError:
+            return None
+        host = (parsed.hostname or "").casefold()
+        if parsed.scheme not in {"http", "https"} or not host or host.endswith("google.com"):
+            return None
+    safe_pairs = []
+    for key, values in parse_qs(parsed.query, keep_blank_values=False).items():
+        if key.casefold().startswith("utm_") or key.casefold() in {"gclid", "fbclid", "ved"}:
+            continue
+        safe_pairs.extend((key, value) for value in values)
+    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", urlencode(safe_pairs), ""))
+
+
+def _orientation(source_page: str, width: int, height: int) -> str:
+    path = urlparse(source_page).path.casefold()
+    host = (urlparse(source_page).hostname or "").casefold()
+    if "/shorts/" in path or (host.endswith("tiktok.com") and "/video/" in path) or (host.endswith("instagram.com") and ("/reel/" in path or "/reels/" in path)):
+        return "portrait"
+    if width > 0 and height > 0:
+        if height > width:
+            return "portrait"
+        if width > height:
+            return "landscape"
+        return "square"
+    return "unknown"
+
+
+def extract_google_video_results(anchors: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
+    if limit <= 0:
+        return []
+    output: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in anchors:
+        source_page = _clean_public_url(str(row.get("href") or ""))
+        if not source_page or source_page in seen:
+            continue
+        preview = str(row.get("img") or "").strip()
+        if not preview.startswith(("http://", "https://")):
+            continue
+        title = " ".join(str(row.get("text") or row.get("aria") or "").split())
+        if not title:
+            title = urlparse(source_page).hostname or "web video"
+        width = int(row.get("img_width") or 0)
+        height = int(row.get("img_height") or 0)
+        seen.add(source_page)
+        output.append({
+            "source_page": source_page,
+            "title": title,
+            "preview_url": preview,
+            "width": width,
+            "height": height,
+            "orientation": _orientation(source_page, width, height),
+        })
+        if len(output) >= limit:
+            break
+    return output
+
+
+class _GoogleVideoHTMLParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.stack: list[dict[str, Any]] = []
+        self.rows: list[dict[str, Any]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = {key: value for key, value in attrs}
+        if tag.casefold() == "a" and values.get("href"):
+            self.stack.append({
+                "href": values.get("href") or "",
+                "text": "",
+                "aria": values.get("aria-label") or "",
+                "img": "",
+                "img_width": 0,
+                "img_height": 0,
+            })
+        elif tag.casefold() == "img" and self.stack:
+            row = self.stack[-1]
+            row["img"] = values.get("src") or values.get("data-src") or row["img"]
+            try:
+                row["img_width"] = int(values.get("width") or 0)
+                row["img_height"] = int(values.get("height") or 0)
+            except (TypeError, ValueError):
+                pass
+
+    def handle_data(self, data: str) -> None:
+        if self.stack:
+            self.stack[-1]["text"] += " " + data
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.casefold() == "a" and self.stack:
+            row = self.stack.pop()
+            if row.get("href") and row.get("img"):
+                row["text"] = " ".join(str(row.get("text") or "").split())
+                self.rows.append(row)
+
+
+async def _http_google_discover(query: str, limit: int) -> list[dict[str, Any]]:
+    url = "https://www.google.com/search"
+    params = {"tbm": "vid", "hl": "en", "q": query}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/153 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers=headers) as client:
+        response = await client.get(url, params=params)
+        response.raise_for_status()
+    parser = _GoogleVideoHTMLParser()
+    parser.feed(response.text)
+    if not parser.rows:
+        if 'consent.google' in response.text or 'Before you continue' in response.text:
+            raise ValueError('google_consent_required')
+        if 'captcha' in response.text.casefold():
+            raise ValueError('google_captcha_required')
+        if 'did not match any' not in response.text.casefold():
+            raise ValueError('google_parser_mismatch')
+    return extract_google_video_results(parser.rows, limit=limit)
+
+
+async def _default_google_discover(query: str, limit: int) -> list[dict[str, Any]]:
+    return await _http_google_discover(query, limit)
+
+
+async def _browser_google_discover(query: str, limit: int) -> list[dict[str, Any]]:
+    try:
+        from playwright.async_api import async_playwright
+    except (ImportError, ModuleNotFoundError):
+        raise RuntimeError('google_browser_unavailable')
+    url = f"https://www.google.com/search?tbm=vid&hl=en&q={quote_plus(query)}"
+    async with async_playwright() as playwright:
+        browser = None
+        try:
+            from .browser_profiles import _installed_browser
+            executable = _installed_browser()
+        except Exception:
+            executable = None
+        if executable:
+            try:
+                browser = await playwright.chromium.launch(headless=True, executable_path=executable)
+            except Exception:
+                browser = None
+        if browser is None:
+            for channel in ("msedge", "chrome", None):
+                try:
+                    kwargs: dict[str, Any] = {"headless": True}
+                    if channel:
+                        kwargs["channel"] = channel
+                    browser = await playwright.chromium.launch(**kwargs)
+                    break
+                except Exception:
+                    browser = None
+        if browser is None:
+            raise RuntimeError('google_browser_unavailable')
+        try:
+            page = await browser.new_page(viewport={"width": 1440, "height": 1200})
+            await page.goto(url, wait_until="domcontentloaded", timeout=20_000)
+            await page.wait_for_timeout(700)
+            anchors = await page.eval_on_selector_all(
+                "a[href]",
+                """els => els.map(a => {
+                  const img=a.querySelector('img');
+                  return {href:a.href||'',text:(a.innerText||a.textContent||'').trim(),aria:a.getAttribute('aria-label')||'',img:img?(img.currentSrc||img.src||''):'',img_width:img?(img.naturalWidth||0):0,img_height:img?(img.naturalHeight||0):0};
+                })""",
+            )
+            rows=extract_google_video_results(list(anchors or []), limit=limit)
+            if not rows:
+                html=await page.content()
+                if 'consent.google' in html:raise ValueError('google_consent_required')
+                if 'did not match any' not in html.casefold():raise ValueError('google_browser_parser_mismatch')
+            return rows
+        finally:
+            await browser.close()
+
+
+class WebVideoSource:
+    """Google Videos-backed discovery. Downloadability is optional, discovery is not."""
+
+    provider_name = "web_video"
+    supported_source_classes = (
+        "EXACT_ENTITY_EVENT", "SOURCE_NATIVE_SOCIAL", "ARCHIVAL_REPERTORY",
+        "CULTURAL_REFERENCE", "CLOSE_SEMANTIC_EDITORIAL",
+    )
+
+    def __init__(self, *, discover: DiscoverFn | None = None) -> None:
+        self.discover = discover or _default_google_discover
+        self._custom_discover = discover is not None
+        self._browser_fallback_remaining = 1
+        self.last_attempt: dict[str, Any] = {}
+
+    async def search(
+        self,
+        query: str,
+        *,
+        orientation: str | None,
+        min_duration: float,
+        max_duration: float,
+        limit: int,
+    ) -> list[WebVideoRemoteCandidate]:
+        clean = " ".join(str(query or "").split())
+        if not clean or limit <= 0:
+            return []
+        try:
+            method='injected' if self._custom_discover else 'google_videos_http'
+            http_error=None
+            try:
+                raw = self.discover(clean, max(limit * 2, limit))
+                rows = await raw if inspect.isawaitable(raw) else raw
+            except Exception as exc:
+                if self._custom_discover:raise
+                http_error=exc
+                rows=[]
+            if not rows and not self._custom_discover and self._browser_fallback_remaining > 0:
+                self._browser_fallback_remaining -= 1
+                method='google_videos_browser'
+                rows = await _browser_google_discover(clean, max(limit * 2, limit))
+            if not rows and http_error:raise http_error
+        except Exception as exc:
+            self.last_attempt = {"provider": self.provider_name, "query": clean, "error": str(exc) if isinstance(exc,(ValueError,RuntimeError)) else type(exc).__name__,
+                "status":"failed", "engine":method, "parser":"google-video-anchors-v1",
+                "http_status":exc.response.status_code if isinstance(exc,httpx.HTTPStatusError) else (200 if isinstance(http_error,ValueError) else None),
+                "http_error":str(http_error) if isinstance(http_error,ValueError) else None,
+                "raw_items":None,"parsed_items":0,"valid_items":0,"cards_surfaced":0}
+            return []
+        if not isinstance(rows, list):
+            rows = []
+        if rows and "source_page" not in rows[0]:
+            rows = extract_google_video_results(rows, limit=max(limit * 2, limit))
+        rows = sorted(
+            (row for row in rows if isinstance(row, dict)),
+            key=lambda row: (str(row.get("orientation")) != "portrait",),
+        )
+        duration_hint = max(float(min_duration), min(float(max_duration), 60.0))
+        output: list[WebVideoRemoteCandidate] = []
+        for index, row in enumerate(rows):
+            source_page = _clean_public_url(str(row.get("source_page") or ""))
+            preview = str(row.get("preview_url") or "").strip()
+            if not source_page or not preview.startswith(("http://", "https://")):
+                continue
+            width = int(row.get("width") or 0)
+            height = int(row.get("height") or 0)
+            orient = str(row.get("orientation") or _orientation(source_page, width, height))
+            provider_id = hashlib.sha256(source_page.encode("utf-8")).hexdigest()[:18]
+            title = " ".join(str(row.get("title") or "web video").split())
+            output.append(WebVideoRemoteCandidate(
+                provider="web_video",
+                provider_id=provider_id,
+                query=clean,
+                source_page=source_page,
+                creator_name=None,
+                creator_page=None,
+                title=title,
+                description=title,
+                duration=duration_hint,
+                width=width,
+                height=height,
+                orientation=orient,
+                preview_url=preview,
+                selected_rendition_url=source_page,
+                rendition_width=width,
+                rendition_height=height,
+                rights_state="review_required",
+                provider_rank=index,
+                source_duration=0.0,
+            ))
+            if len(output) >= limit:
+                break
+        self.last_attempt = {"provider": self.provider_name, "query": clean, "hits": len(output), "engine": method,
+            "parser":"google-video-anchors-v1", "http_status":None if self._custom_discover else 200,
+            "status":"completed", "raw_items":len(rows),"parsed_items":len(rows),"valid_items":len(output),"cards_surfaced":0}
+        return output

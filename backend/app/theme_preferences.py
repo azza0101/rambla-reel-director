@@ -24,9 +24,9 @@ class ThemePreferences(BaseModel):
 
 
 def default_theme_preferences() -> dict:
-    panel = {"mode": "solid", "color_a": "#242743", "color_b": "#20233d"}
+    panel = {"mode": "solid", "color_a": "#13171b", "color_b": "#171c21"}
     return {
-        "canvas": {"mode": "solid", "color_a": "#0b2427", "color_b": "#081b1e"},
+        "canvas": {"mode": "solid", "color_a": "#0b0e10", "color_b": "#0b0e10"},
         "sections": {str(step): dict(panel) for step in range(1, 8)},
     }
 
@@ -41,7 +41,17 @@ def validate_theme_preferences(payload) -> ThemePreferences:
 def load_theme_preferences(path: Path) -> dict:
     try:
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
-        return validate_theme_preferences(payload).model_dump()
+        validated = validate_theme_preferences(payload).model_dump()
+        # Migrate only the former factory paints; keep every custom choice.
+        defaults = default_theme_preferences()
+        old_canvas = {"mode":"solid", "color_a":"#0b2427", "color_b":"#081b1e"}
+        old_panel = {"mode":"solid", "color_a":"#242743", "color_b":"#20233d"}
+        if validated['canvas'] == old_canvas:
+            validated['canvas'] = defaults['canvas']
+        for step, paint in validated['sections'].items():
+            if paint == old_panel:
+                validated['sections'][step] = defaults['sections'][step]
+        return validated
     except (FileNotFoundError, OSError, ValueError, TypeError, json.JSONDecodeError):
         return default_theme_preferences()
 

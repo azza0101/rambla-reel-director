@@ -21,6 +21,24 @@ def validate_native_cut(cut):
         previous=b;cursor=d
     if not cursor or cursor!=cut['duration_frames']:raise ValueError('Durata CUT incoerente')
 
+def assert_current_cut(project_root, projects_root, *, allow_pending=False):
+    """Do not silently deliver a historical child while editing its newer parent."""
+    report=Path(project_root)/'run'/'cut-reconciliation.json'
+    if not allow_pending and report.is_file() and json.loads(report.read_text(encoding='utf-8')).get('pending_beat_ids'):
+        raise ValueError('CUT modificato: premi AGGIORNA SOLO LE PARTI MODIFICATE prima di esportare plan e coperture.')
+    origin=Path(project_root)/'cut-origin.json'
+    if not origin.is_file(): return
+    saved=json.loads(origin.read_text(encoding='utf-8'))
+    if not saved.get('project_id') or not isinstance(saved.get('plan'),dict): return
+    current=Path(projects_root)/str(saved['project_id'])/'cut'/'plan.json'
+    if not current.is_file(): return
+    plan=json.loads(current.read_text(encoding='utf-8'))
+    if plan.get('revision')!=saved['plan'].get('revision'):
+        latest=plan.get('clean_project_id')
+        destination=f"Apri il risultato CUT aggiornato ({latest})." if latest else "Premi CONFERMA CUT E CONTINUA."
+        raise ValueError('Questo risultato contiene una revisione CUT precedente alle esclusioni salvate. '+destination)
+
+
 def load_native_cut(project_root,projects_root):
     project_root=Path(project_root);origin=project_root/'cut-origin.json'
     if origin.is_file():

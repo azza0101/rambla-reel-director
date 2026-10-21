@@ -91,6 +91,7 @@ def conflicting_place(text, expected):
 def missing_subject(target, metadata):
     """Do not let a country or tourist match substitute the requested main subject."""
     subjects = [
+        (r'\b(passaport\w*|passports?)\b', r'\b(passaport\w*|passports?|travel documents?|visa|immigration documents?)\b'),
         (r'\b(police|polizia|poliziott\w*|cops?)\b', r'\b(police|polizia|poliziott\w*|cops?|officers?|law enforcement)\b'),
         (r'\b(military|soldiers?|militari|soldati)\b', r'\b(military|soldiers?|militari|soldati|army|troops?)\b'),
         (r'\b(sarcophag\w*|sarcofag\w*|coffins?)\b', r'\b(sarcophag\w*|sarcofag\w*|coffins?|mumm\w*)\b'),

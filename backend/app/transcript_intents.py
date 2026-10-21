@@ -310,6 +310,9 @@ def selected_word_ranges(run: Path, intent: str, *, max_words: int | None = None
     chunks = normalized_chunks(run)
     state = load_phrase_intents(run)
     field = WORD_FIELDS[intent]
+    if intent == 'highlight':
+        from .highlight_phrases import highlight_ranges
+        return highlight_ranges([{**row,'words':_row_words(row)} for row in chunks],state['phrases'],max_words=max_words or 3)
     ranges: list[dict[str, Any]] = []
     for row in chunks:
         chunk_id = str(row["id"])
@@ -358,7 +361,7 @@ def planning_chunks_for_coverage(run: Path) -> list[dict[str, Any]]:
         snapshot = read(snapshot_path)
         if (snapshot.get('transcript_signature') == state['transcript_signature']
                 and snapshot.get('selection_digest') == digest(state['phrases'])):
-            return snapshot['chunks']
+            return _normalize_planning_boundaries(snapshot['chunks'])
     # The semantic transcript can contain several spoken sentences in one
     # display chunk. Preserve the ASR sentence/segment ends before applying the
     # length cap, otherwise a mechanical 10-word cut can separate a noun from
@@ -473,7 +476,36 @@ def planning_chunks_for_coverage(run: Path) -> list[dict[str, Any]]:
                 "source_word_end_index": last_index,
                 "coverage_selected": active,
             })
-    return result
+    return _normalize_planning_boundaries(result)
+
+
+def _normalize_planning_boundaries(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep derived coverage units chronological when ASR words straddle a CUT edge.
+
+    The original word timing is preserved for review.  Only the derived visual
+    unit boundary is clipped by at most the overlap, so editorial plans can
+    never contain two adjacent visual beats at the same instant.
+    """
+    previous_end: float | None = None
+    normalized: list[dict[str, Any]] = []
+    for chunk in chunks:
+        if not isinstance(chunk, dict) or 'start' not in chunk or 'end' not in chunk:
+            normalized.append(chunk)
+            continue
+        row = dict(chunk)
+        try:
+            start, end = float(row['start']), float(row['end'])
+        except (TypeError, ValueError):
+            normalized.append(row)
+            continue
+        if previous_end is not None and start < previous_end:
+            start = previous_end
+        if end <= start:
+            end = start + 0.001
+        row['start'], row['end'] = start, end
+        previous_end = end
+        normalized.append(row)
+    return normalized
 
 
 def build_animation_export(run: Path, project_id: str, video_context: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -533,7 +565,7 @@ def build_textplus_export(run: Path, project_id: str, *, fps: int = 25, track_hi
 
 
 def build_combined_resolve_export(run: Path, project_id: str, *, fps: int = 25, include_highlights: bool = True) -> dict[str, Any]:
-    """Build title rows plus native-subtitle rows without duplicating highlights."""
+    """Build titles and the complete native subtitle track, disabling highlighted cues."""
     if fps <= 0:
         raise ValueError("Timeline fps must be positive")
     title_rows = selected_word_ranges(run, "highlight", max_words=3) if include_highlights else []
@@ -547,16 +579,17 @@ def build_combined_resolve_export(run: Path, project_id: str, *, fps: int = 25, 
             "start_frame": round(start * fps), "end_frame": round(end * fps), "track_hint": 3,
         })
     intents = load_phrase_intents(run).get("phrases", {})
+    from .highlight_phrases import expanded_highlight_indices
+    completed = expanded_highlight_indices([{**c,'words':_row_words(c)} for c in normalized_chunks(run)],intents) if include_highlights else {}
     subtitles: list[dict[str, Any]] = []
     for chunk in normalized_chunks(run):
         chunk_id = str(chunk["id"])
         words = _row_words(chunk)
-        highlighted = set(intents.get(chunk_id, {}).get("highlighted_word_indices", [])) if include_highlights else set()
+        highlighted = set(completed.get(chunk_id, [])) if include_highlights else set()
         groups: list[list[int]] = []
         for index in range(len(words)):
-            if index in highlighted:
-                continue
-            if not groups or index != groups[-1][-1] + 1 or len(groups[-1]) >= 3:
+            if (not groups or len(groups[-1]) >= 3
+                    or (index in highlighted) != (groups[-1][-1] in highlighted)):
                 groups.append([])
             groups[-1].append(index)
         for group in groups:
@@ -568,6 +601,7 @@ def build_combined_resolve_export(run: Path, project_id: str, *, fps: int = 25, 
                 continue
             subtitles.append({
                 "kind": "SUBTITLE",
+                "enabled": group[0] not in highlighted,
                 "phrase_id": chunk_id,
                 "text": text,
                 "word_start_index": group[0],

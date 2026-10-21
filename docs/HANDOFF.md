@@ -1,3 +1,147 @@
+# v0133 / Auto-Cut 0.1.11 — measured timestamp recovery
+
+Root cause: ASR assigned 13.4 seconds to one word, hiding a failed take and its complete retry. Alignment accepted the long span; CUT and caption exports consequently inherited it. The Resolve importer matched the saved source map.
+
+New analysis detects implausibly long word spans before editorial selection, re-recognizes only short cached source windows with the existing Groq ASR, validates the result, and invalidates indexed proposal caches by transcript fingerprint. It never fixes unknown speech by shortening a timestamp. Alignment refuses anomalous measured updates. Native delivery (including without captions) and captions reject unresolved retained anomalies; discarded anomalies do not block export. Source word fingerprint prevents mixing an old CUT map with changed words. A short word crossing an extraction boundary remains available; uncertain manual index remapping raises instead of silently discarding user choices.
+
+Relative audio levels are measured locally and supplied only as an editorial hint for quieter off-camera direction. Low volume alone never excludes speech. No additional provider or audio upload is introduced for this measurement. Missing optional measurement preserves text. Semantic cache version 6.
+
+Current project was recovered from the specifically authorized audio windows only, without another cloud editorial call or Resolve mutation. Its explicit manual exclusions/restorations and selections outside repaired regions were verified unchanged. Full previous CUT artifacts are in autocut-data/repair-backups with a local report. Private transcript/audio/recovery scripts are excluded from GitHub and update ZIP. Reapply is manual. Existing manually restored closing fragments remain as the user chose; this targeted repair does not declare the entire edit approved.
+
+Validation: 224 Python tests passed, including anomalous retained/discarded spans, cache reuse, rollback on ASR failure, alignment protection, word-boundary preservation, manual remapping, quiet-volume context, subtitles and native delivery. Rollback: managed code backup from apply_archive plus the project repair-backup; restore the whole paired transcript/plan folder with the service stopped.
+
+--- Previous handoff ---
+
+# v0132 / Auto-Cut 0.1.10
+
+Apply dialog now has Crea sottotitoli checked by default. Explicit Apply locally generates revision-specific SRT and short native caption rows from the final reviewed source-to-edited map. It uses aligned transcript only when its signature matches; no new ASR/AI. Omitted source spans never become end-of-timeline captions. SRT timings are bounded by CUT duration and do not overlap.
+
+The existing insert_native_subtitles engine imports captions on empty ST1, verifies text/frame bounds and identifies the generated track. This runs inside native CUT rollback handling. Reapply first backs up/preserves the previous whole timeline (including captions), clears the authorized old content, and produces one caption set on the new CUT, avoiding duplicates. Unchecking skips caption generation/import. Download SRT becomes available after a successful application.
+
+Local current CUT proof: 71 rows, 73.067 seconds, last subtitle exactly at CUT end; no AI/Resolve mutations. Actual Apply remains user-triggered. Private transcript and SRT are local only and excluded from releases.
+
+--- Previous handoff ---
+
+# v0131 / Auto-Cut 0.1.9
+
+Visible preparation loader (indeterminate progress, phase, elapsed time) before timeline/range import and ASR launch. Startup controls are locked during the request, with a 30-second request timeout and explicit error display. The existing CUT progress follows once the job is accepted.
+
+Native pause removal is now strictly optional: `ELIMINA PAUSE`, presets and restore are available without Edit mode. Initial CUT merges unremoved consecutive-word pauses; only explicit tight_pauses removes them. Metadata is persisted in native transcripts so all manual rebuilds and restore retain this choice. Main MAGICO behavior is unchanged.
+
+Current project 6e3fe3e96c3d finished successfully in about 21s. Its text/take choices were preserved; pause-opt-in metadata applied with backup, duration 104.47s -> 105.47s, tight_pauses false. No new AI or Resolve mutations.
+
+--- Previous handoff ---
+
+# v0130 / Auto-Cut 0.1.8
+
+Apply the in-memory CUT repeatedly on an edited current timeline without source import or analysis. Read-only apply-check detects edits and returns a SHA256 fingerprint. A styled OK/Cancel dialog explicitly authorizes preservation of existing content; Apply checks that the fingerprint is unchanged before backup/deletion. Cancel sends no apply request.
+
+Edited current content is preserved as a disabled nested timeline reference after the new CUT, retaining its effects/audio/titles. The fully editable snapshot lives in `BCK/<timeline name>/<timeline name> · BCK · date · time · number`. Existing BCK contents are not migrated. New CUT stays native separate clips. Same project/timeline identity and original source identity checks remain mandatory. Failed apply activates the complete backup; original timeline is never deleted.
+
+Actual current Resolve read-only check verified; no automatic Apply and no cloud requests. GUI smoke covers OK/Cancel. No source/project/cache deletion.
+
+--- Previous handoff ---
+
+# v0129 / Auto-Cut 0.1.7
+
+Fix IN/OUT import from restored sessions. `RILEGGI TIMELINE E IN–OUT` calls an authenticated backend endpoint that reads Resolve in a disposable process, with a 20-second timeout. `AVVIA AUTO-CUT` always refreshes live source/range before analysis, and refuses to analyze if that read fails. No native SDK call in the Electron UI import path. Zero IN is valid; inclusive OUT maps to a half-open source range. No live timeline mutations during verification.
+
+Previous full-source project stays intact; selected-range import creates/reuses a separate project. Real current marks verified: [0,10477) source frames at 30 fps. No AI invoked during debugging. User must start analysis of the selected-range project.
+
+--- Previous handoff ---
+
+# Latest update — v0128 / Auto-Cut 0.1.6
+
+Current branch: fix/magico-images-specific-generics-v0094. Prior verified remote parent: eb6c7d93026c29cb11f0fe276be448042c52b51d.
+
+Selected IN/OUT source import, bounded ASR with absolute source timings, range-safe manual CUT rebuilds, styled Apply destination dialog, backup plus disabled full original parked after CUT on active timeline. No automatic Resolve Apply. See docs/AUTOCUT_INTEGRATION.md for behavior, checks and limitations.
+
+Also includes post-v0127 corrections: explicit recitation direction filtering, take dialog opens from read-only review, Apply bypasses blocking native SDK read, VFR full-clip validation and errors adjacent to Apply.
+
+Original projects, source files and previous repair backups are retained. No secrets/media/transcripts in source or update archive. Rollback: previous 0.1.5 package plus installer update-backups; active timeline backup in BCK.
+
+--- Previous handoff ---
+
+# Auto-Cut v0127 / 0.1.5 - 2026-10-21
+
+Production CUT stays Groq; Gemini comparison timed out and is not a production dependency. Complete ASR-block decisions are validated locally, then whole-retake reconciliation selects the latest and prevents nested restarts reappearing. Preserve unique premises and named-place differences; reject incomplete decisions. The full editorial report stays local in cut/editorial-review.json, excluded from GitHub diagnostics.
+
+Real project 80e60d811461 restored with full backup and prior manual exclusion preserved. Delivery revision 576bf454b3bfe362b36ee7f5: 414 kept words, 147.63 seconds, 11 segments, 8 selectable alternate groups. Exact retained-word match to a human-read reference, never provided to runtime. Low-resolution preview ready. No Resolve mutations. 124 targeted tests and browser smoke passed before final metadata changes.
+
+Backups: autocut-data/repair-backups. AGGIORNA restarts only the native integration and loads saved result. No automatic APPLICA.
+
+# Auto-Cut v0126 / 0.1.4 - 2026-10-21
+
+Fixed invalid selected_take indices during merge: keep alternatives for review. Sorting preserves selected take identity. Real recovery succeeded: project 80e60d811461, 27 segments, 11 groups, 221.97 seconds, 645 kept words. Full backup saved before recovery; no Resolve mutations. 94 targeted tests passed. Sanitized automatic diagnostics confirmed by private issue #16.
+
+# Provider JSON recovery + Auto-Cut diagnostics v0125 / 0.1.3 — 2026-10-21
+
+The 0.1.2 user run advanced past block 1 but failed in block 2 with HTTP400 Failed to validate JSON. cut_cloud now recognizes generated-output validation errors separately from invalid request schemas, retries a full JSON-object document with schema instructions and local Draft202012 validation, lower reasoning and bounded quota. Original failed_generation is never consumed. Existing valid block-1 cache and measured-word transcript remain reusable.
+
+Auto-Cut now installs the existing sanitized diagnostics routes/reporting. Production startup enables automatic reporting on first use as explicitly authorized by user on 2026-10-21, preserves later opt-out; test apps default off. CUT/app/apply failures go to the private GitHub reporter, with new PROVIDER_JSON and PROVIDER_OUTPUT_TRUNCATED categories. ASSISTENZA is included. Original failure report received as issue #16; no video/transcript/keys/paths uploaded. 92 focused tests passed; synthetic browser review/preview still passed. Live recovery test running in a separate scratch project copy, no Resolve mutation; results will be recorded separately.
+
+# Auto-Cut truncated Groq output fix v0124 / 0.1.2 — 2026-10-21
+
+Real integration run on project 80e60d811461 failed at 25% while proposing take groups, first of three word windows. Groq returned HTTP 400 max completion tokens reached. Original measured-word transcript remains cached in autocut-data; no CUT plan or timeline edits were completed by the failed run.
+
+cut_cloud.query_json now recognizes only output-truncation failures, retries a complete JSON document with lower reasoning and a larger completion allowance within the existing 7500-token pacing budget, max three attempts total. It never consumes failed_generation as a partial plan. Other HTTP 400 errors are not retried. Existing transcript and successful per-request cache remain reusable. New tests reproduce truncation and distinguish malformed requests. No live AI retry or Resolve mutation was performed during diagnosis/unit verification. User should AGGIORNA the integration, then AVVIA AUTO-CUT; transcription is reused if source unchanged.
+
+# Auto-Cut in-plugin updates v0123 / 0.1.1 — 2026-10-21
+
+AGGIORNA added to the integration, with idle checks, clean worker shutdown, code-only updater and Electron app.relaunch (guard refuses if host executable is Resolve). No Resolve process termination. Last project/context restores after relaunch. Developer checkout reloads local source/plugin JS; registered installs fetch dedicated autocut-* prerelease assets, not the RMBL main latest release. Loaded native SDK and runtime are excluded; dependency changes require installer. Main RMBL must be closed if sharing its runtime/code before a production update.
+
+Updater tests cover allowed paths, traversal rejection, native SDK/data/credential preservation, SHA mismatch. Node lifecycle mock proves only integration/worker restart and busy rejection. Actual installed worker startup/UI/auth/shutdown and synthetic review/preview verified. Real Resolve host opening/relaunch still pending user test; never claim it was exercised. First registration can require Resolve restart. Packaging and Mac hardware verification remain pending.
+
+# Auto-Cut Workflow Integration v0122 — 2026-10-21
+
+New independent integration com.rambla.autocut / version 0.1.0 installed in the local Resolve Workflow Integration Plugins folder. Native SDK copied from this machine's installed Resolve, not committed. Main app/bridge remain usable independently; only shared CUT UI change is making its optional Analysis button nullable.
+
+Worker: backend/app/autocut_service.py, loopback + random per-session token, dedicated ../autocut-data. Shared install_cut_routes/CUT UI/native export/native apply engine. No bridge routes, heartbeat or outbox. Explicit source import and explicit Apply; Apply creates a new owned timeline and leaves original intact. Current revision/source identity/current Resolve project+timeline checks. No native timeline mutations or AI calls in the completed smoke tests.
+
+Window lifecycle/SDK source adapter: tools/autocut_integration. Installer: tools/install_autocut_integration.py, INSTALL_RMBL_AUTO_CUT.ps1/.command. Windows installed-worker boot/auth/UI/shutdown and synthetic browser review/preview tested; 49 focused Python tests + 3 Node adapter tests passed before final verification. Await real Resolve menu opening/source snapshot and real Apply. Existing Python runtime is reused; self-contained runtime packaging, Mac hardware test and native Resolve transcript reading are NOT complete. Studio + Local scripting required for existing native Apply helper.
+
+Full instructions and exact limitations: docs/AUTOCUT_INTEGRATION.md. No keys copied to plugin source/runtime config; existing .env.local allowlist loader reused. Do not publish credentials or local SDK binary. Original project data untouched.
+
+# Main application reference theme v0121 — 2026-10-20
+
+Main app only: charcoal surfaces, compact controls, restrained aqua/violet accents, consistent workflow headers and smaller previews. Bridge GUI unchanged. Existing custom paints remain saved and active; factory defaults migrate only on exact former factory values. RIPRISTINA COLORI previews the new defaults; SALVA IMPOSTAZIONI persists them.
+
+Combined export retains the full native subtitle transcript. Highlight words, including expanded compound names, form separate disabled cues. Native import matches newly created cues by text and frame range before applying and verifying SetClipEnabled; existing clips are untouched. State is applied before restoring track locks. Text-only export without highlights keeps all cues enabled. No Resolve timeline modified during this task; mock integration verified, actual APPLICA remains user-controlled.
+
+A stale visual plan no longer turns export-options into HTTP 500 / false project-restore error. Counts for text remain readable, media warning is shown, and existing export validation remains authoritative. No plan regenerated or selections changed.
+
+Verification: 111 focused unit tests passed. Browser checks at 1440 and 720 px: no JavaScript errors, no horizontal overflow, accordion and unsaved live-color preview working. Old custom preferences were not overwritten (automatic review rejected that proposal).
+
+# Diagnostica remota v0120 — 2026-10-20
+
+ASSISTENZA su entrambe le GUI: consenso automatico inizialmente spento, invio manuale, anteprima e copia. Coda sanitizzata condivisa e lock app/bridge; repository privato obbligatorio, deduplica e limite 10/giorno. Agganci agli errori CUT, MAGICO, app e bridge. Non inviare messaggi grezzi o progetti: solo schema allowlist verificato prima di ogni upload. Prova reale issue #13 creata, riletta e chiusa; nessun dato del video inviato.
+
+Preconfigurazione GitHub pronta con token fine-grained dedicato + DPAPI locale. Non copiare il token OAuth attuale dell'account. L'utente ha fornito il token dedicato: salvato solo in .runtime-temp/github-distribution-token.txt e nel provisioning personale ignorato da Git. Verificati download release e apertura issue #14, chiusa dopo la prova. Sul PC corrente e cifrato DPAPI in rambla-data/credentials; le chiamate runtime GitHub usano quello, senza modificare il login CLI usato per pubblicare codice. Non pubblicare quel file o installer personale. In assenza del token si usa il login CLI esistente. Nessun monitoraggio Codex continuo e nessuna patch automatica dal client.
+
+Dettagli: docs/REMOTE_DIAGNOSTICS.md e docs/DIAGNOSTICS_QA_20261020.json. Versione app/bridge v0120. Nessuna modifica a Resolve.
+
+# Windows distribution v0119 — 2026-10-20
+
+SEARCH UPDATE in entrambe le GUI. Repository privato: GitHub CLI autentica l'utente; download release con SHA256 e controllo zip, conferma, blocco durante CUT/MAGICO/ricerca/APPLICA. Sviluppo Git non viene sovrascritto. App riavviata, Resolve mai arrestato. Bridge attende la fine dell'installazione prima di autoricaricarsi.
+
+Installer: wheel offline, FFmpeg + DLL, GitHub CLI, template Fusion, collegamenti standalone/bridge. Bootstrap Python 3.12 via winget se assente. Installazione e aggiornamento v0118->v0119 provati in directory isolate: dati, .env.local e preferenze conservati; backup codice e script rollback. HTTP health/UI/stato update della copia installata verificati. Nessun test su un secondo PC fisico ancora.
+
+EXE standard e ZIP aggiornamenti non contengono chiavi. Su esplicita richiesta utente viene prodotto un EXE PERSONALE solo locale, con 3 API preconfigurate. Mai pubblicare dist/personal o private-provision.json. Copia provisioning verificata senza stampare valori. Gateway FreeLLMAPI sperimentale esterno non incluso; provider nativi utilizzabili.
+
+# RMBL B ROLL — handoff v0118
+
+2026-10-20. Branch: fix/magico-images-specific-generics-v0094. Non fare merge automatico.
+
+Ultimi interventi: riconciliazione CUT incrementale, ripristino/esclusioni manuali, preview ridotta, verifica sorgenti native VFR, sottotitoli senza sovrapposizioni, coperture distribuite e fill del quadro, nomi composti evidenziati interamente. FreeLLMAPI opzionale locale per tavole di tre fotogrammi.
+
+Verifica reale coperture: docs/COVERAGE_QA_20261019.json e docs/LOCAL_COVERAGE_AUDIT_20261019.json. La selezione reale precedente è stata revisionata manualmente; non confonderla con una verifica cloud. Prova gateway separata: docs/VISUAL_GATEWAY_TRIAL_20261020.json. Nessuna credenziale inclusa nel repository. Il gateway sperimentale esterno non è ancora incluso nell'installer.
+
+Test mirati recenti: 43 per gateway/vision/product/usage/launcher; 35 per highlight e selezioni. Due test editoriali preesistenti restano da correggere (deduplicazione e mock max_output_tokens). Non dichiarare verde l'intera suite.
+
+Progetti, media e chiavi restano fuori Git. APPLICA in Resolve rimane esplicito. Installer e aggiornamento GitHub sono il prossimo lavoro, non ancora collaudati su un altro PC.
+
+---
+
 # RMBL B ROLL — handoff tecnico
 
 Aggiornato: 2026-10-17  Versione: `v0078`  Branch di consegna: `feat/api-first-text-first-v1`

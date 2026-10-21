@@ -80,6 +80,9 @@ def selection_changes(chunks, rows):
                 raise ValueError('Parole evidenziate: massimo tre parole consecutive')
             previous = index
         output[str(chunk['id'])] = result
+    from .highlight_phrases import expanded_highlight_indices
+    completed = expanded_highlight_indices(chunks,output)
+    for cid,indices in completed.items():output[cid]['highlighted_word_indices']=indices
     return output
 
 
@@ -185,16 +188,19 @@ def _geographically_safe_queries(queries, expected_places, fallback_text):
 
 def _deduplicate_plan_queries(decisions, chunks):
     """Avoid sending the same stock-search query to two different beats."""
-    seen, repairs = set(), 0
+    # The compiler permits the same wording once for images and once for video.
+    # Deduplicate only inside each provider lane.
+    seen, repairs = {'image_queries': set(), 'video_queries': set()}, 0
     for chunk in chunks:
         decision = decisions[str(chunk['id'])]
         for shot in decision['shots']:
             for field in ('image_queries','video_queries'):
+                used = seen[field]
                 unique = []
                 for query in shot[field]:
                     key = ' '.join(str(query).casefold().split())
-                    if key not in seen:
-                        seen.add(key)
+                    if key not in used:
+                        used.add(key)
                         unique.append(query)
                     else:
                         repairs += 1
@@ -206,10 +212,10 @@ def _deduplicate_plan_queries(decisions, chunks):
                 fallback = ' '.join(fallback.split()[:10]) or 'documentary travel scene'
                 candidate = fallback
                 suffix = 2
-                while ' '.join(candidate.casefold().split()) in seen:
+                while ' '.join(candidate.casefold().split()) in used:
                     candidate = ' '.join((fallback.split()[:8] + [f'scene{suffix}']))
                     suffix += 1
-                seen.add(' '.join(candidate.casefold().split()))
+                used.add(' '.join(candidate.casefold().split()))
                 shot[field] = [candidate]
     return repairs
 
@@ -218,7 +224,13 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
     from .cut_cloud import cloud_context, query_json, pack_items, word_windows
     run = Path(run)
     if query is None:
-        query = lambda prompt,schema,label:query_json(prompt,schema,label,max_output_tokens=2600,thinking_level='low')
+        # Keep the adapter signature compatible with both the selection and
+        # director passes, which may use different bounded output budgets.
+        query = lambda prompt,schema,label,**kwargs: query_json(
+            prompt, schema, label,
+            max_output_tokens=kwargs.get('max_output_tokens', 2600),
+            thinking_level=kwargs.get('thinking_level', 'low'),
+        )
     chunks = normalized_chunks(run)
     if not chunks:
         raise ValueError('La trascrizione del CUT è vuota')
@@ -239,6 +251,8 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
         for index, batch in enumerate(batches):
             prompt = ('Sei il montatore di un reel e devi PRODURRE le selezioni editoriali, non solo classificare il tema. '
                 'Compila coverage_word_indices e highlighted_word_indices usando i numeri davanti alle parole. '
+                'Evidenzia espressioni complete: nomi propri, marchi, luoghi e concetti composti sono indivisibili. '
+                'Per esempio National Geographic, Steve McCurry e polizia turistica: seleziona tutte le parole del concetto, mai solo il cognome o l’aggettivo. '
                 'coverage_word_indices: seleziona passaggi completi che descrivono oggetti, luoghi, persone, azioni o fatti '
                 'mostrabili con video o immagini. Includi tutte le parole del passaggio, non solo il nome del soggetto. '
                 'Alterna volto e coperture: in un testo adatto circa 20-45% del parlato, senza forzare una quota o inventare immagini. '
@@ -294,7 +308,11 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
             prompt += 'non sostituirlo automaticamente con una strada tranquilla. Non inventare attribuzioni archivistiche o geografiche.'
             prompt += '\nPer ciascun passaggio selezionato proponi una sola inquadratura concreta, con una o due query semplici per mezzo. Mantieni concise le spiegazioni. Non inventare un paese, una città o un aeroporto specifico se il passaggio non lo nomina: in quel caso la query deve restare geografically neutral.'
             prompt += '\nRestituisci esclusivamente le decisioni per gli ID in TRANSCRIPT_CHUNKS di questo blocco: non ripetere o aggiungere frasi dal contesto completo.'
-            reply = query(prompt,_magic_director_schema(len(batch)),f'Piano visuale · blocco {index+1}/{len(director_batches)}')
+            # The Groq window includes the schema and the generated answer.
+            # 2400 output tokens keep a six-chunk request below its 7.5k cap.
+            reply = query(prompt,_magic_director_schema(len(batch)),
+                          f'Piano visuale · blocco {index+1}/{len(director_batches)}',
+                          max_output_tokens=2400)
             rows, extras = _requested_director_rows(reply,batch)
             extra_director_rows += extras
             for raw,chunk in zip(rows,batch):
@@ -327,3 +345,4 @@ def run_magic_editorial(run, project_id, duration, report, *, query=None):
         return {'editorial_root':str(editorial_root),'beat_count':len(plan['visual_beats']),
                 'coverage_count':sum(b['action']=='BROLL' for b in plan['visual_beats']),
                 'global_topic':plan['global_topic'],'plan_signature':fingerprint(plan), 'warnings':warnings}
+

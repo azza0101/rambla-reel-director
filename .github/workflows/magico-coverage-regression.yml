@@ -1,0 +1,53 @@
+name: MAGICO photo and generic coverage regression
+
+on:
+  push:
+    branches:
+      - fix/magico-images-specific-generics-v0094
+
+jobs:
+  test-magico:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e '.[dev]'
+      - name: MAGICO and B-roll tests
+        run: |
+          pytest -q \
+            tests/unit/test_autocut_update.py \
+            tests/unit/test_autocut_integration.py \
+            tests/unit/test_autocut_range.py \
+            tests/unit/test_autocut_source.py \
+            tests/unit/test_autocut_reapply.py \
+            tests/unit/test_autocut_subtitles.py tests/unit/test_cut_timing_guard.py tests/unit/test_cut_alignment.py \
+            tests/unit/test_resolve_native_cut.py \
+            tests/unit/test_theme_preferences.py \
+            tests/unit/test_transcript_intents.py \
+            tests/unit/test_resolve_native_subtitles.py \
+            tests/unit/test_export_components.py \
+            tests/unit/test_diagnostics.py \
+            tests/unit/test_github_auth.py \
+            tests/unit/test_software_update.py \
+            tests/unit/test_cut_semantic.py \
+            tests/unit/test_cut_restart_reconcile.py \
+            tests/unit/test_cut_cloud.py \
+            tests/unit/test_cut_residual.py \
+            tests/unit/test_magic_coverage.py \
+            tests/unit/test_magic_research_watchdog.py \
+            tests/unit/test_magic_schedule.py \
+            tests/unit/test_magic_product.py \
+            tests/unit/test_magic_resolve_payload.py \
+            tests/unit/test_magic_resolve_images.py \
+            tests/unit/test_magic_visual.py \
+            tests/unit/test_magic_generic.py \
+            tests/unit/test_magic_research.py \
+            tests/unit/test_broll_timeline_export.py
+      - name: Auto-Cut native source adapter tests
+        run: node --test tools/autocut_integration/test_source_adapter.js tools/autocut_integration/test_update_lifecycle.js
+      - name: Compile changed Python modules
+        run: python -m compileall -q backend/app

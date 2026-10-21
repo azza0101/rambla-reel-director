@@ -14,9 +14,10 @@ class MagicCancelled(RuntimeError):
 
 
 class MagicRunner:
-    def __init__(self, store, services, source_signature):
+    def __init__(self, store, services, source_signature, *, on_error=None):
         self.store, self.services, self.source_signature = store, services, source_signature
         self.tasks = {}
+        self.on_error = on_error
 
     def start(self, project_id, options):
         row = self.store.create_or_resume(project_id, self.source_signature(project_id), options)
@@ -38,6 +39,36 @@ class MagicRunner:
 
     def resume(self, run_id):
         return self._schedule(self.store.read(run_id))
+
+    def restart(self, run_id):
+        """Start a new MAGICO run while retaining the prior run and its artifacts."""
+        previous = self.store.read(run_id)
+        if run_id in self.tasks and not self.tasks[run_id].done():
+            raise ValueError('MAGICO è ancora in corso: annullalo prima di ripartire da zero')
+        self.store.validate_source(run_id, self.source_signature(previous['source_project_id']))
+        row = self.store.create_or_resume(previous['source_project_id'], previous['source_signature'],
+                                          previous['options'], fresh=True)
+        return self._schedule(row)
+
+    def retry_from(self, run_id, phase):
+        """Rebuild only the research/selection tail of a durable MAGICO run.
+
+        CUT and editorial checkpoints are immutable here: retrying coverage
+        must never spend another transcript/director call or alter the CUT.
+        """
+        if phase not in {'research', 'selection'}:
+            raise ValueError('Puoi ripetere soltanto ricerca o coperture MAGICO')
+        row = self.store.read(run_id)
+        if run_id in self.tasks and not self.tasks[run_id].done():
+            return row
+        self.store.validate_source(run_id, self.source_signature(row['source_project_id']))
+        start = PHASES.index(phase)
+        checkpoints = {name: value for name, value in row['checkpoints'].items()
+                       if PHASES.index(name) < start}
+        row = self.store.transition(run_id, checkpoints=checkpoints, status='queued',
+            cancel_requested=False, error=None, diagnostics=None,
+            message='Riprovo le coperture con CUT e piano editoriale già salvati')
+        return self._schedule(row)
 
     def resend(self, run_id):
         row = self.store.read(run_id)
@@ -125,5 +156,8 @@ class MagicRunner:
         except MagicBudgetReached as exc:
             self.store.transition(run_id, status='partial', message=str(exc), error=str(exc))
         except Exception as exc:
+            if self.on_error:
+                try:self.on_error(exc,component='magic',phase=locals().get('phase','unknown'))
+                except Exception:pass
             self.store.transition(run_id, status='failed', message=str(exc), error=str(exc),
                                   diagnostics={'traceback': traceback.format_exc()})

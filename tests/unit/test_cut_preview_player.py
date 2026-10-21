@@ -111,7 +111,7 @@ def test_confirmed_cut_preview_is_available_without_a_draft_plan():
     harness="const vm=require('vm'),assert=require('assert');const c={$:()=>({}),state:{},draw(){},setInterval(){}};vm.createContext(c);"
     script=harness+'vm.runInContext('+json.dumps(JS)+',c);'+r"""
     assert.equal(c.cutPreviewBlockReason({source:true,plan:false,confirmed:true,workflowBusy:true,busy:false}),'');
-    assert.ok(c.cutPreviewBlockReason({source:true,plan:false,confirmed:false,workflowBusy:false,busy:false}).includes('Analizza CUT'));
+    assert.ok(c.cutPreviewBlockReason({source:true,plan:false,confirmed:false,workflowBusy:false,busy:false}).includes('Auto-cut'));
     assert.ok(c.cutPreviewBlockReason({source:true,plan:true,confirmed:false,workflowBusy:true,busy:false}).includes('analisi'));
     assert.equal(c.cutPreviewBlockReason({source:true,plan:true,confirmed:false,workflowBusy:false,busy:false}),'');
     """
@@ -142,3 +142,15 @@ def test_cut_undo_redo_preserve_history_on_failed_save_and_clear_redo_on_new_edi
     """
     result=subprocess.run([node,'-e',script],capture_output=True,text=True,encoding='utf-8')
     assert result.returncode==0,result.stderr
+
+
+
+def test_confirming_cut_does_not_replace_the_original_source_view():
+    assert "const next=data.job.result.project_id,p=await api" not in JS
+    assert "Source resta sul video integrale" in JS
+
+
+
+def test_cut_result_edits_are_routed_back_to_the_parent_plan():
+    assert "cutPid=data.cut_parent_project_id||pid" in JS
+    assert "const pid=cutPid||state.pid;cutBusy=true" in JS

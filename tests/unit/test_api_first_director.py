@@ -188,7 +188,7 @@ def test_compile_rejects_wrong_chunk_order():
         compile_director_decisions(package_fixture(), decisions)
 
 
-def test_compile_rejects_query_reused_by_another_visual_beat():
+def test_compile_makes_query_reused_by_another_visual_beat_specific():
     from backend.app.api_first_director import compile_director_decisions
 
     decisions = valid_decisions()
@@ -202,8 +202,9 @@ def test_compile_rejects_query_reused_by_another_visual_beat():
         }],
     )
 
-    with pytest.raises(ValueError, match="reused by another visual beat"):
-        compile_director_decisions(package_fixture(), decisions)
+    plan = compile_director_decisions(package_fixture(), decisions)
+    first, second = plan["visual_beats"][:2]
+    assert first["shots"][0]["image_queries"] != second["shots"][0]["image_queries"]
 
 
 def test_compile_rewrites_generic_ambience_as_historical_evidence_queries():

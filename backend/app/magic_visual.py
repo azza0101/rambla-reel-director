@@ -51,6 +51,25 @@ def sample_candidate(candidate, directory):
     return {**candidate, 'sampled_frames': frames}
 
 
+def contact_sheet(frames):
+    """Pack the actual temporal samples, keeping order, proportions and labels."""
+    from PIL import Image,ImageDraw
+    paths=[Path(p) for p in frames]
+    if len(paths)!=3 or any(not p.is_file() or not p.stat().st_size for p in paths):
+        raise ValueError('Servono tre fotogrammi reali per la tavola video')
+    signature=fingerprint([(str(p.resolve()),p.stat().st_size,p.stat().st_mtime_ns) for p in paths]+['contact-sheet-v1'])[:24]
+    output=paths[0].parent/('board-'+signature+'.jpg')
+    if output.is_file() and output.stat().st_size:return output
+    board=Image.new('RGB',(1536,560),(24,27,34));draw=ImageDraw.Draw(board)
+    for i,(path,label) in enumerate(zip(paths,['1 - inizio','2 - meta','3 - fine'])):
+        with Image.open(path) as image:
+            image=image.convert('RGB');image.thumbnail((512,512))
+            board.paste(image,(i*512+(512-image.width)//2,40+(512-image.height)//2))
+        draw.text((i*512+12,10),label,fill='white')
+    temporary=output.with_suffix('.tmp.jpg');board.save(temporary,quality=90);temporary.replace(output)
+    return output
+
+
 def judge_batch(candidates, client):
     if client is None:
         return validated_verdicts(candidates, None)
@@ -59,22 +78,25 @@ def judge_batch(candidates, client):
     if not usable:
         return validated_verdicts(candidates, None)
     parts, manifest = [], []
+    packed=bool(getattr(client,'contact_sheets',False))
     for row in usable:
         indexes = []
-        for value in row['sampled_frames']:
+        attachments=[str(contact_sheet(row['sampled_frames']))] if packed and row.get('kind')=='video' else row['sampled_frames']
+        for value in attachments:
             indexes.append(len(parts)+1)
             parts.append(dict(type='image', mime_type='image/jpeg', data=base64.b64encode(Path(value).read_bytes()).decode('ascii')))
         manifest.append(dict(asset_id=row['asset_id'], frames=indexes,
             requested_scene=row.get('visual_target') or row.get('beat_text'),
             transcript=row.get('beat_text'), places=row.get('places', [])))
-    prompt = (
+    board_note='Each video image is a contact sheet of three real frames, left to right: inizio, meta, fine. Judge ALL three cells, not only the central cell. An image candidate has one still. ' if packed else ''
+    prompt = board_note+(
         'Evaluate the ACTUAL attached frames against each requested scene and transcript. '
         'Frame numbers are 1-based in attachment order. Metadata is not evidence. '
         'Require matching subject, action and historical/geographic context. Do not infer a named place '
         'from a generic road/uniform. Reject conflicting architecture, flags, uniforms or unrelated subjects. '
         'A video must be coherent across all its samples. If uncertain use confidence below 85; '
         'do not invent evidence. Return exactly one verdict per asset_id, with a concrete reason. '
-        'Images are editorial alternatives and remain disabled regardless of verdict.\n'
+        'A verified still image can be active coverage when no suitable video exists.\n'
         + json.dumps(manifest, ensure_ascii=False))
     schema = dict(type='object', additionalProperties=False, required=['verdicts'], properties={
         'verdicts': dict(type='array', items=dict(type='object', additionalProperties=False,

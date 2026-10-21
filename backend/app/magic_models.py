@@ -50,7 +50,7 @@ class CoverageDecision(BaseModel):
     beat_id: str
     asset_id: str
     provider: str
-    role: Literal['coverage', 'fallback_image', 'generic'] = 'coverage'
+    role: Literal['coverage', 'image_coverage', 'fallback_image', 'generic'] = 'coverage'
     enabled: bool = True
     edited_in_frame: int = Field(ge=0)
     edited_out_frame: int = Field(gt=0)

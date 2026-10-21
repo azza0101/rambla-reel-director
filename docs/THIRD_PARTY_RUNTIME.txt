@@ -1,0 +1,5 @@
+RMBL runtime components
+Python dependencies: see wheels/*.whl for their packaged *.dist-info/LICENSE files and metadata.
+GitHub CLI: https://github.com/cli/cli (MIT license, https://github.com/cli/cli/blob/trunk/LICENSE).
+FFmpeg binaries and shared libraries: https://ffmpeg.org/ ; upstream source https://git.ffmpeg.org/ffmpeg.git ; licensing https://ffmpeg.org/legal.html . This distribution includes the same runtime used by the local installation; run runtime/bin/ffmpeg.exe -version for the exact version and configuration. Source release archives: https://ffmpeg.org/releases/ . No FFmpeg modification is made by RMBL.
+Experimental FreeLLMAPI is not included in this installer.

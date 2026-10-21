@@ -33,6 +33,41 @@ def repetition_hints(transcript,plan,limit=50):
     return hints[:limit] if limit else hints
 
 
+def reconcile_exact_nearby_restarts(transcript,plan,max_gap_seconds=60.0):
+    """Resolve only unmistakable nearby verbatim restarts without another AI call.
+
+    A repeated fragment is selected only when it is at least five words and the
+    retry begins shortly afterwards.  This removes the abandoned occurrence,
+    while preserving any unique words before and after it.
+    """
+    words=words_of(transcript)
+    groups=[dict(g) for g in plan.get('groups',[])]
+    occupied=set()
+    for group in groups:
+        for a,b in group.get('takes',[]): occupied.update(range(a,b+1))
+    for discard in plan.get('discards',[]): occupied.update(range(discard['range'][0],discard['range'][1]+1))
+    accepted=[]
+    for hint in repetition_hints(transcript,plan,limit=None):
+        if len(hint['text'].split())<7: continue
+        for first,second in zip(hint['takes'],hint['takes'][1:]):
+            a,b=first; c,d=second
+            if c<=b or words[c]['start']-words[b]['end']>max_gap_seconds: continue
+            indexes=set(range(a,b+1))|set(range(c,d+1))
+            if occupied.intersection(indexes): continue
+            accepted.append({'takes':[[a,b],[c,d]],'selected_take':1,
+                'reason':'Ripartenza ravvicinata: frammento identico ripetuto, mantiene l’ultima versione.',
+                'confidence':.98,'boundaries_reviewed':True})
+            occupied.update(indexes)
+            break
+    if not accepted: return plan
+    new=build_cut_plan(transcript,duration=plan['source_duration_frames']/float(__import__('fractions').Fraction(plan['fps'])),
+        fps=plan['fps'],signature=plan['source_signature'],groups=groups+accepted,
+        discards=plan.get('discards',[]),pause_threshold=plan['pause_threshold'],breathing=plan['breathing'],
+        excluded_word_indices=plan.get('excluded_word_indices',[]),restored_word_indices=plan.get('restored_word_indices',[]),tight_pauses=plan.get('tight_pauses',False),
+        pause_mode=plan.get('pause_mode','soft'),silence_intervals=plan.get('silence_intervals',[]),end_margin_ms=plan.get('end_margin_ms',0))
+    new['warnings']=plan.get('warnings',[])+[f'Rilevate {len(accepted)} ripartenze verbatim ravvicinate senza chiamate cloud.']
+    return new
+
 def reconcile_question_takes(transcript,plan):
     """Extend an existing short-question group when a later complete take was missed."""
     words=words_of(transcript)
@@ -64,7 +99,7 @@ def reconcile_question_takes(transcript,plan):
                         else:blocks.append([i,i])
                     for pair in blocks:discards.append({'range':pair,'reason':'Conferme e regia fra take della stessa domanda','confidence':.99,'keep':False})
             break
-    new=build_cut_plan(transcript,duration=plan['source_duration_frames']/float(__import__('fractions').Fraction(plan['fps'])),fps=plan['fps'],signature=plan['source_signature'],groups=groups,discards=discards,pause_threshold=plan['pause_threshold'],breathing=plan['breathing'],excluded_word_indices=plan.get('excluded_word_indices',[]),tight_pauses=plan.get('tight_pauses',False),pause_mode=plan.get('pause_mode','soft'),silence_intervals=plan.get('silence_intervals',[]),end_margin_ms=plan.get('end_margin_ms',0))
+    new=build_cut_plan(transcript,duration=plan['source_duration_frames']/float(__import__('fractions').Fraction(plan['fps'])),fps=plan['fps'],signature=plan['source_signature'],groups=groups,discards=discards,pause_threshold=plan['pause_threshold'],breathing=plan['breathing'],excluded_word_indices=plan.get('excluded_word_indices',[]),restored_word_indices=plan.get('restored_word_indices',[]),tight_pauses=plan.get('tight_pauses',False),pause_mode=plan.get('pause_mode','soft'),silence_intervals=plan.get('silence_intervals',[]),end_margin_ms=plan.get('end_margin_ms',0))
     new['warnings']=plan.get('warnings',[])
     return new
 
@@ -106,8 +141,16 @@ def merge_residual_suggestions(transcript,plan,suggestion):
         if occupied.intersection(indexes):
             warnings.append('Proposta ripetuta fra blocchi ignorata: scelte esistenti conservate.')
             continue
+        # Residual replies are independent AI suggestions, not manual edits.
+        # A model can return an out-of-range take index even when the JSON
+        # schema is valid. Fail closed: keep ALL words for manual review.
+        selected = g.get('selected_take', -1)
+        if type(selected) is not int or not -2 <= selected < len(g['takes']):
+            g['selected_take'] = -1
+            warnings.append('Indice take residuale non valido: tutte le versioni conservate per revisione.')
+        if float(g.get('confidence',0))<.85:
+            g['selected_take']=-1
         occupied.update(indexes);accepted.append(g)
-        if float(g.get('confidence',0))<.85:g['selected_take']=-1
     groups=accepted;accepted_discards=[]
     protected=set(i for g in plan['groups'] if g.get('user_selected_take') and g.get('selected_take',-1)>=0
                   for a,b in [g['takes'][g['selected_take']]] for i in range(a,b+1))
@@ -128,7 +171,7 @@ def merge_residual_suggestions(transcript,plan,suggestion):
     new=build_cut_plan(transcript,duration=plan['source_duration_frames']/float(__import__('fractions').Fraction(plan['fps'])),
         fps=plan['fps'],signature=plan['source_signature'],groups=plan['groups']+groups,
         discards=plan.get('discards',[])+discards,pause_threshold=plan['pause_threshold'],breathing=plan['breathing'],
-        excluded_word_indices=plan.get('excluded_word_indices',[]),tight_pauses=plan.get('tight_pauses',False),pause_mode=plan.get('pause_mode','soft'),silence_intervals=plan.get('silence_intervals',[]),end_margin_ms=plan.get('end_margin_ms',0))
+        excluded_word_indices=plan.get('excluded_word_indices',[]),restored_word_indices=plan.get('restored_word_indices',[]),tight_pauses=plan.get('tight_pauses',False),pause_mode=plan.get('pause_mode','soft'),silence_intervals=plan.get('silence_intervals',[]),end_margin_ms=plan.get('end_margin_ms',0))
     new['warnings']=plan.get('warnings',[])+warnings
     new['residual_reviewed']=True
     return new
@@ -179,13 +222,30 @@ TESTO MANTENUTO:\n"""+text+'\nINDICI GIA GESTITI:\n'+json.dumps(sorted(occupied)
     windows=word_windows([w for w in words if w['index'] not in removed],max_words=220,max_chars=2400)
     header=prompt.split('TESTO MANTENUTO:')[0]
     replies=[]
+    provider_failures=[]
     for i,window in enumerate(windows):
         a,b=window[0]['index'],window[-1]['index']
         nearby=[h for h in hints if any(a<=x<=b or a<=y<=b for x,y in h['takes'])][:4]
         nearby_anomalies=[x for x in anomalies if a<=x['index']<=b]
         local=header+'\nTESTO MANTENUTO (indici originali):\n'+' '.join(f"{w['index']}:{w['text']}" for w in window)
         local+='\nINDICI GIA GESTITI:\n'+compact_indices(occupied)+'\nCANDIDATI:\n'+json.dumps(nearby,ensure_ascii=False)+'\nANOMALIE:\n'+json.dumps(nearby_anomalies,ensure_ascii=False)
-        replies.append(query_json(local,schema,f'Verifico ripartenze · blocco {i+1}/{len(windows)}'))
-    return reconcile_question_takes(transcript,merge_residual_suggestions(transcript,plan,merge_suggestions(replies)))
+        try:
+            replies.append(query_json(local,schema,f'Verifico ripartenze · blocco {i+1}/{len(windows)}'))
+        except Exception as exc:
+            # The deterministic pass below is still safe and useful when a
+            # provider refuses a single structured response.
+            provider_failures.append(str(exc))
+    suggestion=merge_suggestions(replies) if replies else {'groups':[],'discards':[]}
+    try:
+        result=reconcile_exact_nearby_restarts(transcript,reconcile_question_takes(transcript,merge_residual_suggestions(transcript,plan,suggestion)))
+    except ValueError as exc:
+        if 'sovrapposte' not in str(exc): raise
+        # Never discard the whole repair because an AI reply has overlapping
+        # ranges.  Preserve the plan and apply only provably safe local repeats.
+        result=reconcile_exact_nearby_restarts(transcript,plan)
+        provider_failures.append('take AI sovrapposte')
+    if provider_failures:
+        result['warnings']=result.get('warnings',[])+['Verifica AI delle ripartenze non disponibile o incoerente: applicato il controllo locale alle ripetizioni certe.']
+    return result
 
 
