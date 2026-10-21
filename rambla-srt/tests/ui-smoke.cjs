@@ -1,0 +1,22 @@
+const assert=require('node:assert/strict'),path=require('node:path'),fs=require('node:fs');
+const {chromium}=require(process.env.PLAYWRIGHT_PATH||'playwright');
+const {Session}=require('../plugin/session');
+const root=path.resolve(process.env.SRT_QA_ROOT||path.join(__dirname,'../../_qa'));fs.mkdirSync(root,{recursive:true});
+const snapshot={projectId:'qa',timelineId:'qa',geometry:'qa',fingerprint:'qa',projectName:'Progetto di prova',timeline:{name:'Intervista / Una timeline dal nome molto lungo 日本',fps:25,start:90000,finish:100000,startTC:'01:00:00:00'},range:{a:90000,b:90050},captions:[{a:90000,b:90050,content:'Caffè 日本',track:1,idx:1}]};
+const session=new Session(path.join(root,'state'),async()=>structuredClone(snapshot));
+(async()=>{const browser=await chromium.launch({channel:'msedge',headless:true});try{const page=await browser.newPage({viewport:{width:620,height:850}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.exposeFunction('callSrt',async(name,args)=>{switch(name){case'version':return '3.2.0';case'refresh':return session.refresh();case'save':return session.save(args[0]);case'add':return session.addRange();case'remove':return session.removeRange(args[0]);case'folder':return session.save({folder:root});case'copy':return session.copy();case'export':return session.export();case'open':return true;case'check':throw Error('Offline');default:throw Error('unexpected '+name)}});
+ await page.addInitScript(()=>{window.ramblaSrt=Object.fromEntries(['version','refresh','save','add','remove','folder','export','copy','open','check'].map(name=>[name,(...args)=>window.callSrt(name,args)]))});
+ await page.goto('file:///'+path.resolve(__dirname,'../plugin/index.html').replace(/\\/g,'/'));await page.waitForFunction(()=>document.querySelector('#timeline').textContent.includes('Intervista'));
+ assert.equal(await page.locator('#multiGroup').isVisible(),false);
+ await page.locator('#multi').click();await page.locator('#add').click();await page.waitForFunction(()=>document.querySelector('#count').textContent==='1');
+ await page.locator('#browse').click();await page.locator('#filename').fill('browser-'+Date.now());await page.locator('#context').check();await page.waitForFunction(()=>document.body.getAttribute('aria-busy')==='false');
+ assert.equal(await page.locator('#contextWarning').isVisible(),true);
+ await page.locator('#copy').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('SRT copiato'));
+ await page.locator('#export').click();await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('SRT esportato'));
+ assert.match(fs.readFileSync(path.join(root,session.state().filename+'.srt'),'utf8'),/# RAMBLA_CONTEXT_BEGIN/);
+ await page.reload();await page.waitForFunction(()=>document.querySelector('#timeline').textContent.includes('Intervista'));assert.equal(await page.locator('#multiGroup').isVisible(),false);assert.equal(await page.locator('#context').isChecked(),true);await page.locator('#multi').click();await page.waitForFunction(()=>document.body.getAttribute('aria-busy')==='false');assert.equal(await page.locator('#count').textContent(),'1');
+ for(const width of [1000,620,496]){await page.setViewportSize({width,height:850});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,`overflow ${width}`);await page.screenshot({path:path.join(root,`ui-${width}.png`),fullPage:true})}
+ await page.getByRole('button',{name:'Rimuovi intervallo 1',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#count').textContent==='0');assert.equal(await page.locator('#export').isDisabled(),true);assert.equal(session.state().ranges.length,0);
+ await page.locator('#check').click();await page.waitForFunction(()=>document.querySelector('#updateText').textContent.includes('offline'));await page.locator('#closeUpdate').click();assert.deepEqual(errors,[]);fs.writeFileSync(path.join(root,'ui-result.json'),JSON.stringify({passed:true,widths:[1000,620,496],export:true,reload:true,remove:true,offline:true,errors},null,2));console.log('UI: export, autosave/reload, MULTI/SINGLE, remove, context, offline and responsive PASS');
+ }finally{await browser.close()}})().catch(e=>{console.error(e);process.exitCode=1});

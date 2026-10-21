@@ -1,5 +1,9 @@
 # RAMBLA SRT Range Exporter — handoff Codex
 
+## Candidata Workflow Integration 3.2.1
+
+Implementazione separata in `plugin/`, installer Windows/Mac in `install/`, test regressivi contro il Lua originale in `tests/`. Vedi [USAGE.md](USAGE.md) per uso e installazione, [VALIDATION.md](VALIDATION.md) per risultati e gate ancora aperti. Il resto di questo documento conserva il contratto di handoff originale. AutoCut è invariato.
+
 **Stato:** implementazione Lua V3.1 attualmente distribuita come `Workspace > Scripts > Utility > RAMBLA_SRT_Range`. Questo commit documenta il contratto funzionale e la migrazione desiderata a una Workflow Integration dedicata, senza alterare AutoCut. Le funzionalità segnate come future NON sono già implementate.
 
 **Sorgente di riferimento esatto:** pacchetto `RAMBLA_SRT_V3_1_WINDOWS_MAC.zip` generato in conversazione ChatGPT del 21/10/2026, file `Plugin/RAMBLA_SRT_Range.lua` (21.487 byte). Se non è disponibile nella checkout locale, recuperarlo dall'artefatto prima di implementare. Non inventare un suo equivalente e non dichiarare regressioni superate senza confrontare l'output reale.
