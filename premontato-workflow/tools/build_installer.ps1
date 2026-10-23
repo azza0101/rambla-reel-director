@@ -14,26 +14,16 @@ try {
     Compress-Archive -Path (Join-Path $payload '*') -DestinationPath (Join-Path $temp 'payload.zip') -CompressionLevel Optimal
     $out = [IO.Path]::GetFullPath($OutputPath); New-Item -ItemType Directory -Force -Path (Split-Path $out) | Out-Null
     $launcher = Join-Path $PSScriptRoot 'launcher'
-    Copy-Item (Join-Path $temp 'payload.zip') (Join-Path $launcher 'payload.zip')
-    try {
-        $env:DOTNET_CLI_HOME = Join-Path $temp '.dotnet-home'
-        $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE = '1'
-        $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
-        $env:DOTNET_NOLOGO = '1'
-        $env:NUGET_PACKAGES = Join-Path $temp '.nuget-packages'
-        $env:APPDATA = Join-Path $temp 'appdata'
-        $nugetConfigDir = Join-Path $env:APPDATA 'NuGet'; New-Item -ItemType Directory -Force -Path $nugetConfigDir | Out-Null
-        $nugetConfig = Join-Path $nugetConfigDir 'NuGet.Config'
-        @'
-<?xml version="1.0" encoding="utf-8"?>
-<configuration><packageSources><clear/><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources></configuration>
-'@ | Set-Content $nugetConfig -Encoding utf8
-        & dotnet restore (Join-Path $launcher 'launcher.csproj') -r win-x64 --configfile $nugetConfig
-        if ($LASTEXITCODE -ne 0) { throw 'dotnet restore failed' }
-        & dotnet publish (Join-Path $launcher 'launcher.csproj') -c Release -r win-x64 --no-restore --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o (Join-Path $temp 'publish')
-        if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed' }
-        Copy-Item (Join-Path $temp 'publish\Install-Premontato.exe') $out -Force
-    } finally { Remove-Item -LiteralPath (Join-Path $launcher 'payload.zip') -Force -ErrorAction SilentlyContinue }
+    $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+    if (!(Test-Path -LiteralPath $compiler)) { throw '.NET Framework C# compiler is not available on this Windows system' }
+    $launcherExe = Join-Path $temp 'Install-Premontato.exe'
+    $payloadZip = Join-Path $temp 'payload.zip'
+    $manifest = Join-Path $launcher 'app.manifest'
+    $source = Join-Path $launcher 'Program.cs'
+    $compilerArgs = @('/nologo','/target:winexe','/platform:x64',('/out:' + $launcherExe),('/win32manifest:' + $manifest),('/resource:' + $payloadZip + ',Premontato.payload.zip'),'/reference:System.dll','/reference:System.Core.dll','/reference:System.Windows.Forms.dll','/reference:System.IO.Compression.dll','/reference:System.IO.Compression.FileSystem.dll',$source)
+    & $compiler @compilerArgs
+    if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $launcherExe)) { throw 'C# launcher compile failed' }
+    Copy-Item -LiteralPath $launcherExe -Destination $out -Force
     $check = Get-Item $out
     if ($check.Length -lt 20MB) { throw 'Installer sospettosamente piccolo: payload runtime mancante' }
     Write-Output "Creato: $out ($($check.Length) byte)"
