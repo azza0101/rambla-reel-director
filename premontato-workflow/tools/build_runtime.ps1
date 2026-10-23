@@ -33,7 +33,7 @@ import site
         }
     }
     # Validate the exact isolated runtime, not the developer's system Python.
-    & (Join-Path $tmp 'python.exe') -c 'import cv2,numpy,pypdf; print(cv2.__version__,numpy.__version__,pypdf.__version__)'
+    & (Join-Path $tmp 'python.exe') -c 'from pathlib import Path; import cv2,numpy,pypdf; assert hasattr(cv2,"CascadeClassifier"), "OpenCV CascadeClassifier API missing"; assert (Path(cv2.data.haarcascades)/"haarcascade_frontalface_default.xml").is_file(), "OpenCV Haar cascade missing"; print(cv2.__version__,numpy.__version__,pypdf.__version__)'
     if ($LASTEXITCODE) { throw 'Import runtime Premontato fallito' }
     Remove-Item -LiteralPath $wheelDir -Recurse -Force
     Remove-Item -LiteralPath $pythonZip -Force
