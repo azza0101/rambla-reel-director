@@ -1,0 +1,20 @@
+# Generated runtime and release artifacts. Built from pinned, hash-checked sources.
+plugin/runtime/
+runtime-test/
+.runtime-*
+.runtime-build/
+.runtime-site/
+dist/
+FILES/
+.installer-payload/
+.installer-payload.zip
+.test-venv/
+runtime-pack/
+.dotnet-home/
+.nuget-packages/
+tools/launcher/payload.zip
+tools/launcher/bin/
+tools/launcher/obj/
+tools/launcher/publish/
+__pycache__/
+*.py[cod]
