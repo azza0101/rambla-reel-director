@@ -1,0 +1,53 @@
+name: Premontato package
+on:
+  push:
+    branches: [feat/premontato-workflow]
+    paths:
+      - 'premontato-workflow/**'
+  pull_request:
+    paths:
+      - 'premontato-workflow/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: premontato-workflow
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Test Resolve adapter and plugin logic
+        run: node --test tests/unit/*.test.cjs
+      - name: Test worker logic
+        run: |
+          python -m pip install pytest -r worker/requirements.txt
+          python -m pytest tests/unit -q
+      - name: Test package contract
+        run: python -m pytest tests/unit/test_package_contract.py -q
+      - name: Build self-contained installer
+        shell: pwsh
+        run: ./tools/build_installer.ps1 -OutputPath ./dist/Install-Premontato.exe
+      - name: Verify release payload excludes private inputs and SDK binary
+        shell: pwsh
+        run: |
+          $exe = Get-Item ./dist/Install-Premontato.exe
+          if ($exe.Length -lt 20MB) { throw 'Installer payload unexpectedly small' }
+          if (Get-ChildItem -Recurse -File | Where-Object { $_.Name -eq 'WorkflowIntegration.node' }) { throw 'SDK binary must not be in the checkout' }
+          if (Test-Path ./FILES) { throw 'User media/script inputs must not be packaged from FILES/' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Premontato-Windows-x64
+          path: premontato-workflow/dist/Install-Premontato.exe
+          if-no-files-found: error
+          retention-days: 30
