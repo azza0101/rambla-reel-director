@@ -9,9 +9,10 @@
 - `.test-venv` Python 3.10 test environment: `pytest tests/unit -q`: 18 passed, including package contract.
 - `node -c` on plugin main/session and Node JSON parsing of package metadata passed.
 - SDK discovery found the local Resolve 21.1 sample `WorkflowIntegration.node`. It is not in the project payload or installer.
+- Installer PowerShell smoke test installed the staged files into a disposable workspace directory using a fake SDK marker; runtime and worker paths were verified, then the test tree was removed.
 
 ## Not yet host-tested
 
-- The installer was not executed, and the plugin was not installed or loaded in Resolve. No UAC prompt was accepted.
+- The EXE was built but not executed; its PowerShell staging was tested separately. The plugin was not installed or loaded in Resolve. No UAC prompt was accepted.
 - No API calls were run against the open Resolve project, and no timeline was created. The open project was left unchanged.
 - A user should test the installer and generated review timeline in a disposable project before using the workflow on production footage.
