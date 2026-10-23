@@ -1,5 +1,14 @@
 # Validation record — 2026-10-23
 
+## OpenCV runtime correction
+
+- Reproduced the reported failure in the installed Python 3.13 runtime: OpenCV 5.0.0 imported, but `cv2.CascadeClassifier` was absent.
+- Pinned the Windows-compatible OpenCV wheel to `opencv-python-headless==4.11.0.86` and recorded its SHA-256 in `runtime/requirements.lock`.
+- Rebuilt the isolated Python 3.13 runtime; confirmed `cv2.CascadeClassifier` exists and `haarcascade_frontalface_default.xml` loads (`empty() == False`).
+- Ran `analyze_video` against synthetic frames through the real OpenCV 4.11 classifier: one segment returned without error. This validates runtime plumbing, not visual accuracy on the user's footage.
+- `node --test`: 17 passed; Python unit tests: 18 passed.
+- Installer rebuilt with this runtime. It has not been launched or installed, and the updated plugin has not yet been loaded in Resolve.
+
 ## Built and checked locally
 
 - Self-contained Windows x64 installer generated at `dist/Install-Premontato.exe` (137,782,694 bytes) from the runtime and worker payload. The installer file was built but not run.
