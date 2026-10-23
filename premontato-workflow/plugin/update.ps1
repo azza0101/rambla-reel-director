@@ -39,7 +39,7 @@ try {
         if($mode -eq 0xA000) { throw 'Collegamento simbolico non consentito nel pacchetto' }
         $total += $entry.Length
         if($total -gt 600MB) { throw 'Pacchetto aggiornamento troppo grande' }
-        $entries += [pscustomobject]@{Entry=$entry;Name=$name;Relative=$relative}
+        $entries += [pscustomobject]@{ArchiveName=$entry.FullName;Name=$name;Relative=$relative}
     }
     foreach($required in @('plugin/main.js','plugin/updater.js','plugin/update.ps1','plugin/package.json','worker/protocol.py','runtime/python.exe','runtime/THIRD_PARTY_NOTICES.txt')) {
         if(!$names.ContainsKey($required)) { throw ('File richiesto mancante: '+$required) }
@@ -65,11 +65,13 @@ try {
     $zip=[IO.Compression.ZipFile]::OpenRead($ArchivePath)
     try {
         foreach($entry in $entries) {
+            $archiveEntry=$zip.GetEntry($entry.ArchiveName)
+            if(!$archiveEntry) { throw ('File non più presente nel pacchetto: '+$entry.Name) }
             $target=Join-Path $stage $entry.Relative
             $resolved=[IO.Path]::GetFullPath($target)
             if(!$resolved.StartsWith($stage+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)) { throw 'Percorso estrazione fuori dalla cartella temporanea' }
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
-            $input=$entry.Entry.Open();$output=[IO.File]::Open($target,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+            $input=$archiveEntry.Open();$output=[IO.File]::Open($target,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
             try { $input.CopyTo($output) } finally { $output.Dispose();$input.Dispose() }
         }
     } finally { $zip.Dispose() }
