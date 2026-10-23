@@ -10,6 +10,9 @@ def test_runtime_dependency_lock_is_hashed_and_license_documented():
     content = lock.read_text(encoding="utf-8")
     assert "--hash=sha256:" in content
     assert "pypdf==" in content and "opencv-python-headless==" in content
+    assert "opencv-python-headless==4.11.0.86" in content
+    runtime_builder = (ROOT / "tools" / "build_runtime.ps1").read_text(encoding="utf-8")
+    assert "CascadeClassifier" in runtime_builder and "haarcascade_frontalface_default.xml" in runtime_builder
     assert (ROOT / "runtime" / "THIRD_PARTY_NOTICES.txt").exists()
     launcher = (ROOT / "tools" / "launcher" / "Program.cs").read_text(encoding="utf-8")
     builder = (ROOT / "tools" / "build_installer.ps1").read_text(encoding="utf-8")
