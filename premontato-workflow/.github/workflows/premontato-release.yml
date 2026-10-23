@@ -20,9 +20,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 8.0.x
       - name: Test Resolve adapter and plugin logic
         run: node --test tests/unit/*.test.cjs
       - name: Test worker logic
