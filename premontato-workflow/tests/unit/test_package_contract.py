@@ -62,7 +62,7 @@ def test_support_debug_uses_existing_update_allowlist_and_never_sends_without_co
     assert "'updater.js'" in update_script
     manifest = (ROOT / "plugin" / "package.json").read_text(encoding="utf-8")
     xml = (ROOT / "plugin" / "manifest.xml").read_text(encoding="utf-8")
-    assert '"version":"0.3.2"' in manifest and "<Version>0.3.2</Version>" in xml
+    assert '"version":"0.3.3"' in manifest and "<Version>0.3.3</Version>" in xml
 
 
 def test_update_validator_accepts_semver_parameter_in_powershell():
@@ -74,6 +74,15 @@ def test_update_extracts_entries_from_the_reopened_archive():
     updater = (ROOT / "plugin" / "update.ps1").read_text(encoding="utf-8")
     assert "$zip.GetEntry($entry.ArchiveName)" in updater
     assert "$entry.Entry.Open()" not in updater
+
+
+def test_update_replace_operations_use_valid_backup_paths_on_windows_powershell():
+    updater = (ROOT / "plugin" / "update.ps1").read_text(encoding="utf-8")
+    assert "[IO.File]::Replace($temporary,$target,$backupFile)" in updater
+    assert "$rollbackBackup=$item.Target+'.premontato-rollback-'" in updater
+    assert "[IO.File]::Replace($restore,$item.Target,$rollbackBackup)" in updater
+    assert "[IO.File]::Replace($temporary,$target,$null)" not in updater
+    assert "[IO.File]::Replace($restore,$item.Target,$null)" not in updater
 
 
 def test_tagged_release_workflow_uploads_to_an_existing_release_without_promoting_it():

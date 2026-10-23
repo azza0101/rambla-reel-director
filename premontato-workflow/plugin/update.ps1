@@ -86,17 +86,17 @@ try {
         }
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
         $old=Test-Path -LiteralPath $target -PathType Leaf;$backupFile=$null
-        if($old) { $backupFile=Join-Path $backup $entry.Relative;New-Item -ItemType Directory -Force -Path (Split-Path -Parent $backupFile) | Out-Null;Copy-Item -LiteralPath $target -Destination $backupFile }
+        if($old) { $backupFile=Join-Path $backup $entry.Relative;New-Item -ItemType Directory -Force -Path (Split-Path -Parent $backupFile) | Out-Null }
         $changed.Add([pscustomobject]@{Target=$target;Backup=$backupFile;Existed=$old})
         $temporary=$target+'.premontato-update'
         Copy-Item -LiteralPath $source -Destination $temporary -Force
-        if($old) { [IO.File]::Replace($temporary,$target,$null) } else { [IO.File]::Move($temporary,$target) }
+        if($old) { [IO.File]::Replace($temporary,$target,$backupFile) } else { [IO.File]::Move($temporary,$target) }
     }
     Write-Output ('Premontato aggiornato a '+$Version+'. Chiudi e riapri il pannello per caricare la nuova versione.')
 } catch {
     for($i=$changed.Count-1;$i -ge 0;$i--) {
         $item=$changed[$i]
-        try { if($item.Existed -and (Test-Path -LiteralPath $item.Backup)) { $restore=$item.Target+'.premontato-restore';Copy-Item -LiteralPath $item.Backup -Destination $restore -Force;if(Test-Path -LiteralPath $item.Target){[IO.File]::Replace($restore,$item.Target,$null)}else{[IO.File]::Move($restore,$item.Target)} } elseif(!$item.Existed -and (Test-Path -LiteralPath $item.Target)){Remove-Item -LiteralPath $item.Target -Force} } catch {}
+        try { if($item.Existed -and (Test-Path -LiteralPath $item.Backup)) { $restore=$item.Target+'.premontato-restore';Copy-Item -LiteralPath $item.Backup -Destination $restore -Force;if(Test-Path -LiteralPath $item.Target){$rollbackBackup=$item.Target+'.premontato-rollback-'+[guid]::NewGuid().ToString('N');[IO.File]::Replace($restore,$item.Target,$rollbackBackup);Remove-Item -LiteralPath $rollbackBackup -Force}else{[IO.File]::Move($restore,$item.Target)} } elseif(!$item.Existed -and (Test-Path -LiteralPath $item.Target)){Remove-Item -LiteralPath $item.Target -Force} } catch {}
     }
     throw
 } finally {
