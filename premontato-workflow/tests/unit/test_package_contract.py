@@ -37,3 +37,14 @@ def test_release_workflow_excludes_media_credentials_and_sdk_binary():
     assert "WorkflowIntegration.node" in content
     assert "Install-Premontato.exe" in content
 
+
+def test_github_updater_is_versioned_and_uses_a_credential_free_release_payload():
+    updater = ROOT / "plugin" / "updater.js"
+    updater_script = ROOT / "plugin" / "update.ps1"
+    builder = ROOT / "tools" / "build_update.ps1"
+    assert updater.exists() and updater_script.exists() and builder.exists()
+    assert "PROTECTED" in updater.read_text(encoding="utf-8").upper()
+    assert "WorkflowIntegration.node" in updater_script.read_text(encoding="utf-8")
+    assert "Name -ne 'WorkflowIntegration.node'" in builder.read_text(encoding="utf-8")
+    assert "DPAPI" not in builder.read_text(encoding="utf-8").upper()
+
