@@ -52,9 +52,19 @@ test('rejects malformed or unconfigured timecodes', () => {
   assert.throws(() => timecodeToFrames('00:00:00:00', 0), /non valido/);
 });
 
+test('explains when Resolve selection is a timeline rather than source footage', async () => {
+  const item = { GetMediaId: async () => 'timeline', GetName: async () => 'TEST-AUTO-EDIT',
+    GetClipProperty: async () => ({ Type: 'Timeline', Frames: '0', 'File Path': '' }), GetMetadata: async () => '' };
+  const sdk = { GetResolvePromise: async () => ({ GetProjectManager: async () => ({ GetCurrentProject: async () => ({
+    GetName: async () => 'p', GetUniqueId: async () => 'p1', GetCurrentTimeline: async () => ({ GetName: async () => 't', GetUniqueId: async () => 't1', GetSetting: async () => '25' }),
+    GetMediaPool: async () => ({ GetSelectedClips: async () => [item] })
+  }) }) }) };
+  await assert.rejects(getSelectedTranscriptions(sdk), /non è un file video valido/);
+});
+
 test('converts camera timecodes to clip-relative frame ranges', async () => {
   const item = {
-    GetMediaId: async () => 'm1', GetName: async () => 'clip', GetClipProperty: async key => key === 'Start TC' ? '02:56:57:15' : ({ FPS: '25', Frames: '2500', Duration: '00:01:40:00' }),
+    GetMediaId: async () => 'm1', GetName: async () => 'clip', GetClipProperty: async key => key === 'Start TC' ? '02:56:57:15' : ({ FPS: '25', Frames: '2500', Duration: '00:01:40:00', 'File Path': 'C:/clip.mp4' }),
     GetMetadata: async () => '', GetTranscription: async () => ({ segments: [{ start: '02:56:58:00', end: '02:56:59:00', text: 'ciao' }] })
   };
   const sdk = { GetResolvePromise: async () => ({ GetProjectManager: async () => ({ GetCurrentProject: async () => ({
@@ -65,6 +75,32 @@ test('converts camera timecodes to clip-relative frame ranges', async () => {
   assert.equal(source.start_tc, '02:56:57:15');
   assert.equal(source.segments[0].start_frame, 10);
   assert.equal(source.segments[0].end_frame, 35);
+});
+
+test('preserves Resolve word-level timestamps as clip-relative phrase timings', async () => {
+  const item = {
+    GetMediaId: async () => 'm1', GetName: async () => 'clip', GetClipProperty: async key => key === 'Start TC' ? '02:56:57:15' : ({ FPS: '25', Frames: '2500', 'File Path': 'C:/clip.mp4' }),
+    GetMetadata: async () => '', GetTranscription: async () => ({ segments: [{
+      start: '02:56:58:00', end: '02:56:59:00', text: 'grazie mi avete salvata',
+      words: [
+        { start: '02:56:58:00', end: '02:56:58:05', text: 'grazie' },
+        { start: '02:56:58:06', end: '02:56:58:09', text: 'mi' },
+        { start: '02:56:58:09', end: '02:56:58:16', text: 'avete' },
+        { start: '02:56:58:16', end: '02:56:59:00', text: 'salvata.' }
+      ]
+    }] })
+  };
+  const sdk = { GetResolvePromise: async () => ({ GetProjectManager: async () => ({ GetCurrentProject: async () => ({
+    GetName: async () => 'p', GetUniqueId: async () => 'p1', GetCurrentTimeline: async () => ({ GetName: async () => 't', GetUniqueId: async () => 't1', GetSetting: async () => '25' }),
+    GetMediaPool: async () => ({ GetSelectedClips: async () => [item] })
+  }) }) }) };
+  const [source] = await getSelectedTranscriptions(sdk);
+  assert.deepEqual(source.segments[0].words.map(({ start_frame, end_frame, text }) => ({ start_frame, end_frame, text })), [
+    { start_frame: 10, end_frame: 15, text: 'grazie' },
+    { start_frame: 16, end_frame: 19, text: 'mi' },
+    { start_frame: 19, end_frame: 26, text: 'avete' },
+    { start_frame: 26, end_frame: 35, text: 'salvata.' }
+  ]);
 });
 
 function timelineSdk({ appendResultCount = 3 } = {}) {
@@ -86,8 +122,12 @@ function timelineSdk({ appendResultCount = 3 } = {}) {
     AppendToTimeline: async clips => {
       reviewTimeline.items = clips.slice(0, appendResultCount).map(clip => ({
         GetMediaPoolItem: async () => clip.mediaPoolItem,
-        GetSourceStartFrame: async () => clip.startFrame,
+        // Resolve can round GetSourceStartFrame down at some clip-relative positions;
+        // the underlying source time remains exact.
+        GetSourceStartFrame: async () => clip.startFrame % 2 ? clip.startFrame - 1 : clip.startFrame,
         GetSourceEndFrame: async () => clip.endFrame,
+        GetSourceStartTime: async () => clip.startFrame / 25,
+        GetSourceEndTime: async () => clip.endFrame / 25,
         GetDuration: async () => clip.endFrame - clip.startFrame
       }));
       return reviewTimeline.items;
@@ -100,10 +140,10 @@ function timelineSdk({ appendResultCount = 3 } = {}) {
 
 test('appends every repeated source edit and restores the original timeline', async () => {
   const { sdk, project, reviewTimeline, sourceTimeline } = timelineSdk();
-  const edits = [100, 250, 400].map(start_frame => ({ media_id: 'm1', start_frame, end_frame: start_frame + 50 }));
+  const edits = [179, 250, 400].map(start_frame => ({ media_id: 'm1', start_frame, end_frame: start_frame + 50 }));
   const created = await createTimeline(sdk, 'PREMONTATO TEST', edits, { projectId: 'project', timelineId: 'source-timeline', media: [{ media_id: 'm1' }] });
   assert.equal(created.included, 3);
-  assert.deepEqual(await Promise.all(reviewTimeline.items.map(item => item.GetSourceStartFrame())), [100, 250, 400]);
+  assert.deepEqual(await Promise.all(reviewTimeline.items.map(item => item.GetSourceStartTime())), [179 / 25, 250 / 25, 400 / 25]);
   assert.equal(project.active, sourceTimeline);
 });
 

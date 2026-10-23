@@ -1,6 +1,7 @@
 """Transcript matching keeps every occurrence; repeated lines are not deduplicated."""
 import re
 import unicodedata
+from difflib import SequenceMatcher
 
 
 def normalize(text):
@@ -14,6 +15,85 @@ def similarity(a, b):
         return 0.0
     at, bt = set(aa.split()), set(bb.split())
     return len(at & bt) / max(1, len(at | bt))
+
+
+_STOPWORDS = {"a", "ad", "al", "alla", "alle", "che", "chi", "ci", "con", "da", "dal", "de", "del", "della", "di", "e", "ed", "è", "il", "in", "io", "la", "le", "lo", "ma", "mi", "ne", "nel", "nella", "no", "non", "o", "per", "più", "poi", "qualche", "se", "si", "sì", "sono", "su", "ti", "tu", "un", "una", "uno", "va", "vabbè", "vi"}
+
+
+def _stem_token(token):
+    for suffix in ("ando", "endo", "ato", "ata", "ati", "ate", "uto", "uta", "uti", "ute", "oso", "osa", "osi", "ose", "mente", "zione", "are", "ere", "ire", "i", "e", "a", "o"):
+        if len(token) - len(suffix) >= 4 and token.endswith(suffix):
+            return token[:-len(suffix)]
+    return token
+
+
+def _same_content(left, right):
+    a, b = _stem_token(left), _stem_token(right)
+    return a == b or (min(len(a), len(b)) >= 4 and (a.startswith(b) or b.startswith(a)))
+
+
+def phrase_candidates(beat, segment, fallback_threshold=0.35):
+    """Find tight, word-timed matches inside a Resolve speaker turn."""
+    beat_tokens = normalize(beat.get("text", "")).split()
+    if not beat_tokens:
+        return []
+    words = segment.get("words") or []
+    if not words:
+        score = similarity(beat.get("text", ""), segment.get("text", ""))
+        return [{"score": score, "start_frame": segment["start_frame"], "end_frame": segment["end_frame"], "text": segment.get("text", "")} ] if score >= fallback_threshold else []
+    tokens = [normalize(word.get("text", "")).split() or [""] for word in words]
+    tokens = [row[0] for row in tokens]
+    target_content = [_stem_token(token) for token in beat_tokens if token not in _STOPWORDS]
+    if not target_content:
+        target_content = beat_tokens
+    target_size = len(target_content)
+    # Include ASR insertions/deletions while keeping the scan linear in the turn length.
+    min_size, max_size = max(1, target_size - 1), min(len(words), target_size + 3)
+    results = []
+    for size in range(min_size, max_size + 1):
+        for start in range(0, len(words) - size + 1):
+            end = start + size
+            observed = [token for token in tokens[start:end] if token]
+            if not observed:
+                continue
+            observed_content = [_stem_token(token) for token in observed if token not in _STOPWORDS]
+            if not observed_content:
+                observed_content = observed
+            # Content overlap prevents common function words from producing matches;
+            # sequence similarity allows minor ASR substitutions and inflections.
+            common = {target for target in target_content if any(_same_content(target, observed) for observed in observed_content)}
+            if len(target_content) >= 2 and len(common) < 2:
+                continue
+            if len(target_content) == 1 and (len(target_content[0]) < 4 or target_content[0] not in common):
+                continue
+            overlap = len(common) / max(1, len(set(target_content) | set(observed_content)))
+            sequence = SequenceMatcher(None, target_content, observed_content, autojunk=False).ratio()
+            score = max(overlap, sequence * 0.75)
+            if score >= fallback_threshold:
+                results.append({"score": score, "start_frame": words[start]["start_frame"],
+                                "end_frame": words[end - 1]["end_frame"],
+                                "text": " ".join(word.get("text", "") for word in words[start:end])})
+    # Keep the strongest non-overlapping phrase hit from each speaker turn.
+    if results:
+        top_score = max(row["score"] for row in results)
+        # ASR may extend a hit with adjacent words. Keep a near-best shorter phrase
+        # to avoid turning a correct dialogue match into a whole-speaker-turn cut.
+        results = [row for row in results if row["score"] >= top_score - 0.08]
+    results.sort(key=lambda row: (row["end_frame"] - row["start_frame"], -row["score"]))
+    kept = []
+    for result in results:
+        if not any(result["start_frame"] < other["end_frame"] and other["start_frame"] < result["end_frame"] for other in kept):
+            kept.append(result)
+    return kept
+
+
+def beat_phrases(beat):
+    """Extract clauses from long script beats so a short ASR turn can match a clause."""
+    text = beat.get("text", "")
+    parts = re.split(r"(?<=[.!?])\s+|[,;:]\s*|…", text)
+    phrases = [part.strip() for part in parts if len([token for token in normalize(part).split() if token not in _STOPWORDS]) >= 2 or
+               (len(normalize(part).split()) >= 3 and len([token for token in normalize(part).split() if token not in _STOPWORDS]) == 1)]
+    return phrases or [text]
 
 
 def select_scene(scenes, transcript_segments, minimum_similarity=0.42, minimum_margin=0.08):

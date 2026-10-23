@@ -20,7 +20,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(rows[1]["status"], "error")
         self.assertEqual(len(rows), 2)
 
-    def test_scene_plan_uses_one_best_covered_take_and_keeps_alternatives(self):
+    def test_scene_plan_uses_latest_take_per_line_and_keeps_earlier_alternatives(self):
         request = {"protocol": 1, "request_id": "plan", "action": "build_plan", "payload": {
             "fps": 25,
             "beats": [{"beat_id": "a", "scene_id": "s", "kind": "dialogue", "text": "primo"}, {"beat_id": "b", "scene_id": "s", "kind": "dialogue", "text": "secondo"}],
@@ -32,8 +32,56 @@ class ProtocolTests(unittest.TestCase):
             ]}}
         from protocol import dispatch
         plan = dispatch(request)["result"]
-        self.assertEqual([row["take_id"] for row in plan["decisions"]], ["take1", "take1"])
+        self.assertEqual([row["take_id"] for row in plan["decisions"]], ["take2", "take1"])
         self.assertTrue(plan["decisions"][0]["alternatives"])
+
+    def test_matches_script_line_inside_long_resolve_turn_and_uses_word_timecodes(self):
+        request = {"protocol": 1, "request_id": "phrase", "action": "build_plan", "payload": {
+            "fps": 25,
+            "beats": [{"beat_id": "cafone", "scene_id": "s", "kind": "dialogue", "text": "Fabri, ma sei un cafone maleducato?"}],
+            "sources": [{"take_id": "take1", "media_id": "m1", "take_index": 1, "duration_frames": 500,
+                         "segments": [{"start_frame": 10, "end_frame": 210, "text": "Tu sei veramente un cafone maleducato e non ascolti mai nessuno.",
+                                       "words": [
+                                           {"text": "Tu", "start_frame": 10, "end_frame": 13},
+                                           {"text": "sei", "start_frame": 14, "end_frame": 18},
+                                           {"text": "veramente", "start_frame": 19, "end_frame": 30},
+                                           {"text": "un", "start_frame": 31, "end_frame": 34},
+                                           {"text": "cafone", "start_frame": 35, "end_frame": 46},
+                                           {"text": "maleducato", "start_frame": 47, "end_frame": 64},
+                                           {"text": "e", "start_frame": 65, "end_frame": 67},
+                                           {"text": "non", "start_frame": 68, "end_frame": 72},
+                                           {"text": "ascolti", "start_frame": 73, "end_frame": 82},
+                                           {"text": "mai", "start_frame": 83, "end_frame": 87},
+                                           {"text": "nessuno", "start_frame": 88, "end_frame": 100}
+                                       ]}]}]}}
+        from protocol import dispatch
+        plan = dispatch(request)["result"]
+        self.assertEqual(plan["unmatched_beats"], [])
+        match = plan["decisions"][0]
+        self.assertEqual(match["matched_text"], "sei veramente un cafone maleducato")
+        self.assertEqual((match["start_frame"], match["end_frame"]), (10, 73))
+
+    def test_plan_alternates_verified_scales_when_phrase_scores_are_equivalent(self):
+        from protocol import dispatch
+        request = {"protocol": 1, "request_id": "coverage", "action": "build_plan", "payload": {
+            "fps": 25,
+            "beats": [{"beat_id": "a", "scene_id": "s", "kind": "dialogue", "text": "prima battuta"},
+                      {"beat_id": "b", "scene_id": "s", "kind": "dialogue", "text": "seconda battuta"}],
+            "sources": [
+                {"take_id": "close", "media_id": "m1", "take_index": 1, "duration_frames": 300,
+                 "segments": [{"start_frame": 10, "end_frame": 20, "text": "prima battuta"}, {"start_frame": 50, "end_frame": 60, "text": "seconda battuta"}]},
+                {"take_id": "master", "media_id": "m2", "take_index": 2, "duration_frames": 300,
+                 "segments": [{"start_frame": 10, "end_frame": 20, "text": "prima battuta"}, {"start_frame": 50, "end_frame": 60, "text": "seconda battuta"}]},
+                {"take_id": "unknown", "media_id": "m3", "take_index": 3, "duration_frames": 300,
+                 "segments": [{"start_frame": 10, "end_frame": 20, "text": "prima battuta"}, {"start_frame": 50, "end_frame": 60, "text": "seconda battuta"}]}
+            ],
+            "shots": [{"media_id": "m1", "start_frame": 0, "end_frame": 300, "shot_size": "close", "confidence": 0.8},
+                      {"media_id": "m2", "start_frame": 0, "end_frame": 300, "shot_size": "wide", "confidence": 0.7},
+                      {"media_id": "m3", "start_frame": 0, "end_frame": 300, "shot_size": "unknown", "confidence": 0.0}]
+        }}
+        plan = dispatch(request)["result"]
+        self.assertEqual([row["take_id"] for row in plan["decisions"]], ["master", "close"])
+        self.assertEqual([row["shot_size"] for row in plan["decisions"]], ["wide", "close"])
 
     def test_parenthetical_is_not_treated_as_unmatched_spoken_line(self):
         request = {"protocol": 1, "request_id": "direction", "action": "build_plan", "payload": {

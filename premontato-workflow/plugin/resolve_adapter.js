@@ -28,7 +28,11 @@ async function snapshot(sdk) {
       if (!Number.isFinite(durationFrames) && /^\d{2}:\d{2}:\d{2}[:;]\d{2}$/.test(String(durationValue))) durationFrames = timecodeToFrames(durationValue, fps);
       if (!Number.isFinite(durationFrames)) { const seconds = Number(durationValue); if (Number.isFinite(seconds) && seconds > 0) durationFrames = Math.round(seconds * fps); }
       const mediaPath = String(props['File Path'] || props['File Name'] || '');
-      return { media_id: String(await item.GetMediaId()), name: String(await item.GetName()), duration_frames: Math.max(0, Math.round(Number.isFinite(durationFrames) ? durationFrames : 0)), fps, start_tc: startTc, path: mediaPath,
+      const type = String(props.Type || props.type || '');
+      if (!mediaPath || !Number.isFinite(durationFrames) || durationFrames <= 0 || /timeline/i.test(type)) {
+        throw new Error(`La selezione contiene “${await item.GetName()}”, che non è un file video valido. Seleziona i file video nel Media Pool, non una timeline o una cartella.`);
+      }
+      return { media_id: String(await item.GetMediaId()), name: String(await item.GetName()), duration_frames: Math.max(0, Math.round(durationFrames)), fps, start_tc: startTc, path: mediaPath,
         people: parsePeopleMetadata(await item.GetMetadata('People')), item };
     })) };
 }
@@ -86,7 +90,12 @@ async function getSelectedTranscriptions(sdk) {
       segment_id: `${source.media_id}:${index}`, media_id: source.media_id,
       start_frame: timecodeToFrames(segment.start, source.fps) - timecodeToFrames(source.start_tc, source.fps),
       end_frame: timecodeToFrames(segment.end, source.fps) - timecodeToFrames(source.start_tc, source.fps),
-      text: String(segment.text || ''), speaker_name: segment.speaker || null
+      text: String(segment.text || ''), speaker_name: segment.speaker || null,
+      words: Array.isArray(segment.words) ? segment.words.map(word => ({
+        start_frame: timecodeToFrames(word.start, source.fps) - timecodeToFrames(source.start_tc, source.fps),
+        end_frame: timecodeToFrames(word.end, source.fps) - timecodeToFrames(source.start_tc, source.fps),
+        text: String(word.text || '')
+      })).filter(word => word.end_frame > word.start_frame && word.text.trim()) : []
     })).filter(segment => segment.end_frame > segment.start_frame && segment.text.trim()) : [];
     return { ...source, item: undefined, take_id: `${source.media_id}:take:1`, take_index: snapshotData.selected.indexOf(source) + 1,
       camera_id: 'camera_1', segments };
@@ -121,9 +130,13 @@ async function createTimeline(sdk, name, edits, expected = {}) {
       const item = videoItems[i];
       const media = await item.GetMediaPoolItem();
       const mediaId = media && String(await media.GetMediaId());
-      const sourceStart = Number(await item.GetSourceStartFrame());
-      const sourceEnd = Number(await item.GetSourceEndFrame());
-      if (mediaId !== String(edits[i].media_id) || sourceStart !== clips[i].startFrame || sourceEnd !== clips[i].endFrame) {
+      const sourceStartTime = Number(await item.GetSourceStartTime());
+      const sourceEndTime = Number(await item.GetSourceEndTime());
+      const sourceFps = Number(expected.media?.find(media => media.media_id === edits[i].media_id)?.fps) || Number(await sourceTimeline.GetSetting?.('timelineFrameRate')) || 25;
+      const expectedStartTime = clips[i].startFrame / sourceFps;
+      const expectedEndTime = clips[i].endFrame / sourceFps;
+      if (mediaId !== String(edits[i].media_id) || !Number.isFinite(sourceStartTime) || !Number.isFinite(sourceEndTime) ||
+          Math.abs(sourceStartTime - expectedStartTime) > 0.5 / sourceFps || Math.abs(sourceEndTime - expectedEndTime) > 0.5 / sourceFps) {
         throw new Error(`Resolve ha alterato il taglio ${i + 1}; timeline di prova annullata`);
       }
     }

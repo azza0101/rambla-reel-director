@@ -1,6 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 let scriptReady = false, mediaReady = false;
+ $('version').textContent = `v${window.premontato.version}`;
 function updateButton() { $('analyze').disabled = !(scriptReady && mediaReady); $('transcribe').disabled = !mediaReady; $('intellisearch').disabled = !mediaReady; }
 function message(text) { $('message').textContent = text; }
 function showError(error) { message(error.message || String(error)); }
