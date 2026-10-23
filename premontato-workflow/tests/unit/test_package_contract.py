@@ -70,9 +70,9 @@ def test_update_validator_accepts_semver_parameter_in_powershell():
     assert "-notmatch '^\\d+\\.\\d+\\.\\d+$'" in updater
 
 
-def test_tagged_release_workflow_uploads_to_an_existing_prerelease_without_promoting_it():
+def test_tagged_release_workflow_uploads_to_an_existing_release_without_promoting_it():
     workflow = (ROOT / ".github" / "workflows" / "premontato-release.yml").read_text(encoding="utf-8")
-    assert "isPrerelease" in workflow
+    assert "releases/latest" in workflow
     assert "gh release upload" in workflow
     assert "gh release create" not in workflow
 

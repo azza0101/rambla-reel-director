@@ -87,3 +87,4 @@
 
 - Ruling: Place diagnostics helpers in the already-allowed `plugin/updater.js` instead of separate modules — the installed 0.3.0 update script rejects files outside its fixed allowlist — cost if wrong: the updater module has more responsibilities.
 - Ruling: Use the existing `bug` GitHub label instead of creating `premontato-debug` — repository label inspection showed only `bug` and generic labels — cost if wrong: support issues are less distinct in the repository list.
+- Ruling: Publish the first bridge release as stable with `make_latest=false` — installed 0.3.0 ignores prereleases — cost if wrong: new code can’t be discovered by the current installation or may replace the repository’s latest release.

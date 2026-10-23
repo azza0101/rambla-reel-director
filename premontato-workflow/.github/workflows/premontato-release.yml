@@ -64,13 +64,13 @@ jobs:
         with:
           name: Premontato-Windows-x64
           path: dist
-      - name: Upload assets to the existing Premontato prerelease
+      - name: Upload assets without promoting Premontato to latest
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          $release = gh release view "$env:GITHUB_REF_NAME" --repo "$env:GH_REPO" --json isPrerelease | ConvertFrom-Json
-          if (!$release.isPrerelease) { throw 'La release Premontato deve restare prerelease e non latest.' }
+          $latestTag = gh api "repos/$env:GH_REPO/releases/latest" --jq .tag_name
+          if ($latestTag -eq $env:GITHUB_REF_NAME) { throw 'La release Premontato non deve sostituire la latest del repository.' }
           gh release upload "$env:GITHUB_REF_NAME" ./dist/Install-Premontato.exe ./dist/Premontato-*.zip ./dist/premontato-update.json --repo "$env:GH_REPO" --clobber
 
