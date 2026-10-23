@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
-const { Session, workerEnvironment } = require('../../plugin/session');
+const { Session, workerEnvironment, prepareReviewTimeline } = require('../../plugin/session');
 
 test('worker process does not inherit unrelated API credentials', () => {
   const env = workerEnvironment({ PATH: 'C:/Python', SYSTEMROOT: 'C:/Windows', GROQ_API_KEY: 'secret', OPENAI_API_KEY: 'secret' }, 'C:/cache');
@@ -40,6 +40,8 @@ test('analysis scopes planning to the single automatically matched screenplay sc
     { segment_id: 's', media_id: 'm', start_frame: 5, end_frame: 20, text: 'line', speaker_name: 'LUCA' }
   ] }], 25, { projectId: 'p', timelineId: 't', selected: [{ media_id: 'm' }] });
   const calls = [];
+  const progress = [];
+  session.onProgress = event => progress.push(event);
   session.request = async (action, payload) => {
     calls.push({ action, payload });
     if (action === 'parse_script') return { scenes: [
@@ -55,6 +57,8 @@ test('analysis scopes planning to the single automatically matched screenplay sc
   const planCall = calls.find(call => call.action === 'build_plan');
   assert.deepEqual(planCall.payload.beats.map(beat => beat.beat_id), ['a1']);
   assert.equal(session.state.analysis.selectedScene.heading, 'SCENA 01');
+  assert.deepEqual([...new Set(progress.map(event => event.phase))], ['script', 'scene', 'shots', 'takes', 'plan', 'complete']);
+  assert.equal(progress.at(-1).percent, 100);
 });
 
 test('rejects transcription results from a different timeline', () => {
@@ -85,4 +89,11 @@ test('stops the idle Python worker before replacing its embedded runtime', async
   session.child = child;
   assert.equal(await session.shutdownWorker(), true);
   assert.equal(session.child, null);
+});
+
+test('creates a confirmed review timeline from matched beats and reports unmatched beats as omitted', () => {
+  const plan = { decisions: [{ beat_id: 'a' }, { beat_id: 'b' }], unmatched_beats: ['c', 'd'] };
+  assert.deepEqual(prepareReviewTimeline(plan, true), { decisions: plan.decisions, omitted: 2 });
+  assert.throws(() => prepareReviewTimeline(plan, false), /conferma/i);
+  assert.throws(() => prepareReviewTimeline({ decisions: [], unmatched_beats: ['c'] }, true), /nessuna battuta abbinata/i);
 });
