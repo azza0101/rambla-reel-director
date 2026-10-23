@@ -48,3 +48,31 @@ def test_github_updater_is_versioned_and_uses_a_credential_free_release_payload(
     assert "Name -ne 'WorkflowIntegration.node'" in builder.read_text(encoding="utf-8")
     assert "DPAPI" not in builder.read_text(encoding="utf-8").upper()
 
+
+def test_support_debug_uses_existing_update_allowlist_and_never_sends_without_confirmation():
+    main = (ROOT / "plugin" / "main.js").read_text(encoding="utf-8")
+    updater = (ROOT / "plugin" / "updater.js").read_text(encoding="utf-8")
+    renderer = (ROOT / "plugin" / "renderer.js").read_text(encoding="utf-8")
+    html = (ROOT / "plugin" / "index.html").read_text(encoding="utf-8")
+    update_script = (ROOT / "plugin" / "update.ps1").read_text(encoding="utf-8")
+    assert "prepareSupportReport" in main and "submitSupportReport" in main
+    assert "options.confirmed !== true" in updater
+    assert "--body-file" in updater and "--label', 'bug'" in updater
+    assert "support-confirm" in renderer and "<dialog id=\"support-dialog\"" in html
+    assert "'updater.js'" in update_script
+    manifest = (ROOT / "plugin" / "package.json").read_text(encoding="utf-8")
+    xml = (ROOT / "plugin" / "manifest.xml").read_text(encoding="utf-8")
+    assert '"version":"0.3.1"' in manifest and "<Version>0.3.1</Version>" in xml
+
+
+def test_update_validator_accepts_semver_parameter_in_powershell():
+    updater = (ROOT / "plugin" / "update.ps1").read_text(encoding="utf-8")
+    assert "-notmatch '^\\d+\\.\\d+\\.\\d+$'" in updater
+
+
+def test_tagged_release_workflow_uploads_to_an_existing_prerelease_without_promoting_it():
+    workflow = (ROOT / ".github" / "workflows" / "premontato-release.yml").read_text(encoding="utf-8")
+    assert "isPrerelease" in workflow
+    assert "gh release upload" in workflow
+    assert "gh release create" not in workflow
+

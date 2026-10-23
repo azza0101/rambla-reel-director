@@ -64,11 +64,13 @@ jobs:
         with:
           name: Premontato-Windows-x64
           path: dist
-      - name: Publish private GitHub release assets
+      - name: Upload assets to the existing Premontato prerelease
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release create "$env:GITHUB_REF_NAME" ./dist/Install-Premontato.exe ./dist/Premontato-*.zip ./dist/premontato-update.json --target "$env:GITHUB_SHA" --title "Premontato $env:GITHUB_REF_NAME" --notes "Installer Windows e pacchetto aggiornamento verificato per il plugin Resolve."
+          $release = gh release view "$env:GITHUB_REF_NAME" --repo "$env:GH_REPO" --json isPrerelease | ConvertFrom-Json
+          if (!$release.isPrerelease) { throw 'La release Premontato deve restare prerelease e non latest.' }
+          gh release upload "$env:GITHUB_REF_NAME" ./dist/Install-Premontato.exe ./dist/Premontato-*.zip ./dist/premontato-update.json --repo "$env:GH_REPO" --clobber
 

@@ -79,3 +79,23 @@ test('reports current when the latest published release is not newer', async () 
   const update = await findLatestUpdate('0.3.0', 'token', async () => new Response(JSON.stringify([release]), { status: 200 }));
   assert.deepEqual(update, { status: 'current', version: '0.3.0' });
 });
+
+test('checks dedicated Premontato prereleases without considering other products', async () => {
+  const archive = Buffer.from('premontato-next');
+  const digest = require('node:crypto').createHash('sha256').update(archive).digest('hex');
+  const manifest = Buffer.from(JSON.stringify({ version: '0.3.1', archive: 'Premontato-0.3.1.zip', sha256: digest }));
+  const release = { tag_name: 'premontato-v0.3.1', draft: false, prerelease: true, assets: [
+    { id: 21, name: 'premontato-update.json', size: manifest.length, url: 'https://api.github.com/repos/azza0101/rambla-reel-director/releases/assets/21' },
+    { id: 22, name: 'Premontato-0.3.1.zip', size: archive.length, url: 'https://api.github.com/repos/azza0101/rambla-reel-director/releases/assets/22' }
+  ] };
+  const other = { tag_name: 'autocut-v99.0.0', draft: false, prerelease: false, assets: [] };
+  const fetchImpl = async url => {
+    if (String(url).endsWith('/releases?per_page=100')) return new Response(JSON.stringify([other, release]), { status: 200 });
+    if (String(url).endsWith('/assets/21')) return new Response(manifest, { status: 200 });
+    if (String(url).endsWith('/assets/22')) return new Response(archive, { status: 200 });
+    return new Response('', { status: 404 });
+  };
+  const update = await findLatestUpdate('0.3.0', 'token', fetchImpl);
+  assert.equal(update.status, 'available');
+  assert.equal(update.manifest.version, '0.3.1');
+});

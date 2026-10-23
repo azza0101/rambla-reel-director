@@ -3,15 +3,143 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { spawnSync } = require('node:child_process');
+const os = require('node:os');
+const { spawnSync, spawn } = require('node:child_process');
 
 const REPOSITORY = 'azza0101/rambla-reel-director';
 const RELEASES_URL = `https://api.github.com/repos/${REPOSITORY}/releases?per_page=100`;
 const MAX_ARCHIVE_BYTES = 350 * 1024 * 1024;
+const MAX_DIAGNOSTIC_EVENTS = 200;
+const MAX_DIAGNOSTIC_BYTES = 64 * 1024;
+const ALLOWED_DIAGNOSTIC_EVENTS = new Set(['application_started', 'operation_failed']);
+const ALLOWED_OPERATIONS = new Set(['resolveSnapshot', 'selectScript', 'selectMedia', 'transcribeSelected', 'analyzeIntellisearch', 'analyze', 'cancelAnalysis', 'getReviewState', 'confirmTakes', 'createReviewTimeline', 'update', 'prepareSupportReport', 'submitSupportReport']);
 
 function parseVersion(value) {
   if (typeof value !== 'string' || !/^\d+\.\d+\.\d+$/.test(value)) throw new Error('Versione Premontato non valida');
   return value.split('.').map(Number);
+}
+
+function safeDiagnosticText(value, maxLength = 400) {
+  return String(value || '')
+    .replace(/github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|Bearer\s+\S+/gi, '[redacted credential]')
+    .replace(/(?:[A-Za-z]:\\|\\\\)[^\r\n"'<>|)]*/g, '[percorso locale]')
+    .replace(/\/(?:Users|home|private|var|tmp|opt)\/[^\s)"']+/g, '[percorso locale]')
+    .replace(/[\r\n\t]+/g, ' ')
+    .slice(0, maxLength);
+}
+
+function diagnosticError(error) {
+  if (!(error instanceof Error)) return { name: 'Error', frames: [] };
+  const name = /^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(error.name) ? error.name : 'Error';
+  const frames = String(error.stack || '').split(/\r?\n/).slice(1, 9)
+    .map(line => safeDiagnosticText(line.trim(), 220)).filter(Boolean);
+  return { name, frames };
+}
+
+function createDiagnostics({ logPath, appVersion, platform = process.platform, release = '' }) {
+  if (!logPath || !path.isAbsolute(logPath)) throw new Error('Percorso log diagnostico non valido');
+  const version = safeDiagnosticText(appVersion, 40) || 'sconosciuta';
+  const osInfo = `${safeDiagnosticText(platform, 20)} ${safeDiagnosticText(release, 40)}`.trim();
+  async function readEvents() {
+    try {
+      const raw = await fsp.readFile(logPath, 'utf8');
+      return raw.split(/\r?\n/).filter(Boolean).slice(-MAX_DIAGNOSTIC_EVENTS).flatMap(line => {
+        try { const event = JSON.parse(line); return ALLOWED_DIAGNOSTIC_EVENTS.has(event.event) ? [event] : []; }
+        catch { return []; }
+      });
+    } catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+  }
+  async function writeEvents(events) {
+    let rows = events.slice(-MAX_DIAGNOSTIC_EVENTS);
+    while (rows.length && Buffer.byteLength(rows.map(row => JSON.stringify(row)).join('\n') + '\n', 'utf8') > MAX_DIAGNOSTIC_BYTES) rows.shift();
+    await fsp.mkdir(path.dirname(logPath), { recursive: true });
+    await fsp.writeFile(logPath, rows.map(row => JSON.stringify(row)).join('\n') + (rows.length ? '\n' : ''), { encoding: 'utf8', mode: 0o600 });
+  }
+  return Object.freeze({
+    async record(event, details = {}) {
+      if (!ALLOWED_DIAGNOSTIC_EVENTS.has(event)) return false;
+      const row = { at: new Date().toISOString(), event };
+      if (event === 'operation_failed' && ALLOWED_OPERATIONS.has(details.operation)) {
+        row.operation = details.operation;
+        const info = diagnosticError(details.error);
+        row.error = info.name;
+        row.frames = info.frames;
+      }
+      const events = await readEvents(); events.push(row); await writeEvents(events); return true;
+    },
+    async preview() {
+      const events = await readEvents();
+      const lines = ['# Segnalazione diagnostica Premontato', `Versione: ${version}`, `Sistema: ${osInfo || 'sconosciuto'}`, `Data report: ${new Date().toISOString()}`, '', 'Eventi tecnici recenti (nessun copione o media allegato):'];
+      for (const item of events) {
+        const operation = item.operation ? ` · ${item.operation}` : '';
+        lines.push(`- ${safeDiagnosticText(item.at, 30)} · ${item.event}${operation}${item.error ? ` · ${safeDiagnosticText(item.error, 40)}` : ''}`);
+        for (const frame of item.frames || []) lines.push(`  ${safeDiagnosticText(frame, 220)}`);
+      }
+      let body = lines.join('\n');
+      if (Buffer.byteLength(body, 'utf8') > MAX_DIAGNOSTIC_BYTES) body = Buffer.from(body, 'utf8').subarray(0, MAX_DIAGNOSTIC_BYTES - 64).toString('utf8') + '\n[report troncato]';
+      return { reportId: crypto.randomUUID(), title: `[Premontato debug] ${version} · ${new Date().toISOString().slice(0, 10)}`, body, createdAt: new Date().toISOString() };
+    },
+    async clear() { await fsp.rm(logPath, { force: true }); }
+  });
+}
+
+function findGhExecutable({ platform = process.platform, env = process.env, existsSync = fs.existsSync } = {}) {
+  if (platform === 'win32') {
+    const candidate = path.join(env.ProgramFiles || 'C:\\Program Files', 'GitHub CLI', 'gh.exe');
+    if (existsSync(candidate)) return candidate;
+  }
+  return 'gh';
+}
+
+function runGh(executable, args, { timeout = 60000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable, args, { windowsHide: true, shell: false, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, GH_PROMPT: 'disabled' } });
+    let stdout = '', stderr = '', finished = false;
+    const timer = setTimeout(() => { child.kill(); finish({ status: null, stdout, stderr }); }, timeout);
+    function finish(value) { if (finished) return; finished = true; clearTimeout(timer); resolve(value); }
+    child.stdout.setEncoding('utf8').on('data', chunk => { if (stdout.length < 200000) stdout += chunk; });
+    child.stderr.setEncoding('utf8').on('data', chunk => { if (stderr.length < 200000) stderr += chunk; });
+    child.once('error', error => { clearTimeout(timer); reject(error); });
+    child.once('close', status => finish({ status, stdout, stderr }));
+  });
+}
+
+async function checkGithubCli(options = {}) {
+  const executable = options.executable || findGhExecutable(options);
+  try {
+    const result = await (options.run || runGh)(executable, ['auth', 'status', '--hostname', 'github.com'], { timeout: 15000 });
+    if (result.status !== 0) return { ready: false, message: 'GitHub CLI non autenticata. Accedi con gh auth login e riprova.' };
+    return { ready: true, executable };
+  } catch { return { ready: false, message: 'GitHub CLI non trovata. Installa GitHub CLI e accedi con gh auth login.' }; }
+}
+
+function validateDiagnosticReport(report) {
+  if (!report || typeof report !== 'object' || !/^[a-f0-9-]{20,}$/i.test(String(report.reportId || '')) ||
+      typeof report.title !== 'string' || !report.title.startsWith('[Premontato debug] ') || /[\r\n]/.test(report.title) ||
+      typeof report.body !== 'string' || !report.body.startsWith('# Segnalazione diagnostica Premontato') || Buffer.byteLength(report.body, 'utf8') > MAX_DIAGNOSTIC_BYTES) {
+    throw new Error('Anteprima diagnostica non valida');
+  }
+}
+
+async function createGithubIssue(report, options = {}) {
+  if (options.confirmed !== true) throw new Error('Conferma l’invio dopo aver letto l’anteprima');
+  validateDiagnosticReport(report);
+  if (options.expectedReportId !== report.reportId) throw new Error('Anteprima scaduta: riaprila prima di inviare');
+  const cli = await checkGithubCli(options);
+  if (!cli.ready) throw new Error(cli.message);
+  const dir = await fsp.mkdtemp(path.join(options.tempDir || os.tmpdir(), 'premontato-debug-'));
+  const bodyPath = path.join(dir, 'report.md');
+  try {
+    await fsp.writeFile(bodyPath, report.body, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    let result;
+    try {
+      result = await (options.run || runGh)(cli.executable, ['issue', 'create', '--repo', 'azza0101/rambla-reel-director', '--title', report.title, '--body-file', bodyPath, '--label', 'bug'], { timeout: 60000 });
+    } catch { throw new Error('Impossibile creare la segnalazione GitHub; la diagnostica locale è conservata.'); }
+    if (result.status !== 0) throw new Error('GitHub non ha creato la segnalazione. Verifica i permessi repo di gh auth status.');
+    const issueUrl = String(result.stdout || '').trim().split(/\s+/).find(value => /^https:\/\/github\.com\/azza0101\/rambla-reel-director\/issues\/\d+\/?$/.test(value));
+    if (!issueUrl) throw new Error('GitHub ha risposto senza un URL di issue verificabile.');
+    return issueUrl.replace(/\/$/, '');
+  } finally { await fsp.rm(dir, { recursive: true, force: true }).catch(() => {}); }
 }
 
 function isNewerVersion(candidate, current) {
@@ -106,7 +234,7 @@ async function findLatestUpdate(currentVersion, token, fetchImpl = globalThis.fe
   parseVersion(currentVersion);
   const releases = await githubJson(RELEASES_URL, token, fetchImpl);
   if (!Array.isArray(releases)) throw new Error('Elenco release GitHub non valido');
-  const release = releases.filter(item => !item.draft && !item.prerelease && /^premontato-v\d+\.\d+\.\d+$/.test(item.tag_name || ''))
+  const release = releases.filter(item => !item.draft && /^premontato-v\d+\.\d+\.\d+$/.test(item.tag_name || ''))
     .sort((a, b) => {
       const av = parseVersion(a.tag_name.slice('premontato-v'.length));
       const bv = parseVersion(b.tag_name.slice('premontato-v'.length));
@@ -138,4 +266,5 @@ async function downloadVerifiedArchive(update, token, destination, fetchImpl = g
 }
 
 module.exports = { MAX_ARCHIVE_BYTES, isNewerVersion, validateReleaseManifest, resolveGithubCredentialPath,
-  loadProtectedToken, findLatestUpdate, downloadVerifiedArchive };
+  loadProtectedToken, findLatestUpdate, downloadVerifiedArchive, createDiagnostics, findGhExecutable,
+  checkGithubCli, createGithubIssue, validateDiagnosticReport };

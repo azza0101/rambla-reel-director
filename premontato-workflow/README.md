@@ -12,6 +12,8 @@ L’installer chiede elevazione solo per scrivere sotto ProgramData. Crea un bac
 
 Il pulsante **Aggiorna** cerca le release private `premontato-vX.Y.Z` del repository GitHub, scarica il pacchetto versionato e ne verifica SHA-256 prima di installarlo. Per autenticarsi riusa in memoria la credenziale DPAPI già registrata da RMBL Auto-Cut; non la copia nell’installer né la salva nel plugin. Servono Auto-Cut installato e un token con lettura delle release. Windows mostra UAC per aggiornare i file in ProgramData. Il bridge `WorkflowIntegration.node` e i dati utente restano intatti; dopo l’aggiornamento chiudi e riapri il pannello da Resolve.
 
+Il pulsante **Invia debug** prepara un registro tecnico locale limitato, senza messaggi degli errori, copione, trascrizioni, file o nomi dei media. Mostra il report prima dell’invio e richiede una conferma esplicita per creare un issue nel repository privato; usa GitHub CLI già autenticata (`gh auth status`) senza incorporare o salvare token. Installa GitHub CLI e accedi con `gh auth login` per usare questa funzione. L’invio reale non è mai automatico.
+
 L’installer è Windows x64; macOS non è ancora predisposto.
 
 ## Test e limiti

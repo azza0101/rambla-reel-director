@@ -9,7 +9,7 @@ const updateManager = require('./updater');
 const { spawn } = require('node:child_process');
 const ID = 'com.rambla.premontato';
 app.setPath('userData', path.join(app.getPath('appData'), 'RAMBLA', 'Premontato'));
-let win, sdk, session, busy = false;
+let win, sdk, session, diagnostics, activeSupportReport, busy = false;
 const page = pathToFileURL(path.join(__dirname, 'index.html')).href;
 
 async function getSdk() {
@@ -22,11 +22,18 @@ function handle(name, fn) {
     assertTrusted(event, win, page);
     if (busy && name !== 'cancelAnalysis') throw new Error('Operazione già in corso');
     if (name !== 'cancelAnalysis') busy = true;
-    try { return await fn(...args); } finally { if (name !== 'cancelAnalysis') busy = false; }
+    try { return await fn(...args); }
+    catch (error) {
+      try { await diagnostics?.record('operation_failed', { operation: name, error }); } catch {}
+      throw error;
+    } finally { if (name !== 'cancelAnalysis') busy = false; }
   });
 }
 async function start() {
   const root = app.getPath('userData');
+  diagnostics = updateManager.createDiagnostics({ logPath: path.join(root, 'logs', 'premontato-diagnostics.jsonl'),
+    appVersion: require('./package.json').version, platform: process.platform, release: require('node:os').release() });
+  await diagnostics.record('application_started');
   const workerPath = path.join(__dirname, 'worker', 'protocol.py');
   session = new Session(root, workerPath);
   win = new BrowserWindow({ width: 1080, height: 820, minWidth: 680, minHeight: 560, title: 'RAMBLA Premontato',
@@ -84,6 +91,21 @@ async function start() {
       token = '';
       if (archivePath) await require('node:fs/promises').rm(archivePath, { force: true }).catch(() => {});
     }
+  });
+  handle('prepareSupportReport', async () => {
+    activeSupportReport = null;
+    const status = await updateManager.checkGithubCli();
+    if (!status.ready) throw new Error(status.message);
+    activeSupportReport = await diagnostics.preview();
+    return activeSupportReport;
+  });
+  handle('submitSupportReport', async request => {
+    if (!activeSupportReport || !request || typeof request.reportId !== 'string') throw new Error('Apri e controlla prima l’anteprima diagnostica');
+    const url = await updateManager.createGithubIssue(activeSupportReport, {
+      confirmed: request.confirmed === true, expectedReportId: request.reportId
+    });
+    activeSupportReport = null;
+    return { url };
   });
   session.onProgress = value => win?.webContents.send('premontato:progress', value);
   await win.loadFile(path.join(__dirname, 'index.html'));

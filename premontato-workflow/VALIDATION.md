@@ -31,3 +31,13 @@
 - The EXE was built but not executed; its PowerShell staging was tested separately. The plugin was not installed or loaded in Resolve. No UAC prompt was accepted.
 - No API calls were run against the open Resolve project, and no timeline was created. The open project was left unchanged.
 - A user should test the installer and generated review timeline in a disposable project before using the workflow on production footage.
+
+## Diagnostic report feature — Premontato 0.3.1
+
+- Added bounded local diagnostics (latest 200 events, maximum 64 KiB). Reports include only app/OS versions, event names, error classes and redacted stack frames; exception messages, script/transcript text, media names/paths, and media files are excluded.
+- Added an **Invia debug** preview and separate confirmation step. The main process retains the preview payload, rejects stale report IDs or missing confirmation, checks `gh auth status`, then creates a private repository issue with the existing `bug` label. GitHub CLI output and credentials are never shown in the UI; the temporary issue body is removed after use.
+- No real issue was submitted during tests. Node tests mock the CLI and verify no token appears in arguments, missing authentication behavior, preview binding, URL validation, and temporary-file cleanup.
+- The feature is embedded in the existing `updater.js` file so the installed 0.3.0 updater's fixed allowlist can install it. `WorkflowIntegration.node` remains excluded from the update archive.
+- `node --test tests/unit/*.test.cjs`: 32 passed. `pytest tests/unit -q`: 22 passed. JavaScript syntax checks passed. The 0.3.1 ZIP passed `update.ps1 -ValidateOnly` with 1,166 files. Archive SHA-256: `0a1ff53d4e7e2c63fef216b4a194616cfe66e842504b570882b82aadf6c6fd72` (65,685,255 bytes).
+- The updater is tested against a `premontato-v0.3.1` prerelease while ignoring Auto-Cut release tags. The GitHub Actions tag workflow uploads assets to an existing prerelease only, preserving the repository's latest release.
+- Resolve was not launched for a UI test, and no live issue was created. The CLI authentication check was verified locally without displaying its credentials.
