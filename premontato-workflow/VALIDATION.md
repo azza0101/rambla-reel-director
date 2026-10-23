@@ -7,18 +7,19 @@
 - Rebuilt the isolated Python 3.13 runtime; confirmed `cv2.CascadeClassifier` exists and `haarcascade_frontalface_default.xml` loads (`empty() == False`).
 - Ran `analyze_video` against synthetic frames through the real OpenCV 4.11 classifier: one segment returned without error. This validates runtime plumbing, not visual accuracy on the user's footage.
 - `node --test`: 17 passed; Python unit tests: 18 passed.
-- Installer rebuilt with this runtime. It has not been launched or installed, and the updated plugin has not yet been loaded in Resolve.
+- Installer rebuilt with this runtime (67,152,896 bytes; SHA-256 `F606CBD799F5DA9150AF0E55D8C8E246DCD6DC9CFB7F307B1D0DC1A6DFD0B1D9`). It has not been launched or installed, and the updated plugin has not yet been loaded in Resolve.
 
 ## Built and checked locally
 
-- Self-contained Windows x64 installer generated at `dist/Install-Premontato.exe` (137,782,694 bytes) from the runtime and worker payload. The installer file was built but not run.
-- Python 3.13.17 embed runtime launched successfully; imported OpenCV 5.0.0, NumPy 2.5.4, and pypdf 6.10.0.
+- Self-contained Windows x64 installer generated at `dist/Install-Premontato.exe` from the runtime and worker payload. The installer file was built but not run.
+- Python 3.13.17 embed runtime launched successfully; imported OpenCV 4.11.0, NumPy 2.5.4, and pypdf 6.10.0.
 - Local JSON-lines worker `ping` returned `status: ok` under the same isolated interpreter.
 - `node --test`: 17 passed.
 - `.test-venv` Python 3.10 test environment: `pytest tests/unit -q`: 18 passed, including package contract.
 - `node -c` on plugin main/session and Node JSON parsing of package metadata passed.
 - SDK discovery found the local Resolve 21.1 sample `WorkflowIntegration.node`. It is not in the project payload or installer.
 - Installer PowerShell smoke test installed the staged files into a disposable workspace directory using a fake SDK marker; runtime and worker paths were verified, then the test tree was removed.
+- Latest EXE payload inspection found the updated OpenCV module, Python runtime, notices and worker; no Resolve SDK module, user PDF/media or credential-like paths were present.
 
 ## Not yet host-tested
 
