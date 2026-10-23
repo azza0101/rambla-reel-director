@@ -93,6 +93,18 @@ class Session {
     } catch (error) { this.state.error = error.message; this.state.stage = 'error'; throw error; }
   }
   async cancelAnalysis() { this.failAll(new Error('Analisi annullata')); this.child?.kill(); this.child = null; this.state.stage = 'idle'; return true; }
+  async shutdownWorker(timeoutMs = 8000) {
+    const child = this.child;
+    if (!child) return false;
+    this.failAll(new Error('Worker arrestato per aggiornare il runtime'));
+    const exited = new Promise(resolve => child.once('exit', resolve));
+    child.kill();
+    let timer;
+    await Promise.race([exited, new Promise(resolve => { timer = setTimeout(resolve, timeoutMs); })]);
+    clearTimeout(timer);
+    if (this.child === child) { child.kill(); this.child = null; }
+    return true;
+  }
   getReviewState() { return { stage: this.state.stage, scriptName: this.state.script ? path.basename(this.state.script.path) : null,
     media: this.state.media.map(({ media_id, name, duration_frames, people = [] }) => ({ media_id, name, duration_frames, people })), analysis: this.state.analysis, error: this.state.error }; }
   setTranscripts(sources, fps, identity) { this.assertContext(identity); this.state.transcripts = sources; this.state.fps = fps; this.state.analysis = null; return { count: sources.reduce((sum, source) => sum + source.segments.length, 0) }; }
