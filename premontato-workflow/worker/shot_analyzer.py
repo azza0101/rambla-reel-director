@@ -13,6 +13,23 @@ def classify_face_areas(areas):
     return "wide", 0.55
 
 
+def classify_face_heights(heights):
+    """Estimate framing from face height within the frame.
+
+    Face area alone is too strict: a face occupying 15% of frame height in
+    16:9 footage is only ~1.3% of total image area and was incorrectly marked
+    wide by the previous thresholds.
+    """
+    if not heights:
+        return "unknown", 0.0
+    height = max(heights)
+    if height >= 0.28:
+        return "close", min(0.9, 0.62 + height / 3)
+    if height >= 0.13:
+        return "medium", min(0.82, 0.55 + height / 3)
+    return "wide", 0.55
+
+
 def analyze_video(media, sample_fps=1.0, face_cascade_path=None):
     try:
         import cv2
@@ -44,8 +61,8 @@ def analyze_video(media, sample_fps=1.0, face_cascade_path=None):
         previous = hist
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         faces = detector.detectMultiScale(gray, scaleFactor=1.12, minNeighbors=5, minSize=(30, 30))
-        areas = [float(w * h) / float(frame.shape[0] * frame.shape[1]) for (x, y, w, h) in faces]
-        label, confidence = classify_face_areas(areas)
+        face_heights = [float(h) / float(frame.shape[0]) for (x, y, w, h) in faces]
+        label, confidence = classify_face_heights(face_heights)
         samples.append({"frame": frame_number, "cut": bool(cut), "shot_size": label, "confidence": confidence,
                         "face_boxes": [{"x": x / frame.shape[1], "y": y / frame.shape[0], "width": w / frame.shape[1], "height": h / frame.shape[0]} for x, y, w, h in faces]})
     cap.release()
