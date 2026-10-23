@@ -11,6 +11,11 @@ def test_runtime_dependency_lock_is_hashed_and_license_documented():
     assert "--hash=sha256:" in content
     assert "pypdf==" in content and "opencv-python-headless==" in content
     assert (ROOT / "runtime" / "THIRD_PARTY_NOTICES.txt").exists()
+    launcher = (ROOT / "tools" / "launcher" / "Program.cs").read_text(encoding="utf-8")
+    builder = (ROOT / "tools" / "build_installer.ps1").read_text(encoding="utf-8")
+    assert "System.IO.Compression" in launcher
+    assert "Framework64\\v4.0.30319\\csc.exe" in builder
+    assert "dotnet publish" not in builder
 
 
 def test_installer_copies_worker_runtime_and_sdk_only_from_local_resolve():
