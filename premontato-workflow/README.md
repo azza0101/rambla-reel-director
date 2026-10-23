@@ -8,7 +8,11 @@ Il primo target è Windows x64 e una camera. La logica del worker non assume un 
 
 Eseguire `tools/build_installer.ps1`. Il comando crea `dist/Install-Premontato.exe` includendo Python 3.13 embeddable e le dipendenze bloccate in `runtime/requirements.lock`; servono PowerShell, Python con pip, il compilatore .NET Framework incluso in Windows e accesso ai download ufficiali di python.org e PyPI. I pacchetti vengono verificati con SHA-256 e il build verifica che OpenCV esponga `CascadeClassifier` e il modello Haar per le stime d’inquadratura. Il launcher usa il .NET Framework già fornito da Windows e non lo ridistribuisce. Non viene incluso `WorkflowIntegration.node`: il setup lo copia dall’SDK locale di Resolve oppure chiede di selezionarlo. Resolve Studio deve essere chiuso e riavviato per registrare l’integrazione.
 
-L’installer chiede elevazione solo per scrivere sotto ProgramData. Crea un backup se trova già `com.rambla.premontato`. Non legge le credenziali GitHub, non le salva e non modifica progetti o timeline Resolve. L’installer è Windows x64; macOS non è ancora predisposto.
+L’installer chiede elevazione solo per scrivere sotto ProgramData. Crea un backup se trova già `com.rambla.premontato`.
+
+Il pulsante **Aggiorna** cerca le release private `premontato-vX.Y.Z` del repository GitHub, scarica il pacchetto versionato e ne verifica SHA-256 prima di installarlo. Per autenticarsi riusa in memoria la credenziale DPAPI già registrata da RMBL Auto-Cut; non la copia nell’installer né la salva nel plugin. Servono Auto-Cut installato e un token con lettura delle release. Windows mostra UAC per aggiornare i file in ProgramData. Il bridge `WorkflowIntegration.node` e i dati utente restano intatti; dopo l’aggiornamento chiudi e riapri il pannello da Resolve.
+
+L’installer è Windows x64; macOS non è ancora predisposto.
 
 ## Test e limiti
 
