@@ -1,6 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
 const { Session, workerEnvironment } = require('../../plugin/session');
 
 test('worker process does not inherit unrelated API credentials', () => {
@@ -75,4 +76,13 @@ test('rejects take edits with source gaps before rebuilding a plan', async () =>
     segments: [{ media_id: 'm', take_id: 'a', start_frame: 0, end_frame: 50 }, { media_id: 'm', take_id: 'b', start_frame: 50, end_frame: 100 }] }] };
   await assert.rejects(session.confirmTakes([{ media_id: 'm', take_id: 'a', start_frame: 0, end_frame: 45 },
     { media_id: 'm', take_id: 'b', start_frame: 50, end_frame: 100 }]), /sovrapposti o fuori/);
+});
+
+test('stops the idle Python worker before replacing its embedded runtime', async () => {
+  const session = new Session('unused', 'unused');
+  const child = new EventEmitter();
+  child.kill = () => setImmediate(() => child.emit('exit', 0));
+  session.child = child;
+  assert.equal(await session.shutdownWorker(), true);
+  assert.equal(session.child, null);
 });
