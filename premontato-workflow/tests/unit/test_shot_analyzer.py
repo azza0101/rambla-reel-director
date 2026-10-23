@@ -2,7 +2,7 @@ import sys
 import unittest
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parents[2] / "worker"))
-from shot_analyzer import apply_manual_overrides, classify_face_areas
+from shot_analyzer import apply_manual_overrides, classify_face_heights, classify_face_areas
 
 
 class ShotAnalyzerTests(unittest.TestCase):
@@ -10,6 +10,12 @@ class ShotAnalyzerTests(unittest.TestCase):
         self.assertEqual(classify_face_areas([0.22])[0], "close")
         self.assertEqual(classify_face_areas([0.10])[0], "medium")
         self.assertEqual(classify_face_areas([])[0], "unknown")
+
+    def test_face_height_provides_useful_scale_for_small_faces(self):
+        # A face 15% of frame height occupies only ~1.3% of a 16:9 frame.
+        self.assertEqual(classify_face_heights([0.149])[0], "medium")
+        self.assertEqual(classify_face_heights([0.32])[0], "close")
+        self.assertEqual(classify_face_heights([0.08])[0], "wide")
 
     def test_manual_override_wins_only_for_same_fingerprint(self):
         segment = {"media_id": "m", "start_frame": 0, "end_frame": 50, "shot_size": "unknown", "source": "automatic"}
