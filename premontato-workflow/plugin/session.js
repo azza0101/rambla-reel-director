@@ -11,6 +11,12 @@ function workerEnvironment(source = process.env, cachePath) {
   return result;
 }
 
+function prepareReviewTimeline(plan, confirmed) {
+  if (confirmed !== true) throw new Error('Conferma gli abbinamenti prima di creare la timeline');
+  if (!plan?.decisions?.length) throw new Error('Nessuna battuta abbinata: timeline non creata');
+  return { decisions: plan.decisions, omitted: plan.unmatched_beats?.length || 0 };
+}
+
 class Session {
   constructor(root, workerPath, python = process.env.PREMONTATO_PYTHON || path.join(__dirname, 'runtime', 'python.exe')) {
     this.root = root; this.workerPath = workerPath; this.python = python;
@@ -58,9 +64,16 @@ class Session {
     if (!this.state.script || !this.state.media.length) throw new Error('Prima scegli un copione e media dal Media Pool');
     if (this.state.stage === 'analyzing') throw new Error('Analisi già in corso');
     this.state.stage = 'analyzing';
+    let lastPhaseIndex = 0;
+    const progress = (phase, phaseIndex, percent, label, current, total) => {
+      if (phaseIndex >= 0) lastPhaseIndex = phaseIndex;
+      this.onProgress?.({ phase, phaseIndex, percent: Math.round(percent), label, current, total });
+    };
     try {
+      progress('script', 0, 0, 'Leggo e separo le scene del copione');
       const parsed = await this.request('parse_script', { text: this.state.script.text });
       const sources = this.state.transcripts || [];
+      progress('scene', 1, 12, 'Individuo la scena che corrisponde al parlato');
       const sceneSelection = await this.request('select_scene', {
         scenes: parsed.scenes, transcript: sources.flatMap(source => source.segments)
       });
@@ -68,19 +81,27 @@ class Session {
       const beats = selectedScene ? selectedScene.beats : [];
       const shots = [];
       let shotCacheHits = 0;
-      for (const source of sources) {
-        if (!source.path) continue;
+      const shotSources = sources.filter(source => source.path);
+      progress('shots', 2, 24, shotSources.length ? `Analisi inquadrature: 0/${shotSources.length} clip` : 'Nessun file video da analizzare');
+      for (let i = 0; i < shotSources.length; i++) {
+        const source = shotSources[i];
+        progress('shots', 2, 24 + (i / shotSources.length) * 42, `Analizzo le inquadrature di ${source.name}`, i, shotSources.length);
         try { const result = await this.request('analyze_shots', { media: source, sample_fps: 1 }, 20 * 60 * 1000); shots.push(...result.segments); if (result.cache_hit) shotCacheHits += 1; }
         catch (error) { this.state.error = `Analisi inquadrature non disponibile per ${source.name}: ${error.message}`; }
+        progress('shots', 2, 24 + ((i + 1) / shotSources.length) * 42, `Inquadrature: ${i + 1}/${shotSources.length} clip`, i + 1, shotSources.length);
       }
       const takes = [];
-      for (const source of sources) {
+      progress('takes', 3, 68, `Individuo i confini delle take: 0/${sources.length} clip`);
+      for (let i = 0; i < sources.length; i++) {
+        const source = sources[i];
         const proposals = await this.request('propose_take_segments', { media: source, transcript: source.segments, fps: source.fps || this.state.fps || 25, beats });
         takes.push({ media_id: source.media_id, media_name: source.name, duration_frames: source.duration_frames,
           confirmed: proposals.length === 1 && proposals[0].boundary_source === 'whole_clip', segments: proposals });
+        progress('takes', 3, 68 + ((i + 1) / Math.max(1, sources.length)) * 17, `Confini take: ${i + 1}/${sources.length} clip`, i + 1, sources.length);
       }
       const planningSources = takes.flatMap(group => group.confirmed ? group.segments.map(take => ({ ...sources.find(source => source.media_id === group.media_id), ...take,
         segments: sources.find(source => source.media_id === group.media_id).segments.filter(segment => segment.start_frame >= take.start_frame && segment.start_frame < take.end_frame) })) : []);
+      progress('plan', 4, 88, 'Abbino le battute alle take confermate');
       const plan = selectedScene && takes.every(group => group.confirmed)
         ? await this.request('build_plan', { beats, sources: planningSources, shots, fps: this.state.fps || 25 }) : null;
       const warnings = selectedScene
@@ -89,8 +110,10 @@ class Session {
       if (shotCacheHits) warnings.push(`Analisi visiva riusata dalla cache locale per ${shotCacheHits} clip.`);
       if (this.state.error) warnings.push(this.state.error);
       this.state.analysis = { script: parsed, sceneSelection, selectedScene, warnings, takes, shots, plan, parsedBeats: beats };
-      this.state.stage = 'review'; return this.getReviewState();
-    } catch (error) { this.state.error = error.message; this.state.stage = 'error'; throw error; }
+      this.state.stage = 'review';
+      progress('complete', 5, 100, 'Analisi completata');
+      return this.getReviewState();
+    } catch (error) { this.state.error = error.message; this.state.stage = 'error'; progress('error', lastPhaseIndex, 0, `Analisi interrotta: ${error.message}`); throw error; }
   }
   async cancelAnalysis() { this.failAll(new Error('Analisi annullata')); this.child?.kill(); this.child = null; this.state.stage = 'idle'; return true; }
   async shutdownWorker(timeoutMs = 8000) {
@@ -128,4 +151,4 @@ class Session {
   }
 }
 
-module.exports = { Session, workerEnvironment };
+module.exports = { Session, workerEnvironment, prepareReviewTimeline };
