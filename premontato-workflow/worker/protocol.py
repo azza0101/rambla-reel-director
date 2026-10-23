@@ -45,7 +45,7 @@ def dispatch(request):
         options = {"sample_fps": float(payload.get("sample_fps", 1.0))}
         fingerprint = f"{media['media_id']}:{stat.st_size}:{stat.st_mtime_ns}"
         segments, cache_hit = get_or_compute(os.environ.get("PREMONTATO_CACHE_DIR", ".premontato-cache"),
-                                              fingerprint, "haar-hist-v1", options,
+                                              fingerprint, "haar-hist-v2-opencv4", options,
                                               lambda: analyze_video(media, options["sample_fps"]))
         result = {"segments": segments, "cache_hit": cache_hit}
     else:
