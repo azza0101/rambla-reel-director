@@ -1,0 +1,119 @@
+'use strict';
+const fs = require('node:fs/promises');
+const path = require('node:path');
+const { spawn } = require('node:child_process');
+
+function workerEnvironment(source = process.env, cachePath) {
+  const result = { PREMONTATO_CACHE_DIR: cachePath };
+  for (const key of ['PATH', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'USERPROFILE', 'LOCALAPPDATA', 'HOMEDRIVE', 'HOMEPATH']) {
+    if (source[key]) result[key] = source[key];
+  }
+  return result;
+}
+
+class Session {
+  constructor(root, workerPath, python = process.env.PREMONTATO_PYTHON || path.join(__dirname, 'runtime', 'python.exe')) {
+    this.root = root; this.workerPath = workerPath; this.python = python;
+    this.state = { stage: 'idle', script: null, media: [], analysis: null, error: null };
+    this.child = null; this.pending = new Map(); this.counter = 0;
+  }
+  async request(action, payload = {}, timeoutMs = 30000) {
+    if (!this.child) {
+      this.child = spawn(this.python, ['-E', '-s', this.workerPath], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
+        env: workerEnvironment(process.env, path.join(this.root, 'cache', 'shots')) });
+      this.child.stdout.setEncoding('utf8'); let buffer = '';
+      this.child.stdout.on('data', chunk => { buffer += chunk; let index; while ((index = buffer.indexOf('\n')) >= 0) { const line = buffer.slice(0, index); buffer = buffer.slice(index + 1); try { this.receive(JSON.parse(line)); } catch { this.failAll(new Error('Risposta worker non valida')); } } });
+      this.child.stderr.setEncoding('utf8'); this.child.stderr.on('data', chunk => { this.lastWorkerLog = (this.lastWorkerLog || '').concat(chunk).slice(-4000); });
+      this.child.on('error', error => this.failAll(error));
+      this.child.on('exit', code => { this.child = null; if (code) this.failAll(new Error(`Worker terminato (${code})`)); });
+    }
+    const request_id = `req-${++this.counter}`;
+    const promise = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { this.pending.delete(request_id); reject(new Error('Timeout analisi locale')); }, timeoutMs);
+      this.pending.set(request_id, { resolve, reject, timer });
+    });
+    this.child.stdin.write(JSON.stringify({ protocol: 1, request_id, action, payload }) + '\n');
+    return promise;
+  }
+  receive(message) {
+    const task = this.pending.get(message.request_id); if (!task) return;
+    clearTimeout(task.timer); this.pending.delete(message.request_id);
+    message.status === 'ok' ? task.resolve(message.result) : task.reject(new Error(message.error?.message || 'Errore worker'));
+  }
+  failAll(error) { for (const task of this.pending.values()) { clearTimeout(task.timer); task.reject(error); } this.pending.clear(); }
+  async setScript(file) {
+    const text = path.extname(file).toLowerCase() === '.pdf'
+      ? (await this.request('extract_pdf_script', { path: file })).text
+      : await fs.readFile(file, 'utf8');
+    this.state.script = { path: file, text }; this.state.analysis = null; return { name: path.basename(file) };
+  }
+  setMedia(records, identity) { this.state.media = records; this.state.transcripts = []; this.state.analysis = null; this.state.projectId = identity.projectId; this.state.timelineId = identity.timelineId; return records.map(({ media_id, name, duration_frames, people = [] }) => ({ media_id, name, duration_frames, people })); }
+  assertContext(identity) {
+    const ids = (identity.selected || []).map(item => item.media_id);
+    if (identity.projectId !== this.state.projectId || identity.timelineId !== this.state.timelineId || ids.length !== this.state.media.length || ids.some((id, index) => id !== this.state.media[index].media_id)) {
+      throw new Error('Progetto, timeline o selezione media cambiati: riseleziona le clip e ricalcola');
+    }
+  }
+  async analyze() {
+    if (!this.state.script || !this.state.media.length) throw new Error('Prima scegli un copione e media dal Media Pool');
+    if (this.state.stage === 'analyzing') throw new Error('Analisi già in corso');
+    this.state.stage = 'analyzing';
+    try {
+      const parsed = await this.request('parse_script', { text: this.state.script.text });
+      const sources = this.state.transcripts || [];
+      const sceneSelection = await this.request('select_scene', {
+        scenes: parsed.scenes, transcript: sources.flatMap(source => source.segments)
+      });
+      const selectedScene = sceneSelection.scene;
+      const beats = selectedScene ? selectedScene.beats : [];
+      const shots = [];
+      let shotCacheHits = 0;
+      for (const source of sources) {
+        if (!source.path) continue;
+        try { const result = await this.request('analyze_shots', { media: source, sample_fps: 1 }, 20 * 60 * 1000); shots.push(...result.segments); if (result.cache_hit) shotCacheHits += 1; }
+        catch (error) { this.state.error = `Analisi inquadrature non disponibile per ${source.name}: ${error.message}`; }
+      }
+      const takes = [];
+      for (const source of sources) {
+        const proposals = await this.request('propose_take_segments', { media: source, transcript: source.segments, fps: source.fps || this.state.fps || 25, beats });
+        takes.push({ media_id: source.media_id, media_name: source.name, duration_frames: source.duration_frames,
+          confirmed: proposals.length === 1 && proposals[0].boundary_source === 'whole_clip', segments: proposals });
+      }
+      const planningSources = takes.flatMap(group => group.confirmed ? group.segments.map(take => ({ ...sources.find(source => source.media_id === group.media_id), ...take,
+        segments: sources.find(source => source.media_id === group.media_id).segments.filter(segment => segment.start_frame >= take.start_frame && segment.start_frame < take.end_frame) })) : []);
+      const plan = selectedScene && takes.every(group => group.confirmed)
+        ? await this.request('build_plan', { beats, sources: planningSources, shots, fps: this.state.fps || 25 }) : null;
+      const warnings = selectedScene
+        ? [...(plan?.warnings || ['Conferma i confini delle take suggerite prima di calcolare il premontato.'])]
+        : ['Non ho trovato una corrispondenza sufficientemente chiara tra dialoghi e copione; controlla trascrizione e clip selezionate.'];
+      if (shotCacheHits) warnings.push(`Analisi visiva riusata dalla cache locale per ${shotCacheHits} clip.`);
+      if (this.state.error) warnings.push(this.state.error);
+      this.state.analysis = { script: parsed, sceneSelection, selectedScene, warnings, takes, shots, plan, parsedBeats: beats };
+      this.state.stage = 'review'; return this.getReviewState();
+    } catch (error) { this.state.error = error.message; this.state.stage = 'error'; throw error; }
+  }
+  async cancelAnalysis() { this.failAll(new Error('Analisi annullata')); this.child?.kill(); this.child = null; this.state.stage = 'idle'; return true; }
+  getReviewState() { return { stage: this.state.stage, scriptName: this.state.script ? path.basename(this.state.script.path) : null,
+    media: this.state.media.map(({ media_id, name, duration_frames, people = [] }) => ({ media_id, name, duration_frames, people })), analysis: this.state.analysis, error: this.state.error }; }
+  setTranscripts(sources, fps, identity) { this.assertContext(identity); this.state.transcripts = sources; this.state.fps = fps; this.state.analysis = null; return { count: sources.reduce((sum, source) => sum + source.segments.length, 0) }; }
+  async confirmTakes(segments) {
+    const grouped = new Map();
+    for (const segment of segments) { if (!grouped.has(segment.media_id)) grouped.set(segment.media_id, []); grouped.get(segment.media_id).push(segment); }
+    const takes = this.state.analysis?.takes || [];
+    if (grouped.size !== takes.length || [...grouped.keys()].some(mediaId => !takes.some(take => take.media_id === mediaId))) throw new Error('Elenco take inatteso; ripeti l’analisi');
+    for (const group of takes) {
+      const items = grouped.get(group.media_id);
+      if (!items) throw new Error(`Confini take mancanti per ${group.media_name}`);
+      items.sort((a, b) => a.start_frame - b.start_frame);
+      if (items[0].start_frame !== 0 || items[items.length - 1].end_frame !== group.duration_frames || items.some((item, index) => !Number.isInteger(item.start_frame) || !Number.isInteger(item.end_frame) || item.end_frame <= item.start_frame || (index && items[index - 1].end_frame !== item.start_frame))) throw new Error(`Segmenti sovrapposti o fuori dal media ${group.media_name}`);
+      group.segments = items.map((item, index) => ({ ...item, take_index: index + 1, boundary_source: item.start_frame === 0 && item.end_frame === group.duration_frames ? 'whole_clip' : 'manual', confirmed: true }));
+      group.confirmed = true;
+    }
+    const sources = takes.flatMap(group => group.segments.map(take => ({ ...this.state.transcripts.find(source => source.media_id === group.media_id), ...take,
+      segments: this.state.transcripts.find(source => source.media_id === group.media_id).segments.filter(segment => segment.start_frame >= take.start_frame && segment.start_frame < take.end_frame) })));
+    this.state.analysis.plan = await this.request('build_plan', { beats: this.state.analysis.parsedBeats, sources, shots: this.state.analysis.shots, fps: this.state.fps || 25 });
+    return this.getReviewState();
+  }
+}
+
+module.exports = { Session, workerEnvironment };
