@@ -3,7 +3,7 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { assertTrusted, validateMediaRecords } = require('./ipc_security');
-const { Session } = require('./session');
+const { Session, prepareReviewTimeline } = require('./session');
 const adapter = require('./resolve_adapter');
 const updateManager = require('./updater');
 const { spawn } = require('node:child_process');
@@ -61,10 +61,11 @@ async function start() {
   handle('cancelAnalysis', async () => session.cancelAnalysis());
   handle('getReviewState', async () => session.getReviewState());
   handle('confirmTakes', async segments => session.confirmTakes(segments));
-  handle('createReviewTimeline', async () => {
+  handle('createReviewTimeline', async request => {
     const plan = session.state.analysis?.plan;
-    if (!plan || plan.unmatched_beats.length || !plan.decisions.length) throw new Error('Piano incompleto: correggi trascrizioni o seleziona take per tutti i beat prima di creare la timeline');
-    return adapter.createTimeline(await getSdk(), `PREMONTATO - ${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}`, plan.decisions, session.state);
+    const review = prepareReviewTimeline(plan, request?.confirmed);
+    const created = await adapter.createTimeline(await getSdk(), `PREMONTATO - ${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}`, review.decisions, session.state);
+    return { ...created, included: review.decisions.length, omitted: review.omitted };
   });
   handle('update', async () => {
     const credentialPath = updateManager.resolveGithubCredentialPath(process.env.PROGRAMDATA);
