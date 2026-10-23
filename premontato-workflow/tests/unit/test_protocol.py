@@ -46,6 +46,23 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(plan["unmatched_beats"], [])
         self.assertEqual([row["beat_id"] for row in plan["decisions"]], ["a"])
 
+    def test_plan_warning_matches_whether_shots_were_analyzed(self):
+        from protocol import dispatch
+        base = {"protocol": 1, "request_id": "shots", "action": "build_plan", "payload": {
+            "fps": 25,
+            "beats": [{"beat_id": "a", "scene_id": "s", "kind": "dialogue", "text": "primo"}],
+            "sources": [{"take_id": "t", "media_id": "m", "take_index": 1, "duration_frames": 100,
+                         "segments": [{"start_frame": 20, "end_frame": 30, "text": "primo"}]}]}}
+        without_shots = dispatch(base)["result"]
+        self.assertTrue(any("inquadratura" in warning.lower() and "nessuna" in warning.lower()
+                            for warning in without_shots["warnings"]))
+        with_shots = {**base, "request_id": "shots-done", "payload": {**base["payload"], "shots": [
+            {"media_id": "m", "start_frame": 0, "end_frame": 100, "shot_size": "close", "confidence": 0.8}]}}
+        result = dispatch(with_shots)["result"]
+        self.assertEqual(result["decisions"][0]["shot_size"], "close")
+        self.assertTrue(any("stime automatiche" in warning.lower() for warning in result["warnings"]))
+        self.assertFalse(any("non sono ancora state analizzate" in warning.lower() for warning in result["warnings"]))
+
 
 if __name__ == "__main__":
     unittest.main()

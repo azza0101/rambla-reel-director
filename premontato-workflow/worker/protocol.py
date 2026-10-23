@@ -92,9 +92,11 @@ def dispatch(request):
         for decision in decisions:
             decision["timeline_start_frame"] = cursor
             cursor += decision["end_frame"] - decision["start_frame"]
+        shot_warnings = (["Le scale delle inquadrature sono stime automatiche: verifica le etichette suggerite."]
+                         if shot_segments else ["Nessuna inquadratura è stata analizzata: verifica e correggi ogni taglio."])
         result = {"plan_id": payload.get("plan_id", "local-plan"), "scene_id": "scene-1", "fps": fps,
                   "decisions": decisions, "unmatched_beats": unmatched,
-                  "warnings": ["Le inquadrature non sono ancora state analizzate: verifica e correggi ogni taglio."]}
+                  "warnings": shot_warnings}
     return {"protocol": PROTOCOL, "request_id": request["request_id"], "status": "ok", "result": result}
 
 
