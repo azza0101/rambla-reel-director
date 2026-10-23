@@ -1,39 +1,77 @@
+using System;
 using System.Diagnostics;
+using System.IO;
 using System.IO.Compression;
 using System.Reflection;
+using System.Windows.Forms;
 
-var resource = Assembly.GetExecutingAssembly().GetManifestResourceStream("Premontato.payload.zip")
-    ?? throw new InvalidOperationException("Payload installer non trovato.");
-var destination = Path.Combine(Path.GetTempPath(), "RAMBLA-Premontato-Setup-" + Guid.NewGuid().ToString("N"));
-Directory.CreateDirectory(destination);
-try
+internal static class Program
 {
-    using (resource)
-    using (var archive = new ZipArchive(resource, ZipArchiveMode.Read))
+    private static int Main()
     {
-        var root = Path.GetFullPath(destination) + Path.DirectorySeparatorChar;
-        foreach (var entry in archive.Entries)
+        string destination = Path.Combine(Path.GetTempPath(), "RAMBLA-Premontato-Setup-" + Guid.NewGuid().ToString("N"));
+        try
         {
-            var path = Path.GetFullPath(Path.Combine(destination, entry.FullName));
-            if (!path.StartsWith(root, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException("Percorso non consentito nel payload.");
-            if (entry.FullName.EndsWith('/')) { Directory.CreateDirectory(path); continue; }
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            entry.ExtractToFile(path, overwrite: true);
+            Directory.CreateDirectory(destination);
+            ExtractPayload(destination);
+            string script = Path.Combine(destination, "install", "Install-Premontato.ps1");
+            string pluginRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "Blackmagic Design", "DaVinci Resolve", "Support", "Workflow Integration Plugins");
+            ProcessStartInfo start = new ProcessStartInfo();
+            start.FileName = "powershell.exe";
+            start.Arguments = "-NoProfile -ExecutionPolicy Bypass -File " + Quote(script) + " -PluginRoot " + Quote(pluginRoot);
+            start.UseShellExecute = true;
+            start.Verb = "runas";
+            using (Process process = Process.Start(start))
+            {
+                if (process == null) throw new InvalidOperationException("Impossibile avviare l'installazione.");
+                process.WaitForExit();
+                return process.ExitCode;
+            }
+        }
+        catch (Exception error)
+        {
+            MessageBox.Show(error.Message, "RAMBLA Premontato Setup", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return 1;
+        }
+        finally
+        {
+            try { if (Directory.Exists(destination)) Directory.Delete(destination, true); }
+            catch { }
         }
     }
-    var script = Path.Combine(destination, "install", "Install-Premontato.ps1");
-    var start = new ProcessStartInfo("powershell.exe") { UseShellExecute = true, Verb = "runas" };
-    start.ArgumentList.Add("-NoProfile");
-    start.ArgumentList.Add("-ExecutionPolicy"); start.ArgumentList.Add("Bypass");
-    start.ArgumentList.Add("-File"); start.ArgumentList.Add(script);
-    start.ArgumentList.Add("-PluginRoot");
-    start.ArgumentList.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Blackmagic Design", "DaVinci Resolve", "Support", "Workflow Integration Plugins"));
-    using var process = Process.Start(start) ?? throw new InvalidOperationException("Impossibile avviare l'installazione.");
-    process.WaitForExit();
-    if (process.ExitCode != 0) Environment.ExitCode = process.ExitCode;
-}
-finally
-{
-    try { Directory.Delete(destination, recursive: true); } catch { }
+
+    private static void ExtractPayload(string destination)
+    {
+        Assembly assembly = Assembly.GetExecutingAssembly();
+        using (Stream resource = assembly.GetManifestResourceStream("Premontato.payload.zip"))
+        {
+            if (resource == null) throw new InvalidOperationException("Payload installer non trovato.");
+            using (ZipArchive archive = new ZipArchive(resource, ZipArchiveMode.Read))
+            {
+                string root = Path.GetFullPath(destination) + Path.DirectorySeparatorChar;
+                foreach (ZipArchiveEntry entry in archive.Entries)
+                {
+                    string relative = entry.FullName.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
+                    string path = Path.GetFullPath(Path.Combine(destination, relative));
+                    if (!path.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidDataException("Percorso non consentito nel payload.");
+                    if (entry.FullName.EndsWith("/", StringComparison.Ordinal) || entry.FullName.EndsWith("\\", StringComparison.Ordinal))
+                    {
+                        Directory.CreateDirectory(path);
+                        continue;
+                    }
+                    string parent = Path.GetDirectoryName(path);
+                    if (!Directory.Exists(parent)) Directory.CreateDirectory(parent);
+                    using (Stream input = entry.Open())
+                    using (FileStream output = File.Create(path)) input.CopyTo(output);
+                }
+            }
+        }
+    }
+
+    private static string Quote(string value)
+    {
+        return "\"" + value.Replace("\"", "\\\"") + "\"";
+    }
 }
