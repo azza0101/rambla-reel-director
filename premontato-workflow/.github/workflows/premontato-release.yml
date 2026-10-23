@@ -1,9 +1,5 @@
 name: Premontato package
 on:
-  push:
-    branches: [feat/premontato-workflow]
-    paths:
-      - 'premontato-workflow/**'
   pull_request:
     paths:
       - 'premontato-workflow/**'
@@ -51,3 +47,4 @@ jobs:
           path: premontato-workflow/dist/Install-Premontato.exe
           if-no-files-found: error
           retention-days: 30
+
