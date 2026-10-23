@@ -1,0 +1,9 @@
+Premontato runtime third-party notices
+
+Python 3.13.7 embeddable distribution: Python Software Foundation License; see Python-PSF.txt.
+NumPy 2.5.4: BSD-3-Clause and bundled third-party notices as stated in its wheel metadata; see NumPy-BSD-3-Clause.txt and the files in site-packages/numpy-2.5.4.dist-info/licenses.
+opencv-python-headless 5.0.0.93: Python wrapper MIT; OpenCV binary Apache-2.0; see opencv-python-MIT.txt and OpenCV-Apache-2.0.txt. Its wheel includes further third-party notices under site-packages/cv2.
+pypdf 6.10.0: BSD-3-Clause; see pypdf-BSD-3-Clause.txt.
+typing_extensions 4.16.0: PSF License; see typing-extensions-PSF.txt.
+
+The release process copies complete license metadata from each wheel into the runtime. Blackmagic Design's WorkflowIntegration.node is not redistributed: the installer copies it from the user's local Resolve SDK.
