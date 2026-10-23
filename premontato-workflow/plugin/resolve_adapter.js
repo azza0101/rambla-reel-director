@@ -103,13 +103,42 @@ async function createTimeline(sdk, name, edits, expected = {}) {
   if (expectedIds && (expectedIds.length !== selectedIds.length || expectedIds.some((id, index) => id !== selectedIds[index]))) throw new Error('La selezione dei media è cambiata: riseleziona le clip e ricalcola');
   const byId = new Map(await Promise.all(items.map(async item => [String(await item.GetMediaId()), item])));
   if (!edits.length || edits.some(edit => !byId.has(edit.media_id) || edit.end_frame <= edit.start_frame)) throw new Error('Piano incompleto o media non selezionato; timeline non creata');
+  // Resolve's CreateTimelineFromClips collapses repeated uses of the same MediaPoolItem
+  // into a single timeline item. AppendToTimeline preserves every source range.
   const clips = edits.map(edit => ({ mediaPoolItem: byId.get(edit.media_id), startFrame: edit.start_frame,
-    endFrame: edit.end_frame - 1 }));
-  const newTimeline = await pool.CreateTimelineFromClips(name, clips);
+    endFrame: edit.end_frame }));
+  const newTimeline = await pool.CreateEmptyTimeline(name);
   if (!newTimeline) throw new Error('Resolve non ha creato la nuova timeline');
-  if (String(await project.GetUniqueId()) !== beforeProject || String(await sourceTimeline.GetUniqueId()) !== beforeTimeline) throw new Error('Progetto o timeline di partenza cambiati durante la creazione');
-  // Do not save the project or switch the user's active timeline.
-  return { timelineId: String(await newTimeline.GetUniqueId()), timelineName: String(await newTimeline.GetName()), sourceTimelineId: beforeTimeline };
+  let created = false, failure;
+  try {
+    if (!await project.SetCurrentTimeline(newTimeline)) throw new Error('Resolve non ha attivato la timeline di prova');
+    const appended = await pool.AppendToTimeline(clips) || [];
+    const videoItems = await newTimeline.GetItemListInTrack('video', 1) || [];
+    if (appended.length !== clips.length || videoItems.length !== clips.length) {
+      throw new Error(`Resolve ha inserito ${videoItems.length} di ${clips.length} tagli; timeline di prova annullata`);
+    }
+    for (let i = 0; i < videoItems.length; i++) {
+      const item = videoItems[i];
+      const media = await item.GetMediaPoolItem();
+      const mediaId = media && String(await media.GetMediaId());
+      const sourceStart = Number(await item.GetSourceStartFrame());
+      const sourceEnd = Number(await item.GetSourceEndFrame());
+      if (mediaId !== String(edits[i].media_id) || sourceStart !== clips[i].startFrame || sourceEnd !== clips[i].endFrame) {
+        throw new Error(`Resolve ha alterato il taglio ${i + 1}; timeline di prova annullata`);
+      }
+    }
+    if (String(await project.GetUniqueId()) !== beforeProject || String(await sourceTimeline.GetUniqueId()) !== beforeTimeline) throw new Error('Progetto o timeline di partenza cambiati durante la creazione');
+    created = true;
+  } catch (error) { failure = error; }
+  const restored = await project.SetCurrentTimeline(sourceTimeline);
+  if (!created) await pool.DeleteTimelines([newTimeline]);
+  if (failure) throw failure;
+  const activeTimeline = await project.GetCurrentTimeline();
+  if (!restored || !activeTimeline || String(await activeTimeline.GetUniqueId()) !== beforeTimeline) {
+    throw new Error('Timeline creata, ma Resolve non ha ripristinato quella di partenza');
+  }
+  // Do not save the project or leave the user's active timeline switched.
+  return { timelineId: String(await newTimeline.GetUniqueId()), timelineName: String(await newTimeline.GetName()), sourceTimelineId: beforeTimeline, included: clips.length };
 }
 
 module.exports = { getResolve, snapshot, getTranscript, getSelectedTranscriptions, transcribeSelected, analyzeIntellisearchSelected, parsePeopleMetadata, timecodeToFrames, createTimeline };
