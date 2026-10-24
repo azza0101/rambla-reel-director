@@ -3,10 +3,18 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 
+
+const DEFAULT_DIRECTIONS={profile:'VIDEO COLICHE',notes:'Durante tensione e crescendo mantenere le strette fino al sollievo o alla risoluzione. Aprire sulla larga per distendere. Esempio: dopo l’invito a dormire nel suo letto, primo piano di lui prima dello sbotto, larga quando rifiuta. La reazione richiede copertura verificata: non viene inventata.',markers:{}};
+function validateDirections(value){
+ if(!value || typeof value!=='object' || Array.isArray(value) || !['none','VIDEO COLICHE'].includes(value.profile) || typeof value.notes!=='string' || value.notes.length>20000 || !value.markers || typeof value.markers!=='object' || Array.isArray(value.markers) || Object.keys(value.markers).length>10000 || Object.entries(value.markers).some(([id,role])=>!id || id.length>128 || !['tension','resolution','free'].includes(role)))throw new Error('Direzioni di montaggio non valide');
+ return JSON.parse(JSON.stringify(value));
+}
+
 function validateDraft(value){
  const obj=v=>v && typeof v==='object' && !Array.isArray(v),str=v=>typeof v==='string',list=(v,check)=>Array.isArray(v) && v.length<=10000 && v.every(check),scalar=v=>str(v)||Number.isFinite(v),sizes=['wide','medium','close','detail','unknown'];
  if(!obj(value) || Buffer.byteLength(JSON.stringify(value))>512*1024 || value.takes!==undefined && !list(value.takes,v=>obj(v)&&str(v.take_id)&&scalar(v.start_frame)&&scalar(v.end_frame)) || value.beats!==undefined && !list(value.beats,v=>obj(v)&&str(v.beat_id)&&scalar(v.start)&&scalar(v.end)&&sizes.includes(v.scale)))throw new Error('Bozza progetto non valida');
  if(value.visual!==undefined && (!obj(value.visual) || value.visual.dirty!==undefined && typeof value.visual.dirty!=='boolean' || value.visual.person_names!==undefined && (!obj(value.visual.person_names)||!Object.values(value.visual.person_names).every(str)) || value.visual.intervals!==undefined && !list(value.visual.intervals,v=>obj(v)&&str(v.segment_id)&&sizes.includes(v.shot_size)&&list(v.visible_subjects,str))))throw new Error('Bozza visiva del progetto non valida');
+ if(value.directions!==undefined)validateDirections(value.directions);
  if(value.pacing!==undefined && (!obj(value.pacing)||typeof value.pacing.enabled!=='boolean'||typeof value.pacing.script!=='boolean'||!scalar(value.pacing.gap)||!scalar(value.pacing.minimum)))throw new Error('Bozza ritmo non valida');
 }
 function validateProjectState(state){
@@ -31,6 +39,7 @@ function validateProjectState(state){
  };
  const shot=row=>obj(row)&&media.has(row.media_id)&&str(row.segment_id)&&range(row,media.get(row.media_id)?.duration_frames)&&sizes.includes(row.shot_size)&&(row.visible_subjects===undefined||Array.isArray(row.visible_subjects)&&row.visible_subjects.every(str));
  const source=row=>obj(row)&&media.has(row.media_id)&&(row.path===undefined||row.path===media.get(row.media_id).path)&&Array.isArray(row.segments)&&row.segments.every(segment=>obj(segment)&&str(segment.text)&&range(segment,media.get(row.media_id).duration_frames)&&(segment.words===undefined||Array.isArray(segment.words)&&segment.words.every(word=>obj(word)&&str(word.text)&&int(word.start_frame)&&int(word.end_frame)&&word.end_frame>=word.start_frame&&word.end_frame<=media.get(row.media_id).duration_frames)));
+ if(state.directions!==undefined)validateDirections(state.directions);
  if(state.pacingSettings!==undefined&&!obj(state.pacingSettings))fail();state.pacingSettings={enabled:true,max_pause_seconds:.45,minimum_shot_seconds:1.2,respect_script_pauses:true,comic_hold_seconds:1,...state.pacingSettings};for(const key of ['enabled','respect_script_pauses'])if(typeof state.pacingSettings[key]!=='boolean')fail();for(const key of ['max_pause_seconds','minimum_shot_seconds','comic_hold_seconds'])if(!Number.isFinite(state.pacingSettings[key])||state.pacingSettings[key]<0)fail();
  array(state.transcripts,source,true);if(state.uiDraft!==undefined&&state.uiDraft!==null)validateDraft(state.uiDraft);
  const analysis=state.analysis;if(analysis===null||analysis===undefined)return;if(!obj(analysis))fail();
@@ -60,7 +69,7 @@ function prepareReviewTimeline(plan, confirmed) {
 class Session {
   constructor(root, workerPath, python = process.env.PREMONTATO_PYTHON || path.join(__dirname, 'runtime', 'python.exe')) {
     this.root = root; this.workerPath = workerPath; this.python = python;
-    this.state = { stage: 'idle', script: null, media: [], analysis: null, error: null, pacingSettings: { enabled: true, max_pause_seconds: .45, minimum_shot_seconds: 1.2, respect_script_pauses: true, comic_hold_seconds: 1 } };
+    this.state = { directions:JSON.parse(JSON.stringify(DEFAULT_DIRECTIONS)), stage: 'idle', script: null, media: [], analysis: null, error: null, pacingSettings: { enabled: true, max_pause_seconds: .45, minimum_shot_seconds: 1.2, respect_script_pauses: true, comic_hold_seconds: 1 } };
     this.documentId=require('node:crypto').randomUUID(); this.projectFile=null; this.lastSavedAt=null; this.lastAutosaveAt=null; this.saveError=null;
     this.child = null; this.pending = new Map(); this.counter = 0;
   }
@@ -93,7 +102,7 @@ class Session {
     const text = path.extname(file).toLowerCase() === '.pdf'
       ? (await this.request('extract_pdf_script', { path: file })).text
       : await fs.readFile(file, 'utf8');
-    this.state.script = { path: file, text }; this.state.analysis = null; return { name: path.basename(file) };
+    this.state.directions={...(this.state.directions || DEFAULT_DIRECTIONS),markers:{}}; this.state.script = { path: file, text }; this.state.analysis = null; return { name: path.basename(file) };
   }
   setMedia(records, identity) { this.state.media = records; this.state.transcripts = []; this.state.mediaFingerprints=null; this.state.uiDraft=null; this.state.analysis = null; this.state.projectId = identity.projectId; this.state.timelineId = identity.timelineId; return records.map(({ media_id, name, duration_frames, people = [] }) => ({ media_id, name, duration_frames, people })); }
   assertContext(identity) {
@@ -164,7 +173,7 @@ class Session {
       }
       progress('plan', 6, 89, 'Abbino il significato delle battute alle take confermate');
       let plan = selectedScene && takes.every(group => group.confirmed)
-        ? await this.request('build_plan', { beats, sources: planningSources, shots, semantic: true, fps: this.state.fps || 25 },300000) : null;
+        ? await this.request('build_plan', { beats, sources: planningSources, shots, directions:this.state.directions, semantic: true, fps: this.state.fps || 25 },300000) : null;
       progress('pacing',7,95,'Regolo pause e durata delle inquadrature');
       if (plan) plan=await this.request('pace_plan',{plan,sources:planningSources,audio,beats,fps:this.state.fps || 25,settings:this.state.pacingSettings});
       if (plan && visualReview) plan.visual_review_required = !visualReview.confirmed;
@@ -206,7 +215,7 @@ class Session {
     this.state.uiDraft=JSON.parse(JSON.stringify(value));if(value.visual?.dirty && this.state.analysis?.plan){this.state.analysis.plan.visual_review_required=true;if(this.state.analysis.visualReview)this.state.analysis.visualReview.confirmed=false;}return true;
   }
   async writeProject(file){
-    const keys=['script','media','transcripts','fps','projectId','timelineId','analysis','pacingSettings','uiDraft','mediaFingerprints'];
+    const keys=['script','media','transcripts','fps','projectId','timelineId','analysis','pacingSettings','directions','uiDraft','mediaFingerprints'];
     const state=Object.fromEntries(keys.filter(key=>this.state[key]!==undefined).map(key=>[key,this.state[key]]));
     state.mediaFingerprints=state.mediaFingerprints || await this.captureMediaFingerprints();
     const document={format:'premontato-project',schema_version:1,document_id:this.documentId,savedAt:new Date().toISOString(),state};
@@ -257,7 +266,7 @@ class Session {
     return true;
   }
   getReviewState() { return { projectStatus:this.projectStatus(), uiDraft:this.state.uiDraft, stage: this.state.stage, scriptName: this.state.script ? path.basename(this.state.script.path) : null,
-    media: this.state.media.map(({ media_id, name, duration_frames, people = [] }) => ({ media_id, name, duration_frames, people })), analysis: this.state.analysis, pacingSettings: this.state.pacingSettings, error: this.state.error }; }
+    media: this.state.media.map(({ media_id, name, duration_frames, people = [] }) => ({ media_id, name, duration_frames, people })), analysis: this.state.analysis, directions:this.state.directions || DEFAULT_DIRECTIONS, pacingSettings: this.state.pacingSettings, error: this.state.error }; }
   setTranscripts(sources, fps, identity) { this.assertContext(identity); this.state.transcripts = sources; this.state.fps = fps; this.state.analysis = null; return { count: sources.reduce((sum, source) => sum + source.segments.length, 0) }; }
   updateDecision(request) {
     const plan = this.state.analysis?.plan;
@@ -291,6 +300,23 @@ class Session {
     this.state.analysis.plan=await this.request('pace_plan',{plan:this.state.analysis.plan,sources:this.state.analysis?.planningSources || this.state.transcripts || [],audio:this.state.analysis.audio || {},beats:this.state.analysis.parsedBeats || [],fps:this.state.fps || 25,settings:this.state.pacingSettings});
     return this.getReviewState();
   }
+  async setDirections(value) {
+    const directions=validateDirections(value),analysis=this.state.analysis;
+    const beats=analysis?.parsedBeats || [];
+    if(Object.keys(directions.markers).some(id=>!beats.some(b=>b.beat_id===id && b.kind==='dialogue')))throw new Error('Battuta delle direzioni non presente nella scena');
+    let plan=analysis?.plan;
+    const previous=this.state.directions || DEFAULT_DIRECTIONS;
+    const changed=directions.profile!==previous.profile || JSON.stringify(Object.entries(directions.markers).sort())!==JSON.stringify(Object.entries(previous.markers || {}).sort());
+    if(changed && analysis?.planningSources?.length && analysis.takes?.every(group=>group.confirmed)) {
+      this.onProgress?.({phase:'plan',phaseIndex:6,percent:89,label:'Ricalcolo secondo le direzioni di montaggio'});
+      plan=await this.request('build_plan',{beats,sources:analysis.planningSources,shots:analysis.shots || [],directions,semantic:true,fps:this.state.fps || 25},300000);
+      plan=await this.request('pace_plan',{plan,sources:analysis.planningSources,audio:analysis.audio || {},beats,fps:this.state.fps || 25,settings:this.state.pacingSettings});
+      if(analysis.visualReview)plan.visual_review_required=!analysis.visualReview.confirmed;
+    }
+    this.state.directions=directions;if(analysis)analysis.plan=plan;
+    this.onProgress?.({phase:'complete',phaseIndex:8,percent:100,label:'Direzioni salvate; controlla le scelte narrative'});
+    return this.getReviewState();
+  }
   async setPacing(options) {
     const plan=this.state.analysis?.plan || {decisions:[],warnings:[]};
     const result=await this.request('pace_plan',{plan,sources:this.state.analysis?.planningSources || this.state.transcripts || [],audio:this.state.analysis?.audio || {},beats:this.state.analysis?.parsedBeats || [],fps:this.state.fps || 25,settings:{...this.state.pacingSettings,...options}});
@@ -318,7 +344,7 @@ class Session {
     let plan=analysis.plan;
     if (analysis.planningSources?.length && analysis.takes?.every(t=>t.confirmed)) {
       this.onProgress?.({phase:'plan',phaseIndex:6,percent:89,label:'Ricalcolo con campi e personaggi confermati'});
-      plan=await this.request('build_plan',{beats:analysis.parsedBeats,sources:analysis.planningSources,shots:updated,semantic:true,fps:this.state.fps || 25},300000);
+      plan=await this.request('build_plan',{beats:analysis.parsedBeats,sources:analysis.planningSources,shots:updated,directions:this.state.directions,semantic:true,fps:this.state.fps || 25},300000);
       plan=await this.request('pace_plan',{plan,sources:analysis.planningSources,audio:analysis.audio || {},beats:analysis.parsedBeats,fps:this.state.fps || 25,settings:this.state.pacingSettings});
     }
     if(plan)plan.visual_review_required=false;
@@ -342,7 +368,7 @@ class Session {
     const sources = takes.flatMap(group => group.segments.map(take => ({ ...this.state.transcripts.find(source => source.media_id === group.media_id), ...take,
       segments: this.state.transcripts.find(source => source.media_id === group.media_id).segments.filter(segment => segment.start_frame >= take.start_frame && segment.start_frame < take.end_frame) })));
     this.state.analysis.planningSources = sources;
-    this.state.analysis.plan = await this.request('build_plan', { beats: this.state.analysis.parsedBeats, sources, shots: this.state.analysis.shots, semantic: true, fps: this.state.fps || 25 },300000);
+    this.state.analysis.plan = await this.request('build_plan', { beats: this.state.analysis.parsedBeats, sources, shots: this.state.analysis.shots, directions:this.state.directions, semantic: true, fps: this.state.fps || 25 },300000);
     if (this.state.analysis.visualReview) this.state.analysis.plan.visual_review_required=!this.state.analysis.visualReview.confirmed;
     return this.applyPacing();
   }

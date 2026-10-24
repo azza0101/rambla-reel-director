@@ -107,9 +107,16 @@ def dispatch(request):
             semantic_hits = semantic_scene_hits(beats, sources, fps)
         from shot_analyzer import speaker_coverage
         previous_shot_size = None
+        directions = payload.get("directions") or {}
+        markers = directions.get("markers", {}) if directions.get("profile") == "VIDEO COLICHE" else {}
+        tension = False
         for beat in beats:
             if beat.get("kind") != "dialogue":
                 continue
+            marker = markers.get(beat["beat_id"])
+            if marker == "tension": tension = True
+            elif marker in {"resolution", "free"}: tension = False
+            role = "resolution" if marker == "resolution" else "tension" if tension else "free"
             candidates = []
             for source in sources:
                 segments = source.get("segments", [])
@@ -136,7 +143,9 @@ def dispatch(request):
             classified = [row for row in credible if row[5] and row[5].get("shot_size") in {"wide", "medium", "close"} and row[5].get("confidence", 0) >= 0.55]
             alternating = [row for row in classified if previous_shot_size and row[5]["shot_size"] != previous_shot_size]
             opening = [row for row in classified if row[5]["shot_size"] == "wide"] if not decisions else []
-            pool = opening or alternating or classified or credible
+            desired = "close" if role == "tension" else "wide" if role == "resolution" else None
+            narrative = [row for row in classified if row[5]["shot_size"] == desired] if desired else []
+            pool = narrative or opening or alternating or classified or credible
             latest_index = max(row[0] for row in pool)
             latest = [row for row in pool if row[0] == latest_index]
             _, score, source, segment, hit, shot = max(latest, key=lambda row: (row[4]["start_frame"], row[1]))
@@ -146,6 +155,7 @@ def dispatch(request):
                               "start_frame": max(source.get("start_frame", 0), hit["start_frame"] - round(0.15 * fps)),
                               "end_frame": min(source.get("end_frame", source["duration_frames"]), hit["end_frame"] + round(0.35 * fps)),
                               "matched_start_frame": hit["start_frame"], "matched_end_frame": hit["end_frame"],
+                              "narrative_role": role, "style_satisfied": bool(narrative) if desired else None,
                               "camera_id": source.get("camera_id", "camera_1"), "shot_size": shot.get("shot_size", "unknown") if shot else "unknown",
                               "speaker_coverage": speaker_coverage(shot_segments,source['media_id'],hit['start_frame'],hit['end_frame'],beat.get('character','')),
                               "visible_subjects": shot.get('visible_subjects',[]) if shot else [],
@@ -158,6 +168,12 @@ def dispatch(request):
                                    "end_frame": row[4]["end_frame"], "score": row[1], "coverage": row[4].get("coverage", 0.0),
                                    "speaker_coverage":speaker_coverage(shot_segments,row[2]['media_id'],row[4]['start_frame'],row[4]['end_frame'],beat.get('character','')),
                                    "matched_text": row[4]["text"], "semantic_score": row[4].get("semantic_score"), "match_method": row[4].get("match_method", "lexical"), "shot_size": row[5].get("shot_size", "unknown") if row[5] else "unknown"} for row in candidates if row[2]["take_id"] != source["take_id"] or row[4]["start_frame"] != hit["start_frame"]]})
+        for decision in decisions:
+            if decision.get("narrative_role") != "free":
+                decision["rationale_codes"].append("NARRATIVE_" + decision["narrative_role"].upper())
+                if not decision.get("style_satisfied"):
+                    decision["rationale_codes"].append("STYLE_COVERAGE_UNAVAILABLE")
+                    decision["warnings"].append("Direzione narrativa: copertura richiesta non disponibile tra le alternative affidabili; verifica il campo")
         for left, right in zip(decisions, decisions[1:]):
             if left["media_id"] == right["media_id"] and left["matched_end_frame"] <= right["matched_start_frame"] and left["end_frame"] > right["start_frame"]:
                 boundary = (left["matched_end_frame"] + right["matched_start_frame"]) // 2

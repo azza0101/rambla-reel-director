@@ -44,3 +44,12 @@ test('malformed persisted frame fields are rejected before replacing current wor
 test('background autosave detaches instead of overwriting an externally edited named file',async()=>{
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'premontato-live-external-'));try{const s=new Session(dir,'unused'),file=path.join(dir,'scene.json');await s.saveProject(file);await fs.writeFile(file,'external work');await s.saveAutosave();assert.equal(await fs.readFile(file,'utf8'),'external work');assert.equal(s.projectFile,null);assert.match(s.state.restoreWarning,/modificat/i);}finally{await fs.rm(dir,{recursive:true,force:true});}
 });
+
+ test('editorial directions and pending notes survive project saves and reject invalid roles',async()=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'premontato-directions-'));try{
+ const s=new Session(dir,'unused');await s.setDirections({profile:'VIDEO COLICHE',notes:'Tieni il primo piano prima dello sbotto',markers:{}});
+ await s.saveProject(path.join(dir,'scene.json'));const r=new Session(dir,'unused');await r.loadProject(path.join(dir,'scene.json'));assert.deepEqual(r.state.directions,s.state.directions);
+ await assert.rejects(s.setDirections({profile:'VIDEO COLICHE',notes:'',markers:{bad:'magic'}}),/direzion|battut/i);
+ s.setDraft({directions:{profile:'VIDEO COLICHE',notes:'nota non applicata',markers:{}}});await s.saveAutosave();const recovered=new Session(dir,'unused');await recovered.restoreAutosave();assert.equal(recovered.state.uiDraft.directions.notes,'nota non applicata');
+ }finally{await fs.rm(dir,{recursive:true,force:true});}
+ });

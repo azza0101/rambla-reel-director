@@ -98,7 +98,7 @@ def pace_plan(plan, sources, audio, beats, fps, options=None):
     removed=0;holds=0;short=0;protected_count=0;unavailable=set();cursor=0
     previous=None;group_duration=0
     for decision in decisions:
-        if settings['enabled'] and previous and decision['end_frame']-decision['start_frame']<minimum and decision['media_id']!=previous['media_id'] and not decision.get('manual'):
+        if settings['enabled'] and previous and decision['end_frame']-decision['start_frame']<minimum and decision['media_id']!=previous['media_id'] and not decision.get('manual') and decision.get('narrative_role','free')=='free':
             good=[a for a in decision.get('alternatives',[]) if a.get('speaker_coverage') != 'absent' and (decision.get('speaker_coverage') != 'visible' or a.get('speaker_coverage') == 'visible') and a['media_id']==previous['media_id'] and a.get('score',0)>=decision.get('score',0)-.025 and a['media_id'] in by_media]
             if good:
                 alt=max(good,key=lambda a:a.get('score',0));original=copy.deepcopy(decision)
@@ -116,7 +116,7 @@ def pace_plan(plan, sources, audio, beats, fps, options=None):
         measured=audio.get(decision['media_id'],{})
         active=settings['enabled'] and measured.get('status')=='ok'
         if settings['enabled'] and not active:unavailable.add(decision['media_id'])
-        protect=bool(decision['preserve_pause']) if 'preserve_pause' in decision else decision.get('beat_id') in protected
+        protect=bool(decision['preserve_pause']) if 'preserve_pause' in decision else decision.get('beat_id') in protected or decision.get('narrative_role')=='tension'
         if protect and settings['enabled']:protected_count+=1
         silences=measured.get('silences',[]) if active else []
         original_lo,original_hi=lo,hi

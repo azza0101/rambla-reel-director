@@ -12,7 +12,7 @@ const MAX_ARCHIVE_BYTES = 350 * 1024 * 1024;
 const MAX_DIAGNOSTIC_EVENTS = 200;
 const MAX_DIAGNOSTIC_BYTES = 64 * 1024;
 const ALLOWED_DIAGNOSTIC_EVENTS = new Set(['application_started', 'operation_failed']);
-const ALLOWED_OPERATIONS = new Set(['resolveSnapshot', 'selectScript', 'selectMedia', 'transcribeSelected', 'analyzeIntellisearch', 'analyze', 'cancelAnalysis', 'getReviewState', 'saveDraft', 'saveProject', 'openProject', 'updateDecision', 'setPacing', 'confirmVisualReview', 'confirmTakes', 'createReviewTimeline', 'update', 'prepareSupportReport', 'submitSupportReport']);
+const ALLOWED_OPERATIONS = new Set(['resolveSnapshot', 'selectScript', 'selectMedia', 'transcribeSelected', 'analyzeIntellisearch', 'analyze', 'cancelAnalysis', 'getReviewState', 'saveDraft', 'saveProject', 'openProject', 'updateDecision', 'setPacing', 'setDirections', 'confirmVisualReview', 'confirmTakes', 'createReviewTimeline', 'update', 'prepareSupportReport', 'submitSupportReport']);
 
 function parseVersion(value) {
   if (typeof value !== 'string' || !/^\d+\.\d+\.\d+$/.test(value)) throw new Error('Versione Premontato non valida');
@@ -281,19 +281,22 @@ async function restartPlugin(app, cleanup, {execPath=process.execPath}={}) {
 async function runUpdateInstaller({script,pluginRoot,archivePath,sha256,version,onProgress,spawnImpl=spawn}) {
  const net=require('node:net'),pipeName='premontato-update-'+crypto.randomUUID().replaceAll('-','');
  const address=process.platform==='win32'?'\\\\.\\pipe\\'+pipeName:path.join(os.tmpdir(),pipeName+'.sock');
- const sockets=new Set();
+ const sockets=new Set();let installerDetail='';
  const server=net.createServer(socket=>{
   sockets.add(socket);socket.setEncoding('utf8');let buffer='';
-  socket.on('data',chunk=>{buffer+=chunk;if(buffer.length>32768){socket.destroy();return;}let index;while((index=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,index);buffer=buffer.slice(index+1);try{const event=JSON.parse(line);if(['validate','extract','install','rollback'].includes(event.phase) && Number.isInteger(event.current) && Number.isInteger(event.total) && event.total>0 && event.total<=1000000 && event.current>=0 && event.current<=event.total)onProgress?.({phase:event.phase,current:event.current,total:event.total,percent:Math.round(event.current/event.total*100)});}catch{}}});
+  socket.on('data',chunk=>{buffer+=chunk;if(buffer.length>32768){socket.destroy();return;}let index;while((index=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,index);buffer=buffer.slice(index+1);try{const event=JSON.parse(line);if(event.phase==='error' && typeof event.message==='string'){installerDetail=safeDiagnosticText(event.message,700);onProgress?.({phase:'error',percent:null,error:installerDetail});}if(['validate','extract','install','rollback'].includes(event.phase) && Number.isInteger(event.current) && Number.isInteger(event.total) && event.total>0 && event.total<=1000000 && event.current>=0 && event.current<=event.total)onProgress?.({phase:event.phase,current:event.current,total:event.total,percent:Math.round(event.current/event.total*100)});}catch{}}});
   socket.on('error',()=>{});socket.on('close',()=>sockets.delete(socket));
  });
  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(address,resolve);});
  try{
   await new Promise((resolve,reject)=>{
-   const child=spawnImpl('powershell.exe',['-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',script,'-PluginRoot',pluginRoot,'-ArchivePath',archivePath,'-ExpectedSha256',sha256,'-Version',version,'-ProgressPipe',pipeName],{windowsHide:true,stdio:'ignore'});
+   const child=spawnImpl('powershell.exe',['-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',script,'-PluginRoot',pluginRoot,'-ArchivePath',archivePath,'-ExpectedSha256',sha256,'-Version',version,'-ProgressPipe',pipeName],{windowsHide:true,stdio:['ignore','pipe','pipe']});
+   child.stderr?.setEncoding('utf8').on('data',chunk=>{installerDetail=safeDiagnosticText((installerDetail+' '+chunk).slice(-4000),700);});
    child.once('error',()=>reject(new Error('Impossibile avviare l’installazione dell’aggiornamento')));
-   child.once('exit',code=>code===0?resolve():reject(new Error(code===1223?'Aggiornamento annullato nella richiesta UAC.':'Installazione aggiornamento non riuscita; l’installazione precedente è stata conservata.')));
+   child.once('exit',code=>code===0?resolve():reject(new Error(code===1223?'Aggiornamento annullato nella richiesta UAC.':'Installazione aggiornamento non riuscita; verifica il recupero dell’installazione precedente.'+(installerDetail?' Dettaglio: '+installerDetail:' Nessun dettaglio ricevuto dal programma di installazione.'))));
   });
+  let installed;try{installed=JSON.parse(await fsp.readFile(path.join(pluginRoot,'package.json'),'utf8')).version;}catch{throw new Error('Impossibile verificare la versione installata: riapri il pannello e controlla la versione.');}
+  if(installed!==version)throw new Error('Aggiornamento non applicato: versione installata '+installed+', attesa '+version+'.');
  }finally{for(const socket of sockets)socket.destroy();await new Promise(resolve=>server.close(resolve));}
 }
 

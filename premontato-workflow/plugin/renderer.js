@@ -66,7 +66,18 @@ $('cancel').addEventListener('click', async () => { await window.premontato.canc
 $('make-timeline').addEventListener('click', async () => { try { const result = await window.premontato.createReviewTimeline({ confirmed: $('reviewed').checked }); const omitted = result.omitted ? `; ${result.omitted} dialoghi non abbinati omessi` : ''; message(`Creata ${result.timelineName} con ${result.included} battute abbinate${omitted}. Verifica i tagli e l'audio in Resolve.`); } catch (e) { showError(e); } });
  $('reviewed').addEventListener('change', () => {updateTimelineButton();if(hasPendingFormEdits())message('Applica le correzioni in bozza prima di creare la timeline.');});
 $('confirm-takes').addEventListener('click', async () => { try { const fields = [...$('takes').querySelectorAll('[data-take]')]; const segments = fields.map(row => ({ ...JSON.parse(row.dataset.take), start_frame: Number(row.querySelector('[data-start]').value), end_frame: Number(row.querySelector('[data-end]').value) })); const state = await window.premontato.confirmTakes(segments); render(state); message('Confini confermati e montaggio ricalcolato.'); } catch (e) { showError(e); } });
-function render(state) { window.__lastReviewState = state; renderPacing(state); renderVisualReview(state); const takes = state.analysis?.takes || []; const needsConfirm = takes.some(group => !group.confirmed); $('confirm-takes').hidden = !needsConfirm; $('takes').innerHTML = takes.map(group => `<h3>${escapeHtml(group.media_name)}</h3>${group.segments.map(segment => `<div class="take-row" data-take='${escapeHtml(JSON.stringify(segment))}'><span>Take ${escapeHtml(segment.take_index)}${segment.boundary_source === 'suggested' ? ' · suggerita' : ''}</span><label>In <input data-start type="number" min="0" max="${escapeHtml(group.duration_frames)}" value="${escapeHtml(segment.start_frame)}"></label><label>Out <input data-end type="number" min="1" max="${escapeHtml(group.duration_frames)}" value="${escapeHtml(segment.end_frame)}"></label><small>${segment.confirmed ? 'confermata' : 'da verificare'}</small></div>`).join('')}`).join(''); const selectedScene = state.analysis?.selectedScene; const beats = selectedScene?.beats || []; const decisions = new Map((state.analysis?.plan?.decisions || []).map(item => [item.beat_id, item])); $('beats').innerHTML = selectedScene ? `<div class="notice">Scena individuata dal parlato: ${escapeHtml(selectedScene.heading)} · confidenza ${Math.round((state.analysis.sceneSelection?.confidence || 0) * 100)}%</div>` : ''; $('beats').innerHTML += beats.map((beat, i) => { const edit = decisions.get(beat.beat_id); const framing = edit ? ` · ${escapeHtml(edit.shot_size)} (${Math.round((edit.shot_confidence || 0) * 100)}%)` : ''; const status = edit ? `Visibilità parlante: ${edit.speaker_coverage === 'visible' ? 'confermata nelle still' : edit.speaker_coverage === 'absent' ? 'fuori campo: verifica' : 'da verificare'} · Take ${escapeHtml(edit.take_id)}${framing} · ${edit.match_method === "semantic_context" ? `significato · indice ${(edit.semantic_score ?? 0).toFixed(2)}` : `copertura parole ${Math.round((edit.coverage ?? 1) * 100)}%`} · ${edit.alternatives.length} alternative${edit.warnings?.length ? ` · ${escapeHtml(edit.warnings.join("; "))}` : ""}` : beat.kind === 'dialogue' ? 'Nessuna battuta trovata nella trascrizione' : 'Indicazione di scena, non richiede corrispondenza audio'; return `<div class="beat"><span class="num">${String(i + 1).padStart(2, '0')}</span><span class="character">${escapeHtml(beat.character || beat.kind.toUpperCase())}</span><span>${escapeHtml(beat.text)}<small>${status}</small></span></div>`; }).join(''); const plan = state.analysis?.plan; const matched = plan?.decisions.length || 0, omitted = plan?.unmatched_beats.length || 0; $('make-timeline').disabled = !plan || !matched || visualDirty || plan.visual_review_required || !$('reviewed').checked; $('reviewed-copy').textContent = omitted ? `Ho controllato: crea una timeline di prova con ${matched} battute abbinate e ometti ${omitted} dialoghi senza corrispondenza.` : 'Ho controllato gli abbinamenti e voglio creare una timeline di prova.'; if (plan) { const summary = document.createElement('div'); summary.className = 'notice'; summary.textContent = `${matched} battute abbinate · ${omitted} dialoghi senza corrispondenza · ${state.analysis.shots.length} segmenti video analizzati`; $('beats').append(summary); } renderEditors(state, beats, decisions); updateTimelineButton(state); for (const warning of state.analysis?.warnings || []) { const notice = document.createElement('div'); notice.className = 'notice'; notice.textContent = warning; $('beats').append(notice); } }
+function render(state){
+ const previous=window.__lastReviewState;
+ const pending=previous && directionsChanged(previous) ? captureDirections() : null;
+ renderBase(state);
+ if(pending){
+   const ids=new Set((state.analysis?.parsedBeats || []).map(b=>b.beat_id));pending.markers=Object.fromEntries(Object.entries(pending.markers).filter(([id])=>ids.has(id)));
+   renderDirections({...state,directions:pending});
+   clearTimeout(draftTimer);draftTimer=setTimeout(async()=>{try{await window.premontato.saveDraft(capturePremontatoDraft());}catch(error){showError(error);}},0);
+ }
+ updateTimelineButton(state);
+}
+function renderBase(state) { window.__lastReviewState = state; renderPacing(state); renderDirections(state); renderVisualReview(state); const takes = state.analysis?.takes || []; const needsConfirm = takes.some(group => !group.confirmed); $('confirm-takes').hidden = !needsConfirm; $('takes').innerHTML = takes.map(group => `<h3>${escapeHtml(group.media_name)}</h3>${group.segments.map(segment => `<div class="take-row" data-take='${escapeHtml(JSON.stringify(segment))}'><span>Take ${escapeHtml(segment.take_index)}${segment.boundary_source === 'suggested' ? ' · suggerita' : ''}</span><label>In <input data-start type="number" min="0" max="${escapeHtml(group.duration_frames)}" value="${escapeHtml(segment.start_frame)}"></label><label>Out <input data-end type="number" min="1" max="${escapeHtml(group.duration_frames)}" value="${escapeHtml(segment.end_frame)}"></label><small>${segment.confirmed ? 'confermata' : 'da verificare'}</small></div>`).join('')}`).join(''); const selectedScene = state.analysis?.selectedScene; const beats = selectedScene?.beats || []; const decisions = new Map((state.analysis?.plan?.decisions || []).map(item => [item.beat_id, item])); $('beats').innerHTML = selectedScene ? `<div class="notice">Scena individuata dal parlato: ${escapeHtml(selectedScene.heading)} · confidenza ${Math.round((state.analysis.sceneSelection?.confidence || 0) * 100)}%</div>` : ''; $('beats').innerHTML += beats.map((beat, i) => { const edit = decisions.get(beat.beat_id); const framing = edit ? ` · ${escapeHtml(edit.shot_size)} (${Math.round((edit.shot_confidence || 0) * 100)}%)` : ''; const status = edit ? `Visibilità parlante: ${edit.speaker_coverage === 'visible' ? 'confermata nelle still' : edit.speaker_coverage === 'absent' ? 'fuori campo: verifica' : 'da verificare'} · Take ${escapeHtml(edit.take_id)}${framing} · ${edit.match_method === "semantic_context" ? `significato · indice ${(edit.semantic_score ?? 0).toFixed(2)}` : `copertura parole ${Math.round((edit.coverage ?? 1) * 100)}%`} · ${edit.alternatives.length} alternative${edit.warnings?.length ? ` · ${escapeHtml(edit.warnings.join("; "))}` : ""}` : beat.kind === 'dialogue' ? 'Nessuna battuta trovata nella trascrizione' : 'Indicazione di scena, non richiede corrispondenza audio'; return `<div class="beat"><span class="num">${String(i + 1).padStart(2, '0')}</span><span class="character">${escapeHtml(beat.character || beat.kind.toUpperCase())}</span><span>${escapeHtml(beat.text)}<small>${status}</small></span></div>`; }).join(''); const plan = state.analysis?.plan; const matched = plan?.decisions.length || 0, omitted = plan?.unmatched_beats.length || 0; $('make-timeline').disabled = !plan || !matched || visualDirty || plan.visual_review_required || !$('reviewed').checked; $('reviewed-copy').textContent = omitted ? `Ho controllato: crea una timeline di prova con ${matched} battute abbinate e ometti ${omitted} dialoghi senza corrispondenza.` : 'Ho controllato gli abbinamenti e voglio creare una timeline di prova.'; if (plan) { const summary = document.createElement('div'); summary.className = 'notice'; summary.textContent = `${matched} battute abbinate · ${omitted} dialoghi senza corrispondenza · ${state.analysis.shots.length} segmenti video analizzati`; $('beats').append(summary); } renderEditors(state, beats, decisions); updateTimelineButton(state); for (const warning of state.analysis?.warnings || []) { const notice = document.createElement('div'); notice.className = 'notice'; notice.textContent = warning; $('beats').append(notice); } }
 function escapeHtml(value) { return String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]); }
 
 
@@ -94,6 +105,7 @@ function renderEditors(state, beats, decisions) {
     pauseLabel.append(pauseCheck,document.createTextNode(' Conserva le pause di questa battuta'));
     pauseCheck.addEventListener('change',async()=>{try{const next=await window.premontato.updateDecision({beat_id:edit.beat_id,preserve_pause:pauseCheck.checked});$('reviewed').checked=false;render(next);}catch(error){showError(error);}});
     panel.append(pauseLabel);
+    if(edit.narrative_role && edit.narrative_role!=='free'){const narrative=document.createElement('small');narrative.textContent='Regia: '+(edit.narrative_role==='tension'?'tensione · stretta':'risoluzione · larga')+(edit.style_satisfied?' · copertura trovata':' · copertura richiesta non disponibile');panel.append(narrative);}
     if(edit.pacing){const info=document.createElement('small');info.textContent=(edit.pacing.duration_frames/(state.analysis?.plan?.fps || 25)).toFixed(2)+' s · '+(edit.source_ranges?.length || 1)+' intervalli'+(edit.pacing.short_exception?' · Inquadratura breve: eccezione da verificare':'')+(edit.pacing.protected_pause?' · Pausa protetta':'');panel.append(info);}
     row.lastElementChild.append(panel);
   });
@@ -171,7 +183,8 @@ $('visual-save').addEventListener('click',async()=>{
  }catch(error){showError(error);$('visual-status').textContent=error.message || String(error);button.disabled=false;}
 });
 
-function hasPendingFormEdits(state=window.__lastReviewState || {}){
+function hasPendingFormEdits(state=window.__lastReviewState || {},includeDirections=true){
+ if(includeDirections && directionsChanged(state))return true;
  const decisions=new Map((state.analysis?.plan?.decisions || []).map(item=>[item.beat_id,item]));
  for(const row of $('beats').querySelectorAll('[data-beat-id]')){const edit=decisions.get(row.dataset.beatId);if(edit && (Number(row.querySelector('[data-in]').value)!==edit.start_frame || Number(row.querySelector('[data-out]').value)!==edit.end_frame || row.querySelector('[data-scale]').value!==edit.shot_size))return true;}
  for(const row of $('takes').querySelectorAll('[data-take]')){const item=JSON.parse(row.dataset.take);if(Number(row.querySelector('[data-start]').value)!==item.start_frame || Number(row.querySelector('[data-end]').value)!==item.end_frame)return true;}
@@ -181,7 +194,7 @@ function hasPendingFormEdits(state=window.__lastReviewState || {}){
 function updateTimelineButton(state=window.__lastReviewState || {}){const plan=state.analysis?.plan;$('make-timeline').disabled=!plan?.decisions?.length || Boolean(plan.visual_review_required) || visualDirty || hasPendingFormEdits(state) || !$('reviewed').checked;}
 let draftTimer=null,restoringDraft=false;
 function capturePremontatoDraft(){
- return {visual:{dirty:visualDirty,person_names:{...visualNames},intervals:[...$('visual-intervals').querySelectorAll('[data-visual-segment]')].map(card=>({segment_id:card.dataset.visualSegment,shot_size:card.querySelector('[data-visual-scale]').value,visible_subjects:[...card.querySelectorAll('[data-subject]:checked')].map(input=>input.value)}))},
+ return {directions:captureDirections(),visual:{dirty:visualDirty,person_names:{...visualNames},intervals:[...$('visual-intervals').querySelectorAll('[data-visual-segment]')].map(card=>({segment_id:card.dataset.visualSegment,shot_size:card.querySelector('[data-visual-scale]').value,visible_subjects:[...card.querySelectorAll('[data-subject]:checked')].map(input=>input.value)}))},
  takes:[...$('takes').querySelectorAll('[data-take]')].map(row=>({take_id:JSON.parse(row.dataset.take).take_id,start_frame:row.querySelector('[data-start]').value,end_frame:row.querySelector('[data-end]').value})),
  beats:[...$('beats').querySelectorAll('[data-beat-id]')].map(row=>({beat_id:row.dataset.beatId,start:row.querySelector('[data-in]').value,end:row.querySelector('[data-out]').value,scale:row.querySelector('[data-scale]').value})),
  pacing:{enabled:$('pacing-enabled').checked,gap:$('pacing-gap').value,minimum:$('pacing-minimum').value,script:$('pacing-script').checked}};
@@ -197,25 +210,56 @@ function hydrateProject(state){
  scriptReady=Boolean(state.scriptName);mediaReady=Boolean(state.media?.length);$('script-status').textContent=state.scriptName?'Copione: '+state.scriptName:'Nessun copione scelto';
  $('media-list').innerHTML=(state.media || []).map(item=>'<div>'+escapeHtml(item.name)+' <span class="pill">'+item.duration_frames+' frame</span></div>').join('') || 'Nessuna clip selezionata';
  visualNames={};visualOverrides.clear();visualDirty=false;$('reviewed').checked=false;
- render(state);$('review').hidden=!state.analysis;updateButton();showProjectStatus(state.projectStatus);
+ window.__lastReviewState=null;render(state);$('review').hidden=!state.analysis;updateButton();showProjectStatus(state.projectStatus);
  const draft=state.uiDraft;if(!draft)return;
  restoringDraft=true;
  try{
   if(draft.visual){visualNames={...draft.visual.person_names};visualDirty=Boolean(draft.visual.dirty);for(const item of draft.visual.intervals || [])visualOverrides.set(item.segment_id,item);if(state.analysis?.visualReview)renderVisualReview(state);if(visualDirty)$('make-timeline').disabled=true;}
   for(const row of $('takes').querySelectorAll('[data-take]')){const item=draft.takes?.find(x=>x.take_id===JSON.parse(row.dataset.take).take_id);if(item){row.querySelector('[data-start]').value=item.start_frame;row.querySelector('[data-end]').value=item.end_frame;}}
   for(const row of $('beats').querySelectorAll('[data-beat-id]')){const item=draft.beats?.find(x=>x.beat_id===row.dataset.beatId);if(item){row.querySelector('[data-in]').value=item.start;row.querySelector('[data-out]').value=item.end;row.querySelector('[data-scale]').value=item.scale;}}
+  if(draft.directions)renderDirections({...state,directions:draft.directions});
   if(draft.pacing){$('pacing-enabled').checked=draft.pacing.enabled;$('pacing-gap').value=draft.pacing.gap;$('pacing-minimum').value=draft.pacing.minimum;$('pacing-script').checked=draft.pacing.script;}
  }finally{restoringDraft=false;updateTimelineButton(state);}
 }
 document.addEventListener('input',event=>{
- if(restoringDraft || !window.premontato.saveDraft || !event.target.matches('input,select') || event.target.closest('#support-dialog') || ['reviewed','visual-confirm'].includes(event.target.id))return;
+ if(restoringDraft || !window.premontato.saveDraft || !event.target.matches('input,select,textarea') || event.target.closest('#support-dialog') || ['reviewed','visual-confirm'].includes(event.target.id))return;
  if(hasPendingFormEdits())$('reviewed').checked=false;updateTimelineButton();
  clearTimeout(draftTimer);draftTimer=setTimeout(async()=>{try{await window.premontato.saveDraft(capturePremontatoDraft());}catch(error){if(!/Operazione già in corso/.test(error.message))$('project-status').textContent='Salvataggio bozza: '+error.message;}},900);
 });
 for(const [id,saveAs] of [['project-save',false],['project-save-as',true]])$(id).addEventListener('click',async()=>{const button=$(id);button.disabled=true;clearTimeout(draftTimer);try{const state=await window.premontato.saveProject({saveAs,draft:capturePremontatoDraft()});if(state){hydrateProject(state);message('Progetto Premontato salvato.');}}catch(error){showError(error);}finally{button.disabled=false;}});
 $('project-open').addEventListener('click',async()=>{const button=$('project-open');button.disabled=true;clearTimeout(draftTimer);try{const state=await window.premontato.openProject({draft:capturePremontatoDraft()});if(state){hydrateProject(state);message('Progetto Premontato aperto. Le riprese restano nei percorsi originali.');}}catch(error){showError(error);}finally{button.disabled=false;}});
+
+function captureDirections(){
+ const markers={};for(const input of $('directions-beats').querySelectorAll('[data-direction-beat]'))if(input.value)markers[input.dataset.directionBeat]=input.value;
+ return {profile:$('directions-profile').value,notes:$('directions-notes').value,markers};
+}
+function directionsChanged(state){
+ const current=captureDirections(),saved=state.directions || {profile:'VIDEO COLICHE',notes:'',markers:{}};
+ return current.profile!==saved.profile || current.notes!==saved.notes || JSON.stringify(Object.entries(current.markers).sort())!==JSON.stringify(Object.entries(saved.markers || {}).sort());
+}
+function renderDirections(state){
+ const value=state.directions || {profile:'VIDEO COLICHE',notes:'',markers:{}};
+ $('directions-profile').value=value.profile;$('directions-notes').value=value.notes;$('directions-beats').replaceChildren();
+ for(const beat of state.analysis?.parsedBeats || [])if(beat.kind==='dialogue'){
+   const row=document.createElement('label');row.className='direction-row';const text=document.createElement('span');text.textContent=(beat.character || '')+': '+beat.text;
+   const select=document.createElement('select');select.dataset.directionBeat=beat.beat_id;select.setAttribute('aria-label','Direzione di '+beat.text);
+   for(const [key,label] of Object.entries({'':'Prosegui','tension':'Inizio tensione','resolution':'Risoluzione → larga','free':'Libero'})){const option=document.createElement('option');option.value=key;option.textContent=label;select.append(option);}select.value=value.markers?.[beat.beat_id] || '';row.append(text,select);$('directions-beats').append(row);
+ }
+ $('directions-status').textContent=Object.keys(value.markers || {}).length+' indicazioni sulle battute · note conservate localmente';
+}
+$('directions-file').addEventListener('change',async()=>{try{
+ const file=$('directions-file').files[0];if(!file)return;
+ if(file.size>80000 || !/\.(txt|md)$/i.test(file.name))throw new Error('Carica un file .txt o .md fino a 80 KB');
+ const text=await file.text();if(text.length>20000)throw new Error('Note troppo lunghe: massimo 20.000 caratteri');
+ $('directions-notes').value=text;$('directions-notes').dispatchEvent(new Event('input',{bubbles:true}));$('directions-status').textContent='Note caricate in bozza: salva le direzioni per conservarle nel progetto.';
+ }catch(error){showError(error);}finally{$('directions-file').value='';}});
+$('directions-apply').addEventListener('click',async()=>{const button=$('directions-apply');button.disabled=true;try{
+ if(visualDirty || hasPendingFormEdits(window.__lastReviewState || {},false))throw new Error('Applica prima le correzioni in bozza a take, clip, ritmo e revisione visiva. Le direzioni restano in bozza.');
+ const state=await window.premontato.setDirections(captureDirections());$('reviewed').checked=false;render(state);message('Direzioni salvate. Controlla copertura, tensione e risoluzione nelle scelte ricalcolate.');
+ }catch(error){showError(error);}finally{button.disabled=false;}});
+
 (async()=>{
- try{const state=await window.premontato.getReviewState();if(state?.scriptName || state?.media?.length)hydrateProject(state);else showProjectStatus(state?.projectStatus);}
+ try{const state=await window.premontato.getReviewState();if(state)hydrateProject(state);}
  catch(error){showError(error);}
  try{const snapshot=await window.premontato.resolveSnapshot();$('host').textContent='Resolve '+snapshot.project+' · '+snapshot.fps+' fps';}catch(error){$('host').textContent='Resolve non collegato';message(error.message || String(error));}
 })();

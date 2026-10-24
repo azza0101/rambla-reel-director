@@ -12,3 +12,5 @@
 .project-panel .actions{flex-wrap:wrap;margin:8px 0}.project-panel .status{padding:3px 0}#update-progress-detail{display:block;color:var(--muted);margin-top:8px}
 
 .media-list small,.beat>span>small{display:block;color:var(--muted)}
+
+#directions-notes{display:block;box-sizing:border-box;width:100%;margin:10px 0;padding:12px;background:#111d25;color:inherit;border:1px solid #526974;border-radius:6px;font:inherit;resize:vertical} .direction-row{display:flex;gap:12px;align-items:center;padding:8px 0;border-bottom:1px solid #31454f}.direction-row span{flex:1} .direction-row select{max-width:180px}

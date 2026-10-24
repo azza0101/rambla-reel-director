@@ -24,8 +24,8 @@ function handle(name, fn) {
     if (name !== 'cancelAnalysis') busy = true;
     try {
       let result=await fn(...args);
-      if(['analyze','updateDecision','confirmVisualReview','setPacing','confirmTakes','selectMedia','selectScript','transcribeSelected'].includes(name))session.state.uiDraft=null;
-      if(['selectScript','selectMedia','transcribeSelected','analyze','updateDecision','confirmVisualReview','setPacing','confirmTakes','createReviewTimeline','saveDraft'].includes(name)){
+      if(['analyze','updateDecision','confirmVisualReview','setPacing','setDirections','confirmTakes','selectMedia','selectScript','transcribeSelected'].includes(name)){const pending=session.state.uiDraft?.directions;session.state.uiDraft=['updateDecision','confirmVisualReview','setPacing','confirmTakes'].includes(name) && pending ? {directions:pending} : null;}
+      if(['selectScript','selectMedia','transcribeSelected','analyze','updateDecision','confirmVisualReview','setPacing','setDirections','confirmTakes','createReviewTimeline','saveDraft'].includes(name)){
         try{await session.saveAutosave();}catch(error){session.saveError='Salvataggio automatico non riuscito: '+error.message;}
         publishProjectStatus();if(result?.stage)result=session.getReviewState();
       }
@@ -97,6 +97,7 @@ async function start() {
   });
   handle('updateDecision', async request => { session.updateDecision(request); return session.applyPacing(); });
   handle('confirmVisualReview', async request => session.confirmVisualReview(request));
+  handle('setDirections', async options => session.setDirections(options));
   handle('setPacing', async options => session.setPacing(options));
   handle('confirmTakes', async segments => session.confirmTakes(segments));
   handle('createReviewTimeline', async request => {
@@ -104,7 +105,7 @@ async function start() {
     await saveResolve(session.state.projectId);
     const plan = session.state.analysis?.plan;
     const review = prepareReviewTimeline(plan, request?.confirmed);
-    const created = await adapter.createTimeline(await getSdk(), `PREMONTATO - ${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}`, review.decisions, session.state);
+    const created = await adapter.createTimeline(await getSdk(), `PREMONTATO v${require('./package.json').version} - ${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}`, review.decisions, session.state);
     try{await saveResolve(session.state.projectId);}catch{}
     return { ...created, included: review.decisions.length, omitted: review.omitted };
   });

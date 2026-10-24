@@ -133,3 +133,11 @@ test('the real worker parses Italian text as Unicode internally rather than loca
  const expected='scene_'+crypto.createHash('sha1').update(heading.toLowerCase()+'|0','utf8').digest('hex').slice(0,12);
  try{const result=await session.request('parse_script',{text:heading+'\n\nLUCA\nPerché è già così?'});assert.equal(result.scenes[0].scene_id,expected);assert.equal(result.scenes[0].beats[0].text,'Perché è già così?');}finally{await session.shutdownWorker();}
 });
+
+test('saving notes alone preserves manual edits without rebuilding the plan',async()=>{
+ const session=new Session('unused','unused');session.state.directions={profile:'VIDEO COLICHE',notes:'old',markers:{a:'tension'}};
+ const plan={decisions:[{beat_id:'a',manual:true,start_frame:7,end_frame:90,preserve_pause:true}],base_decisions:[]};
+ session.state.analysis={parsedBeats:[{beat_id:'a',kind:'dialogue'}],planningSources:[{}],takes:[{confirmed:true}],plan};
+ session.request=async()=>{throw Error('Must not rebuild notes-only changes');};
+ await session.setDirections({...session.state.directions,notes:'new'});assert.equal(session.state.analysis.plan,plan);assert.equal(plan.decisions[0].start_frame,7);
+});

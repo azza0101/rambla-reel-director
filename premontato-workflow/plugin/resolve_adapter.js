@@ -122,49 +122,111 @@ async function createTimeline(sdk, name, edits, expected = {}) {
     if (!Array.isArray(ranges) || !ranges.length || ranges.some((range,index)=>!Number.isInteger(range.start_frame)||!Number.isInteger(range.end_frame)||range.end_frame<=range.start_frame||range.start_frame<edit.start_frame||range.end_frame>edit.end_frame||(index>0 && range.start_frame<ranges[index-1].end_frame))) throw new Error('Intervalli ritmo non validi');
     return ranges.map(range=>({...edit,...range}));
   });
-  // Resolve's CreateTimelineFromClips collapses repeated uses of the same MediaPoolItem
-  // into a single timeline item. AppendToTimeline preserves every source range.
-  const clips = expanded.map(edit => ({ mediaPoolItem: byId.get(edit.media_id), startFrame: edit.start_frame,
-    endFrame: edit.end_frame }));
-  const newTimeline = await pool.CreateEmptyTimeline(name);
-  if (!newTimeline) throw new Error('Resolve non ha creato la nuova timeline');
-  let created = false, failure;
-  try {
-    if (!await project.SetCurrentTimeline(newTimeline)) throw new Error('Resolve non ha attivato la timeline di prova');
-    const appended = await pool.AppendToTimeline(clips) || [];
-    const videoItems = await newTimeline.GetItemListInTrack('video', 1) || [];
-    if (appended.length !== clips.length || videoItems.length !== clips.length) {
-      throw new Error(`Resolve ha inserito ${videoItems.length} di ${clips.length} tagli; timeline di prova annullata`);
-    }
-    for (let i = 0; i < videoItems.length; i++) {
-      const item = videoItems[i];
-      const media = await item.GetMediaPoolItem();
-      const mediaId = media && String(await media.GetMediaId());
-      const sourceStartTime = Number(await item.GetSourceStartTime());
-      const sourceEndTime = Number(await item.GetSourceEndTime());
-      const sourceFps = Number(expected.media?.find(media => media.media_id === expanded[i].media_id)?.fps) || Number(await sourceTimeline.GetSetting?.('timelineFrameRate')) || 25;
-      const sourceRecord = expected.media?.find(media => media.media_id === expanded[i].media_id);
-      const sourceTc = sourceRecord?.start_tc || (typeof media.GetClipProperty === 'function' ? await media.GetClipProperty('Start TC') : null);
-      const sourceBase = sourceTc ? timecodeToFrames(sourceTc, sourceFps) / sourceFps : 0;
-      const expectedStartTime = sourceBase + clips[i].startFrame / sourceFps;
-      const expectedEndTime = sourceBase + clips[i].endFrame / sourceFps;
-      if (mediaId !== String(expanded[i].media_id) || !Number.isFinite(sourceStartTime) || !Number.isFinite(sourceEndTime) ||
-          Math.abs(sourceStartTime - expectedStartTime) > 0.5 / sourceFps || Math.abs(sourceEndTime - expectedEndTime) > 0.5 / sourceFps) {
-        throw new Error(`Resolve ha alterato il taglio ${i + 1}; timeline di prova annullata`);
-      }
-    }
-    if (String(await project.GetUniqueId()) !== beforeProject || String(await sourceTimeline.GetUniqueId()) !== beforeTimeline) throw new Error('Progetto o timeline di partenza cambiati durante la creazione');
-    created = true;
-  } catch (error) { failure = error; }
-  const restored = await project.SetCurrentTimeline(sourceTimeline);
-  if (!created) await pool.DeleteTimelines([newTimeline]);
-  if (failure) throw failure;
-  const activeTimeline = await project.GetCurrentTimeline();
-  if (!restored || !activeTimeline || String(await activeTimeline.GetUniqueId()) !== beforeTimeline) {
-    throw new Error('Timeline creata, ma Resolve non ha ripristinato quella di partenza');
+  // Only the new timeline is changed. Source audio mapping and Media Pool colors stay intact.
+  const layout = size => size === 'medium' ? {track:2,color:'Green'} : ['close','detail'].includes(size) ? {track:3,color:'Orange'} : {track:1,color:size==='wide'?'Blue':'Tan'};
+  const version=require('./package.json').version;
+  const originalFolder=await pool.GetCurrentFolder();
+  let targetFolder=await pool.GetRootFolder();
+  const folderPath=['Premontato','v'+version,expected.purpose==='test'?'Test':'Revisioni'];
+  for(const part of folderPath){
+    let found=null;for(const folder of await targetFolder.GetSubFolderList() || [])if(await folder.GetName()===part){found=folder;break;}
+    targetFolder=found || await pool.AddSubFolder(targetFolder,part);
+    if(!targetFolder)throw new Error('Resolve non ha creato la cartella '+part);
   }
-  // Do not save the project or leave the user's active timeline switched.
-  return { timelineId: String(await newTimeline.GetUniqueId()), timelineName: String(await newTimeline.GetName()), sourceTimelineId: beforeTimeline, included: edits.length, segments: clips.length };
+  let newTimeline;
+  try {
+    if(!await pool.SetCurrentFolder(targetFolder))throw new Error('Resolve non ha selezionato la cartella delle timeline');
+    const title=name.includes('v'+version)?name:'PREMONTATO v'+version+' - '+name;
+    newTimeline=await pool.CreateEmptyTimeline(title);
+  } finally {
+    if(!await pool.SetCurrentFolder(originalFolder)){
+      if(newTimeline)await pool.DeleteTimelines([newTimeline]);
+      throw new Error('Resolve non ha ripristinato la cartella Media Pool iniziale');
+    }
+  }
+  if(!newTimeline)throw new Error('Resolve non ha creato la nuova timeline');
+  let created = false, failure, audioSegments=0;
+  try {
+    const timelineMedia=await newTimeline.GetMediaPoolItem();
+    const timelineMediaId=timelineMedia && String(await timelineMedia.GetMediaId());
+    const inFolder=async()=>{for(const item of await targetFolder.GetClipList() || [])if(String(await item.GetMediaId())===timelineMediaId)return true;return false;};
+    if(!timelineMedia || !await inFolder() && (!await pool.MoveClips([timelineMedia],targetFolder) || !await inFolder()))throw new Error('Resolve non ha organizzato la timeline nella cartella prevista');
+    if (!await project.SetCurrentTimeline(newTimeline)) throw new Error('Resolve non ha attivato la timeline di prova');
+    const defaultAudioTracks=Number(await newTimeline.GetTrackCount('audio'));
+    // Resolve refuses deletion of its final audio track: add replacements first.
+    for(let i=0;i<3;i++)if(!await newTimeline.AddTrack('audio','mono'))throw new Error('Resolve non ha creato le tracce mono');
+    for (let i=defaultAudioTracks;i>=1;i--) {
+      if ((await newTimeline.GetItemListInTrack('audio',i) || []).length || !await newTimeline.DeleteTrack('audio',i)) throw new Error('Impossibile preparare le tracce mono');
+    }
+    for(let i=Number(await newTimeline.GetTrackCount('video'));i>3;i--) {
+      if ((await newTimeline.GetItemListInTrack('video',i) || []).length || !await newTimeline.DeleteTrack('video',i)) throw new Error('Impossibile preparare le tracce video');
+    }
+    for(let i=Number(await newTimeline.GetTrackCount('video'));i<3;i++) if(!await newTimeline.AddTrack('video')) throw new Error('Resolve non ha creato le tracce video');
+    const names=['Master e larghe','Medie','Strette e dettagli'];
+    for(let i=1;i<=3;i++) {
+      if(!await newTimeline.SetTrackName('video',i,names[i-1]) || !await newTimeline.SetTrackName('audio',i,names[i-1])) throw new Error('Resolve non ha nominato le tracce');
+    }
+    const checkLayout=async()=>{
+      if(Number(await newTimeline.GetTrackCount('video'))!==3 || Number(await newTimeline.GetTrackCount('audio'))!==3) throw new Error('Resolve ha modificato il numero delle tracce; timeline di prova annullata');
+      for(let i=1;i<=3;i++)if(String(await newTimeline.GetTrackSubType('audio',i)).toLowerCase()!=='mono')throw new Error('Resolve non ha mantenuto le tracce audio mono; timeline di prova annullata');
+    };
+    await checkLayout();
+    let cursor=Number(await newTimeline.GetStartFrame());
+    if(!Number.isFinite(cursor))throw new Error('Inizio timeline non disponibile');
+    const mappingBefore=new Map();
+    for(const [id,media] of byId)if(typeof media.GetAudioMapping==='function')mappingBefore.set(id,await media.GetAudioMapping());
+    for (let i=0;i<expanded.length;i++) {
+      const edit=expanded[i],{track,color}=layout(edit.shot_size),media=byId.get(edit.media_id);
+      const clip={mediaPoolItem:media,startFrame:edit.start_frame,endFrame:edit.end_frame,trackIndex:track,recordFrame:cursor};
+      const video=await pool.AppendToTimeline([{...clip,mediaType:1}]) || [];
+      if(video.length!==1)throw new Error('Resolve ha inserito '+i+' di '+expanded.length+' tagli; timeline di prova annullata');
+      const item=video[0],nativeStart=Number(await item.GetStart()),nativeEnd=Number(await item.GetEnd());
+      if(nativeStart!==cursor || !Number.isFinite(nativeEnd) || nativeEnd<=cursor)throw new Error('Resolve ha alterato la posizione del taglio '+(i+1));
+      const sourceMedia=await item.GetMediaPoolItem(),mediaId=sourceMedia && String(await sourceMedia.GetMediaId());
+      const sourceFps=Number(expected.media?.find(m=>m.media_id===edit.media_id)?.fps) || Number(await sourceTimeline.GetSetting?.('timelineFrameRate')) || 25;
+      const record=expected.media?.find(m=>m.media_id===edit.media_id);
+      const sourceTc=record?.start_tc || (typeof media.GetClipProperty==='function' ? await media.GetClipProperty('Start TC') : null);
+      const sourceBase=sourceTc ? timecodeToFrames(sourceTc,sourceFps)/sourceFps : 0;
+      const verifySource=async target=>{
+        const start=Number(await target.GetSourceStartTime()),end=Number(await target.GetSourceEndTime());
+        if(!Number.isFinite(start)||!Number.isFinite(end)||Math.abs(start-sourceBase-edit.start_frame/sourceFps)>.5/sourceFps||Math.abs(end-sourceBase-edit.end_frame/sourceFps)>.5/sourceFps)throw new Error('Resolve ha alterato il taglio '+(i+1)+'; timeline di prova annullata');
+      };
+      if(mediaId!==String(edit.media_id))throw new Error('Sorgente del taglio non corretta');
+      const videoTrack=await item.GetTrackTypeAndIndex();if(videoTrack[0]!=='video' || Number(videoTrack[1])!==track)throw new Error('Resolve ha inserito il video sulla traccia errata');
+      await verifySource(item);
+      const setColor=async target=>{if(!await target.SetClipColor(color) || await target.GetClipColor()!==color)throw new Error('Resolve non ha applicato il colore del campo');};
+      await setColor(item);
+      // A video-only source may legitimately have no audio mapping.
+      let hasAudio=true;
+      if(mappingBefore.has(edit.media_id)) {
+        let mapping=mappingBefore.get(edit.media_id);if(typeof mapping==='string'){try{mapping=JSON.parse(mapping);}catch{throw new Error('Mappatura audio sorgente non leggibile');}}
+        if(mapping && Number(mapping.embedded_audio_channels)===0 && !Number(mapping.linked_audio_channels) && !Object.keys(mapping.track_mapping || {}).length)hasAudio=false;
+      }
+      if(hasAudio){
+        const audio=await pool.AppendToTimeline([{...clip,mediaType:2}]) || [];
+        if(audio.length!==1)throw new Error('Resolve non ha inserito una sola clip audio sulla traccia mono; timeline di prova annullata');
+        const sound=audio[0];
+        if(Number(await sound.GetStart())!==nativeStart || Number(await sound.GetEnd())!==nativeEnd || String(await (await sound.GetMediaPoolItem()).GetMediaId())!==mediaId)throw new Error('Audio e video non sincronizzati');
+        const audioTrack=await sound.GetTrackTypeAndIndex();if(audioTrack[0]!=='audio' || Number(audioTrack[1])!==track)throw new Error('Resolve ha inserito l’audio sulla traccia errata');
+        await verifySource(sound);await setColor(sound);
+        if(!await newTimeline.SetClipsLinked([item,sound],true))throw new Error('Resolve non ha collegato audio e video');
+        audioSegments++;
+      }
+      await checkLayout();cursor=nativeEnd;
+    }
+    let videos=0,audios=0;
+    for(let i=1;i<=3;i++){videos+=(await newTimeline.GetItemListInTrack('video',i) || []).length;audios+=(await newTimeline.GetItemListInTrack('audio',i) || []).length;}
+    if(videos!==expanded.length || audios!==audioSegments)throw new Error('Numero di clip non coerente; timeline di prova annullata');
+    for(const [id,before] of mappingBefore)if(JSON.stringify(await byId.get(id).GetAudioMapping())!==JSON.stringify(before))throw new Error('Resolve ha modificato la mappatura audio sorgente');
+    if(String(await project.GetUniqueId())!==beforeProject || String(await sourceTimeline.GetUniqueId())!==beforeTimeline)throw new Error('Progetto o timeline di partenza cambiati durante la creazione');
+    created=true;
+  } catch(error){failure=error;}
+  const restored=await project.SetCurrentTimeline(sourceTimeline);
+  if(!created)await pool.DeleteTimelines([newTimeline]);
+  if(failure)throw failure;
+  const active=await project.GetCurrentTimeline();
+  if(!restored || !active || String(await active.GetUniqueId())!==beforeTimeline)throw new Error('Timeline creata, ma Resolve non ha ripristinato quella di partenza');
+  return {timelineId:String(await newTimeline.GetUniqueId()),timelineName:String(await newTimeline.GetName()),sourceTimelineId:beforeTimeline,included:edits.length,segments:expanded.length,audioSegments,videoTracks:3,audioTracks:3,audioFormat:'mono',version,folderPath:folderPath.join(' / ')};
 }
 
 async function saveCurrentProject(sdk, expectedProjectId) {

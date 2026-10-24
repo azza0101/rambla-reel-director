@@ -118,8 +118,20 @@ test('restart requests one Electron relaunch only after cleanup succeeds',async(
 
 test('installer progress pipe is informational and cannot turn a failed install into success',async()=>{
  const {runUpdateInstaller}=require('../../plugin/updater'),{EventEmitter}=require('node:events'),net=require('node:net');
- const run=code=>{const events=[];return {events,promise:runUpdateInstaller({script:'update.ps1',pluginRoot:'plugin',archivePath:'archive',sha256:'a'.repeat(64),version:'1.0.0',onProgress:event=>events.push(event),spawnImpl:(_exe,args)=>{
+ const fixture=fs.mkdtempSync(path.join(os.tmpdir(),'premontato-installer-pipe-'));fs.writeFileSync(path.join(fixture,'package.json'),JSON.stringify({version:'1.0.0'}));
+ const run=code=>{const events=[];return {events,promise:runUpdateInstaller({script:'update.ps1',pluginRoot:fixture,archivePath:'archive',sha256:'a'.repeat(64),version:'1.0.0',onProgress:event=>events.push(event),spawnImpl:(_exe,args)=>{
  const child=new EventEmitter();setImmediate(()=>{const name=args[args.indexOf('-ProgressPipe')+1],address=process.platform==='win32'?'\\\\.\\pipe\\'+name:path.join(os.tmpdir(),name+'.sock');const socket=net.connect(address,()=>socket.end(JSON.stringify({phase:'extract',current:2,total:4})+'\n'+JSON.stringify({phase:'exec',current:4,total:4})+'\n'+JSON.stringify({phase:'install',current:4,total:4})+'\n'));socket.on('error',error=>child.emit('error',error));socket.on('close',()=>child.emit('exit',code));});return child;}})};};
- const ok=run(0);await ok.promise;assert.deepEqual(ok.events.map(e=>[e.phase,e.percent]),[['extract',50],['install',100]]);
- const bad=run(1);await assert.rejects(bad.promise,/precedente è stata conservata/);
+ try{const ok=run(0);await ok.promise;assert.deepEqual(ok.events.map(e=>[e.phase,e.percent]),[['extract',50],['install',100]]);
+ const bad=run(1);await assert.rejects(bad.promise,/installazione precedente/);}finally{fs.rmSync(fixture,{recursive:true,force:true});}
+});
+
+test('installer success requires the requested version to be present on disk',async()=>{
+ const {runUpdateInstaller}=require('../../plugin/updater'),{EventEmitter}=require('node:events');const dir=fs.mkdtempSync(path.join(os.tmpdir(),'premontato-install-version-'));
+ try{fs.writeFileSync(path.join(dir,'package.json'),JSON.stringify({version:'0.7.0'}));
+ await assert.rejects(runUpdateInstaller({script:'update.ps1',pluginRoot:dir,archivePath:'x',sha256:'a'.repeat(64),version:'0.9.0',spawnImpl:()=>{const child=new EventEmitter();setImmediate(()=>child.emit('exit',0));return child;}}),/versione|installat/i);
+ }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('installer exposes a redacted local failure detail rather than only a generic error',async()=>{
+ const {runUpdateInstaller}=require('../../plugin/updater'),{EventEmitter}=require('node:events'),{PassThrough}=require('node:stream');
+ await assert.rejects(runUpdateInstaller({script:'update.ps1',pluginRoot:'plugin',archivePath:'x',sha256:'a'.repeat(64),version:'0.9.0',spawnImpl:()=>{const child=new EventEmitter();child.stderr=new PassThrough();setImmediate(()=>{child.stderr.write('File in uso github_pat_'+'s'.repeat(40));child.emit('exit',1);});return child;}}),error=>/File in uso/.test(error.message) && !error.message.includes('s'.repeat(40)));
 });

@@ -8,6 +8,9 @@ param(
 )
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
+# Do not rely on module autoload inherited from Resolve/Electron.
+Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1') -ErrorAction Stop
+Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Management\Microsoft.PowerShell.Management.psd1') -ErrorAction Stop
 
 $script:progressClient=$null;$script:progressWriter=$null
 if($ProgressPipe -and $ProgressPipe -notmatch '^premontato-update-[a-f0-9]{32}$'){throw 'Canale avanzamento non valido'}
@@ -18,6 +21,11 @@ function Send-UpdateProgress([string]$Phase,[int]$Current,[int]$Total){
   $script:progressWriter.WriteLine((@{phase=$Phase;current=$Current;total=$Total}|ConvertTo-Json -Compress))
  }catch{if($script:progressClient){$script:progressClient.Dispose()};$script:progressWriter=$null;$script:progressClient=$null}
 }
+function Send-UpdateFailure([string]$Message){
+ if(!$ProgressPipe){return}
+ try{Send-UpdateProgress 'error' 0 1;if($script:progressWriter){$script:progressWriter.WriteLine((@{phase='error';message=$Message}|ConvertTo-Json -Compress))}}catch{}
+}
+trap { Send-UpdateFailure $_.Exception.Message; throw }
 function Quote-Argument([string]$Value) { '"' + $Value.Replace('"','\"') + '"' }
 function Get-TargetRelativePath([string]$Name) {
     $parts=$Name.Split('/')
