@@ -133,13 +133,15 @@ def dispatch(request):
                 continue
             # Prefer the latest take which actually contains this line; within that
             # take prefer the strongest phrase hit. Earlier takes remain alternatives.
-            best_score = max(row[1] for row in candidates)
-            best_coverage = max(row[4].get("coverage", 1.0) for row in candidates)
-            credible = [row for row in candidates if row[1] >= best_score - (0.025 if payload.get("semantic") else 0.10) and (payload.get("semantic") or row[4].get("coverage", 1.0) >= best_coverage - 0.08)]
-            statuses = {id(row):speaker_coverage(shot_segments,row[2]['media_id'],row[4]['start_frame'],row[4]['end_frame'],beat.get('character','')) for row in credible}
-            visible = [row for row in credible if statuses[id(row)]=='visible']
-            unknown = [row for row in credible if statuses[id(row)]=='unknown']
-            credible = visible or unknown or credible
+            # The ASR score ranks reliable views of the speaker; it must not remove
+            # the only confirmed view before visibility is evaluated.
+            statuses = {id(row):speaker_coverage(shot_segments,row[2]['media_id'],row[4]['start_frame'],row[4]['end_frame'],beat.get('character','')) for row in candidates}
+            visible = [row for row in candidates if statuses[id(row)]=='visible']
+            unknown = [row for row in candidates if statuses[id(row)]=='unknown']
+            scoped = visible or unknown or candidates
+            best_score = max(row[1] for row in scoped)
+            best_coverage = max(row[4].get('coverage',1.0) for row in scoped)
+            credible = [row for row in scoped if row[1] >= best_score - (0.025 if payload.get('semantic') else 0.10) and (payload.get('semantic') or row[4].get('coverage',1.0) >= best_coverage - 0.08)]
             classified = [row for row in credible if row[5] and row[5].get("shot_size") in {"wide", "medium", "close"} and row[5].get("confidence", 0) >= 0.55]
             alternating = [row for row in classified if previous_shot_size and row[5]["shot_size"] != previous_shot_size]
             opening = [row for row in classified if row[5]["shot_size"] == "wide"] if not decisions else []
@@ -169,6 +171,10 @@ def dispatch(request):
                                    "speaker_coverage":speaker_coverage(shot_segments,row[2]['media_id'],row[4]['start_frame'],row[4]['end_frame'],beat.get('character','')),
                                    "matched_text": row[4]["text"], "semantic_score": row[4].get("semantic_score"), "match_method": row[4].get("match_method", "lexical"), "shot_size": row[5].get("shot_size", "unknown") if row[5] else "unknown"} for row in candidates if row[2]["take_id"] != source["take_id"] or row[4]["start_frame"] != hit["start_frame"]]})
         for decision in decisions:
+            if payload.get("semantic") and decision.get("coverage", 1) < .5:
+                decision["warnings"].append("Controlla la completezza: poche parole del copione ritrovate; può essere una parafrasi o una battuta parziale")
+            if decision.get("speaker_coverage")=="absent":
+                decision["warnings"].append("Parlante fuori campo: nessuna alternativa affidabile con visibilità confermata; verifica la scelta")
             if decision.get("narrative_role") != "free":
                 decision["rationale_codes"].append("NARRATIVE_" + decision["narrative_role"].upper())
                 if not decision.get("style_satisfied"):

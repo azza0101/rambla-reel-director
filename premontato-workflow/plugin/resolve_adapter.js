@@ -11,9 +11,17 @@ async function getResolve(sdk) {
   return { resolve, pm, project, timeline, pool: await project.GetMediaPool() };
 }
 
+async function selectedClips(pool) {
+  try { return await pool.GetSelectedClips() || []; }
+  catch (error) {
+    if (/errorStr:No media item is selected\./.test(String(error.message)) && /errorCode:2/.test(String(error.message))) return [];
+    throw error;
+  }
+}
+
 async function snapshot(sdk) {
   const { project, timeline, pool } = await getResolve(sdk);
-  const clips = await pool.GetSelectedClips() || [];
+  const clips = await selectedClips(pool);
   return { project: String(await project.GetName()), projectId: String(await project.GetUniqueId()),
     timeline: String(await timeline.GetName()), timelineId: String(await timeline.GetUniqueId()),
     fps: Number(await timeline.GetSetting('timelineFrameRate')),
@@ -39,7 +47,7 @@ async function snapshot(sdk) {
 
 async function getTranscript(sdk, mediaId) {
   const { pool } = await getResolve(sdk);
-  const item = (await pool.GetSelectedClips() || []).find(clip => String(clip.GetMediaId()) === mediaId);
+  const item = (await selectedClips(pool)).find(clip => String(clip.GetMediaId()) === mediaId);
   if (!item) throw new Error('Seleziona il media nel Media Pool prima di leggere la trascrizione');
   const transcription = await item.GetTranscription(true);
   if (!transcription || !Array.isArray(transcription.segments)) return { status: 'missing', segments: [] };
@@ -47,7 +55,7 @@ async function getTranscript(sdk, mediaId) {
 }
 
 async function transcribeSelected(sdk, onProgress) {
-  const { pool } = await getResolve(sdk), clips = await pool.GetSelectedClips() || [];
+  const { pool } = await getResolve(sdk), clips = await selectedClips(pool);
   if (!clips.length) throw new Error('Seleziona i media nel Media Pool');
   const results=[];
   for (let i=0;i<clips.length;i++) {
@@ -63,7 +71,7 @@ async function transcribeSelected(sdk, onProgress) {
 
 // IntelliSearch is opt-in; face clusters are read separately through GetMetadata('People').
 async function analyzeIntellisearchSelected(sdk, options = {}) {
-  const { pool } = await getResolve(sdk), clips = await pool.GetSelectedClips() || [];
+  const { pool } = await getResolve(sdk), clips = await selectedClips(pool);
   if (!clips.length) throw new Error('Seleziona i media nel Media Pool');
   const identifyFaces = options.identifyFaces !== false;
   const isBetterMode = options.isBetterMode === true;
@@ -91,17 +99,18 @@ async function getSelectedTranscriptions(sdk) {
   const snapshotData = await snapshot(sdk);
   return Promise.all(snapshotData.selected.map(async source => {
     const transcription = await source.item.GetTranscription(true);
+    const clipFrame=value=>Math.max(0,Math.min(source.duration_frames,timecodeToFrames(value,source.fps)-timecodeToFrames(source.start_tc,source.fps)));
     const segments = Array.isArray(transcription?.segments) ? transcription.segments.map((segment, index) => ({
       segment_id: `${source.media_id}:${index}`, media_id: source.media_id,
-      start_frame: timecodeToFrames(segment.start, source.fps) - timecodeToFrames(source.start_tc, source.fps),
-      end_frame: timecodeToFrames(segment.end, source.fps) - timecodeToFrames(source.start_tc, source.fps),
+      start_frame: clipFrame(segment.start),
+      end_frame: clipFrame(segment.end),
       text: String(segment.text || ''), speaker_name: segment.speaker || null,
       words: Array.isArray(segment.words) ? segment.words.map(word => ({
-        start_frame: timecodeToFrames(word.start, source.fps) - timecodeToFrames(source.start_tc, source.fps),
-        end_frame: timecodeToFrames(word.end, source.fps) - timecodeToFrames(source.start_tc, source.fps),
+        start_frame: clipFrame(word.start),
+        end_frame: clipFrame(word.end),
         text: String(word.text || '')
-      })).filter(word => word.end_frame > word.start_frame && word.text.trim()) : []
-    })).filter(segment => segment.end_frame > segment.start_frame && segment.text.trim()) : [];
+      })).filter(word => word.end_frame > word.start_frame && /[\p{L}\p{N}]/u.test(word.text)) : []
+    })).filter(segment => segment.end_frame > segment.start_frame && /[\p{L}\p{N}]/u.test(segment.text)) : [];
     return { ...source, item: undefined, take_id: `${source.media_id}:take:1`, take_index: snapshotData.selected.indexOf(source) + 1,
       camera_id: 'camera_1', segments };
   }));
@@ -111,7 +120,7 @@ async function createTimeline(sdk, name, edits, expected = {}) {
   const { pm, project, pool, timeline: sourceTimeline } = await getResolve(sdk);
   const beforeProject = String(await project.GetUniqueId()), beforeTimeline = String(await sourceTimeline.GetUniqueId());
   if ((expected.projectId && expected.projectId !== beforeProject) || (expected.timelineId && expected.timelineId !== beforeTimeline)) throw new Error('Progetto o timeline cambiati: crea una nuova analisi');
-  const items = await pool.GetSelectedClips() || [];
+  const items = await selectedClips(pool);
   const selectedIds = await Promise.all(items.map(async item => String(await item.GetMediaId())));
   const expectedIds = expected.mediaIds || expected.media?.map(item => item.media_id);
   if (expectedIds && (expectedIds.length !== selectedIds.length || expectedIds.some((id, index) => id !== selectedIds[index]))) throw new Error('La selezione dei media è cambiata: riseleziona le clip e ricalcola');

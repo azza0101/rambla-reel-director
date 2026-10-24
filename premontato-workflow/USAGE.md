@@ -27,3 +27,9 @@ Per un recupero manuale: salva il progetto Resolve, chiudi il pannello Premontat
 ## 0.9.1 — versione visibile e avvio del pannello
 
 Corregge il blocco del preload sandbox della 0.9.0. La versione compare accanto ad Aggiorna e nel titolo della finestra, anche prima dell’avvio dell’interfaccia. Un pannello 0.9.0 bloccato richiede reinstallazione manuale della 0.9.1: il suo pulsante Aggiorna non può essere utilizzato finché il preload non si avvia.
+
+## 0.9.2 — collaudo delle riprese e correzioni dell’allineamento
+
+Le finestre semantiche rispettano i cambi di voce osservati come indizi di confine, completano le frasi oltre pause brevi e non prendono in prestito l’attacco della battuta successiva. La visibilità confermata del parlante viene considerata prima della qualità della trascrizione. Gli abbinamenti con poche parole comuni al copione richiedono un controllo esplicito di completezza, anche quando la somiglianza semantica è alta: le parafrasi e le ripetizioni parziali restano possibili.
+
+L’apertura senza clip selezionate non viene più presentata come assenza del collegamento a Resolve. Le pause segnaposto senza parlato vengono escluse dalla trascrizione; i progetti precedenti contenenti un segnaposto al frame -1 possono essere riaperti mantenendo la validazione dei segmenti parlati. L’analisi dei campi decodifica il video in sequenza per evitare ricerche ripetute nei GOP.

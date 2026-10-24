@@ -27,6 +27,9 @@ function validateProjectState(state){
  const range=(row,bounds)=>obj(row)&&int(row.start_frame)&&int(row.end_frame)&&row.end_frame>row.start_frame&&row.end_frame<=bounds;
  const beat=row=>obj(row)&&str(row.beat_id)&&str(row.kind)&&str(row.text)&&(row.character===undefined||row.character===null||str(row.character));
  const scene=row=>obj(row)&&str(row.heading)&&Array.isArray(row.beats)&&row.beats.every(beat);
+ // Earlier Resolve imports retained nonspoken '(...)' rows at frame -1. Drop only
+ // punctuation placeholders; malformed spoken timing still fails validation.
+ for(const sources of [state.transcripts,state.analysis?.planningSources])if(Array.isArray(sources))for(const source of sources)if(Array.isArray(source?.segments))source.segments=source.segments.filter(segment=>typeof segment?.text!=='string'||/[\p{L}\p{N}]/u.test(segment.text));
  const sizes=['wide','medium','close','detail','unknown'];
  const decision=(row,alt=false)=>{
   if(!obj(row)||!media.has(row.media_id)||!str(row.take_id)||!alt&&!str(row.beat_id)||!range(row,media.get(row.media_id)?.duration_frames))return false;

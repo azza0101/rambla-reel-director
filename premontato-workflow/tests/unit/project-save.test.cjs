@@ -53,3 +53,8 @@ test('background autosave detaches instead of overwriting an externally edited n
  s.setDraft({directions:{profile:'VIDEO COLICHE',notes:'nota non applicata',markers:{}}});await s.saveAutosave();const recovered=new Session(dir,'unused');await recovered.restoreAutosave();assert.equal(recovered.state.uiDraft.directions.notes,'nota non applicata');
  }finally{await fs.rm(dir,{recursive:true,force:true});}
  });
+
+test('legacy Resolve silence placeholders before source frame zero do not block project recovery',async()=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'premontato-legacy-transcript-'));try{const file=path.join(dir,'clip.mp4');await fs.writeFile(file,'test');const s=new Session(dir,'unused');s.state.media=[{media_id:'m',duration_frames:100,path:file}];const source={media_id:'m',duration_frames:100,path:file,segments:[{start_frame:-1,end_frame:20,text:'(...)'},{start_frame:30,end_frame:50,text:'Ciao'}]};s.state.transcripts=[source];s.state.analysis={planningSources:[source]};await s.saveProject(path.join(dir,'scene.json'));const r=new Session(dir,'unused');await r.loadProject(path.join(dir,'scene.json'));assert.equal(r.state.transcripts[0].segments.length,1);assert.equal(r.state.analysis.planningSources[0].segments.length,1);
+ }finally{await fs.rm(dir,{recursive:true,force:true});}
+});

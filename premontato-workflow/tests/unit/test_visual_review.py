@@ -50,3 +50,13 @@ class VisualReviewTests(unittest.TestCase):
                 self.assertTrue(dispatch(request)['result']['warnings'])
                 self.assertEqual(dispatch(request)['result']['warnings'],[])
                 self.assertEqual(analyze.call_count,2)
+
+    def test_confirmed_speaker_is_not_discarded_before_scoring_cleaner_offscreen_asr(self):
+        from unittest.mock import patch
+        from protocol import dispatch
+        sources=[{'media_id':name,'take_id':name,'take_index':index,'duration_frames':200,'segments':[]} for index,name in enumerate(['visible','offscreen'],1)]
+        shots=[{'media_id':name,'start_frame':0,'end_frame':200,'reviewed':True,'visible_subjects':names,'shot_size':'close','confidence':1} for name,names in [('visible',['MARTA']),('offscreen',['LUCA'])]]
+        hits={(name,'ok'):[{'start_frame':20,'end_frame':50,'text':'ok','score':score,'semantic_score':.8,'coverage':1}] for name,score in [('visible',.57),('offscreen',.84)]}
+        with patch('transcript_align.semantic_scene_hits',return_value=hits):
+            result=dispatch({'protocol':1,'request_id':'visibility','action':'build_plan','payload':{'fps':25,'semantic':True,'beats':[{'beat_id':'ok','kind':'dialogue','character':'MARTA','text':'ok'}],'sources':sources,'shots':shots}})['result']['decisions'][0]
+        self.assertEqual(result['media_id'],'visible');self.assertEqual(result['speaker_coverage'],'visible')

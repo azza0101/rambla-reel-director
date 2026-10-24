@@ -195,3 +195,16 @@ test('versions generated timelines and places them in dedicated Media Pool folde
  const c=timelineSdk();await createTimeline(c.sdk,'REVISIONE',[{media_id:'m1',start_frame:10,end_frame:40,shot_size:'wide'}],{purpose:'test'});
  const version=require('../../plugin/package.json').version;assert.match(c.reviewTimeline.requestedName,new RegExp(version.replaceAll('.','\\.')));const folder=c.rootFolder.children.find(f=>f.name==='Premontato').children.find(f=>f.name==='v'+version).children.find(f=>f.name==='Test');assert.equal(folder.clips.length,1);assert.equal(await c.pool.GetCurrentFolder(),c.sourceFolder);
 });
+
+test('normalizes camera-edge timestamps and excludes nonspoken Resolve placeholder segments',async()=>{
+ const item={GetMediaId:async()=>'m1',GetName:async()=>'clip',GetMetadata:async()=>'',GetClipProperty:async key=>key==='Start TC'?'01:00:00:01':{FPS:'25',Frames:'100','File Path':'C:/clip.mp4'},GetTranscription:async()=>({segments:[{start:'01:00:00:00',end:'01:00:00:05',text:'(...)'},{start:'01:00:00:00',end:'01:00:00:20',text:'Ciao',words:[{start:'01:00:00:00',end:'01:00:00:20',text:'Ciao'}]}]})};
+ const sdk={GetResolvePromise:async()=>({GetProjectManager:async()=>({GetCurrentProject:async()=>({GetCurrentTimeline:async()=>({GetName:async()=>'T',GetUniqueId:async()=>'t',GetSetting:async()=>'25'}),GetName:async()=>'P',GetUniqueId:async()=>'p',GetMediaPool:async()=>({GetSelectedClips:async()=>[item]})})})})};
+ const [source]=await getSelectedTranscriptions(sdk);assert.equal(source.segments.length,1);assert.equal(source.segments[0].start_frame,0);assert.equal(source.segments[0].words[0].start_frame,0);
+});
+
+ test('empty selection from the native Workflow SDK still returns a connected project snapshot',async()=>{
+ const project={GetName:async()=>'P',GetUniqueId:async()=>'p',GetCurrentTimeline:async()=>({GetName:async()=>'T',GetUniqueId:async()=>'t',GetSetting:async()=>'25'}),GetMediaPool:async()=>({GetSelectedClips:async()=>{throw Error('GetSelectedClips: Error response (errorStr:No media item is selected.) (errorCode:2)');}})};
+ const sdk={GetResolvePromise:async()=>({GetProjectManager:async()=>({GetCurrentProject:async()=>project})})};
+ const result=await require('../../plugin/resolve_adapter').snapshot(sdk);assert.equal(result.project,'P');assert.deepEqual(result.selected,[]);
+ project.GetMediaPool=async()=>({GetSelectedClips:async()=>{throw Error('connection lost');}});await assert.rejects(require('../../plugin/resolve_adapter').snapshot(sdk),/connection lost/);
+ });

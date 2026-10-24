@@ -51,6 +51,18 @@ def classify_face_heights(heights):
     return "wide", 0.55
 
 
+def sampled_frames(cap, count, step, on_progress=None):
+    """Decode forward once; avoid repeated GOP seeks while preserving sample positions."""
+    for index in range(count):
+        if index % step:
+            if not cap.grab(): break
+            continue
+        if on_progress: on_progress(index, count)
+        ok, frame = cap.read()
+        if not ok: break
+        yield index, frame
+
+
 def analyze_video(media, sample_fps=1.0, face_cascade_path=None, on_progress=None):
     try:
         import cv2
@@ -70,13 +82,7 @@ def analyze_video(media, sample_fps=1.0, face_cascade_path=None, on_progress=Non
     fps, count = cap.get(cv2.CAP_PROP_FPS), int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     step = max(1, round(fps / max(0.1, sample_fps)))
     samples, previous = [], None
-    for frame_number in range(0, count, step):
-        if on_progress:
-            on_progress(frame_number, count)
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-        ok, frame = cap.read()
-        if not ok:
-            continue
+    for frame_number, frame in sampled_frames(cap, count, step, on_progress):
         small = cv2.resize(frame, (160, 90))
         hist = cv2.calcHist([small], [0, 1, 2], None, [8, 8, 8], [0, 256] * 3)
         cv2.normalize(hist, hist)
