@@ -25,7 +25,7 @@ class Session {
   }
   async request(action, payload = {}, timeoutMs = 30000, onProgress) {
     if (!this.child) {
-      this.child = spawn(this.python, ['-E', '-s', this.workerPath], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
+      this.child = spawn(this.python, ['-X', 'utf8', '-E', '-s', this.workerPath], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
         env: workerEnvironment(process.env, path.join(this.root, 'cache', 'shots')) });
       this.child.stdout.setEncoding('utf8'); let buffer = '';
       this.child.stdout.on('data', chunk => { buffer += chunk; let index; while ((index = buffer.indexOf('\n')) >= 0) { const line = buffer.slice(0, index); buffer = buffer.slice(index + 1); try { this.receive(JSON.parse(line)); } catch { this.failAll(new Error('Risposta worker non valida')); } } });

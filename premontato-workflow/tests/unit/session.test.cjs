@@ -123,3 +123,12 @@ test('a pause-only edit restores the untrimmed source interval before reapplying
  assert.equal(session.state.analysis.plan.decisions[0].start_frame,10);
  assert.equal(Boolean(session.state.analysis.plan.decisions[0].manual),false);
 });
+
+test('the real worker parses Italian text as Unicode internally rather than locale bytes',async()=>{
+ const path=require('node:path'),crypto=require('node:crypto');
+ const python=process.env.PREMONTATO_TEST_PYTHON || 'python';
+ const session=new Session('unused',path.resolve(__dirname,'../../worker/protocol.py'),python);
+ const heading='SCENA 01 INT. CITTÀ - SERA';
+ const expected='scene_'+crypto.createHash('sha1').update(heading.toLowerCase()+'|0','utf8').digest('hex').slice(0,12);
+ try{const result=await session.request('parse_script',{text:heading+'\n\nLUCA\nPerché è già così?'});assert.equal(result.scenes[0].scene_id,expected);assert.equal(result.scenes[0].beats[0].text,'Perché è già così?');}finally{await session.shutdownWorker();}
+});
