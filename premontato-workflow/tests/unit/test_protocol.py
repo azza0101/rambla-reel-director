@@ -59,7 +59,8 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(plan["unmatched_beats"], [])
         match = plan["decisions"][0]
         self.assertEqual(match["matched_text"], "sei veramente un cafone maleducato")
-        self.assertEqual((match["start_frame"], match["end_frame"]), (10, 73))
+        # Handles stop before adjacent words ("Tu" and "e non"), rather than repeating them.
+        self.assertEqual((match["start_frame"], match["end_frame"]), (13, 65))
 
     def test_plan_alternates_verified_scales_when_phrase_scores_are_equivalent(self):
         from protocol import dispatch

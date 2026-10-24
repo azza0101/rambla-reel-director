@@ -33,3 +33,11 @@ Corregge il blocco del preload sandbox della 0.9.0. La versione compare accanto 
 Le finestre semantiche rispettano i cambi di voce osservati come indizi di confine, completano le frasi oltre pause brevi e non prendono in prestito l’attacco della battuta successiva. La visibilità confermata del parlante viene considerata prima della qualità della trascrizione. Gli abbinamenti con poche parole comuni al copione richiedono un controllo esplicito di completezza, anche quando la somiglianza semantica è alta: le parafrasi e le ripetizioni parziali restano possibili.
 
 L’apertura senza clip selezionate non viene più presentata come assenza del collegamento a Resolve. Le pause segnaposto senza parlato vengono escluse dalla trascrizione; i progetti precedenti contenenti un segnaposto al frame -1 possono essere riaperti mantenendo la validazione dei segmenti parlati. L’analisi dei campi decodifica il video in sequenza per evitare ricerche ripetute nei GOP.
+
+## 0.9.3 — completezza e reazioni integrate
+
+Il motore locale confronta anche l’attacco delle battute lunghe, conserva una versione completa invece di una ripetizione recente ma parziale e separa i tentativi interrotti da sospensioni esplicite. I margini automatici non includono parole delle battute adiacenti. Se mancano indizi sufficienti rimane necessaria la revisione: nessuna garanzia di trascrizione o scelta perfetta.
+
+Nel profilo VIDEO COLICHE, un beat Risoluzione preceduto da Tensione può ricevere una stretta silenziosa del personaggio che risponde prima dell’apertura sulla larga. Servono una ripresa alternativa associata alla stessa battuta, presenza confermata nelle still, pausa audio misurata, nessuna parola trascritta sovrapposta, durata minima configurata e nessun fotogramma già usato altrove nel piano. Il plugin mostra la still esatta e un comando per escludere l’inserto; l’esclusione resta salvata anche quando ricalcoli stile, campi o take. Il suo audio ambiente resta collegato su traccia mono. Non classifica emozioni e non inventa reazioni: senza requisiti mostra il motivo dell’assenza.
+
+Significato, attacco e ricerca delle reazioni sono calcolati nel runtime del plugin, senza Codex, Groq o altre chiamate cloud. La conferma di campi/personaggi e i marcatori Tensione/Risoluzione rimangono controlli dell’utente. Le note libere restano un promemoria.

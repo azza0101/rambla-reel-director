@@ -126,7 +126,13 @@ async function createTimeline(sdk, name, edits, expected = {}) {
   if (expectedIds && (expectedIds.length !== selectedIds.length || expectedIds.some((id, index) => id !== selectedIds[index]))) throw new Error('La selezione dei media è cambiata: riseleziona le clip e ricalcola');
   const byId = new Map(await Promise.all(items.map(async item => [String(await item.GetMediaId()), item])));
   if (!edits.length || edits.some(edit => !byId.has(edit.media_id) || edit.end_frame <= edit.start_frame)) throw new Error('Piano incompleto o media non selezionato; timeline non creata');
-  const expanded = edits.flatMap(edit => {
+  const reviewed=edits.flatMap(edit=>{
+    if(!edit.reaction_before || edit.reaction_enabled===false)return [edit];
+    const reaction=require('./ipc_security').validateReaction(edit.reaction_before,expected.media?.find(m=>m.media_id===edit.reaction_before.media_id));
+    if(!byId.has(reaction.media_id))throw new Error('Media di reazione non selezionato');
+    return reaction.enabled?[{...reaction,beat_id:edit.beat_id},edit]:[edit];
+  });
+  const expanded = reviewed.flatMap(edit => {
     const ranges=edit.source_ranges ?? [{start_frame:edit.start_frame,end_frame:edit.end_frame}];
     if (!Array.isArray(ranges) || !ranges.length || ranges.some((range,index)=>!Number.isInteger(range.start_frame)||!Number.isInteger(range.end_frame)||range.end_frame<=range.start_frame||range.start_frame<edit.start_frame||range.end_frame>edit.end_frame||(index>0 && range.start_frame<ranges[index-1].end_frame))) throw new Error('Intervalli ritmo non validi');
     return ranges.map(range=>({...edit,...range}));

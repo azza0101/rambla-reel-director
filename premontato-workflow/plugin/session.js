@@ -35,6 +35,8 @@ function validateProjectState(state){
   if(!obj(row)||!media.has(row.media_id)||!str(row.take_id)||!alt&&!str(row.beat_id)||!range(row,media.get(row.media_id)?.duration_frames))return false;
   for(const key of ['score','confidence','coverage','semantic_score','shot_confidence'])if(row[key]!==undefined&&row[key]!==null&&!Number.isFinite(row[key]))return false;
   if(row.shot_size!==undefined&&!sizes.includes(row.shot_size)||row.matched_text!==undefined&&!str(row.matched_text))return false;
+  if(row.reaction_enabled!==undefined && typeof row.reaction_enabled!=='boolean')return false;
+  if(row.reaction_before!==undefined){try{require('./ipc_security').validateReaction(row.reaction_before,media.get(row.reaction_before?.media_id));}catch{return false;}}
   if(row.alternatives===undefined && !alt)row.alternatives=[];
   if(row.alternatives!==undefined&&(!Array.isArray(row.alternatives)||!row.alternatives.every(value=>decision(value,true))))return false;
   if(row.source_ranges!==undefined&&(!Array.isArray(row.source_ranges)||!row.source_ranges.every(value=>range(value,row.end_frame)&&value.start_frame>=row.start_frame)))return false;
@@ -174,11 +176,12 @@ class Session {
         catch(error) { audio[source.media_id] = {status:'unavailable',reason:error.message}; }
         progress('audio',5,81+((i+1)/audioSources.length)*7,'Audio · '+source.name+' · '+(audio[source.media_id].status==='ok' ? (audio[source.media_id].cache_hit?'cache verificata':'misurato') : 'non disponibile: pause conservate'),i+1,audioSources.length);
       }
-      progress('plan', 6, 89, 'Abbino il significato delle battute alle take confermate');
+      progress('plan', 6, 89, 'Verifico significato e attacco delle battute nelle take confermate');
       let plan = selectedScene && takes.every(group => group.confirmed)
         ? await this.request('build_plan', { beats, sources: planningSources, shots, directions:this.state.directions, semantic: true, fps: this.state.fps || 25 },300000) : null;
-      progress('pacing',7,95,'Regolo pause e durata delle inquadrature');
-      if (plan) plan=await this.request('pace_plan',{plan,sources:planningSources,audio,beats,fps:this.state.fps || 25,settings:this.state.pacingSettings});
+      progress('pacing',7,95,'Verifico pause e reazioni prima della risoluzione');
+      if(plan)plan=this.keepReactionChoices(plan);
+      if (plan) plan=await this.request('pace_plan',{plan,sources:planningSources,audio,beats,shots,fps:this.state.fps || 25,settings:this.state.pacingSettings});
       if (plan && visualReview) plan.visual_review_required = !visualReview.confirmed;
       const warnings = selectedScene
         ? [...(plan?.warnings || ['Conferma i confini delle take suggerite prima di calcolare il premontato.'])]
@@ -275,7 +278,7 @@ class Session {
     const plan = this.state.analysis?.plan;
     const decision = plan?.decisions.find(item => item.beat_id === request?.beat_id);
     if (!decision) throw new Error('Battuta non disponibile');
-    const pauseOnly=request.preserve_pause !== undefined && !['start_frame','end_frame','shot_size','alternative_index'].some(key=>request[key]!==undefined);
+    const pauseOnly=(request.preserve_pause !== undefined || request.reaction_enabled !== undefined) && !['start_frame','end_frame','shot_size','alternative_index'].some(key=>request[key]!==undefined);
     const original=pauseOnly ? plan.base_decisions?.find(item=>item.beat_id===decision.beat_id) : null;
     let updated = { ...(original || decision) };
     if (request.alternative_index !== undefined) {
@@ -287,10 +290,11 @@ class Session {
     const start = request.start_frame ?? updated.start_frame, end = request.end_frame ?? updated.end_frame;
     if (!media || !Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end > media.duration_frames || end <= start) throw new Error('Intervallo sorgente non valido');
     if (request.shot_size !== undefined && !['wide','medium','close','detail','unknown'].includes(request.shot_size)) throw new Error('Scala non valida');
+    if(request.reaction_enabled!==undefined && typeof request.reaction_enabled!=='boolean')throw new Error('Stato reazione non valido');
     if (request.preserve_pause !== undefined && typeof request.preserve_pause !== 'boolean') throw new Error('Blocco pausa non valido');
     const manual=updated.manual || ['start_frame','end_frame','shot_size','alternative_index'].some(key=>request[key]!==undefined);
-    Object.assign(updated, { start_frame: start, end_frame: end, shot_size: request.shot_size ?? updated.shot_size, manual, preserve_pause: request.preserve_pause ?? updated.preserve_pause });
-    delete updated.source_ranges; delete updated.pacing;
+    Object.assign(updated, { start_frame: start, end_frame: end, shot_size: request.shot_size ?? updated.shot_size, manual, reaction_enabled:request.reaction_enabled ?? updated.reaction_enabled, preserve_pause: request.preserve_pause ?? updated.preserve_pause });
+    delete updated.source_ranges; delete updated.pacing; delete updated.reaction_before;
     const base=plan.base_decisions?.findIndex(item=>item.beat_id===updated.beat_id);
     if (base !== undefined && base>=0) plan.base_decisions[base]={...updated};
     plan.decisions[plan.decisions.indexOf(decision)] = updated;
@@ -298,9 +302,14 @@ class Session {
     for (const item of plan.decisions) { item.timeline_start_frame = cursor; cursor += item.source_ranges?.reduce((sum,r)=>sum+r.end_frame-r.start_frame,0) ?? item.end_frame - item.start_frame; }
     return this.getReviewState();
   }
+  keepReactionChoices(plan, previous=this.state.analysis?.plan) {
+    const choices=new Map((previous?.decisions || []).filter(d=>typeof d.reaction_enabled==='boolean').map(d=>[d.beat_id,d.reaction_enabled]));
+    for(const decision of plan?.decisions || [])if(choices.has(decision.beat_id))decision.reaction_enabled=choices.get(decision.beat_id);
+    return plan;
+  }
   async applyPacing() {
     if (!this.state.analysis?.plan) return this.getReviewState();
-    this.state.analysis.plan=await this.request('pace_plan',{plan:this.state.analysis.plan,sources:this.state.analysis?.planningSources || this.state.transcripts || [],audio:this.state.analysis.audio || {},beats:this.state.analysis.parsedBeats || [],fps:this.state.fps || 25,settings:this.state.pacingSettings});
+    this.state.analysis.plan=await this.request('pace_plan',{plan:this.state.analysis.plan,sources:this.state.analysis?.planningSources || this.state.transcripts || [],audio:this.state.analysis.audio || {},shots:this.state.analysis.shots || [],beats:this.state.analysis.parsedBeats || [],fps:this.state.fps || 25,settings:this.state.pacingSettings});
     return this.getReviewState();
   }
   async setDirections(value) {
@@ -313,7 +322,9 @@ class Session {
     if(changed && analysis?.planningSources?.length && analysis.takes?.every(group=>group.confirmed)) {
       this.onProgress?.({phase:'plan',phaseIndex:6,percent:89,label:'Ricalcolo secondo le direzioni di montaggio'});
       plan=await this.request('build_plan',{beats,sources:analysis.planningSources,shots:analysis.shots || [],directions,semantic:true,fps:this.state.fps || 25},300000);
-      plan=await this.request('pace_plan',{plan,sources:analysis.planningSources,audio:analysis.audio || {},beats,fps:this.state.fps || 25,settings:this.state.pacingSettings});
+      plan=this.keepReactionChoices(plan);
+      this.onProgress?.({phase:'pacing',phaseIndex:7,percent:95,label:'Verifico pause e reazioni prima della risoluzione'});
+      plan=await this.request('pace_plan',{plan,sources:analysis.planningSources,audio:analysis.audio || {},shots:analysis.shots || [],beats,fps:this.state.fps || 25,settings:this.state.pacingSettings});
       if(analysis.visualReview)plan.visual_review_required=!analysis.visualReview.confirmed;
     }
     this.state.directions=directions;if(analysis)analysis.plan=plan;
@@ -322,7 +333,7 @@ class Session {
   }
   async setPacing(options) {
     const plan=this.state.analysis?.plan || {decisions:[],warnings:[]};
-    const result=await this.request('pace_plan',{plan,sources:this.state.analysis?.planningSources || this.state.transcripts || [],audio:this.state.analysis?.audio || {},beats:this.state.analysis?.parsedBeats || [],fps:this.state.fps || 25,settings:{...this.state.pacingSettings,...options}});
+    const result=await this.request('pace_plan',{plan,sources:this.state.analysis?.planningSources || this.state.transcripts || [],audio:this.state.analysis?.audio || {},shots:this.state.analysis?.shots || [],beats:this.state.analysis?.parsedBeats || [],fps:this.state.fps || 25,settings:{...this.state.pacingSettings,...options}});
     this.state.pacingSettings=result.pacing_settings;
     if(this.state.analysis?.plan)this.state.analysis.plan=result;
     return this.getReviewState();
@@ -348,7 +359,9 @@ class Session {
     if (analysis.planningSources?.length && analysis.takes?.every(t=>t.confirmed)) {
       this.onProgress?.({phase:'plan',phaseIndex:6,percent:89,label:'Ricalcolo con campi e personaggi confermati'});
       plan=await this.request('build_plan',{beats:analysis.parsedBeats,sources:analysis.planningSources,shots:updated,directions:this.state.directions,semantic:true,fps:this.state.fps || 25},300000);
-      plan=await this.request('pace_plan',{plan,sources:analysis.planningSources,audio:analysis.audio || {},beats:analysis.parsedBeats,fps:this.state.fps || 25,settings:this.state.pacingSettings});
+      plan=this.keepReactionChoices(plan);
+      this.onProgress?.({phase:'pacing',phaseIndex:7,percent:95,label:'Verifico pause e reazioni prima della risoluzione'});
+      plan=await this.request('pace_plan',{plan,sources:analysis.planningSources,audio:analysis.audio || {},shots:updated,beats:analysis.parsedBeats,fps:this.state.fps || 25,settings:this.state.pacingSettings});
     }
     if(plan)plan.visual_review_required=false;
     analysis.shots=updated; analysis.visualReview={...review,intervals:updated,confirmed:true,personNames:names};analysis.plan=plan;
@@ -371,7 +384,9 @@ class Session {
     const sources = takes.flatMap(group => group.segments.map(take => ({ ...this.state.transcripts.find(source => source.media_id === group.media_id), ...take,
       segments: this.state.transcripts.find(source => source.media_id === group.media_id).segments.filter(segment => segment.start_frame >= take.start_frame && segment.start_frame < take.end_frame) })));
     this.state.analysis.planningSources = sources;
+    const previousPlan=this.state.analysis.plan;
     this.state.analysis.plan = await this.request('build_plan', { beats: this.state.analysis.parsedBeats, sources, shots: this.state.analysis.shots, directions:this.state.directions, semantic: true, fps: this.state.fps || 25 },300000);
+    this.keepReactionChoices(this.state.analysis.plan,previousPlan);
     if (this.state.analysis.visualReview) this.state.analysis.plan.visual_review_required=!this.state.analysis.visualReview.confirmed;
     return this.applyPacing();
   }

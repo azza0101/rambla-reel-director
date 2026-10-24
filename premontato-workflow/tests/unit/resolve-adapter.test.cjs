@@ -208,3 +208,10 @@ test('normalizes camera-edge timestamps and excludes nonspoken Resolve placehold
  const result=await require('../../plugin/resolve_adapter').snapshot(sdk);assert.equal(result.project,'P');assert.deepEqual(result.selected,[]);
  project.GetMediaPool=async()=>({GetSelectedClips:async()=>{throw Error('connection lost');}});await assert.rejects(require('../../plugin/resolve_adapter').snapshot(sdk),/connection lost/);
  });
+
+test('inserts a reviewed reaction before the dialogue on synchronized mono audio and close video tracks',async()=>{
+ const {sdk,reviewTimeline,project,sourceTimeline}=timelineSdk({appendResultCount:2});const reaction={kind:'reaction',media_id:'m1',take_id:'t',start_frame:150,end_frame:180,shot_size:'close',character:'LUCA',enabled:true,basis:'verified_silent_preroll',speaker_coverage:'visible'};
+ const result=await createTimeline(sdk,'REACTION',[{media_id:'m1',start_frame:200,end_frame:240,shot_size:'wide',reaction_before:reaction}],{media:[{media_id:'m1',duration_frames:500}]});
+ assert.equal(result.included,1);assert.equal(result.segments,2);assert.equal(result.audioSegments,2);assert.deepEqual(reviewTimeline.items.map(x=>[x.clip.startFrame,x.clip.trackIndex]),[[150,3],[200,1]]);assert.equal(project.active,sourceTimeline);
+ const broken=timelineSdk();await assert.rejects(createTimeline(broken.sdk,'BAD',[{media_id:'m1',start_frame:200,end_frame:240,reaction_before:{...reaction,end_frame:900}}],{media:[{media_id:'m1',duration_frames:500}]}),/reazione/i);
+});

@@ -5,7 +5,7 @@ let scriptReady = false, mediaReady = false;
 function updateButton() { $('analyze').disabled = !(scriptReady && mediaReady); $('transcribe').disabled = !mediaReady; $('intellisearch').disabled = !mediaReady; }
 function message(text) { $('message').textContent = text; }
 function showError(error) { message(error.message || String(error)); if(lastProgressEvent && !['complete','error','transcript-complete'].includes(lastProgressEvent.phase))showProgress({...lastProgressEvent,phase:'error',label:error.message || String(error)}); }
-const phaseNames=['Copione','Scena','Inquadrature','Still e volti','Confini take','Audio','Abbinamenti','Ritmo'];
+const phaseNames=['Copione','Scena','Inquadrature','Still e volti','Confini take','Audio','Battute e completezza','Ritmo e reazioni'];
 const phaseBounds=[0,12,24,62,68,81,89,95,100];
 const phaseState=[]; let progressStarted=0,lastProgressEvent=null;
 [...$('progress-steps').children].forEach((row,index)=>{
@@ -105,6 +105,17 @@ function renderEditors(state, beats, decisions) {
     pauseLabel.append(pauseCheck,document.createTextNode(' Conserva le pause di questa battuta'));
     pauseCheck.addEventListener('change',async()=>{try{const next=await window.premontato.updateDecision({beat_id:edit.beat_id,preserve_pause:pauseCheck.checked});$('reviewed').checked=false;render(next);}catch(error){showError(error);}});
     panel.append(pauseLabel);
+    if(edit.opening_checked){const checked=document.createElement('small');checked.textContent='Attacco della battuta verificato nel contesto del copione';panel.append(checked);}
+    if(edit.reaction_status){
+      const reaction=edit.reaction_before,box=document.createElement('div');box.className='reaction-review';
+      if(edit.reaction_status==='unavailable'){const note=document.createElement('small');note.textContent='Reazione non inserita: manca una pausa senza parole in una stretta verificata del personaggio, oppure la battuta è stata modificata manualmente.';box.append(note);}
+      else {
+        const label=document.createElement('label'),check=document.createElement('input');check.type='checkbox';check.dataset.reaction='';check.checked=Boolean(reaction);label.className='review-confirm';
+        label.append(check,document.createTextNode(' Inserisci la reazione silenziosa prima della risposta'+(reaction?' · '+((reaction.end_frame-reaction.start_frame)/(state.analysis.plan.fps || 25)).toFixed(2)+' s':'')));box.append(label);
+        if(reaction?.still){const figure=document.createElement('figure'),image=document.createElement('img'),caption=document.createElement('figcaption');image.src=safeStill(reaction.still.image);image.alt='Anteprima della stretta silenziosa di '+reaction.character;caption.textContent=reaction.character+' · frame '+reaction.still.frame+' · pausa audio verificata, senza parole trascritte';figure.append(image,caption);box.append(figure);}
+        check.addEventListener('change',async()=>{try{const next=await window.premontato.updateDecision({beat_id:edit.beat_id,reaction_enabled:check.checked});$('reviewed').checked=false;render(next);message('Scelta della reazione salvata nel piano.');}catch(error){showError(error);}});
+      }panel.append(box);
+    }
     if(edit.narrative_role && edit.narrative_role!=='free'){const narrative=document.createElement('small');narrative.textContent='Regia: '+(edit.narrative_role==='tension'?'tensione · stretta':'risoluzione · larga')+(edit.style_satisfied?' · copertura trovata':' · copertura richiesta non disponibile');panel.append(narrative);}
     if(edit.pacing){const info=document.createElement('small');info.textContent=(edit.pacing.duration_frames/(state.analysis?.plan?.fps || 25)).toFixed(2)+' s · '+(edit.source_ranges?.length || 1)+' intervalli'+(edit.pacing.short_exception?' · Inquadratura breve: eccezione da verificare':'')+(edit.pacing.protected_pause?' · Pausa protetta':'');panel.append(info);}
     row.lastElementChild.append(panel);

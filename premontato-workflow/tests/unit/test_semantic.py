@@ -53,3 +53,43 @@ class SemanticTests(unittest.TestCase):
   sources=[{'media_id':'m','take_id':'t','segments':[{'start_frame':0,'words':[{'text':first,'start_frame':0,'end_frame':35},{'text':'Marco.','start_frame':70,'end_frame':80}]}]}]
   with patch('transcript_align._SEMANTIC_ENCODER',Encoder()): result=semantic_scene_hits(beats,sources,25)
   self.assertNotIn(('t','b'),result);self.assertEqual(result[('t','a')][0]['end_frame'],35);self.assertNotIn('Marco',result[('t','a')][0]['text'])
+
+ def test_partial_restart_does_not_continue_through_an_aborted_sentence(self):
+  source={'media_id':'m','segments':[{'start_frame':0,'words':[{'text':'Potrei aiutarti ma...','start_frame':0,'end_frame':30},{'text':'Rifacciamo da capo.','start_frame':31,'end_frame':60}]}]}
+  self.assertFalse(any(r['start_frame']==0 and r['end_frame']==60 for r in semantic_windows(source,25)))
+
+ def test_complete_opening_wins_over_a_stronger_truncated_repetition(self):
+  import numpy as np
+  from unittest.mock import patch
+  from transcript_align import semantic_scene_hits, opening_anchor
+  text='Va bene, ma cosa significa? Guarda quel ragazzo, gli ho promesso di aiutarlo e questa sera manterrò la promessa.'
+  head='Va bene, ma cosa significa?';tail='Guarda quel ragazzo, gli ho promesso di aiutarlo e questa sera manterrò la promessa.'
+  class Encoder:
+   def encode(self,texts):
+    return np.array([[0.,1.] if t==opening_anchor({'text':text}) else [.92,.1] if t==tail else [.1,.9] if t==head else [1.,0.] if t==text else [.8,.8] for t in texts])
+  sources=[{'media_id':'complete','take_id':'earlier','segments':[{'start_frame':0,'words':[{'text':head,'start_frame':0,'end_frame':40},{'text':tail,'start_frame':41,'end_frame':100}]}]}, {'media_id':'partial','take_id':'later','segments':[{'start_frame':0,'words':[{'text':tail,'start_frame':0,'end_frame':60}]}]}]
+  with patch('transcript_align._SEMANTIC_ENCODER',Encoder()): hits=semantic_scene_hits([{'beat_id':'b','kind':'dialogue','text':text}],sources,25)
+  self.assertIn(('earlier','b'),hits);self.assertNotIn(('later','b'),hits)
+
+ def test_complete_opening_expands_to_an_equivalent_validated_candidate_without_crossing_previous_line(self):
+  from transcript_align import prefer_complete_opening
+  hit={'start_frame':50,'end_frame':150,'score':.8,'opening_checked':True,'text':'Continuiamo il discorso.'}
+  full={**hit,'start_frame':10,'score':.75,'text':'Va bene, ma che significa? Continuiamo il discorso.'}
+  self.assertEqual(prefer_complete_opening(hit,[full,hit],0)['start_frame'],10)
+  self.assertEqual(prefer_complete_opening(hit,[full,hit],30)['start_frame'],50)
+
+ def test_opening_anchor_requires_specific_words_not_only_a_generic_semantic_match(self):
+  from transcript_align import opening_words_overlap
+  self.assertGreaterEqual(opening_words_overlap('Eeeh va bene! Ma che significa?','Eh, va bene, ma cosa significa?'),2)
+  self.assertEqual(opening_words_overlap('Eeeh va bene! Ma che significa?','Passa, passata.'),0)
+
+ def test_dialogue_handles_never_include_words_of_adjacent_lines(self):
+  from transcript_align import safe_dialogue_handles
+  source={'duration_frames':250,'segments':[{'words':[{'text':'prima','start_frame':80,'end_frame':99},{'text':'battuta','start_frame':100,'end_frame':150},{'text':'dopo','start_frame':153,'end_frame':180}]}]}
+  self.assertEqual(safe_dialogue_handles({'start_frame':100,'end_frame':150},source,25),(99,153))
+
+ def test_next_line_ownership_needs_specific_content_not_a_generic_question(self):
+  from transcript_align import fragment_supports_line
+  beat={'text':"Non ho capito, ti immoli con l'ingegnere?"}
+  self.assertTrue(fragment_supports_line("No, capito, dimmoli con l'ingegnere.",beat))
+  self.assertFalse(fragment_supports_line('Butti su questa cosa, dai.',beat))

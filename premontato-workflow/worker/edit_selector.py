@@ -83,7 +83,59 @@ def _protected_beats(beats):
     return protected
 
 
-def pace_plan(plan, sources, audio, beats, fps, options=None):
+def _reaction_preview(source, start, end):
+    if not source.get('path'):return None
+    cap=None
+    try:
+        import cv2,base64
+        cap=cv2.VideoCapture(str(source['path']));frame_number=(start+end)//2
+        cap.set(cv2.CAP_PROP_POS_FRAMES,frame_number);ok,frame=cap.read()
+        if not ok:return None
+        frame=cv2.resize(frame,(480,max(1,round(frame.shape[0]*480/frame.shape[1]))))
+        ok,data=cv2.imencode('.jpg',frame,[cv2.IMWRITE_JPEG_QUALITY,70])
+        return {'frame':frame_number,'image':'data:image/jpeg;base64,'+base64.b64encode(data).decode()} if ok else None
+    except Exception:return None
+    finally:
+        if cap is not None:cap.release()
+
+
+def verified_reaction(decision, previous, sources, audio, beats, shots, fps, minimum, occupied=None):
+    """A real silent preroll of the answering actor, never arbitrary reaction B-roll."""
+    from shot_analyzer import speaker_coverage
+    if not previous or previous.get('narrative_role')!='tension' or decision.get('narrative_role')!='resolution':return None
+    if decision.get('manual') or decision.get('reaction_enabled') is False:return None
+    character=next((b.get('character') for b in beats if b.get('beat_id')==decision['beat_id']),None)
+    if not character:return None
+    duration=max(round(.8*fps),minimum);margin=max(1,round(.12*fps))
+    if duration>5*fps:return None
+    candidates=[]
+    for row in [decision,*decision.get('alternatives',[])]:
+        if row.get('shot_size')!='close' or row.get('speaker_coverage')!='visible':continue
+        source=next((s for s in sources if s.get('take_id')==row.get('take_id') and s['media_id']==row['media_id']),None)
+        measured=audio.get(row['media_id'],{})
+        if not source or measured.get('status')!='ok':continue
+        anchor=row.get('matched_start_frame',row['start_frame'])
+        floor=source.get('start_frame',0);ceiling=source.get('end_frame',source['duration_frames'])
+        words=_speech_words(source)
+        for silence in measured.get('silences',[]):
+            end=min(anchor-margin,silence['end_frame'],ceiling)
+            start=end-duration
+            if start<max(floor,silence['start_frame']) or anchor-end>round(.6*fps):continue
+            if any(w['start_frame']<end and start<w['end_frame'] for w in words):continue
+            retained=[r for d in occupied or [] if d['media_id']==row['media_id'] for r in d.get('source_ranges',[d])]
+            if any(r['start_frame']<end and start<r['end_frame'] for r in retained):continue
+            if speaker_coverage(shots,row['media_id'],start,end,character)!='visible':continue
+            if not any(s.get('media_id')==row['media_id'] and s.get('reviewed') and s.get('shot_size')=='close' and s['start_frame']<=start and s['end_frame']>=end for s in shots):continue
+            reaction={'kind':'reaction','media_id':row['media_id'],'take_id':row['take_id'],'start_frame':start,'end_frame':end,'shot_size':'close','character':character,'enabled':True,'basis':'verified_silent_preroll','speaker_coverage':'visible'}
+            candidates.append((source.get('take_index',0),row.get('score',0),reaction,source))
+    if not candidates:return None
+    _,_,reaction,source=max(candidates,key=lambda x:(x[0],x[1]))
+    preview=_reaction_preview(source,reaction['start_frame'],reaction['end_frame'])
+    if preview:reaction['still']=preview
+    return reaction
+
+
+def pace_plan(plan, sources, audio, beats, fps, options=None, shots=None):
     import copy
     settings=pacing_options(options)
     if not isinstance(fps,(float,int)) or fps<=0:raise ValueError('Frame rate non valido')
@@ -188,9 +240,22 @@ def pace_plan(plan, sources, audio, beats, fps, options=None):
         exception=settings['enabled'] and sum(d['pacing']['duration_frames'] for d in group)<minimum
         short+=int(exception)
         for decision in group:decision['pacing']['short_exception']=bool(exception)
+    reactions=0;cursor=0;previous=None;occupied=list(decisions)
+    for decision in decisions:
+        decision.pop('reaction_before',None)
+        reaction=verified_reaction(decision,previous,sources,audio,beats,shots or [],fps,minimum,occupied)
+        requested=previous and previous.get('narrative_role')=='tension' and decision.get('narrative_role')=='resolution'
+        if reaction:
+            reaction['timeline_start_frame']=cursor
+            occupied.append(reaction)
+            decision['reaction_before']=reaction;cursor+=reaction['end_frame']-reaction['start_frame'];reactions+=1
+            decision['reaction_status']='inserted'
+        elif requested:decision['reaction_status']='disabled' if decision.get('reaction_enabled') is False else 'unavailable'
+        else:decision.pop('reaction_status',None)
+        decision['timeline_start_frame']=cursor;cursor+=decision['pacing']['duration_frames'];previous=decision
     result['decisions']=decisions
     result['pacing_settings']=settings
     result['pacing_summary']={'removed_frames':removed,'removed_seconds':round(removed/fps,3),'duration_frames':cursor,
-                              'protected_beats':protected_count,'coverage_holds':holds,'short_shot_exceptions':short,
+                              'reaction_count':reactions,'protected_beats':protected_count,'coverage_holds':holds,'short_shot_exceptions':short,
                               'unavailable_media':sorted(unavailable),'measured_media':sum(v.get('status')=='ok' for v in audio.values())}
     return result

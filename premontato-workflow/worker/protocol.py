@@ -51,7 +51,7 @@ def dispatch(request):
         result={**result,'cache_hit':cached is not None}
     elif action == "pace_plan":
         from edit_selector import pace_plan
-        result=pace_plan(payload['plan'],payload.get('sources',[]),payload.get('audio',{}),payload.get('beats',[]),float(payload['fps']),payload.get('settings'))
+        result=pace_plan(payload['plan'],payload.get('sources',[]),payload.get('audio',{}),payload.get('beats',[]),float(payload['fps']),payload.get('settings'),shots=payload.get('shots',[]))
     elif action == "visual_review":
         from shot_analyzer import visual_review_media, cluster_faces, VISUAL_REVIEW_VERSION
         from cache import get_cache, cache_key, write_cache
@@ -97,7 +97,7 @@ def dispatch(request):
                                               lambda: analyze_video(media, options["sample_fps"], on_progress=report))
         result = {"segments": segments, "cache_hit": cache_hit}
     else:
-        from transcript_align import similarity, phrase_candidates, beat_phrases, normalize, complete_beat_candidates
+        from transcript_align import similarity, phrase_candidates, beat_phrases, normalize, complete_beat_candidates, safe_dialogue_handles
         beats, sources, fps = payload["beats"], payload["sources"], float(payload["fps"])
         decisions, unmatched = [], []
         shot_segments = payload.get("shots", [])
@@ -153,16 +153,17 @@ def dispatch(request):
             _, score, source, segment, hit, shot = max(latest, key=lambda row: (row[4]["start_frame"], row[1]))
             if shot and shot.get("shot_size") in {"wide", "medium", "close"} and shot.get("confidence", 0) >= 0.55:
                 previous_shot_size = shot["shot_size"]
+            handle_start,handle_end=safe_dialogue_handles(hit,source,fps)
             decisions.append({"beat_id": beat["beat_id"], "take_id": source["take_id"], "media_id": source["media_id"],
-                              "start_frame": max(source.get("start_frame", 0), hit["start_frame"] - round(0.15 * fps)),
-                              "end_frame": min(source.get("end_frame", source["duration_frames"]), hit["end_frame"] + round(0.35 * fps)),
+                              "start_frame": handle_start,
+                              "end_frame": handle_end,
                               "matched_start_frame": hit["start_frame"], "matched_end_frame": hit["end_frame"],
                               "narrative_role": role, "style_satisfied": bool(narrative) if desired else None,
                               "camera_id": source.get("camera_id", "camera_1"), "shot_size": shot.get("shot_size", "unknown") if shot else "unknown",
                               "speaker_coverage": speaker_coverage(shot_segments,source['media_id'],hit['start_frame'],hit['end_frame'],beat.get('character','')),
                               "visible_subjects": shot.get('visible_subjects',[]) if shot else [],
                               "shot_confidence": shot.get("confidence", 0.0) if shot else 0.0,
-                              "match_method": hit.get("match_method", "lexical"), "semantic_score": hit.get("semantic_score"),
+                              "match_method": hit.get("match_method", "lexical"), "semantic_score": hit.get("semantic_score"), "opening_checked": hit.get("opening_checked", False),
                               "score": score, "confidence": score, "coverage": hit.get("coverage", 1.0), "matched_text": hit["text"],
                               "rationale_codes": ["LATEST_MATCHING_TAKE", "LOCAL_TRANSCRIPT_MATCH"],
                               "warnings": (["Abbinamento per significato da verificare"] if hit.get("semantic_score", 1.0) < .7 else []) if payload.get("semantic") else (["Battuta parziale: verificare le parole mancanti"] if hit.get("coverage", 1.0) < .75 else []) + (["inquadratura da verificare"] if not shot else []), "alternatives": [
