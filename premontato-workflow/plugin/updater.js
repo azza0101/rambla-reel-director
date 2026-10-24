@@ -12,7 +12,7 @@ const MAX_ARCHIVE_BYTES = 350 * 1024 * 1024;
 const MAX_DIAGNOSTIC_EVENTS = 200;
 const MAX_DIAGNOSTIC_BYTES = 64 * 1024;
 const ALLOWED_DIAGNOSTIC_EVENTS = new Set(['application_started', 'operation_failed']);
-const ALLOWED_OPERATIONS = new Set(['resolveSnapshot', 'selectScript', 'selectMedia', 'transcribeSelected', 'analyzeIntellisearch', 'analyze', 'cancelAnalysis', 'getReviewState', 'confirmTakes', 'createReviewTimeline', 'update', 'prepareSupportReport', 'submitSupportReport']);
+const ALLOWED_OPERATIONS = new Set(['resolveSnapshot', 'selectScript', 'selectMedia', 'transcribeSelected', 'analyzeIntellisearch', 'analyze', 'cancelAnalysis', 'getReviewState', 'saveDraft', 'saveProject', 'openProject', 'updateDecision', 'setPacing', 'confirmVisualReview', 'confirmTakes', 'createReviewTimeline', 'update', 'prepareSupportReport', 'submitSupportReport']);
 
 function parseVersion(value) {
   if (typeof value !== 'string' || !/^\d+\.\d+\.\d+$/.test(value)) throw new Error('Versione Premontato non valida');
@@ -215,7 +215,7 @@ function findReleaseAsset(release, name) {
   return Array.isArray(release.assets) ? release.assets.find(asset => asset.name === name && Number(asset.size) > 0) : null;
 }
 
-async function downloadAssetBytes(asset, token, maxBytes, fetchImpl = globalThis.fetch) {
+async function downloadAssetBytes(asset, token, maxBytes, fetchImpl = globalThis.fetch, onProgress) {
   const assetUrl = new URL(asset?.url || '');
   if (assetUrl.protocol !== 'https:' || assetUrl.hostname !== 'api.github.com' ||
       !assetUrl.pathname.startsWith(`/repos/${REPOSITORY}/releases/assets/`)) throw new Error('URL del pacchetto GitHub non valido');
@@ -225,7 +225,14 @@ async function downloadAssetBytes(asset, token, maxBytes, fetchImpl = globalThis
     'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'RAMBLA-Premontato-Updater'
   }, signal: AbortSignal.timeout(120000) });
   if (!response.ok) throw new Error(`Download aggiornamento non riuscito (HTTP ${response.status})`);
-  const bytes = Buffer.from(await response.arrayBuffer());
+  const chunks=[];let received=0;
+  onProgress?.({phase:'download',received:0,total:Number(asset.size),percent:0});
+  if(response.body?.getReader){
+    const reader=response.body.getReader();
+    try{while(true){const {value,done}=await reader.read();if(done)break;received+=value.byteLength;if(received>maxBytes || received>Number(asset.size)){await reader.cancel();throw new Error('Download aggiornamento troppo grande');}chunks.push(Buffer.from(value));onProgress?.({phase:'download',received,total:Number(asset.size),percent:Math.round(received/Number(asset.size)*100)});}}
+    finally{reader.releaseLock();}
+  }else{const chunk=Buffer.from(await response.arrayBuffer());chunks.push(chunk);received=chunk.length;onProgress?.({phase:'download',received,total:Number(asset.size),percent:100});}
+  const bytes=Buffer.concat(chunks,received);
   if (bytes.length !== Number(asset.size) || bytes.length > maxBytes) throw new Error('Download aggiornamento incompleto o troppo grande');
   return bytes;
 }
@@ -255,9 +262,10 @@ async function findLatestUpdate(currentVersion, token, fetchImpl = globalThis.fe
   return { status: 'available', release, manifest, archiveAsset };
 }
 
-async function downloadVerifiedArchive(update, token, destination, fetchImpl = globalThis.fetch) {
+async function downloadVerifiedArchive(update, token, destination, fetchImpl = globalThis.fetch, onProgress) {
   if (!update || update.status !== 'available' || !update.archiveAsset?.url) throw new Error('Aggiornamento non pronto per il download');
-  const bytes = await downloadAssetBytes(update.archiveAsset, token, MAX_ARCHIVE_BYTES, fetchImpl);
+  const bytes = await downloadAssetBytes(update.archiveAsset, token, MAX_ARCHIVE_BYTES, fetchImpl, onProgress);
+  onProgress?.({phase:'verify',percent:null});
   const digest = crypto.createHash('sha256').update(bytes).digest('hex');
   if (digest !== update.manifest.sha256) throw new Error('SHA-256 del pacchetto aggiornamento non valido');
   await fsp.mkdir(path.dirname(destination), { recursive: true });
@@ -265,6 +273,30 @@ async function downloadVerifiedArchive(update, token, destination, fetchImpl = g
   return destination;
 }
 
-module.exports = { MAX_ARCHIVE_BYTES, isNewerVersion, validateReleaseManifest, resolveGithubCredentialPath,
+async function restartPlugin(app, cleanup, {execPath=process.execPath}={}) {
+ if(!/(?:^|[\\/])electron(?:\.exe)?$/i.test(execPath))throw new Error('Riavvio automatico disponibile solo nel processo Electron del pannello');
+ await cleanup();app.relaunch();app.quit();
+}
+
+async function runUpdateInstaller({script,pluginRoot,archivePath,sha256,version,onProgress,spawnImpl=spawn}) {
+ const net=require('node:net'),pipeName='premontato-update-'+crypto.randomUUID().replaceAll('-','');
+ const address=process.platform==='win32'?'\\\\.\\pipe\\'+pipeName:path.join(os.tmpdir(),pipeName+'.sock');
+ const sockets=new Set();
+ const server=net.createServer(socket=>{
+  sockets.add(socket);socket.setEncoding('utf8');let buffer='';
+  socket.on('data',chunk=>{buffer+=chunk;if(buffer.length>32768){socket.destroy();return;}let index;while((index=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,index);buffer=buffer.slice(index+1);try{const event=JSON.parse(line);if(['validate','extract','install','rollback'].includes(event.phase) && Number.isInteger(event.current) && Number.isInteger(event.total) && event.total>0 && event.total<=1000000 && event.current>=0 && event.current<=event.total)onProgress?.({phase:event.phase,current:event.current,total:event.total,percent:Math.round(event.current/event.total*100)});}catch{}}});
+  socket.on('error',()=>{});socket.on('close',()=>sockets.delete(socket));
+ });
+ await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(address,resolve);});
+ try{
+  await new Promise((resolve,reject)=>{
+   const child=spawnImpl('powershell.exe',['-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',script,'-PluginRoot',pluginRoot,'-ArchivePath',archivePath,'-ExpectedSha256',sha256,'-Version',version,'-ProgressPipe',pipeName],{windowsHide:true,stdio:'ignore'});
+   child.once('error',()=>reject(new Error('Impossibile avviare l’installazione dell’aggiornamento')));
+   child.once('exit',code=>code===0?resolve():reject(new Error(code===1223?'Aggiornamento annullato nella richiesta UAC.':'Installazione aggiornamento non riuscita; l’installazione precedente è stata conservata.')));
+  });
+ }finally{for(const socket of sockets)socket.destroy();await new Promise(resolve=>server.close(resolve));}
+}
+
+module.exports = { restartPlugin, runUpdateInstaller, MAX_ARCHIVE_BYTES, isNewerVersion, validateReleaseManifest, resolveGithubCredentialPath,
   loadProtectedToken, findLatestUpdate, downloadVerifiedArchive, createDiagnostics, findGhExecutable,
   checkGithubCli, createGithubIssue, validateDiagnosticReport };

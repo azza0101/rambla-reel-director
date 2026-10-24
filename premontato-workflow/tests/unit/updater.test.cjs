@@ -99,3 +99,27 @@ test('checks dedicated Premontato prereleases without considering other products
   assert.equal(update.status, 'available');
   assert.equal(update.manifest.version, '0.3.1');
 });
+
+test('streams real download byte progress and never writes an unverified archive',async()=>{
+ const archive=Buffer.from('abcdefgh'),hash=require('node:crypto').createHash('sha256').update(archive).digest('hex');
+ const update={status:'available',archiveAsset:{url:'https://api.github.com/repos/azza0101/rambla-reel-director/releases/assets/900',size:8},manifest:{sha256:hash}};
+ const makeResponse=async()=>new Response(new ReadableStream({start(controller){controller.enqueue(archive.subarray(0,3));controller.enqueue(archive.subarray(3));controller.close();}}));
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'premontato-progress-')),events=[];
+ try{await downloadVerifiedArchive(update,'private',path.join(dir,'ok.zip'),makeResponse,event=>events.push(event));assert.deepEqual(events.filter(e=>e.phase==='download').map(e=>e.received),[0,3,8]);
+ await assert.rejects(downloadVerifiedArchive({...update,manifest:{sha256:'0'.repeat(64)}},'private',path.join(dir,'bad.zip'),makeResponse),/SHA-256/);assert.equal(fs.existsSync(path.join(dir,'bad.zip')),false);
+ }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('restart requests one Electron relaunch only after cleanup succeeds',async()=>{
+ const {restartPlugin}=require('../../plugin/updater'),order=[];const app={relaunch:()=>order.push('relaunch'),quit:()=>order.push('quit')};
+ await restartPlugin(app,async()=>order.push('saved'),{execPath:'C:/Resolve/Electron/electron.exe'});assert.deepEqual(order,['saved','relaunch','quit']);
+ order.length=0;await assert.rejects(restartPlugin(app,async()=>{throw Error('save failed');},{execPath:'C:/Resolve/Electron/electron.exe'}));assert.deepEqual(order,[]);
+ await assert.rejects(restartPlugin(app,async()=>{}, {execPath:'C:/Resolve/Resolve.exe'}),/Electron/);
+});
+
+test('installer progress pipe is informational and cannot turn a failed install into success',async()=>{
+ const {runUpdateInstaller}=require('../../plugin/updater'),{EventEmitter}=require('node:events'),net=require('node:net');
+ const run=code=>{const events=[];return {events,promise:runUpdateInstaller({script:'update.ps1',pluginRoot:'plugin',archivePath:'archive',sha256:'a'.repeat(64),version:'1.0.0',onProgress:event=>events.push(event),spawnImpl:(_exe,args)=>{
+ const child=new EventEmitter();setImmediate(()=>{const name=args[args.indexOf('-ProgressPipe')+1],address=process.platform==='win32'?'\\\\.\\pipe\\'+name:path.join(os.tmpdir(),name+'.sock');const socket=net.connect(address,()=>socket.end(JSON.stringify({phase:'extract',current:2,total:4})+'\n'+JSON.stringify({phase:'exec',current:4,total:4})+'\n'+JSON.stringify({phase:'install',current:4,total:4})+'\n'));socket.on('error',error=>child.emit('error',error));socket.on('close',()=>child.emit('exit',code));});return child;}})};};
+ const ok=run(0);await ok.promise;assert.deepEqual(ok.events.map(e=>[e.phase,e.percent]),[['extract',50],['install',100]]);
+ const bad=run(1);await assert.rejects(bad.promise,/precedente è stata conservata/);
+});

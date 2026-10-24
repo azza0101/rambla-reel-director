@@ -3,11 +3,21 @@ param(
     [Parameter(Mandatory=$true)][string]$ArchivePath,
     [Parameter(Mandatory=$true)][string]$ExpectedSha256,
     [Parameter(Mandatory=$true)][string]$Version,
+    [string]$ProgressPipe = '',
     [switch]$ValidateOnly
 )
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 
+$script:progressClient=$null;$script:progressWriter=$null
+if($ProgressPipe -and $ProgressPipe -notmatch '^premontato-update-[a-f0-9]{32}$'){throw 'Canale avanzamento non valido'}
+function Send-UpdateProgress([string]$Phase,[int]$Current,[int]$Total){
+ if(!$ProgressPipe){return}
+ try{
+  if(!$script:progressWriter){$script:progressClient=[IO.Pipes.NamedPipeClientStream]::new('.',$ProgressPipe,[IO.Pipes.PipeDirection]::Out);$script:progressClient.Connect(500);$script:progressWriter=[IO.StreamWriter]::new($script:progressClient,[Text.UTF8Encoding]::new($false));$script:progressWriter.AutoFlush=$true}
+  $script:progressWriter.WriteLine((@{phase=$Phase;current=$Current;total=$Total}|ConvertTo-Json -Compress))
+ }catch{if($script:progressClient){$script:progressClient.Dispose()};$script:progressWriter=$null;$script:progressClient=$null}
+}
 function Quote-Argument([string]$Value) { '"' + $Value.Replace('"','\"') + '"' }
 function Get-TargetRelativePath([string]$Name) {
     $parts=$Name.Split('/')
@@ -26,6 +36,7 @@ if((Split-Path -Leaf $PluginRoot) -ne 'com.rambla.premontato' -or !(Test-Path -L
 if(!(Test-Path -LiteralPath $ArchivePath -PathType Leaf) -or $ExpectedSha256 -notmatch '^[a-f0-9]{64}$' -or $Version -notmatch '^\d+\.\d+\.\d+$') { throw 'Parametri aggiornamento non validi' }
 if((Get-FileHash -LiteralPath $ArchivePath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $ExpectedSha256.ToLowerInvariant()) { throw 'SHA-256 pacchetto non valido' }
 
+Send-UpdateProgress 'validate' 0 1
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $zip=[IO.Compression.ZipFile]::OpenRead($ArchivePath)
 $entries=@();$names=@{};$total=0L
@@ -51,6 +62,7 @@ $identity=[Security.Principal.WindowsIdentity]::GetCurrent();$principal=[Securit
 if(!$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     $exe=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $argsList=@('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$PSCommandPath,'-PluginRoot',$PluginRoot,'-ArchivePath',$ArchivePath,'-ExpectedSha256',$ExpectedSha256,'-Version',$Version)
+    if($ProgressPipe){$argsList+=@('-ProgressPipe',$ProgressPipe)}
     $argLine=($argsList | ForEach-Object { Quote-Argument $_ }) -join ' '
     try { $process=Start-Process -FilePath $exe -ArgumentList $argLine -Verb RunAs -WindowStyle Hidden -PassThru -Wait;exit $process.ExitCode }
     catch { throw 'Richiesta di autorizzazione amministrativa annullata o non riuscita' }
@@ -64,6 +76,7 @@ try {
     New-Item -ItemType Directory -Path $stage | Out-Null
     $zip=[IO.Compression.ZipFile]::OpenRead($ArchivePath)
     try {
+        $processed=0
         foreach($entry in $entries) {
             $archiveEntry=$zip.GetEntry($entry.ArchiveName)
             if(!$archiveEntry) { throw ('File non più presente nel pacchetto: '+$entry.Name) }
@@ -73,8 +86,10 @@ try {
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
             $input=$archiveEntry.Open();$output=[IO.File]::Open($target,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
             try { $input.CopyTo($output) } finally { $output.Dispose();$input.Dispose() }
+            $processed++;if($processed % [Math]::Max(1,[Math]::Floor($entries.Count/100)) -eq 0 -or $processed -eq $entries.Count){Send-UpdateProgress 'extract' $processed $entries.Count}
         }
     } finally { $zip.Dispose() }
+    $processed=0
     foreach($entry in $entries) {
         $source=Join-Path $stage $entry.Relative;$target=Join-Path $PluginRoot $entry.Relative
         $targetFull=[IO.Path]::GetFullPath($target)
@@ -91,14 +106,17 @@ try {
         $temporary=$target+'.premontato-update'
         Copy-Item -LiteralPath $source -Destination $temporary -Force
         if($old) { [IO.File]::Replace($temporary,$target,$backupFile) } else { [IO.File]::Move($temporary,$target) }
+        $processed++;if($processed % [Math]::Max(1,[Math]::Floor($entries.Count/100)) -eq 0 -or $processed -eq $entries.Count){Send-UpdateProgress 'install' $processed $entries.Count}
     }
     Write-Output ('Premontato aggiornato a '+$Version+'. Chiudi e riapri il pannello per caricare la nuova versione.')
 } catch {
+    Send-UpdateProgress 'rollback' 0 1
     for($i=$changed.Count-1;$i -ge 0;$i--) {
         $item=$changed[$i]
         try { if($item.Existed -and (Test-Path -LiteralPath $item.Backup)) { $restore=$item.Target+'.premontato-restore';Copy-Item -LiteralPath $item.Backup -Destination $restore -Force;if(Test-Path -LiteralPath $item.Target){$rollbackBackup=$item.Target+'.premontato-rollback-'+[guid]::NewGuid().ToString('N');[IO.File]::Replace($restore,$item.Target,$rollbackBackup);Remove-Item -LiteralPath $rollbackBackup -Force}else{[IO.File]::Move($restore,$item.Target)} } elseif(!$item.Existed -and (Test-Path -LiteralPath $item.Target)){Remove-Item -LiteralPath $item.Target -Force} } catch {}
     }
     throw
 } finally {
+    if($script:progressWriter){$script:progressWriter.Dispose()};if($script:progressClient){$script:progressClient.Dispose()}
     if(Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
 }

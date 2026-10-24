@@ -3,6 +3,45 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 
+function validateDraft(value){
+ const obj=v=>v && typeof v==='object' && !Array.isArray(v),str=v=>typeof v==='string',list=(v,check)=>Array.isArray(v) && v.length<=10000 && v.every(check),scalar=v=>str(v)||Number.isFinite(v),sizes=['wide','medium','close','detail','unknown'];
+ if(!obj(value) || Buffer.byteLength(JSON.stringify(value))>512*1024 || value.takes!==undefined && !list(value.takes,v=>obj(v)&&str(v.take_id)&&scalar(v.start_frame)&&scalar(v.end_frame)) || value.beats!==undefined && !list(value.beats,v=>obj(v)&&str(v.beat_id)&&scalar(v.start)&&scalar(v.end)&&sizes.includes(v.scale)))throw new Error('Bozza progetto non valida');
+ if(value.visual!==undefined && (!obj(value.visual) || value.visual.dirty!==undefined && typeof value.visual.dirty!=='boolean' || value.visual.person_names!==undefined && (!obj(value.visual.person_names)||!Object.values(value.visual.person_names).every(str)) || value.visual.intervals!==undefined && !list(value.visual.intervals,v=>obj(v)&&str(v.segment_id)&&sizes.includes(v.shot_size)&&list(v.visible_subjects,str))))throw new Error('Bozza visiva del progetto non valida');
+ if(value.pacing!==undefined && (!obj(value.pacing)||typeof value.pacing.enabled!=='boolean'||typeof value.pacing.script!=='boolean'||!scalar(value.pacing.gap)||!scalar(value.pacing.minimum)))throw new Error('Bozza ritmo non valida');
+}
+function validateProjectState(state){
+ const fail=()=>{throw new Error('Campi del progetto Premontato non validi');},obj=v=>v&&typeof v==='object'&&!Array.isArray(v),str=v=>typeof v==='string',int=v=>Number.isSafeInteger(v)&&v>=0;
+ const array=(v,check,optional=false)=>{if(v===undefined&&optional)return;if(!Array.isArray(v)||v.length>100000||!v.every(check))fail();};
+ if(!obj(state)||!Array.isArray(state.media))fail();const media=new Map();
+ for(const item of state.media){if(!obj(item)||!str(item.media_id)||media.has(item.media_id)||!int(item.duration_frames)||!item.duration_frames||!str(item.path)||item.name!==undefined&&!str(item.name))fail();media.set(item.media_id,item);}
+ if(state.script!==null&&state.script!==undefined&&(!obj(state.script)||!str(state.script.text)||!str(state.script.path)))fail();
+ for(const key of ['projectId','timelineId'])if(state[key]!==undefined&&!str(state[key]))fail();
+ const range=(row,bounds)=>obj(row)&&int(row.start_frame)&&int(row.end_frame)&&row.end_frame>row.start_frame&&row.end_frame<=bounds;
+ const beat=row=>obj(row)&&str(row.beat_id)&&str(row.kind)&&str(row.text)&&(row.character===undefined||row.character===null||str(row.character));
+ const scene=row=>obj(row)&&str(row.heading)&&Array.isArray(row.beats)&&row.beats.every(beat);
+ const sizes=['wide','medium','close','detail','unknown'];
+ const decision=(row,alt=false)=>{
+  if(!obj(row)||!media.has(row.media_id)||!str(row.take_id)||!alt&&!str(row.beat_id)||!range(row,media.get(row.media_id)?.duration_frames))return false;
+  for(const key of ['score','confidence','coverage','semantic_score','shot_confidence'])if(row[key]!==undefined&&row[key]!==null&&!Number.isFinite(row[key]))return false;
+  if(row.shot_size!==undefined&&!sizes.includes(row.shot_size)||row.matched_text!==undefined&&!str(row.matched_text))return false;
+  if(row.alternatives===undefined && !alt)row.alternatives=[];
+  if(row.alternatives!==undefined&&(!Array.isArray(row.alternatives)||!row.alternatives.every(value=>decision(value,true))))return false;
+  if(row.source_ranges!==undefined&&(!Array.isArray(row.source_ranges)||!row.source_ranges.every(value=>range(value,row.end_frame)&&value.start_frame>=row.start_frame)))return false;
+  if(row.warnings!==undefined&&(!Array.isArray(row.warnings)||!row.warnings.every(str)))return false;return true;
+ };
+ const shot=row=>obj(row)&&media.has(row.media_id)&&str(row.segment_id)&&range(row,media.get(row.media_id)?.duration_frames)&&sizes.includes(row.shot_size)&&(row.visible_subjects===undefined||Array.isArray(row.visible_subjects)&&row.visible_subjects.every(str));
+ const source=row=>obj(row)&&media.has(row.media_id)&&(row.path===undefined||row.path===media.get(row.media_id).path)&&Array.isArray(row.segments)&&row.segments.every(segment=>obj(segment)&&str(segment.text)&&range(segment,media.get(row.media_id).duration_frames)&&(segment.words===undefined||Array.isArray(segment.words)&&segment.words.every(word=>obj(word)&&str(word.text)&&int(word.start_frame)&&int(word.end_frame)&&word.end_frame>=word.start_frame&&word.end_frame<=media.get(row.media_id).duration_frames)));
+ if(state.pacingSettings!==undefined&&!obj(state.pacingSettings))fail();state.pacingSettings={enabled:true,max_pause_seconds:.45,minimum_shot_seconds:1.2,respect_script_pauses:true,comic_hold_seconds:1,...state.pacingSettings};for(const key of ['enabled','respect_script_pauses'])if(typeof state.pacingSettings[key]!=='boolean')fail();for(const key of ['max_pause_seconds','minimum_shot_seconds','comic_hold_seconds'])if(!Number.isFinite(state.pacingSettings[key])||state.pacingSettings[key]<0)fail();
+ array(state.transcripts,source,true);if(state.uiDraft!==undefined&&state.uiDraft!==null)validateDraft(state.uiDraft);
+ const analysis=state.analysis;if(analysis===null||analysis===undefined)return;if(!obj(analysis))fail();
+ array(analysis.parsedBeats,beat,true);if(analysis.shots===undefined)analysis.shots=[];array(analysis.shots,shot);array(analysis.planningSources,source,true);array(analysis.warnings,str,true);
+ if(analysis.selectedScene!==undefined&&analysis.selectedScene!==null&&!scene(analysis.selectedScene))fail();
+ if(analysis.script!==undefined&&(!obj(analysis.script)||!Array.isArray(analysis.script.scenes)||!analysis.script.scenes.every(scene)))fail();
+ if(analysis.plan!==undefined&&analysis.plan!==null){if(!obj(analysis.plan))fail();array(analysis.plan.decisions,v=>decision(v));array(analysis.plan.base_decisions,v=>decision(v),true);if(analysis.plan.unmatched_beats===undefined)analysis.plan.unmatched_beats=[];array(analysis.plan.unmatched_beats,str);if(analysis.plan.pacing_summary!==undefined){const summary=analysis.plan.pacing_summary;if(!obj(summary))fail();if(summary.unavailable_media===undefined)summary.unavailable_media=[];array(summary.unavailable_media,str);}}
+ array(analysis.takes,group=>obj(group)&&media.has(group.media_id)&&str(group.media_name)&&int(group.duration_frames)&&group.duration_frames===media.get(group.media_id).duration_frames&&Array.isArray(group.segments)&&group.segments.every(segment=>obj(segment)&&str(segment.take_id)&&int(segment.take_index)&&range(segment,group.duration_frames)),true);
+ const review=analysis.visualReview;if(review!==undefined&&review!==null){if(!obj(review))fail();array(review.intervals,row=>shot(row)&&Array.isArray(row.stills)&&row.stills.every(still=>obj(still)&&int(still.frame)&&still.frame>=row.start_frame&&still.frame<row.end_frame&&str(still.image)&&Array.isArray(still.face_ids)&&still.face_ids.every(str)));array(review.faces,face=>obj(face)&&str(face.observation_id)&&(face.person_id===null||str(face.person_id))&&int(face.face_number)&&str(face.thumbnail));if(review.personNames!==undefined&&(!obj(review.personNames)||!Object.values(review.personNames).every(str)))fail();}
+}
+
 function workerEnvironment(source = process.env, cachePath) {
   const result = { PREMONTATO_CACHE_DIR: cachePath };
   for (const key of ['PATH', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'USERPROFILE', 'LOCALAPPDATA', 'HOMEDRIVE', 'HOMEPATH']) {
@@ -22,6 +61,7 @@ class Session {
   constructor(root, workerPath, python = process.env.PREMONTATO_PYTHON || path.join(__dirname, 'runtime', 'python.exe')) {
     this.root = root; this.workerPath = workerPath; this.python = python;
     this.state = { stage: 'idle', script: null, media: [], analysis: null, error: null, pacingSettings: { enabled: true, max_pause_seconds: .45, minimum_shot_seconds: 1.2, respect_script_pauses: true, comic_hold_seconds: 1 } };
+    this.documentId=require('node:crypto').randomUUID(); this.projectFile=null; this.lastSavedAt=null; this.lastAutosaveAt=null; this.saveError=null;
     this.child = null; this.pending = new Map(); this.counter = 0;
   }
   async request(action, payload = {}, timeoutMs = 30000, onProgress) {
@@ -55,7 +95,7 @@ class Session {
       : await fs.readFile(file, 'utf8');
     this.state.script = { path: file, text }; this.state.analysis = null; return { name: path.basename(file) };
   }
-  setMedia(records, identity) { this.state.media = records; this.state.transcripts = []; this.state.analysis = null; this.state.projectId = identity.projectId; this.state.timelineId = identity.timelineId; return records.map(({ media_id, name, duration_frames, people = [] }) => ({ media_id, name, duration_frames, people })); }
+  setMedia(records, identity) { this.state.media = records; this.state.transcripts = []; this.state.mediaFingerprints=null; this.state.uiDraft=null; this.state.analysis = null; this.state.projectId = identity.projectId; this.state.timelineId = identity.timelineId; return records.map(({ media_id, name, duration_frames, people = [] }) => ({ media_id, name, duration_frames, people })); }
   assertContext(identity) {
     const ids = (identity.selected || []).map(item => item.media_id);
     if (identity.projectId !== this.state.projectId || identity.timelineId !== this.state.timelineId || ids.length !== this.state.media.length || ids.some((id, index) => id !== this.state.media[index].media_id)) {
@@ -65,6 +105,7 @@ class Session {
   async analyze() {
     if (!this.state.script || !this.state.media.length) throw new Error('Prima scegli un copione e media dal Media Pool');
     if (this.state.stage === 'analyzing') throw new Error('Analisi già in corso');
+    this.state.mediaFingerprints=await this.captureMediaFingerprints();
     this.state.stage = 'analyzing';
     this.state.error = null;
     let lastPhaseIndex = 0;
@@ -151,7 +192,71 @@ class Session {
     if (this.child === child) { child.kill(); this.child = null; }
     return true;
   }
-  getReviewState() { return { stage: this.state.stage, scriptName: this.state.script ? path.basename(this.state.script.path) : null,
+  async captureMediaFingerprints(media=this.state.media) {
+    return Promise.all(media.map(async item=>{try{const stat=await fs.stat(item.path);return {media_id:item.media_id,path:item.path,size:stat.size,mtimeMs:stat.mtimeMs};}catch{return {media_id:item.media_id,path:item.path,unavailable:true};}}));
+  }
+  async validateMediaUnchanged() {
+    if(!this.state.mediaFingerprints)return;
+    const current=await this.captureMediaFingerprints();
+    if(current.some((item,i)=>item.unavailable || item.size!==this.state.mediaFingerprints[i]?.size || item.mtimeMs!==this.state.mediaFingerprints[i]?.mtimeMs))throw new Error('Riprese modificate o non disponibili: riseleziona e ricalcola prima della timeline');
+  }
+  projectStatus(){return {name:this.projectFile?path.basename(this.projectFile):'Sessione senza nome',lastSavedAt:this.lastSavedAt,lastAutosaveAt:this.lastAutosaveAt,error:this.saveError,warning:this.state.restoreWarning || null};}
+  setDraft(value){
+    validateDraft(value);
+    this.state.uiDraft=JSON.parse(JSON.stringify(value));if(value.visual?.dirty && this.state.analysis?.plan){this.state.analysis.plan.visual_review_required=true;if(this.state.analysis.visualReview)this.state.analysis.visualReview.confirmed=false;}return true;
+  }
+  async writeProject(file){
+    const keys=['script','media','transcripts','fps','projectId','timelineId','analysis','pacingSettings','uiDraft','mediaFingerprints'];
+    const state=Object.fromEntries(keys.filter(key=>this.state[key]!==undefined).map(key=>[key,this.state[key]]));
+    state.mediaFingerprints=state.mediaFingerprints || await this.captureMediaFingerprints();
+    const document={format:'premontato-project',schema_version:1,document_id:this.documentId,savedAt:new Date().toISOString(),state};
+    const target=path.resolve(file),temporary=target+'.'+require('node:crypto').randomUUID()+'.tmp';
+    await fs.mkdir(path.dirname(target),{recursive:true});
+    try{const handle=await fs.open(temporary,'wx',0o600);try{await handle.writeFile(JSON.stringify(document));await handle.sync();}finally{await handle.close();}await fs.rename(temporary,target);}
+    finally{await fs.rm(temporary,{force:true}).catch(()=>{});}
+    return document.savedAt;
+  }
+  async writeBinding(){
+    const target=path.join(this.root,'projects','current.json'),temporary=target+'.'+require('node:crypto').randomUUID()+'.tmp';
+    await fs.mkdir(path.dirname(target),{recursive:true});
+    this.projectFingerprint=this.projectFile?await fs.stat(this.projectFile).then(stat=>({size:stat.size,mtimeMs:stat.mtimeMs})):null;
+    try{await fs.writeFile(temporary,JSON.stringify({document_id:this.documentId,path:this.projectFile,fingerprint:this.projectFingerprint}),{flag:'wx',mode:0o600});await fs.rename(temporary,target);}finally{await fs.rm(temporary,{force:true}).catch(()=>{});}
+  }
+  async saveProject(file=this.projectFile){
+    if(!file)throw new Error('Scegli un nome per il progetto Premontato');
+    const saved=await this.writeProject(file);this.projectFile=path.resolve(file);this.lastSavedAt=saved;await this.writeBinding();this.saveError=null;return this.getReviewState();
+  }
+  async saveAutosave(){
+    this.lastAutosaveAt=await this.writeProject(path.join(this.root,'projects','autosave.premontato.json'));
+    if(this.projectFile){
+      const stat=await fs.stat(this.projectFile).catch(()=>null);
+      if(!stat || !this.projectFingerprint || stat.size!==this.projectFingerprint.size || stat.mtimeMs!==this.projectFingerprint.mtimeMs){this.projectFile=null;this.state.restoreWarning='Il file progetto è stato modificato fuori dal plugin: recupero locale conservato, usa Apri o Salva con nome.';}
+      else this.lastSavedAt=await this.writeProject(this.projectFile);
+    }
+    await this.writeBinding();this.saveError=null;return this.projectStatus();
+  }
+  async loadProject(file,{recovery=false}={}){
+    const stat=await fs.stat(file);if(stat.size>100*1024*1024)throw new Error('Progetto Premontato troppo grande');
+    let document;try{document=JSON.parse(await fs.readFile(file,'utf8'));}catch{throw new Error('File progetto Premontato non leggibile');}
+    const state=document?.state;
+    if(document?.format!=='premontato-project' || document.schema_version!==1 || !state || !Array.isArray(state.media) || (state.script && typeof state.script.text!=='string') || (state.transcripts && !Array.isArray(state.transcripts)) || (state.analysis && (typeof state.analysis!=='object' || (state.analysis.plan && !Array.isArray(state.analysis.plan.decisions)))))throw new Error('Formato progetto Premontato non valido');
+    validateProjectState(state);
+    if(state.media.length)require('./ipc_security').validateMediaRecords(state.media);
+    const current=await this.captureMediaFingerprints(state.media),stored=state.mediaFingerprints || [];
+    const changed=current.some((item,i)=>item.unavailable || item.path!==stored[i]?.path || item.size!==stored[i]?.size || item.mtimeMs!==stored[i]?.mtimeMs);
+    const restored={...state,stage:state.analysis?'review':'idle',error:null};
+    if(changed){restored.analysis=null;restored.transcripts=[];restored.uiDraft=null;restored.stage='idle';restored.restoreWarning='Riprese modificate o non disponibili: riseleziona le clip, trascrivi e ripeti l’analisi.';}
+    await this.shutdownWorker();this.documentId=typeof document.document_id==='string' && /^[a-f0-9-]{36}$/.test(document.document_id)?document.document_id:require('node:crypto').randomUUID();this.state=restored;this.projectFile=recovery?null:path.resolve(file);this.lastSavedAt=recovery?null:document.savedAt;this.projectFingerprint=recovery?null:{size:stat.size,mtimeMs:stat.mtimeMs};this.lastAutosaveAt=recovery?document.savedAt:null;this.saveError=null;
+    return this.getReviewState();
+  }
+  async restoreAutosave(){
+    const file=path.join(this.root,'projects','autosave.premontato.json');
+    try{await fs.access(file);}catch(error){if(error.code==='ENOENT')return false;throw error;}
+    await this.loadProject(file,{recovery:true});
+    try{const binding=JSON.parse(await fs.readFile(path.join(this.root,'projects','current.json'),'utf8'));if(binding.document_id===this.documentId && typeof binding.path==='string' && path.isAbsolute(binding.path)){const stat=await fs.stat(binding.path);if(stat.isFile() && stat.size===binding.fingerprint?.size && stat.mtimeMs===binding.fingerprint?.mtimeMs){this.projectFile=binding.path;this.projectFingerprint=binding.fingerprint;this.lastSavedAt=this.lastAutosaveAt;}else{this.state.restoreWarning='Il file progetto è stato modificato fuori dal plugin: recupero aperto senza sovrascriverlo. Apri il file aggiornato oppure salva con un nuovo nome.';}}}catch{}
+    return true;
+  }
+  getReviewState() { return { projectStatus:this.projectStatus(), uiDraft:this.state.uiDraft, stage: this.state.stage, scriptName: this.state.script ? path.basename(this.state.script.path) : null,
     media: this.state.media.map(({ media_id, name, duration_frames, people = [] }) => ({ media_id, name, duration_frames, people })), analysis: this.state.analysis, pacingSettings: this.state.pacingSettings, error: this.state.error }; }
   setTranscripts(sources, fps, identity) { this.assertContext(identity); this.state.transcripts = sources; this.state.fps = fps; this.state.analysis = null; return { count: sources.reduce((sum, source) => sum + source.segments.length, 0) }; }
   updateDecision(request) {

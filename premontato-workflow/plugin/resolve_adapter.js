@@ -167,4 +167,15 @@ async function createTimeline(sdk, name, edits, expected = {}) {
   return { timelineId: String(await newTimeline.GetUniqueId()), timelineName: String(await newTimeline.GetName()), sourceTimelineId: beforeTimeline, included: edits.length, segments: clips.length };
 }
 
-module.exports = { getResolve, snapshot, getTranscript, getSelectedTranscriptions, transcribeSelected, analyzeIntellisearchSelected, parsePeopleMetadata, timecodeToFrames, createTimeline };
+async function saveCurrentProject(sdk, expectedProjectId) {
+ const resolve=await sdk.GetResolvePromise();if(!resolve)throw new Error('Resolve non disponibile per il salvataggio');
+ const pm=await resolve.GetProjectManager(),project=pm && await pm.GetCurrentProject();
+ if(!project)throw new Error('Apri un progetto Resolve prima di salvare');
+ const projectId=String(await project.GetUniqueId()),name=String(await project.GetName());
+ if(expectedProjectId && projectId!==expectedProjectId)throw new Error('Il progetto Resolve è cambiato: salvataggio automatico non eseguito');
+ if(await pm.SaveProject()!==true)throw new Error('Resolve non ha salvato il progetto: aggiornamento interrotto');
+ const after=await pm.GetCurrentProject();if(!after || String(await after.GetUniqueId())!==projectId)throw new Error('Il progetto Resolve è cambiato durante il salvataggio');
+ return {projectId,name,savedAt:new Date().toISOString()};
+}
+
+module.exports = { saveCurrentProject, getResolve, snapshot, getTranscript, getSelectedTranscriptions, transcribeSelected, analyzeIntellisearchSelected, parsePeopleMetadata, timecodeToFrames, createTimeline };
