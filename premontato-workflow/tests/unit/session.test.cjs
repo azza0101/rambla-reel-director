@@ -50,6 +50,7 @@ test('analysis scopes planning to the single automatically matched screenplay sc
     ] };
     if (action === 'select_scene') return { scene: { scene_id: 'scene-a', heading: 'SCENA 01', beats: [{ beat_id: 'a1', kind: 'dialogue', text: 'line' }] }, confidence: 0.91, candidates: [] };
     if (action === 'propose_take_segments') return [{ take_id: 'm:take:1', media_id: 'm', start_frame: 0, end_frame: 100, take_index: 1, boundary_source: 'whole_clip' }];
+    if (action === 'pace_plan') return {...payload.plan, pacing_settings:payload.settings};
     if (action === 'build_plan') return { decisions: [], unmatched_beats: [], warnings: [] };
     throw new Error(`unexpected action ${action}`);
   };
@@ -57,7 +58,7 @@ test('analysis scopes planning to the single automatically matched screenplay sc
   const planCall = calls.find(call => call.action === 'build_plan');
   assert.deepEqual(planCall.payload.beats.map(beat => beat.beat_id), ['a1']);
   assert.equal(session.state.analysis.selectedScene.heading, 'SCENA 01');
-  assert.deepEqual([...new Set(progress.map(event => event.phase))], ['script', 'scene', 'shots', 'takes', 'plan', 'complete']);
+  assert.deepEqual([...new Set(progress.map(event => event.phase))], ['script', 'scene', 'shots', 'takes', 'audio', 'plan', 'pacing', 'complete']);
   assert.equal(progress.at(-1).percent, 100);
 });
 
@@ -106,4 +107,19 @@ test('manual review validates source bounds and recalculates timeline positions'
  session.updateDecision({beat_id:'a',start_frame:5,end_frame:80,shot_size:'close'});
  assert.equal(session.state.analysis.plan.decisions[1].timeline_start_frame,75);
  assert.equal(session.state.analysis.plan.decisions[0].shot_size,'close');
+});
+
+test('editing a paced interval invalidates its old ranges and updates the unpaced base',()=>{
+ const session=new Session('unused','unused');session.state.media=[{media_id:'m',duration_frames:500}];
+ session.state.analysis={plan:{base_decisions:[{beat_id:'a',media_id:'m',start_frame:10,end_frame:300}],decisions:[{beat_id:'a',media_id:'m',start_frame:20,end_frame:280,source_ranges:[{start_frame:20,end_frame:100},{start_frame:200,end_frame:280}],alternatives:[]}]}};
+ session.updateDecision({beat_id:'a',start_frame:50,end_frame:120});
+ assert.equal(session.state.analysis.plan.decisions[0].source_ranges,undefined);
+ assert.equal(session.state.analysis.plan.base_decisions[0].end_frame,120);
+});
+test('a pause-only edit restores the untrimmed source interval before reapplying pacing',()=>{
+ const session=new Session('unused','unused');session.state.media=[{media_id:'m',duration_frames:500}];
+ session.state.analysis={plan:{base_decisions:[{beat_id:'a',media_id:'m',start_frame:10,end_frame:300}],decisions:[{beat_id:'a',media_id:'m',start_frame:20,end_frame:280,alternatives:[]}]}};
+ session.updateDecision({beat_id:'a',preserve_pause:true});
+ assert.equal(session.state.analysis.plan.decisions[0].start_frame,10);
+ assert.equal(Boolean(session.state.analysis.plan.decisions[0].manual),false);
 });

@@ -22,7 +22,7 @@ try{
  Copy-Item -LiteralPath $SdkPath -Destination (Join-Path $stage 'WorkflowIntegration.node')
  if(Test-Path -LiteralPath $target){New-Item -ItemType Directory -Force -Path $backupRoot|Out-Null;Move-Item -LiteralPath $target -Destination $backup}
  try{Move-Item -LiteralPath $stage -Destination $target}catch{if(Test-Path -LiteralPath $backup){Move-Item -LiteralPath $backup -Destination $target};throw}
- $message='RAMBLA Premontato '+$manifest.version+' installato. Apri Workspace > Workflow Integrations > RAMBLA Premontato.';Write-Output $message
+ $message='RAMBLA Premontato '+$manifest.version+' installato. Apri Workspace > Workflow Integrations > RAMBLA Premontato.';if(!(Get-Command ffmpeg -ErrorAction SilentlyContinue) -and !(Test-Path -LiteralPath 'C:\Program Files\FFmpeg\ffmpeg.exe')){$message+=' Analisi silenzi: installa FFmpeg nel PATH per abilitarla; fino ad allora le pause vengono conservate.'};Write-Output $message
  if(!$Quiet){Add-Type -AssemblyName System.Windows.Forms;[Windows.Forms.MessageBox]::Show($message,'RAMBLA Premontato')|Out-Null}
 }catch{Write-Error -ErrorAction Continue $_;if(!$Quiet){Add-Type -AssemblyName System.Windows.Forms;[Windows.Forms.MessageBox]::Show($_.Exception.Message,'RAMBLA Premontato')|Out-Null};exit 1}
 finally{if((Test-Path -LiteralPath $stage) -and [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($stage)) -eq $PluginRoot -and [IO.Path]::GetFileName($stage).StartsWith('.premontato-stage-')){Assert-NoLink $stage;Remove-Item -LiteralPath $stage -Recurse -Force}}

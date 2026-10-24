@@ -20,7 +20,7 @@ function prepareReviewTimeline(plan, confirmed) {
 class Session {
   constructor(root, workerPath, python = process.env.PREMONTATO_PYTHON || path.join(__dirname, 'runtime', 'python.exe')) {
     this.root = root; this.workerPath = workerPath; this.python = python;
-    this.state = { stage: 'idle', script: null, media: [], analysis: null, error: null };
+    this.state = { stage: 'idle', script: null, media: [], analysis: null, error: null, pacingSettings: { enabled: true, max_pause_seconds: .45, minimum_shot_seconds: 1.2, respect_script_pauses: true, comic_hold_seconds: 1 } };
     this.child = null; this.pending = new Map(); this.counter = 0;
   }
   async request(action, payload = {}, timeoutMs = 30000, onProgress) {
@@ -99,21 +99,32 @@ class Session {
         const proposals = await this.request('propose_take_segments', { media: source, transcript: source.segments, fps: source.fps || this.state.fps || 25, beats });
         takes.push({ media_id: source.media_id, media_name: source.name, duration_frames: source.duration_frames,
           confirmed: proposals.length === 1 && proposals[0].boundary_source === 'whole_clip', segments: proposals });
-        progress('takes', 3, 68 + ((i + 1) / Math.max(1, sources.length)) * 17, `Confini take: ${i + 1}/${sources.length} clip`, i + 1, sources.length);
+        progress('takes', 3, 68 + ((i + 1) / Math.max(1, sources.length)) * 12, `Confini take: ${i + 1}/${sources.length} clip`, i + 1, sources.length);
       }
       const planningSources = takes.flatMap(group => group.confirmed ? group.segments.map(take => ({ ...sources.find(source => source.media_id === group.media_id), ...take,
         segments: sources.find(source => source.media_id === group.media_id).segments.filter(segment => segment.start_frame >= take.start_frame && segment.start_frame < take.end_frame) })) : []);
-      progress('plan', 4, 88, 'Abbino le battute alle take confermate');
-      const plan = selectedScene && takes.every(group => group.confirmed)
-        ? await this.request('build_plan', { beats, sources: planningSources, shots, semantic: true, fps: this.state.fps || 25 }) : null;
+      const audio = {};
+      const audioSources = this.state.pacingSettings.enabled ? sources.filter(source => source.path) : [];
+      progress('audio', 4, 81, 'Misuro le pause nell’audio locale');
+      for (let i=0;i<audioSources.length;i++) {
+        const source=audioSources[i];
+        progress('audio',4,81+(i/Math.max(1,audioSources.length))*7, 'Audio · '+source.name,i,audioSources.length);
+        try { audio[source.media_id] = await this.request('analyze_audio',{media:source},180000); }
+        catch(error) { audio[source.media_id] = {status:'unavailable',reason:error.message}; }
+      }
+      progress('plan', 5, 89, 'Abbino il significato delle battute alle take confermate');
+      let plan = selectedScene && takes.every(group => group.confirmed)
+        ? await this.request('build_plan', { beats, sources: planningSources, shots, semantic: true, fps: this.state.fps || 25 },300000) : null;
+      progress('pacing',6,95,'Regolo pause e durata delle inquadrature');
+      if (plan) plan=await this.request('pace_plan',{plan,sources:planningSources,audio,beats,fps:this.state.fps || 25,settings:this.state.pacingSettings});
       const warnings = selectedScene
         ? [...(plan?.warnings || ['Conferma i confini delle take suggerite prima di calcolare il premontato.'])]
         : ['Non ho trovato una corrispondenza sufficientemente chiara tra dialoghi e copione; controlla trascrizione e clip selezionate.'];
       if (shotCacheHits) warnings.push(`Analisi visiva riusata dalla cache locale per ${shotCacheHits} clip.`);
       if (this.state.error) warnings.push(this.state.error);
-      this.state.analysis = { script: parsed, sceneSelection, selectedScene, warnings, takes, shots, plan, parsedBeats: beats };
+      this.state.analysis = { script: parsed, sceneSelection, selectedScene, warnings, takes, shots, audio, planningSources, plan, parsedBeats: beats };
       this.state.stage = 'review';
-      progress('complete', 5, 100, 'Analisi completata');
+      progress('complete', 7, 100, 'Analisi completata');
       return this.getReviewState();
     } catch (error) { this.state.error = error.message; this.state.stage = 'error'; progress('error', lastPhaseIndex, 0, `Analisi interrotta: ${error.message}`); throw error; }
   }
@@ -131,13 +142,15 @@ class Session {
     return true;
   }
   getReviewState() { return { stage: this.state.stage, scriptName: this.state.script ? path.basename(this.state.script.path) : null,
-    media: this.state.media.map(({ media_id, name, duration_frames, people = [] }) => ({ media_id, name, duration_frames, people })), analysis: this.state.analysis, error: this.state.error }; }
+    media: this.state.media.map(({ media_id, name, duration_frames, people = [] }) => ({ media_id, name, duration_frames, people })), analysis: this.state.analysis, pacingSettings: this.state.pacingSettings, error: this.state.error }; }
   setTranscripts(sources, fps, identity) { this.assertContext(identity); this.state.transcripts = sources; this.state.fps = fps; this.state.analysis = null; return { count: sources.reduce((sum, source) => sum + source.segments.length, 0) }; }
   updateDecision(request) {
     const plan = this.state.analysis?.plan;
     const decision = plan?.decisions.find(item => item.beat_id === request?.beat_id);
     if (!decision) throw new Error('Battuta non disponibile');
-    let updated = { ...decision };
+    const pauseOnly=request.preserve_pause !== undefined && !['start_frame','end_frame','shot_size','alternative_index'].some(key=>request[key]!==undefined);
+    const original=pauseOnly ? plan.base_decisions?.find(item=>item.beat_id===decision.beat_id) : null;
+    let updated = { ...(original || decision) };
     if (request.alternative_index !== undefined) {
       const alt = decision.alternatives?.[request.alternative_index];
       if (!Number.isInteger(request.alternative_index) || !alt) throw new Error('Alternativa non valida');
@@ -147,10 +160,27 @@ class Session {
     const start = request.start_frame ?? updated.start_frame, end = request.end_frame ?? updated.end_frame;
     if (!media || !Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end > media.duration_frames || end <= start) throw new Error('Intervallo sorgente non valido');
     if (request.shot_size !== undefined && !['wide','medium','close','detail','unknown'].includes(request.shot_size)) throw new Error('Scala non valida');
-    Object.assign(updated, { start_frame: start, end_frame: end, shot_size: request.shot_size ?? updated.shot_size, manual: true });
+    if (request.preserve_pause !== undefined && typeof request.preserve_pause !== 'boolean') throw new Error('Blocco pausa non valido');
+    const manual=updated.manual || ['start_frame','end_frame','shot_size','alternative_index'].some(key=>request[key]!==undefined);
+    Object.assign(updated, { start_frame: start, end_frame: end, shot_size: request.shot_size ?? updated.shot_size, manual, preserve_pause: request.preserve_pause ?? updated.preserve_pause });
+    delete updated.source_ranges; delete updated.pacing;
+    const base=plan.base_decisions?.findIndex(item=>item.beat_id===updated.beat_id);
+    if (base !== undefined && base>=0) plan.base_decisions[base]={...updated};
     plan.decisions[plan.decisions.indexOf(decision)] = updated;
     let cursor = 0;
-    for (const item of plan.decisions) { item.timeline_start_frame = cursor; cursor += item.end_frame - item.start_frame; }
+    for (const item of plan.decisions) { item.timeline_start_frame = cursor; cursor += item.source_ranges?.reduce((sum,r)=>sum+r.end_frame-r.start_frame,0) ?? item.end_frame - item.start_frame; }
+    return this.getReviewState();
+  }
+  async applyPacing() {
+    if (!this.state.analysis?.plan) return this.getReviewState();
+    this.state.analysis.plan=await this.request('pace_plan',{plan:this.state.analysis.plan,sources:this.state.analysis?.planningSources || this.state.transcripts || [],audio:this.state.analysis.audio || {},beats:this.state.analysis.parsedBeats || [],fps:this.state.fps || 25,settings:this.state.pacingSettings});
+    return this.getReviewState();
+  }
+  async setPacing(options) {
+    const plan=this.state.analysis?.plan || {decisions:[],warnings:[]};
+    const result=await this.request('pace_plan',{plan,sources:this.state.analysis?.planningSources || this.state.transcripts || [],audio:this.state.analysis?.audio || {},beats:this.state.analysis?.parsedBeats || [],fps:this.state.fps || 25,settings:{...this.state.pacingSettings,...options}});
+    this.state.pacingSettings=result.pacing_settings;
+    if(this.state.analysis?.plan)this.state.analysis.plan=result;
     return this.getReviewState();
   }
   async confirmTakes(segments) {
@@ -168,8 +198,9 @@ class Session {
     }
     const sources = takes.flatMap(group => group.segments.map(take => ({ ...this.state.transcripts.find(source => source.media_id === group.media_id), ...take,
       segments: this.state.transcripts.find(source => source.media_id === group.media_id).segments.filter(segment => segment.start_frame >= take.start_frame && segment.start_frame < take.end_frame) })));
-    this.state.analysis.plan = await this.request('build_plan', { beats: this.state.analysis.parsedBeats, sources, shots: this.state.analysis.shots, semantic: true, fps: this.state.fps || 25 });
-    return this.getReviewState();
+    this.state.analysis.planningSources = sources;
+    this.state.analysis.plan = await this.request('build_plan', { beats: this.state.analysis.parsedBeats, sources, shots: this.state.analysis.shots, semantic: true, fps: this.state.fps || 25 },300000);
+    return this.applyPacing();
   }
 }
 

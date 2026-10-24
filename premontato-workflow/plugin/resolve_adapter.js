@@ -112,9 +112,14 @@ async function createTimeline(sdk, name, edits, expected = {}) {
   if (expectedIds && (expectedIds.length !== selectedIds.length || expectedIds.some((id, index) => id !== selectedIds[index]))) throw new Error('La selezione dei media è cambiata: riseleziona le clip e ricalcola');
   const byId = new Map(await Promise.all(items.map(async item => [String(await item.GetMediaId()), item])));
   if (!edits.length || edits.some(edit => !byId.has(edit.media_id) || edit.end_frame <= edit.start_frame)) throw new Error('Piano incompleto o media non selezionato; timeline non creata');
+  const expanded = edits.flatMap(edit => {
+    const ranges=edit.source_ranges ?? [{start_frame:edit.start_frame,end_frame:edit.end_frame}];
+    if (!Array.isArray(ranges) || !ranges.length || ranges.some((range,index)=>!Number.isInteger(range.start_frame)||!Number.isInteger(range.end_frame)||range.end_frame<=range.start_frame||range.start_frame<edit.start_frame||range.end_frame>edit.end_frame||(index>0 && range.start_frame<ranges[index-1].end_frame))) throw new Error('Intervalli ritmo non validi');
+    return ranges.map(range=>({...edit,...range}));
+  });
   // Resolve's CreateTimelineFromClips collapses repeated uses of the same MediaPoolItem
   // into a single timeline item. AppendToTimeline preserves every source range.
-  const clips = edits.map(edit => ({ mediaPoolItem: byId.get(edit.media_id), startFrame: edit.start_frame,
+  const clips = expanded.map(edit => ({ mediaPoolItem: byId.get(edit.media_id), startFrame: edit.start_frame,
     endFrame: edit.end_frame }));
   const newTimeline = await pool.CreateEmptyTimeline(name);
   if (!newTimeline) throw new Error('Resolve non ha creato la nuova timeline');
@@ -132,13 +137,13 @@ async function createTimeline(sdk, name, edits, expected = {}) {
       const mediaId = media && String(await media.GetMediaId());
       const sourceStartTime = Number(await item.GetSourceStartTime());
       const sourceEndTime = Number(await item.GetSourceEndTime());
-      const sourceFps = Number(expected.media?.find(media => media.media_id === edits[i].media_id)?.fps) || Number(await sourceTimeline.GetSetting?.('timelineFrameRate')) || 25;
-      const sourceRecord = expected.media?.find(media => media.media_id === edits[i].media_id);
+      const sourceFps = Number(expected.media?.find(media => media.media_id === expanded[i].media_id)?.fps) || Number(await sourceTimeline.GetSetting?.('timelineFrameRate')) || 25;
+      const sourceRecord = expected.media?.find(media => media.media_id === expanded[i].media_id);
       const sourceTc = sourceRecord?.start_tc || (typeof media.GetClipProperty === 'function' ? await media.GetClipProperty('Start TC') : null);
       const sourceBase = sourceTc ? timecodeToFrames(sourceTc, sourceFps) / sourceFps : 0;
       const expectedStartTime = sourceBase + clips[i].startFrame / sourceFps;
       const expectedEndTime = sourceBase + clips[i].endFrame / sourceFps;
-      if (mediaId !== String(edits[i].media_id) || !Number.isFinite(sourceStartTime) || !Number.isFinite(sourceEndTime) ||
+      if (mediaId !== String(expanded[i].media_id) || !Number.isFinite(sourceStartTime) || !Number.isFinite(sourceEndTime) ||
           Math.abs(sourceStartTime - expectedStartTime) > 0.5 / sourceFps || Math.abs(sourceEndTime - expectedEndTime) > 0.5 / sourceFps) {
         throw new Error(`Resolve ha alterato il taglio ${i + 1}; timeline di prova annullata`);
       }
@@ -154,7 +159,7 @@ async function createTimeline(sdk, name, edits, expected = {}) {
     throw new Error('Timeline creata, ma Resolve non ha ripristinato quella di partenza');
   }
   // Do not save the project or leave the user's active timeline switched.
-  return { timelineId: String(await newTimeline.GetUniqueId()), timelineName: String(await newTimeline.GetName()), sourceTimelineId: beforeTimeline, included: clips.length };
+  return { timelineId: String(await newTimeline.GetUniqueId()), timelineName: String(await newTimeline.GetName()), sourceTimelineId: beforeTimeline, included: edits.length, segments: clips.length };
 }
 
 module.exports = { getResolve, snapshot, getTranscript, getSelectedTranscriptions, transcribeSelected, analyzeIntellisearchSelected, parsePeopleMetadata, timecodeToFrames, createTimeline };

@@ -60,7 +60,8 @@ async function start() {
   handle('analyze', async () => { const current = await adapter.snapshot(await getSdk()); session.assertContext(current); return session.analyze(); });
   handle('cancelAnalysis', async () => session.cancelAnalysis());
   handle('getReviewState', async () => session.getReviewState());
-  handle('updateDecision', async request => session.updateDecision(request));
+  handle('updateDecision', async request => { session.updateDecision(request); return session.applyPacing(); });
+  handle('setPacing', async options => session.setPacing(options));
   handle('confirmTakes', async segments => session.confirmTakes(segments));
   handle('createReviewTimeline', async request => {
     const plan = session.state.analysis?.plan;

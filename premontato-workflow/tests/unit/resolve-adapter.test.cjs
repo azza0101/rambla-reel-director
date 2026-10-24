@@ -161,3 +161,16 @@ test('verifies absolute camera source timecodes against the media base', async (
  const result = await createTimeline(context.sdk,'CAMERA TC',[{media_id:'m1',start_frame:100,end_frame:150}],{media:[{media_id:'m1',fps:25,start_tc:'02:00:00:00'}]});
  assert.equal(result.included,1);
 });
+
+test('applies silence source ranges as separate synchronized timeline inserts',async()=>{
+ const context=timelineSdk();
+ const result=await createTimeline(context.sdk,'PACED',[{media_id:'m1',start_frame:100,end_frame:300,source_ranges:[{start_frame:100,end_frame:150},{start_frame:250,end_frame:300}]},{media_id:'m1',start_frame:400,end_frame:450}],{media:[{media_id:'m1',fps:25}]});
+ assert.equal(context.reviewTimeline.items.length,3);
+ assert.deepEqual(await Promise.all(context.reviewTimeline.items.map(i=>i.GetSourceStartTime())),[4,10,16]);
+ assert.equal(result.included,2);
+ assert.equal(result.segments,3);
+});
+test('rejects paced ranges outside the reviewed source interval before creation',async()=>{
+ const context=timelineSdk();
+ await assert.rejects(createTimeline(context.sdk,'BAD',[{media_id:'m1',start_frame:100,end_frame:300,source_ranges:[{start_frame:80,end_frame:150}]}]),/Intervalli/);
+});
