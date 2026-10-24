@@ -36,7 +36,7 @@ def dispatch(request):
     elif action == "choose_take":
         result = choose_latest_complete(payload["takes"])
     elif action == "analyze_shots":
-        from shot_analyzer import analyze_video
+        from shot_analyzer import analyze_video, ANALYZER_VERSION
         from cache import get_or_compute
         from pathlib import Path
         import os
@@ -44,12 +44,15 @@ def dispatch(request):
         stat = Path(media["path"]).stat()
         options = {"sample_fps": float(payload.get("sample_fps", 2.0))}
         fingerprint = f"{media['media_id']}:{stat.st_size}:{stat.st_mtime_ns}"
+        def report(frame, total):
+            sys.stdout.write(json.dumps({"protocol": 1, "request_id": request["request_id"], "status": "progress", "result": {"frame": frame, "total": total}}) + "\n")
+            sys.stdout.flush()
         segments, cache_hit = get_or_compute(os.environ.get("PREMONTATO_CACHE_DIR", ".premontato-cache"),
-                                              fingerprint, "haar-hist-v4-face-height-2fps-opencv4", options,
-                                              lambda: analyze_video(media, options["sample_fps"]))
+                                              fingerprint, ANALYZER_VERSION, options,
+                                              lambda: analyze_video(media, options["sample_fps"], on_progress=report))
         result = {"segments": segments, "cache_hit": cache_hit}
     else:
-        from transcript_align import similarity, phrase_candidates, beat_phrases, normalize
+        from transcript_align import similarity, phrase_candidates, beat_phrases, normalize, complete_beat_candidates
         beats, sources, fps = payload["beats"], payload["sources"], float(payload["fps"])
         decisions, unmatched = [], []
         shot_segments = payload.get("shots", [])
@@ -59,48 +62,58 @@ def dispatch(request):
                 continue
             candidates = []
             for source in sources:
-                for segment in source.get("segments", []):
-                    hits = []
-                    for phrase in beat_phrases(beat):
-                        hits.extend(phrase_candidates({**beat, "text": phrase}, segment))
-                    # A script beat can contain several sentences. Keep the single
-                    # strongest clause in each Resolve speaker turn, not every clause
-                    # as a separate timeline insert.
-                    if hits:
-                        hit = max(hits, key=lambda row: (row["score"], -row["end_frame"] + row["start_frame"]))
-                        shot = next((item for item in shot_segments if item.get("media_id") == source["media_id"] and item.get("start_frame", 0) <= hit["start_frame"] < item.get("end_frame", 0)), None)
-                        candidates.append((source.get("take_index", 0), hit["score"], source, segment, hit, shot))
+                segments = source.get("segments", [])
+                hits = complete_beat_candidates(beat, segments, fps)
+                for hit in hits:
+                    if hit["start_frame"] < source.get("start_frame", 0) or hit["end_frame"] > source.get("end_frame", source["duration_frames"]):
+                        continue
+                    if any(d["media_id"] == source["media_id"] and hit["start_frame"] < d.get("matched_end_frame", d["end_frame"]) and d.get("matched_start_frame", d["start_frame"]) < hit["end_frame"] for d in decisions):
+                        continue
+                    shot = next((item for item in shot_segments if item.get("media_id") == source["media_id"] and item.get("start_frame", 0) <= hit["start_frame"] < item.get("end_frame", 0)), None)
+                    candidates.append((source.get("take_index", 0), hit["score"], source, {}, hit, shot))
             if not candidates:
                 unmatched.append(beat["beat_id"])
                 continue
             # Prefer the latest take which actually contains this line; within that
             # take prefer the strongest phrase hit. Earlier takes remain alternatives.
             best_score = max(row[1] for row in candidates)
-            credible = [row for row in candidates if row[1] >= best_score - 0.10]
+            best_coverage = max(row[4].get("coverage", 1.0) for row in candidates)
+            credible = [row for row in candidates if row[1] >= best_score - 0.10 and row[4].get("coverage", 1.0) >= best_coverage - 0.08]
             classified = [row for row in credible if row[5] and row[5].get("shot_size") in {"wide", "medium", "close"} and row[5].get("confidence", 0) >= 0.55]
             alternating = [row for row in classified if previous_shot_size and row[5]["shot_size"] != previous_shot_size]
-            pool = alternating or classified or credible
+            opening = [row for row in classified if row[5]["shot_size"] == "wide"] if not decisions else []
+            pool = opening or alternating or classified or credible
             latest_index = max(row[0] for row in pool)
             latest = [row for row in pool if row[0] == latest_index]
-            _, score, source, segment, hit, shot = max(latest, key=lambda row: (row[1], len(normalize(row[4].get("text", "")).split())))
+            _, score, source, segment, hit, shot = max(latest, key=lambda row: (row[4]["start_frame"], row[1]))
             if shot and shot.get("shot_size") in {"wide", "medium", "close"} and shot.get("confidence", 0) >= 0.55:
                 previous_shot_size = shot["shot_size"]
             decisions.append({"beat_id": beat["beat_id"], "take_id": source["take_id"], "media_id": source["media_id"],
                               "start_frame": max(source.get("start_frame", 0), hit["start_frame"] - round(0.15 * fps)),
                               "end_frame": min(source.get("end_frame", source["duration_frames"]), hit["end_frame"] + round(0.35 * fps)),
+                              "matched_start_frame": hit["start_frame"], "matched_end_frame": hit["end_frame"],
                               "camera_id": source.get("camera_id", "camera_1"), "shot_size": shot.get("shot_size", "unknown") if shot else "unknown",
                               "shot_confidence": shot.get("confidence", 0.0) if shot else 0.0,
-                              "score": score, "confidence": score, "matched_text": hit["text"],
+                              "score": score, "confidence": score, "coverage": hit.get("coverage", 1.0), "matched_text": hit["text"],
                               "rationale_codes": ["LATEST_MATCHING_TAKE", "LOCAL_TRANSCRIPT_MATCH"],
-                              "warnings": ["inquadratura da verificare"], "alternatives": [
+                              "warnings": (["Battuta parziale: verificare le parole mancanti"] if hit.get("coverage", 1.0) < .75 else []) + (["inquadratura da verificare"] if not shot else []), "alternatives": [
                                   {"take_id": row[2]["take_id"], "media_id": row[2]["media_id"], "start_frame": row[4]["start_frame"],
-                                   "end_frame": row[4]["end_frame"], "score": row[1]} for row in candidates if row[2]["take_id"] != source["take_id"]]})
+                                   "end_frame": row[4]["end_frame"], "score": row[1], "coverage": row[4].get("coverage", 0.0),
+                                   "matched_text": row[4]["text"], "shot_size": row[5].get("shot_size", "unknown") if row[5] else "unknown"} for row in candidates if row[2]["take_id"] != source["take_id"] or row[4]["start_frame"] != hit["start_frame"]]})
+        for left, right in zip(decisions, decisions[1:]):
+            if left["media_id"] == right["media_id"] and left["matched_end_frame"] <= right["matched_start_frame"] and left["end_frame"] > right["start_frame"]:
+                boundary = (left["matched_end_frame"] + right["matched_start_frame"]) // 2
+                left["end_frame"] = min(left["end_frame"], boundary)
+                right["start_frame"] = max(right["start_frame"], boundary)
         cursor = 0
         for decision in decisions:
             decision["timeline_start_frame"] = cursor
             cursor += decision["end_frame"] - decision["start_frame"]
         shot_warnings = (["Le scale delle inquadrature sono stime automatiche: verifica le etichette suggerite."]
                          if shot_segments else ["Nessuna inquadratura è stata analizzata: verifica e correggi ogni taglio."])
+        partial_count = sum(d.get("coverage", 0) < .75 for d in decisions)
+        if partial_count:
+            shot_warnings.append(f"{partial_count} battute hanno corrispondenza parziale: controlla il parlato trovato e correggi gli intervalli prima della timeline.")
         result = {"plan_id": payload.get("plan_id", "local-plan"), "scene_id": "scene-1", "fps": fps,
                   "decisions": decisions, "unmatched_beats": unmatched,
                   "warnings": shot_warnings}

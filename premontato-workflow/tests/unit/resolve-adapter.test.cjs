@@ -103,7 +103,7 @@ test('preserves Resolve word-level timestamps as clip-relative phrase timings', 
   ]);
 });
 
-function timelineSdk({ appendResultCount = 3 } = {}) {
+function timelineSdk({ appendResultCount = 3, sourceBase = 0 } = {}) {
   const media = { GetMediaId: async () => 'm1', GetName: async () => 'master.mp4' };
   const sourceTimeline = { GetUniqueId: async () => 'source-timeline', GetName: async () => 'SOURCE' };
   const reviewTimeline = {
@@ -126,8 +126,8 @@ function timelineSdk({ appendResultCount = 3 } = {}) {
         // the underlying source time remains exact.
         GetSourceStartFrame: async () => clip.startFrame % 2 ? clip.startFrame - 1 : clip.startFrame,
         GetSourceEndFrame: async () => clip.endFrame,
-        GetSourceStartTime: async () => clip.startFrame / 25,
-        GetSourceEndTime: async () => clip.endFrame / 25,
+        GetSourceStartTime: async () => sourceBase + clip.startFrame / 25,
+        GetSourceEndTime: async () => sourceBase + clip.endFrame / 25,
         GetDuration: async () => clip.endFrame - clip.startFrame
       }));
       return reviewTimeline.items;
@@ -154,4 +154,10 @@ test('rejects and removes a review timeline when Resolve appends only part of th
     projectId: 'project', timelineId: 'source-timeline', media: [{ media_id: 'm1' }]
   }), /inserito 1 di 3/);
   assert.equal(context.project.active, context.sourceTimeline);
+});
+
+test('verifies absolute camera source timecodes against the media base', async () => {
+ const context = timelineSdk({sourceBase:7200});
+ const result = await createTimeline(context.sdk,'CAMERA TC',[{media_id:'m1',start_frame:100,end_frame:150}],{media:[{media_id:'m1',fps:25,start_tc:'02:00:00:00'}]});
+ assert.equal(result.included,1);
 });

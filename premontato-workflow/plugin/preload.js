@@ -1,6 +1,6 @@
 'use strict';
 const { contextBridge, ipcRenderer } = require('electron/renderer');
-const methods = ['resolveSnapshot', 'selectScript', 'selectMedia', 'transcribeSelected', 'analyzeIntellisearch', 'analyze', 'cancelAnalysis', 'getReviewState', 'confirmTakes', 'createReviewTimeline', 'update', 'prepareSupportReport', 'submitSupportReport'];
+const methods = ['resolveSnapshot', 'selectScript', 'selectMedia', 'transcribeSelected', 'analyzeIntellisearch', 'analyze', 'cancelAnalysis', 'getReviewState', 'confirmTakes', 'updateDecision', 'createReviewTimeline', 'update', 'prepareSupportReport', 'submitSupportReport'];
 const api = Object.fromEntries(methods.map(name => [name, (...args) => ipcRenderer.invoke(`premontato:${name}`, ...args)]));
 api.version = require('./package.json').version;
 api.onProgress = callback => {

@@ -97,3 +97,13 @@ test('creates a confirmed review timeline from matched beats and reports unmatch
   assert.throws(() => prepareReviewTimeline(plan, false), /conferma/i);
   assert.throws(() => prepareReviewTimeline({ decisions: [], unmatched_beats: ['c'] }, true), /nessuna battuta abbinata/i);
 });
+
+test('manual review validates source bounds and recalculates timeline positions', async () => {
+ const session=new Session('unused','unused');
+ session.state.media=[{media_id:'m',duration_frames:500}];
+ session.state.analysis={plan:{decisions:[{beat_id:'a',media_id:'m',start_frame:10,end_frame:50,alternatives:[]},{beat_id:'b',media_id:'m',start_frame:100,end_frame:150,alternatives:[]}]}};
+ assert.throws(()=>session.updateDecision({beat_id:'a',start_frame:-1,end_frame:600}),/Intervallo/);
+ session.updateDecision({beat_id:'a',start_frame:5,end_frame:80,shot_size:'close'});
+ assert.equal(session.state.analysis.plan.decisions[1].timeline_start_frame,75);
+ assert.equal(session.state.analysis.plan.decisions[0].shot_size,'close');
+});

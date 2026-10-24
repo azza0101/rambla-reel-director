@@ -233,3 +233,59 @@ def propose_take_segments_for_beats(media, beats, transcript, fps, minimum_simil
              "start_frame": start, "end_frame": end, "take_index": index + 1,
              "camera_id": "camera_1", "boundary_source": "suggested", "confirmed": False}
             for index, (start, end) in enumerate(zip(edges, edges[1:])) if end > start]
+
+
+def complete_beat_candidates(beat, segments, fps):
+    """Local sequence alignment; gaps allow ASR errors, intervals never join takes."""
+    target=normalize(beat.get('text','')).split()
+    if not target: return []
+    words=[]
+    for seg in sorted(segments,key=lambda s:s['start_frame']):
+        items=seg.get('words') or [{'text':t,'start_frame':seg['start_frame'],'end_frame':seg['end_frame']} for t in seg.get('text','').split()]
+        for word in items:
+            for token in normalize(word.get('text','')).split():
+                if token: words.append({**word,'token':token})
+    results=[]; blocked=set()
+    for attempt in range(8):
+        n,m=len(target),len(words)
+        scores=[[0.0]*(m+1) for _ in range(n+1)]
+        pointers={}; best=(0,0,0)
+        for i in range(1,n+1):
+            for j in range(1,m+1):
+                if j-1 in blocked: continue
+                same=_same_content(target[i-1],words[j-1]['token'])
+                # Do not align across a long silence / take boundary.
+                prior=0 if j>1 and words[j-1]['start_frame']-words[j-2]['end_frame']>2.5*fps else scores[i-1][j-1]
+                values=(0,prior+(2 if same else -1.3),scores[i-1][j]-.9,scores[i][j-1]-.9)
+                value=max(values); direction=values.index(value)
+                scores[i][j]=value
+                if value: pointers[(i,j)]=direction
+                if value>best[0]: best=(value,i,j)
+        value,i,j=best
+        if value<=0: break
+        pairs=[]; observed=[]
+        while i and j and scores[i][j]>0:
+            direction=pointers.get((i,j),0)
+            if direction==1:
+                if _same_content(target[i-1],words[j-1]['token']): pairs.append((i-1,j-1))
+                observed.append(j-1);i-=1;j-=1
+            elif direction==2:i-=1
+            elif direction==3:observed.append(j-1);j-=1
+            else:break
+        if not pairs:break
+        pairs.reverse();lo,hi=min(observed),max(observed)+1
+        blocked.update(range(lo,hi))
+        content=[idx for idx,t in enumerate(target) if t not in _STOPWORDS]
+        matched={a for a,b in pairs}
+        coverage=sum(idx in matched for idx in content)/max(1,len(content)) if content else len(pairs)/len(target)
+        if len(target)<=2 and (coverage<1 or len(pairs)/max(1,hi-lo)<.7):continue
+        if coverage<.3 or (len(content)>2 and sum(idx in matched for idx in content)<2):continue
+        if pairs[0][0]<=2 and all(t in _STOPWORDS for t in target[:pairs[0][0]]):lo=max(0,lo-pairs[0][0])
+        trailing=len(target)-pairs[-1][0]-1
+        if trailing<=2:hi=min(len(words),hi+trailing)
+        if words[hi-1]['end_frame']-words[lo]['start_frame']>35*fps:continue
+        precision=len(pairs)/max(1,hi-lo)
+        results.append({'start_frame':words[lo]['start_frame'],'end_frame':words[hi-1]['end_frame'],
+                        'coverage':coverage,'score':.8*coverage+.2*precision,
+                        'text':' '.join(w['text'] for w in words[lo:hi])})
+    return sorted(results,key=lambda h:(-h['coverage'],-h['score']))

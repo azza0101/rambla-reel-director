@@ -12,7 +12,8 @@ class ShotAnalyzerTests(unittest.TestCase):
         self.assertEqual(classify_face_areas([])[0], "unknown")
 
     def test_face_height_provides_useful_scale_for_small_faces(self):
-        # A face 15% of frame height occupies only ~1.3% of a 16:9 frame.
+        # The user's cached sample had a face ~15% of frame height but only
+        # ~1.25% of total frame area; it should not fall back to wide.
         self.assertEqual(classify_face_heights([0.149])[0], "medium")
         self.assertEqual(classify_face_heights([0.32])[0], "close")
         self.assertEqual(classify_face_heights([0.08])[0], "wide")

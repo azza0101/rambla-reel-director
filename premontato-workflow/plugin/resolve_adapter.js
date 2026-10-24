@@ -41,7 +41,7 @@ async function getTranscript(sdk, mediaId) {
   const { pool } = await getResolve(sdk);
   const item = (await pool.GetSelectedClips() || []).find(clip => String(clip.GetMediaId()) === mediaId);
   if (!item) throw new Error('Seleziona il media nel Media Pool prima di leggere la trascrizione');
-  const transcription = await item.GetTranscription();
+  const transcription = await item.GetTranscription(true);
   if (!transcription || !Array.isArray(transcription.segments)) return { status: 'missing', segments: [] };
   return { status: 'ok', language: transcription.language || null, segments: transcription.segments };
 }
@@ -50,7 +50,7 @@ async function transcribeSelected(sdk) {
   const { pool } = await getResolve(sdk), clips = await pool.GetSelectedClips() || [];
   if (!clips.length) throw new Error('Seleziona i media nel Media Pool');
   return Promise.all(clips.map(async item => {
-    const existing = await item.GetTranscription();
+    const existing = await item.GetTranscription(true);
     if (Array.isArray(existing?.segments) && existing.segments.length) return { media_id: String(await item.GetMediaId()), ok: true, reused: true };
     return { media_id: String(await item.GetMediaId()), ok: Boolean(await item.TranscribeAudio(true)), reused: false };
   }));
@@ -85,7 +85,7 @@ function parsePeopleMetadata(value) {
 async function getSelectedTranscriptions(sdk) {
   const snapshotData = await snapshot(sdk);
   return Promise.all(snapshotData.selected.map(async source => {
-    const transcription = await source.item.GetTranscription();
+    const transcription = await source.item.GetTranscription(true);
     const segments = Array.isArray(transcription?.segments) ? transcription.segments.map((segment, index) => ({
       segment_id: `${source.media_id}:${index}`, media_id: source.media_id,
       start_frame: timecodeToFrames(segment.start, source.fps) - timecodeToFrames(source.start_tc, source.fps),
@@ -133,8 +133,11 @@ async function createTimeline(sdk, name, edits, expected = {}) {
       const sourceStartTime = Number(await item.GetSourceStartTime());
       const sourceEndTime = Number(await item.GetSourceEndTime());
       const sourceFps = Number(expected.media?.find(media => media.media_id === edits[i].media_id)?.fps) || Number(await sourceTimeline.GetSetting?.('timelineFrameRate')) || 25;
-      const expectedStartTime = clips[i].startFrame / sourceFps;
-      const expectedEndTime = clips[i].endFrame / sourceFps;
+      const sourceRecord = expected.media?.find(media => media.media_id === edits[i].media_id);
+      const sourceTc = sourceRecord?.start_tc || (typeof media.GetClipProperty === 'function' ? await media.GetClipProperty('Start TC') : null);
+      const sourceBase = sourceTc ? timecodeToFrames(sourceTc, sourceFps) / sourceFps : 0;
+      const expectedStartTime = sourceBase + clips[i].startFrame / sourceFps;
+      const expectedEndTime = sourceBase + clips[i].endFrame / sourceFps;
       if (mediaId !== String(edits[i].media_id) || !Number.isFinite(sourceStartTime) || !Number.isFinite(sourceEndTime) ||
           Math.abs(sourceStartTime - expectedStartTime) > 0.5 / sourceFps || Math.abs(sourceEndTime - expectedEndTime) > 0.5 / sourceFps) {
         throw new Error(`Resolve ha alterato il taglio ${i + 1}; timeline di prova annullata`);

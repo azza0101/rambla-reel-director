@@ -13,6 +13,7 @@ try{
     Copy-Item (Join-Path $root 'worker\*.py') (Join-Path $stage 'worker')
     Copy-Item (Join-Path $root 'worker\requirements.txt') (Join-Path $stage 'worker')
     Copy-Item (Join-Path $runtime '*') (Join-Path $stage 'runtime') -Recurse -Force
+    Copy-Item -LiteralPath (Join-Path $root 'runtime\models') -Destination (Join-Path $stage 'runtime\models') -Recurse -Force
     $archiveName='Premontato-'+$version+'.zip';$archive=Join-Path $out $archiveName
     New-Item -ItemType Directory -Force -Path $out|Out-Null
     if(Test-Path -LiteralPath $archive){Remove-Item -LiteralPath $archive -Force}

@@ -23,7 +23,7 @@ class Session {
     this.state = { stage: 'idle', script: null, media: [], analysis: null, error: null };
     this.child = null; this.pending = new Map(); this.counter = 0;
   }
-  async request(action, payload = {}, timeoutMs = 30000) {
+  async request(action, payload = {}, timeoutMs = 30000, onProgress) {
     if (!this.child) {
       this.child = spawn(this.python, ['-E', '-s', this.workerPath], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
         env: workerEnvironment(process.env, path.join(this.root, 'cache', 'shots')) });
@@ -36,13 +36,14 @@ class Session {
     const request_id = `req-${++this.counter}`;
     const promise = new Promise((resolve, reject) => {
       const timer = setTimeout(() => { this.pending.delete(request_id); reject(new Error('Timeout analisi locale')); }, timeoutMs);
-      this.pending.set(request_id, { resolve, reject, timer });
+      this.pending.set(request_id, { resolve, reject, timer, onProgress });
     });
     this.child.stdin.write(JSON.stringify({ protocol: 1, request_id, action, payload }) + '\n');
     return promise;
   }
   receive(message) {
     const task = this.pending.get(message.request_id); if (!task) return;
+    if (message.status === 'progress') { task.onProgress?.(message.result); return; }
     clearTimeout(task.timer); this.pending.delete(message.request_id);
     message.status === 'ok' ? task.resolve(message.result) : task.reject(new Error(message.error?.message || 'Errore worker'));
   }
@@ -64,6 +65,7 @@ class Session {
     if (!this.state.script || !this.state.media.length) throw new Error('Prima scegli un copione e media dal Media Pool');
     if (this.state.stage === 'analyzing') throw new Error('Analisi già in corso');
     this.state.stage = 'analyzing';
+    this.state.error = null;
     let lastPhaseIndex = 0;
     const progress = (phase, phaseIndex, percent, label, current, total) => {
       if (phaseIndex >= 0) lastPhaseIndex = phaseIndex;
@@ -86,7 +88,7 @@ class Session {
       for (let i = 0; i < shotSources.length; i++) {
         const source = shotSources[i];
         progress('shots', 2, 24 + (i / shotSources.length) * 42, `Analizzo le inquadrature di ${source.name}`, i, shotSources.length);
-        try { const result = await this.request('analyze_shots', { media: source, sample_fps: 1 }, 20 * 60 * 1000); shots.push(...result.segments); if (result.cache_hit) shotCacheHits += 1; }
+        try { const result = await this.request('analyze_shots', { media: source, sample_fps: 2 }, 20 * 60 * 1000, event => progress('shots', 2, 24 + ((i + event.frame / Math.max(1, event.total)) / shotSources.length) * 42, `YuNet · ${source.name} · ${Math.round(event.frame / Math.max(1, event.total) * 100)}%`, i, shotSources.length)); shots.push(...result.segments); if (result.cache_hit) shotCacheHits += 1; }
         catch (error) { this.state.error = `Analisi inquadrature non disponibile per ${source.name}: ${error.message}`; }
         progress('shots', 2, 24 + ((i + 1) / shotSources.length) * 42, `Inquadrature: ${i + 1}/${shotSources.length} clip`, i + 1, shotSources.length);
       }
@@ -131,6 +133,26 @@ class Session {
   getReviewState() { return { stage: this.state.stage, scriptName: this.state.script ? path.basename(this.state.script.path) : null,
     media: this.state.media.map(({ media_id, name, duration_frames, people = [] }) => ({ media_id, name, duration_frames, people })), analysis: this.state.analysis, error: this.state.error }; }
   setTranscripts(sources, fps, identity) { this.assertContext(identity); this.state.transcripts = sources; this.state.fps = fps; this.state.analysis = null; return { count: sources.reduce((sum, source) => sum + source.segments.length, 0) }; }
+  updateDecision(request) {
+    const plan = this.state.analysis?.plan;
+    const decision = plan?.decisions.find(item => item.beat_id === request?.beat_id);
+    if (!decision) throw new Error('Battuta non disponibile');
+    let updated = { ...decision };
+    if (request.alternative_index !== undefined) {
+      const alt = decision.alternatives?.[request.alternative_index];
+      if (!Number.isInteger(request.alternative_index) || !alt) throw new Error('Alternativa non valida');
+      updated = { ...updated, ...alt, alternatives: [decision, ...decision.alternatives.filter((_, index) => index !== request.alternative_index)].map(({ alternatives, ...item }) => item) };
+    }
+    const media = this.state.media.find(item => item.media_id === updated.media_id);
+    const start = request.start_frame ?? updated.start_frame, end = request.end_frame ?? updated.end_frame;
+    if (!media || !Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end > media.duration_frames || end <= start) throw new Error('Intervallo sorgente non valido');
+    if (request.shot_size !== undefined && !['wide','medium','close','detail','unknown'].includes(request.shot_size)) throw new Error('Scala non valida');
+    Object.assign(updated, { start_frame: start, end_frame: end, shot_size: request.shot_size ?? updated.shot_size, manual: true });
+    plan.decisions[plan.decisions.indexOf(decision)] = updated;
+    let cursor = 0;
+    for (const item of plan.decisions) { item.timeline_start_frame = cursor; cursor += item.end_frame - item.start_frame; }
+    return this.getReviewState();
+  }
   async confirmTakes(segments) {
     const grouped = new Map();
     for (const segment of segments) { if (!grouped.has(segment.media_id)) grouped.set(segment.media_id, []); grouped.get(segment.media_id).push(segment); }
