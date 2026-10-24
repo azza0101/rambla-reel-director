@@ -23,3 +23,7 @@ Le timeline generate usano tre coppie di tracce: V1/A1 master e larghe blu, V2/A
 Le nuove timeline includono v0.9.0 nel nome e vengono create sotto Premontato / v0.9.0 / Revisioni; i test usano Premontato / v0.9.0 / Test. La cartella e la timeline attive vengono ripristinate dopo la creazione.
 
 Per un recupero manuale: salva il progetto Resolve, chiudi il pannello Premontato e Resolve e avvia dist-0.9.0/Install-Premontato.exe. La versione 0.9.0 carica esplicitamente i moduli Utility/Management di Windows PowerShell, trasmette gli errori reali dell’installer e controlla la versione installata su disco prima del riavvio.
+
+## 0.9.1 — versione visibile e avvio del pannello
+
+Corregge il blocco del preload sandbox della 0.9.0. La versione compare accanto ad Aggiorna e nel titolo della finestra, anche prima dell’avvio dell’interfaccia. Un pannello 0.9.0 bloccato richiede reinstallazione manuale della 0.9.1: il suo pulsante Aggiorna non può essere utilizzato finché il preload non si avvia.

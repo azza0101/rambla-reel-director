@@ -55,8 +55,8 @@ async function start() {
   const workerPath = path.join(__dirname, 'worker', 'protocol.py');
   session = new Session(root, workerPath);
   try{await session.restoreAutosave();}catch(error){session.saveError='Recupero automatico non riuscito: '+error.message;}
-  win = new BrowserWindow({ width: 1080, height: 820, minWidth: 680, minHeight: 560, title: 'RAMBLA Premontato',
-    backgroundColor: '#111820', webPreferences: { preload: path.join(__dirname, 'preload.js'), sandbox: true, contextIsolation: true, nodeIntegration: false } });
+  win = new BrowserWindow({ width: 1080, height: 820, minWidth: 680, minHeight: 560, title: 'RAMBLA Premontato v'+require('./package.json').version,
+    backgroundColor: '#111820', webPreferences: { additionalArguments:['--premontato-version='+require('./package.json').version], preload: path.join(__dirname, 'preload.js'), sandbox: true, contextIsolation: true, nodeIntegration: false } });
   win.setMenu(null); win.webContents.setWindowOpenHandler(() => ({ action: 'deny' })); win.webContents.on('will-navigate', e => e.preventDefault());
   win.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   handle('resolveSnapshot', async () => { const result = await adapter.snapshot(await getSdk()); return { ...result, selected: result.selected.map(({ item, path: _mediaPath, ...record }) => record) }; });

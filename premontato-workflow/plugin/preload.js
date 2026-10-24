@@ -2,7 +2,8 @@
 const { contextBridge, ipcRenderer } = require('electron/renderer');
 const methods = ['resolveSnapshot', 'selectScript', 'selectMedia', 'transcribeSelected', 'analyzeIntellisearch', 'analyze', 'cancelAnalysis', 'getReviewState', 'saveDraft', 'saveProject', 'openProject', 'confirmTakes', 'updateDecision', 'setPacing', 'setDirections', 'confirmVisualReview', 'createReviewTimeline', 'update', 'prepareSupportReport', 'submitSupportReport'];
 const api = Object.fromEntries(methods.map(name => [name, (...args) => ipcRenderer.invoke(`premontato:${name}`, ...args)]));
-api.version = require('./package.json').version;
+// Sandboxed preloads cannot import local JSON. The main process supplies this value.
+api.version = process.argv.find(arg => /^--premontato-version=\d+\.\d+\.\d+$/.test(arg))?.split('=')[1] || null;
 api.onProgress = callback => {
   if (typeof callback !== 'function') throw new TypeError('callback non valida');
   const listener = (_event, value) => callback(value);

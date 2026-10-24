@@ -1,7 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 let scriptReady = false, mediaReady = false;
- $('version').textContent = `v${window.premontato.version}`;
+ if(/^\d+\.\d+\.\d+$/.test(window.premontato.version || ''))$('version').textContent = `v${window.premontato.version}`;
 function updateButton() { $('analyze').disabled = !(scriptReady && mediaReady); $('transcribe').disabled = !mediaReady; $('intellisearch').disabled = !mediaReady; }
 function message(text) { $('message').textContent = text; }
 function showError(error) { message(error.message || String(error)); if(lastProgressEvent && !['complete','error','transcript-complete'].includes(lastProgressEvent.phase))showProgress({...lastProgressEvent,phase:'error',label:error.message || String(error)}); }
