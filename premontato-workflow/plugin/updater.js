@@ -273,9 +273,10 @@ async function downloadVerifiedArchive(update, token, destination, fetchImpl = g
   return destination;
 }
 
-async function restartPlugin(app, cleanup, {execPath=process.execPath}={}) {
+async function restartPlugin(app, cleanup, {execPath=process.execPath,reload}={}) {
  if(!/(?:^|[\\/])electron(?:\.exe)?$/i.test(execPath))throw new Error('Riavvio automatico disponibile solo nel processo Electron del pannello');
- await cleanup();app.relaunch();app.quit();
+ if(typeof reload!=='function')throw new Error('Ricaricamento nel processo Resolve non disponibile: riapri dal menu Workflow Integrations');
+ await cleanup();await reload();
 }
 
 async function runUpdateInstaller({script,pluginRoot,archivePath,sha256,version,onProgress,spawnImpl=spawn}) {

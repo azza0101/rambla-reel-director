@@ -109,9 +109,9 @@ test('streams real download byte progress and never writes an unverified archive
  await assert.rejects(downloadVerifiedArchive({...update,manifest:{sha256:'0'.repeat(64)}},'private',path.join(dir,'bad.zip'),makeResponse),/SHA-256/);assert.equal(fs.existsSync(path.join(dir,'bad.zip')),false);
  }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
-test('restart requests one Electron relaunch only after cleanup succeeds',async()=>{
+test('panel restart keeps the Resolve host process and reloads only after cleanup succeeds',async()=>{
  const {restartPlugin}=require('../../plugin/updater'),order=[];const app={relaunch:()=>order.push('relaunch'),quit:()=>order.push('quit')};
- await restartPlugin(app,async()=>order.push('saved'),{execPath:'C:/Resolve/Electron/electron.exe'});assert.deepEqual(order,['saved','relaunch','quit']);
+ await restartPlugin(app,async()=>order.push('saved'),{execPath:'C:/Resolve/Electron/electron.exe',reload:async()=>order.push('reload')});assert.deepEqual(order,['saved','reload']);
  order.length=0;await assert.rejects(restartPlugin(app,async()=>{throw Error('save failed');},{execPath:'C:/Resolve/Electron/electron.exe'}));assert.deepEqual(order,[]);
  await assert.rejects(restartPlugin(app,async()=>{}, {execPath:'C:/Resolve/Resolve.exe'}),/Electron/);
 });

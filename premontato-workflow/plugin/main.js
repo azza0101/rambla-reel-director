@@ -8,15 +8,24 @@ const adapter = require('./resolve_adapter');
 const updateManager = require('./updater');
 const ID = 'com.rambla.premontato';
 app.setPath('userData', path.join(app.getPath('appData'), 'RAMBLA', 'Premontato'));
+let autoSaveTimer, sdkInitialization;
+const handlerNames=new Set();
 let win, sdk, session, diagnostics, activeSupportReport, busy = false, shuttingDown=false, closing=false, updateRestartPending=false;
 const page = pathToFileURL(path.join(__dirname, 'index.html')).href;
 
 async function getSdk() {
-  if (sdk) return sdk;
-  try { sdk = require('./WorkflowIntegration.node'); if (!await sdk.InitializePromise(ID)) throw new Error('InitializePromise rifiutata'); return sdk; }
-  catch (error) { throw new Error(`Bridge Workflow Integration non disponibile: ${error.message}`); }
+  if(sdk)return sdk;
+  if(!sdkInitialization)sdkInitialization=(async()=>{
+    try {
+      const candidate=require('./WorkflowIntegration.node');
+      if(!await candidate.InitializePromise(ID))throw new Error('InitializePromise rifiutata: riapri Premontato da Workspace > Workflow Integrations in Resolve');
+      sdk=candidate;return sdk;
+    } catch(error) { sdk=null;throw new Error('Collegamento Resolve non inizializzato: '+error.message); }
+  })().finally(()=>{sdkInitialization=null;});
+  return sdkInitialization;
 }
 function handle(name, fn) {
+  handlerNames.add('premontato:'+name);
   ipcMain.handle(`premontato:${name}`, async (event, ...args) => {
     assertTrusted(event, win, page);
     if (updateRestartPending) throw new Error('Riavvio del pannello in corso');
@@ -32,6 +41,7 @@ function handle(name, fn) {
       return result;
     }
     catch (error) {
+      if(/Not initialized|InitializePromise rifiutata/i.test(error.message || ''))sdk=null;
       try { await diagnostics?.record('operation_failed', { operation: name, error }); } catch {}
       throw error;
     } finally { if (name !== 'cancelAnalysis') busy = false; }
@@ -59,7 +69,7 @@ async function start() {
     backgroundColor: '#111820', webPreferences: { additionalArguments:['--premontato-version='+require('./package.json').version], preload: path.join(__dirname, 'preload.js'), sandbox: true, contextIsolation: true, nodeIntegration: false } });
   win.setMenu(null); win.webContents.setWindowOpenHandler(() => ({ action: 'deny' })); win.webContents.on('will-navigate', e => e.preventDefault());
   win.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
-  handle('resolveSnapshot', async () => { const result = await adapter.snapshot(await getSdk()); return { ...result, selected: result.selected.map(({ item, path: _mediaPath, ...record }) => record) }; });
+  handle('resolveSnapshot', async () => { const result = await adapter.snapshot(await getSdk(),{includeSelection:false}); return { ...result, selected: result.selected.map(({ item, path: _mediaPath, ...record }) => record) }; });
   handle('selectScript', async () => { const result = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: [{ name: 'Copione', extensions: ['txt', 'fountain', 'md', 'pdf'] }] }); return result.canceled ? null : session.setScript(result.filePaths[0]); });
   handle('selectMedia', async () => { const result = await adapter.snapshot(await getSdk()); const selected = result.selected.map(({ item, ...record }) => record); return session.setMedia(validateMediaRecords(selected), result); });
   handle('transcribeSelected', async () => {
@@ -126,7 +136,7 @@ async function start() {
       await session.shutdownWorker();updateProgress({phase:'install',percent:null});
       await updateManager.runUpdateInstaller({script:path.join(__dirname,'update.ps1'),pluginRoot:__dirname,archivePath,sha256:update.manifest.sha256,version:update.manifest.version,onProgress:updateProgress});
       updateRestartPending=true;updateProgress({phase:'restart',percent:100,version:update.manifest.version});
-      setTimeout(()=>updateManager.restartPlugin(app,async()=>{await session.saveAutosave();await session.shutdownWorker();try{sdk?.CleanUp();}catch{}sdk=null;shuttingDown=true;}).catch(error=>{shuttingDown=false;updateRestartPending=false;updateProgress({phase:'restart-error',percent:null,error:error.message});}),1200);
+      setTimeout(()=>restartInHost().catch(error=>{shuttingDown=false;updateRestartPending=false;updateProgress({phase:'restart-error',percent:null,error:error.message});}),1200);
       return {status:'updated',version:update.manifest.version,restarting:true};
     }catch(error){updateProgress({phase:'error',percent:null,error:error.message});throw error;}
     finally{token='';if(jobRoot)await require('node:fs/promises').rm(jobRoot,{recursive:true,force:true}).catch(()=>{});}
@@ -155,11 +165,36 @@ async function start() {
     (async()=>{try{const draft=await win.webContents.executeJavaScript('window.capturePremontatoDraft?.()');if(draft)session.setDraft(draft);await session.saveAutosave();await session.shutdownWorker();try{sdk?.CleanUp();}catch{}shuttingDown=true;app.quit();}
     catch(error){closing=false;const result=await dialog.showMessageBox(win,{type:'error',title:'Salvataggio non riuscito',message:'Non riesco a salvare la sessione Premontato.',detail:error.message,buttons:['Riprova','Chiudi senza salvare'],defaultId:0,cancelId:0});if(result.response===1){shuttingDown=true;await session.shutdownWorker();app.quit();}}})();
   });
-  const autoSaveTimer=setInterval(async()=>{if(busy || shuttingDown || closing || !session.state.script && !session.state.media.length)return;busy=true;try{await session.saveAutosave();if(session.state.projectId)await saveResolve(session.state.projectId);}catch(error){session.saveError=error.message;}finally{busy=false;publishProjectStatus();}},60000);autoSaveTimer.unref();
+  autoSaveTimer=setInterval(async()=>{if(busy || shuttingDown || closing || !session.state.script && !session.state.media.length)return;busy=true;try{await session.saveAutosave();if(session.state.projectId)await saveResolve(session.state.projectId);}catch(error){session.saveError=error.message;}finally{busy=false;publishProjectStatus();}},60000);autoSaveTimer.unref();
   await win.loadFile(path.join(__dirname, 'index.html'));
 }
-if (!app.requestSingleInstanceLock()) app.quit(); else app.whenReady().then(start).catch(async error => { await dialog.showMessageBox({ type: 'error', title: 'RAMBLA Premontato', message: 'Avvio non riuscito', detail: error.message }); app.quit(); });
-app.on('window-all-closed', () => { try { sdk?.CleanUp(); } catch {} app.quit(); });
-
-
-
+async function reloadInHost() {
+  // Resolve owns the Electron process registration: app.relaunch() creates an orphan.
+  const connectedSdk=sdk;
+  const holdProcessOpen=()=>{};app.on('window-all-closed',holdProcessOpen);
+  shuttingDown=true;clearInterval(autoSaveTimer);
+  app.removeListener('window-all-closed',onAllWindowsClosed);
+  for(const name of handlerNames)ipcMain.removeHandler(name);
+  handlerNames.clear();
+  win?.destroy();win=null;session=null;sdk=null;
+  const modules=['main.js','session.js','updater.js','resolve_adapter.js','ipc_security.js','package.json'];
+  for(const name of modules)delete require.cache[require.resolve(path.join(__dirname,name))];
+  try { await require(__filename).launch({initializedSdk:connectedSdk}); }
+  catch(error){await dialog.showMessageBox({type:'error',title:'RAMBLA Premontato',message:'Ricaricamento non riuscito. Riapri il pannello dal menu Workspace > Workflow Integrations di Resolve.',detail:error.message});app.quit();throw error;}
+  finally{app.removeListener('window-all-closed',holdProcessOpen);}
+}
+async function restartInHost() {
+  return updateManager.restartPlugin(app,async()=>{await session.saveAutosave();await session.shutdownWorker();},{reload:reloadInHost});
+}
+function onAllWindowsClosed(){if(BrowserWindow.getAllWindows().length)return;try{sdk?.CleanUp();}catch{}app.quit();}
+async function launch({initializedSdk}={}) {
+  if(initializedSdk)sdk=initializedSdk;
+  app.on('window-all-closed',onAllWindowsClosed);
+  await start();
+}
+module.exports={launch,restartInHost};
+if(!globalThis[Symbol.for('com.rambla.premontato.bootstrapped')]){
+  globalThis[Symbol.for('com.rambla.premontato.bootstrapped')]=true;
+  if(!app.requestSingleInstanceLock())app.quit();
+  else app.whenReady().then(()=>launch()).catch(async error=>{await dialog.showMessageBox({type:'error',title:'RAMBLA Premontato',message:'Avvio non riuscito',detail:error.message});app.quit();});
+}

@@ -215,3 +215,9 @@ test('inserts a reviewed reaction before the dialogue on synchronized mono audio
  assert.equal(result.included,1);assert.equal(result.segments,2);assert.equal(result.audioSegments,2);assert.deepEqual(reviewTimeline.items.map(x=>[x.clip.startFrame,x.clip.trackIndex]),[[150,3],[200,1]]);assert.equal(project.active,sourceTimeline);
  const broken=timelineSdk();await assert.rejects(createTimeline(broken.sdk,'BAD',[{media_id:'m1',start_frame:200,end_frame:240,reaction_before:{...reaction,end_frame:900}}],{media:[{media_id:'m1',duration_frames:500}]}),/reazione/i);
 });
+
+test('connection snapshot remains healthy when selected items cannot be read',async()=>{
+ const project={GetName:async()=>'P',GetUniqueId:async()=>'p',GetCurrentTimeline:async()=>({GetName:async()=>'T',GetUniqueId:async()=>'t',GetSetting:async()=>'25'}),GetMediaPool:async()=>({GetSelectedClips:async()=>{throw Error('invalid selection');}})};
+ const sdk={GetResolvePromise:async()=>({GetProjectManager:async()=>({GetCurrentProject:async()=>project})})};
+ const status=await require('../../plugin/resolve_adapter').snapshot(sdk,{includeSelection:false});assert.equal(status.project,'P');assert.deepEqual(status.selected,[]);await assert.rejects(require('../../plugin/resolve_adapter').snapshot(sdk),/invalid selection/);
+});

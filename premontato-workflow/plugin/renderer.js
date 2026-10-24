@@ -58,7 +58,7 @@ $('support-confirm').addEventListener('change', () => { $('support-send').disabl
 $('support-close').addEventListener('click', () => $('support-dialog').close());
 $('support-dialog').addEventListener('click', event => { if (event.target === $('support-dialog')) $('support-dialog').close(); });
 $('support-send').addEventListener('click', async () => { if (!supportPreview || !$('support-confirm').checked) return; const button = $('support-send'); button.disabled = true; $('support-status').textContent = 'Invio a GitHub…'; try { const result = await window.premontato.submitSupportReport({ reportId: supportPreview.reportId, confirmed: true }); $('support-status').textContent = 'Segnalazione inviata.'; const link = document.createElement('a'); link.href = result.url; link.target = '_blank'; link.rel = 'noreferrer'; link.textContent = result.url; $('support-status').append(document.createTextNode(' '), link); supportPreview = null; } catch (error) { $('support-status').textContent = error.message || String(error); button.disabled = false; } });
-$('media').addEventListener('click', async () => { try { const items = await window.premontato.selectMedia(); mediaReady = items.length > 0; $('reviewed').checked = false; $('review').hidden = true; $('make-timeline').disabled = true; $('media-list').innerHTML = items.map(item => `<div>${escapeHtml(item.name)} <span class="pill">${item.duration_frames} frame</span>${item.people?.length ? `<small>Volti IntelliSearch nel clip: ${escapeHtml(item.people.join(', '))}</small>` : ''}</div>`).join('') || 'Nessuna clip selezionata in Resolve'; updateButton(); } catch (e) { showError(e); } });
+$('media').addEventListener('click', async () => { try { const items = await window.premontato.selectMedia(); mediaReady = items.length > 0; $('reviewed').checked = false; $('review').hidden = true; $('make-timeline').disabled = true; $('media-list').innerHTML = items.map(item => `<div>${escapeHtml(item.name)} <span class="pill">${item.duration_frames} frame</span>${item.people?.length ? `<small>Volti IntelliSearch nel clip: ${escapeHtml(item.people.join(', '))}</small>` : ''}</div>`).join('') || 'Nessuna clip selezionata in Resolve'; updateButton(); await refreshConnection(); } catch (e) { showError(e); } });
 $('transcribe').addEventListener('click', async () => { $('transcribe').disabled = true; message('Controllo trascrizioni Resolve…'); try { const result = await window.premontato.transcribeSelected(); message(`Trascrizione pronta: ${result.count} segmenti; ${result.results.filter(item => item.reused).length} clip riusate dalla cache Resolve.`); } catch (e) { showError(e); } finally { updateButton(); } });
 $('intellisearch').addEventListener('click', async () => { $('intellisearch').disabled = true; message('Resolve sta analizzando le clip selezionate con IntelliSearch…'); try { const result = await window.premontato.analyzeIntellisearch(); message(`Richiesta IntelliSearch inviata a ${result.filter(item => item.ok).length}/${result.length} clip. I risultati restano nel catalogo Resolve.`); } catch (e) { showError(e); } finally { updateButton(); } });
 $('analyze').addEventListener('click', async () => { $('analyze').disabled = true; $('cancel').hidden = false; $('analysis-progress').hidden = false; $('progress-bar').value = 0; visualNames={}; visualDirty=false; visualOverrides.clear(); $('progress-label').textContent = 'Avvio analisi…'; $('progress-percent').textContent = '0%'; message('Analisi locale del copione…'); try { const state = await window.premontato.analyze(); render(state); $('review').hidden = false; message('Analisi completata. Controlla i beat prima della timeline.'); } catch (e) { showError(e); } finally { $('cancel').hidden = true; updateButton(); } });
@@ -269,8 +269,21 @@ $('directions-apply').addEventListener('click',async()=>{const button=$('directi
  const state=await window.premontato.setDirections(captureDirections());$('reviewed').checked=false;render(state);message('Direzioni salvate. Controlla copertura, tensione e risoluzione nelle scelte ricalcolate.');
  }catch(error){showError(error);}finally{button.disabled=false;}});
 
+async function refreshConnection(){
+ const previous=$('host').textContent;$('host').textContent='Connessione Resolve…';
+ try{
+  const snapshot=await window.premontato.resolveSnapshot();
+  $('host').textContent='Resolve '+snapshot.project+' · '+snapshot.fps+' fps';$('connection-status').textContent='';
+  return snapshot;
+ }catch(error){
+  $('host').textContent=/Operazione già in corso/.test(error.message || '')?previous:'Resolve non collegato · Riprova';
+  $('connection-status').textContent=error.message || String(error);throw error;
+ }
+}
+$('host').addEventListener('click',async()=>{try{await refreshConnection();message('Collegamento Resolve ripristinato. Puoi usare le clip selezionate.');}catch(error){showError(error);}});
+
 (async()=>{
  try{const state=await window.premontato.getReviewState();if(state)hydrateProject(state);}
  catch(error){showError(error);}
- try{const snapshot=await window.premontato.resolveSnapshot();$('host').textContent='Resolve '+snapshot.project+' · '+snapshot.fps+' fps';}catch(error){$('host').textContent='Resolve non collegato';message(error.message || String(error));}
+ try{await refreshConnection();}catch(error){showError(error);}
 })();

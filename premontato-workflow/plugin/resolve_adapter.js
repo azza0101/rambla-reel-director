@@ -19,9 +19,9 @@ async function selectedClips(pool) {
   }
 }
 
-async function snapshot(sdk) {
+async function snapshot(sdk,{includeSelection=true}={}) {
   const { project, timeline, pool } = await getResolve(sdk);
-  const clips = await selectedClips(pool);
+  const clips = includeSelection ? await selectedClips(pool) : [];
   return { project: String(await project.GetName()), projectId: String(await project.GetUniqueId()),
     timeline: String(await timeline.GetName()), timelineId: String(await timeline.GetUniqueId()),
     fps: Number(await timeline.GetSetting('timelineFrameRate')),

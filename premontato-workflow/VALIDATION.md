@@ -73,3 +73,10 @@ Nuova timeline nativa PREMONTATO v0.9.3 - TEST COMPLETO AUTO, cartella Premontat
 Verificati nel browser locale con il vero Session/worker: anteprima della reazione, esclusione e riattivazione, salvataggio, barra e fasi; trasporto IPC sostituito dal ponte locale di test, non dichiarato click-through sulla finestra Resolve installata. Test di regressione su tentativi interrotti, prestito di battute, margini senza parole adiacenti, mancanza audio/copertura, durata minima, take, idempotenza, esclusione persistente dopo ricalcolo, fotogrammi già trattenuti, progetto manomesso e inserimento AV mono.
 
 Suite finale 0.9.3: 73 test Node, 66 unittest Python e 9 contratti pacchetto superati. Revisione indipendente: corretti mantenimento dell’esclusione dopo ricalcolo e protezione contro riuso di un’attesa già presente nel montaggio. Entrambi hanno test di regressione. Smoke nell’Electron ufficiale con IPC di prova: versione0.9.3 visibile, preload e pulsanti di prova funzionanti, nessun errore; non equivale a un aggiornamento del pannello vivo.
+
+
+## 0.9.4 — inizializzazione SDK e riavvio del pannello
+
+Riprodotto sul pannello installato 0.9.3: errore nativo «Not initialized, call InitializePromise(<pluginId>) first»; il log Resolve mostra lo scaricamento della integrazione senza un nuovo caricamento dopo app.relaunch(). Riprodotto inoltre il bootstrap inattivo sotto il loader Electron e aggiunto test dedicato. Corretti sia la cache della inizializzazione fallita sia il riavvio che perdeva la registrazione host. Snapshot del collegamento indipendente dalla selezione Media Pool.
+
+77 test Node e 66 unittest Python superati. Prova nel vero Electron distribuito con Resolve, con SDK simulato: recupero da inizializzazione fallita, selezione di tre clip, due ricaricamenti mantenendo il PID e il collegamento, nessun CleanUp durante il ricaricamento; lettura di una nuova versione package.json al primo ricaricamento. Il test usa il vero main, preload, renderer e IPC, ma non dimostra la connessione SDK a Resolve. Correzione applicata localmente; verifica reale dopo riapertura dal menu Resolve ancora da completare.

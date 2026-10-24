@@ -41,3 +41,10 @@ Il motore locale confronta anche l’attacco delle battute lunghe, conserva una 
 Nel profilo VIDEO COLICHE, un beat Risoluzione preceduto da Tensione può ricevere una stretta silenziosa del personaggio che risponde prima dell’apertura sulla larga. Servono una ripresa alternativa associata alla stessa battuta, presenza confermata nelle still, pausa audio misurata, nessuna parola trascritta sovrapposta, durata minima configurata e nessun fotogramma già usato altrove nel piano. Il plugin mostra la still esatta e un comando per escludere l’inserto; l’esclusione resta salvata anche quando ricalcoli stile, campi o take. Il suo audio ambiente resta collegato su traccia mono. Non classifica emozioni e non inventa reazioni: senza requisiti mostra il motivo dell’assenza.
 
 Significato, attacco e ricerca delle reazioni sono calcolati nel runtime del plugin, senza Codex, Groq o altre chiamate cloud. La conferma di campi/personaggi e i marcatori Tensione/Risoluzione rimangono controlli dell’utente. Le note libere restano un promemoria.
+
+
+## 0.9.4 — collegamento e aggiornamento nel processo Resolve
+
+Gli aggiornamenti ricaricano il pannello nello stesso processo Electron registrato da Resolve. La versione e i moduli vengono riletti senza avviare una finestra esterna. Il collegamento viene conservato; una inizializzazione SDK fallita può essere ritentata cliccando sullo stato in alto. Gli errori di selezione clip sono separati dallo stato del collegamento.
+
+Se una versione precedente ha già riaperto il pannello fuori da Resolve, chiudi Premontato e aprilo una volta da Workspace > Workflow Integrations > RAMBLA Premontato. Avviarlo direttamente con Electron non ripristina la registrazione del plugin nel programma.
