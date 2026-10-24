@@ -56,6 +56,10 @@ def dispatch(request):
         beats, sources, fps = payload["beats"], payload["sources"], float(payload["fps"])
         decisions, unmatched = [], []
         shot_segments = payload.get("shots", [])
+        semantic_hits = {}
+        if payload.get("semantic"):
+            from transcript_align import semantic_scene_hits
+            semantic_hits = semantic_scene_hits(beats, sources, fps)
         previous_shot_size = None
         for beat in beats:
             if beat.get("kind") != "dialogue":
@@ -63,7 +67,7 @@ def dispatch(request):
             candidates = []
             for source in sources:
                 segments = source.get("segments", [])
-                hits = complete_beat_candidates(beat, segments, fps)
+                hits = (semantic_hits.get((source["take_id"], beat["beat_id"]), []) if payload.get("semantic") else complete_beat_candidates(beat, segments, fps))
                 for hit in hits:
                     if hit["start_frame"] < source.get("start_frame", 0) or hit["end_frame"] > source.get("end_frame", source["duration_frames"]):
                         continue
@@ -78,7 +82,7 @@ def dispatch(request):
             # take prefer the strongest phrase hit. Earlier takes remain alternatives.
             best_score = max(row[1] for row in candidates)
             best_coverage = max(row[4].get("coverage", 1.0) for row in candidates)
-            credible = [row for row in candidates if row[1] >= best_score - 0.10 and row[4].get("coverage", 1.0) >= best_coverage - 0.08]
+            credible = [row for row in candidates if row[1] >= best_score - (0.025 if payload.get("semantic") else 0.10) and (payload.get("semantic") or row[4].get("coverage", 1.0) >= best_coverage - 0.08)]
             classified = [row for row in credible if row[5] and row[5].get("shot_size") in {"wide", "medium", "close"} and row[5].get("confidence", 0) >= 0.55]
             alternating = [row for row in classified if previous_shot_size and row[5]["shot_size"] != previous_shot_size]
             opening = [row for row in classified if row[5]["shot_size"] == "wide"] if not decisions else []
@@ -94,12 +98,13 @@ def dispatch(request):
                               "matched_start_frame": hit["start_frame"], "matched_end_frame": hit["end_frame"],
                               "camera_id": source.get("camera_id", "camera_1"), "shot_size": shot.get("shot_size", "unknown") if shot else "unknown",
                               "shot_confidence": shot.get("confidence", 0.0) if shot else 0.0,
+                              "match_method": hit.get("match_method", "lexical"), "semantic_score": hit.get("semantic_score"),
                               "score": score, "confidence": score, "coverage": hit.get("coverage", 1.0), "matched_text": hit["text"],
                               "rationale_codes": ["LATEST_MATCHING_TAKE", "LOCAL_TRANSCRIPT_MATCH"],
-                              "warnings": (["Battuta parziale: verificare le parole mancanti"] if hit.get("coverage", 1.0) < .75 else []) + (["inquadratura da verificare"] if not shot else []), "alternatives": [
+                              "warnings": (["Abbinamento per significato da verificare"] if hit.get("semantic_score", 1.0) < .7 else []) if payload.get("semantic") else (["Battuta parziale: verificare le parole mancanti"] if hit.get("coverage", 1.0) < .75 else []) + (["inquadratura da verificare"] if not shot else []), "alternatives": [
                                   {"take_id": row[2]["take_id"], "media_id": row[2]["media_id"], "start_frame": row[4]["start_frame"],
                                    "end_frame": row[4]["end_frame"], "score": row[1], "coverage": row[4].get("coverage", 0.0),
-                                   "matched_text": row[4]["text"], "shot_size": row[5].get("shot_size", "unknown") if row[5] else "unknown"} for row in candidates if row[2]["take_id"] != source["take_id"] or row[4]["start_frame"] != hit["start_frame"]]})
+                                   "matched_text": row[4]["text"], "semantic_score": row[4].get("semantic_score"), "match_method": row[4].get("match_method", "lexical"), "shot_size": row[5].get("shot_size", "unknown") if row[5] else "unknown"} for row in candidates if row[2]["take_id"] != source["take_id"] or row[4]["start_frame"] != hit["start_frame"]]})
         for left, right in zip(decisions, decisions[1:]):
             if left["media_id"] == right["media_id"] and left["matched_end_frame"] <= right["matched_start_frame"] and left["end_frame"] > right["start_frame"]:
                 boundary = (left["matched_end_frame"] + right["matched_start_frame"]) // 2
@@ -111,7 +116,7 @@ def dispatch(request):
             cursor += decision["end_frame"] - decision["start_frame"]
         shot_warnings = (["Le scale delle inquadrature sono stime automatiche: verifica le etichette suggerite."]
                          if shot_segments else ["Nessuna inquadratura è stata analizzata: verifica e correggi ogni taglio."])
-        partial_count = sum(d.get("coverage", 0) < .75 for d in decisions)
+        partial_count = sum(d.get("coverage", 0) < .75 for d in decisions) if not payload.get("semantic") else 0
         if partial_count:
             shot_warnings.append(f"{partial_count} battute hanno corrispondenza parziale: controlla il parlato trovato e correggi gli intervalli prima della timeline.")
         result = {"plan_id": payload.get("plan_id", "local-plan"), "scene_id": "scene-1", "fps": fps,

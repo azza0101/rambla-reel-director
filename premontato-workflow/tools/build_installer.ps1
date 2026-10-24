@@ -1,6 +1,7 @@
 param([string]$OutputPath = (Join-Path $PSScriptRoot '..\dist\Install-Premontato.exe'), [string]$RuntimePath = '')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
+& (Join-Path $PSScriptRoot 'prepare_models.ps1')
 $temp = Join-Path $root ('.premontato-installer-' + [guid]::NewGuid().ToString('N'))
 $payload = Join-Path $temp 'payload'; New-Item -ItemType Directory -Path $payload -Force | Out-Null
 try {

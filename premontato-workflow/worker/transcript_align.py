@@ -289,3 +289,146 @@ def complete_beat_candidates(beat, segments, fps):
                         'coverage':coverage,'score':.8*coverage+.2*precision,
                         'text':' '.join(w['text'] for w in words[lo:hi])})
     return sorted(results,key=lambda h:(-h['coverage'],-h['score']))
+
+
+def semantic_windows(source, fps):
+    """Candidate utterances retain real word timestamps, never invented timing."""
+    units=[]
+    for segment in sorted(source.get('segments',[]),key=lambda s:s['start_frame'] if 'start_frame' in s else s['words'][0]['start_frame']):
+        current=[]
+        words=segment.get('words') or [{'text':segment.get('text',''),'start_frame':segment['start_frame'],'end_frame':segment['end_frame']}]
+        for word in words:
+            if not normalize(word.get('text','')) or word['text'].strip()=='(...)':continue
+            current.append(word)
+            if re.search(r'[.!?]$',word['text'].strip()) or (len(current)>5 and word['end_frame']-current[0]['start_frame']>8*fps):
+                units.append(current);current=[]
+        if current:units.append(current)
+    windows=[]
+    for i in range(len(units)):
+        combined=[];previous_texts=[]
+        for unit in units[i:i+8]:
+            text=' '.join(w['text'].strip() for w in unit)
+            if combined and unit[0]['start_frame']-combined[-1]['end_frame']>2.5*fps:break
+            # A repeated sentence begins another attempt, not one longer line.
+            core=[_stem_token(t) for t in normalize(text).split() if t not in _STOPWORDS]
+            repeated=False
+            if len(core)>=2:
+                for old in previous_texts:
+                    old_core=[_stem_token(t) for t in normalize(old).split() if t not in _STOPWORDS]
+                    if (len(old_core)>=2 and core[:2]==old_core[:2]) or SequenceMatcher(None,core,old_core,autojunk=False).find_longest_match(0,len(core),0,len(old_core)).size>=3:repeated=True;break
+            if repeated:break
+            combined+=unit;previous_texts.append(text)
+            if len(combined)>120 or combined[-1]['end_frame']-combined[0]['start_frame']>35*fps:break
+            windows.append({'media_id':source['media_id'],'start_frame':combined[0]['start_frame'],
+                            'end_frame':combined[-1]['end_frame'],'text':' '.join(w['text'].strip() for w in combined)})
+    return windows
+
+
+def contextual_path(candidates):
+    """Scene-level monotonic alignment, with an explicit unmatched option."""
+    states=[(0.0,0,[])]
+    for rows in candidates:
+        next_states=[(value-.18,end,path+[None]) for value,end,path in states]
+        for row in rows:
+            eligible=[s for s in states if s[1]<=row['start_frame']]
+            if eligible:
+                value,_,path=max(eligible,key=lambda s:s[0])
+                next_states.append((value+row['score']-.45,row['end_frame'],path+[row]))
+        states=[];best=-float('inf')
+        for state in sorted(next_states,key=lambda s:s[1]):
+            if state[0]>best:states.append(state);best=state[0]
+    return max(states,key=lambda s:s[0])[2]
+
+
+class LocalSemanticEncoder:
+    def __init__(self):
+        import json,hashlib,sys
+        from pathlib import Path
+        import onnxruntime as ort
+        from tokenizers import Tokenizer
+        roots=[Path(sys.executable).parent/'models'/'semantic',Path(__file__).resolve().parents[1]/'runtime'/'models'/'semantic']
+        folder=next((p for p in roots if (p/'model-lock.json').is_file()),None)
+        if folder is None:raise RuntimeError('Modello semantico locale mancante: reinstalla Premontato')
+        lock=json.loads((folder/'model-lock.json').read_text(encoding='utf8'))
+        for name in ['model.onnx','tokenizer.json']:
+            if hashlib.sha256((folder/name).read_bytes()).hexdigest()!=lock['files'][name]['sha256']:
+                raise RuntimeError('Modello semantico danneggiato: reinstalla Premontato')
+        self.tokenizer=Tokenizer.from_file(str(folder/'tokenizer.json'))
+        self.tokenizer.enable_truncation(max_length=128);self.tokenizer.enable_padding()
+        options=ort.SessionOptions();options.intra_op_num_threads=4
+        self.model=ort.InferenceSession(str(folder/'model.onnx'),sess_options=options,providers=['CPUExecutionProvider'])
+        self.cache={}
+    def encode(self,texts):
+        import numpy as np
+        missing=list(dict.fromkeys(text for text in texts if text not in self.cache))
+        if len(self.cache)>5000:self.cache.clear();missing=list(dict.fromkeys(texts))
+        for start in range(0,len(missing),32):
+            batch=self.tokenizer.encode_batch(missing[start:start+32])
+            mask=np.array([b.attention_mask for b in batch],dtype=np.int64)
+            args={'input_ids':np.array([b.ids for b in batch],dtype=np.int64),'attention_mask':mask,'token_type_ids':np.array([b.type_ids for b in batch],dtype=np.int64)}
+            output=self.model.run(None,{i.name:args[i.name] for i in self.model.get_inputs()})[0]
+            if output.ndim==3:output=(output*mask[:,:,None]).sum(1)/np.maximum(mask.sum(1)[:,None],1)
+            output=output/np.maximum(np.linalg.norm(output,axis=1,keepdims=True),1e-9)
+            self.cache.update(zip(missing[start:start+32],output))
+        return np.array([self.cache[text] for text in texts])
+
+
+_SEMANTIC_ENCODER=None
+
+def semantic_scene_hits(beats, sources, fps):
+    global _SEMANTIC_ENCODER
+    if _SEMANTIC_ENCODER is None:_SEMANTIC_ENCODER=LocalSemanticEncoder()
+    dialogue=[b for b in beats if b.get('kind')=='dialogue']
+    windows=[(s,semantic_windows(s,fps)) for s in sources]
+    flat=[w for s,rows in windows for w in rows]
+    if not flat or not dialogue:return {}
+    encoder=_SEMANTIC_ENCODER
+    queries=encoder.encode([b['text'] for b in dialogue]);vectors=encoder.encode([w['text'] for w in flat])
+    similarities=queries@vectors.T
+    clause_vectors=[encoder.encode(beat_phrases(beat)) for beat in dialogue]
+    output={};offset=0
+    for source,rows in windows:
+        candidates=[]
+        for i,beat in enumerate(dialogue):
+            target=normalize(beat['text']).split();content=[t for t in target if t not in _STOPWORDS]
+            choices=[]
+            for k,row in enumerate(rows):
+                observed=normalize(row['text']).split();semantic=float(similarities[i,offset+k])
+                if semantic<.48:continue
+                if len(target)==1 and target[0] not in observed:continue
+                coverage=sum(any(_same_content(t,o) for o in observed) for t in content)/max(1,len(content))
+                inside=[offset+j for j,w in enumerate(rows) if w['start_frame']>=row['start_frame'] and w['end_frame']<=row['end_frame']]
+                support=float((clause_vectors[i]@vectors[inside].T).max(axis=1).mean()) if inside else semantic
+                score=.8*semantic+.2*coverage
+                if len(content)>=2 and coverage==0 and semantic<.8:continue
+                # Equivalent candidates should prefer a clean, compact utterance.
+                score-=.015*max(0,len(observed)-len(target))/max(1,len(target))
+                choices.append({**row,'score':score,'semantic_score':semantic,'coverage':coverage,'semantic_completeness':support,'match_method':'semantic_context'})
+            candidates.append(sorted(choices,key=lambda c:c['score'],reverse=True)[:40])
+        path=contextual_path(candidates)
+        all_words=[w for seg in source.get('segments',[]) for w in seg.get('words',[]) if normalize(w.get('text','')) and w['text'].strip()!='(...)']
+        all_words.sort(key=lambda w:w['start_frame'])
+        for index,(beat,hit) in enumerate(zip(dialogue,path)):
+            if not hit:continue
+            if len(normalize(beat['text']).split())>7:
+                following=next((p for p in path[index+1:] if p),None)
+                safe_end=max((w['end_frame'] for w in rows if w['start_frame']==hit['start_frame']),default=hit['end_frame'])
+                limit=min(following['start_frame'] if following else hit['end_frame']+5*fps,hit['start_frame']+35*fps,safe_end)
+                end=hit['end_frame'];sentence_end=end
+                for word in all_words:
+                    if word['start_frame']<end:continue
+                    if word['end_frame']>limit or word['start_frame']-end>1.2*fps:break
+                    end=word['end_frame']
+                    if re.search(r'[.!?]$',word['text'].strip()):sentence_end=end
+                end=sentence_end
+                if end>hit['end_frame']:
+                    hit={**hit,'end_frame':end,'text':' '.join(w['text'].strip() for w in all_words if w['start_frame']>=hit['start_frame'] and w['end_frame']<=end)}
+            else:
+                subset=[{**seg,'words':[w for w in seg.get('words',[]) if w['start_frame']>=hit['start_frame'] and w['end_frame']<=hit['end_frame']]} for seg in source.get('segments',[])]
+                subset=[seg for seg in subset if seg['words']]
+                tight=complete_beat_candidates(beat,subset,fps)
+                if tight and tight[0]['coverage']>=.65:
+                    hit={**hit,'start_frame':tight[0]['start_frame'],'end_frame':tight[0]['end_frame'],'text':tight[0]['text']}
+            output[(source['take_id'],beat['beat_id'])]=[hit]
+        offset+=len(rows)
+    return output

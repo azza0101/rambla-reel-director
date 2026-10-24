@@ -1,6 +1,7 @@
 param([Parameter(Mandatory=$true)][string]$RuntimePath,[string]$OutputDirectory=(Join-Path $PSScriptRoot '..\dist'))
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $PSScriptRoot
+& (Join-Path $PSScriptRoot 'prepare_models.ps1')
 $runtime=[IO.Path]::GetFullPath($RuntimePath)
 $out=[IO.Path]::GetFullPath($OutputDirectory)
 $version=(Get-Content -Raw (Join-Path $root 'plugin\package.json')|ConvertFrom-Json).version

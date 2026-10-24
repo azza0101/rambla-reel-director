@@ -7,3 +7,5 @@ pypdf 6.10.0: BSD-3-Clause; see pypdf-BSD-3-Clause.txt.
 typing_extensions 4.16.0: PSF License; see typing-extensions-PSF.txt.
 
 The release process copies complete license metadata from each wheel into the runtime. The installer launcher targets the .NET Framework already included with Windows; no .NET runtime files are bundled. Blackmagic Design's WorkflowIntegration.node is not redistributed: the installer copies it from the user's local Resolve SDK.
+
+Semantic alignment: ONNX Runtime (MIT), Hugging Face Tokenizers (Apache-2.0), sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 quantized model (Apache-2.0). Exact model revision/hash and model license included under models/semantic. Dependency licenses included under licenses/.
