@@ -13,6 +13,7 @@ function workerEnvironment(source = process.env, cachePath) {
 
 function prepareReviewTimeline(plan, confirmed) {
   if (confirmed !== true) throw new Error('Conferma gli abbinamenti prima di creare la timeline');
+  if (plan?.visual_review_required) throw new Error('Conferma le inquadrature e i personaggi nella revisione visiva');
   if (!plan?.decisions?.length) throw new Error('Nessuna battuta abbinata: timeline non creata');
   return { decisions: plan.decisions, omitted: plan.unmatched_beats?.length || 0 };
 }
@@ -67,9 +68,11 @@ class Session {
     this.state.stage = 'analyzing';
     this.state.error = null;
     let lastPhaseIndex = 0;
+    const startedAt = Date.now(); let lastPhase, phaseStartedAt = startedAt;
     const progress = (phase, phaseIndex, percent, label, current, total) => {
       if (phaseIndex >= 0) lastPhaseIndex = phaseIndex;
-      this.onProgress?.({ phase, phaseIndex, percent: Math.round(percent), label, current, total });
+      if (phase !== lastPhase) { lastPhase = phase; phaseStartedAt = Date.now(); }
+      this.onProgress?.({ phase, phaseIndex, percent: Math.round(percent), label, current, total, elapsedSeconds: Math.round((Date.now()-startedAt)/1000), phaseElapsedSeconds: Math.round((Date.now()-phaseStartedAt)/1000) });
     };
     try {
       progress('script', 0, 0, 'Leggo e separo le scene del copione');
@@ -87,44 +90,51 @@ class Session {
       progress('shots', 2, 24, shotSources.length ? `Analisi inquadrature: 0/${shotSources.length} clip` : 'Nessun file video da analizzare');
       for (let i = 0; i < shotSources.length; i++) {
         const source = shotSources[i];
-        progress('shots', 2, 24 + (i / shotSources.length) * 42, `Analizzo le inquadrature di ${source.name}`, i, shotSources.length);
-        try { const result = await this.request('analyze_shots', { media: source, sample_fps: 2 }, 20 * 60 * 1000, event => progress('shots', 2, 24 + ((i + event.frame / Math.max(1, event.total)) / shotSources.length) * 42, `YuNet · ${source.name} · ${Math.round(event.frame / Math.max(1, event.total) * 100)}%`, i, shotSources.length)); shots.push(...result.segments); if (result.cache_hit) shotCacheHits += 1; }
+        progress('shots', 2, 24 + (i / shotSources.length) * 38, `Analizzo le inquadrature di ${source.name}`, i, shotSources.length);
+        try { const result = await this.request('analyze_shots', { media: source, sample_fps: 2 }, 20 * 60 * 1000, event => progress('shots', 2, 24 + ((i + event.frame / Math.max(1, event.total)) / shotSources.length) * 38, `YuNet · ${source.name} · ${Math.round(event.frame / Math.max(1, event.total) * 100)}%`, i + event.frame / Math.max(1,event.total), shotSources.length)); shots.push(...result.segments); if (result.cache_hit) shotCacheHits += 1; }
         catch (error) { this.state.error = `Analisi inquadrature non disponibile per ${source.name}: ${error.message}`; }
-        progress('shots', 2, 24 + ((i + 1) / shotSources.length) * 42, `Inquadrature: ${i + 1}/${shotSources.length} clip`, i + 1, shotSources.length);
+        progress('shots', 2, 24 + ((i + 1) / shotSources.length) * 38, `Inquadrature: ${i + 1}/${shotSources.length} clip`, i + 1, shotSources.length);
+      }
+      let visualReview = null;
+      if (shotSources.length) {
+        progress('visual', 3, 62, 'Estraggo le still e confronto i volti localmente');
+        visualReview = await this.request('visual_review', {media:shotSources,shots}, 20*60*1000, event => progress('visual',3,62+((event.clip_index+event.current/Math.max(1,event.total))/Math.max(1,event.clip_total))*6,'Still e volti · '+event.name+' · '+event.current+'/'+event.total,event.clip_index+event.current/Math.max(1,event.total),event.clip_total));
       }
       const takes = [];
-      progress('takes', 3, 68, `Individuo i confini delle take: 0/${sources.length} clip`);
+      progress('takes', 4, 68, `Individuo i confini delle take: 0/${sources.length} clip`);
       for (let i = 0; i < sources.length; i++) {
         const source = sources[i];
         const proposals = await this.request('propose_take_segments', { media: source, transcript: source.segments, fps: source.fps || this.state.fps || 25, beats });
         takes.push({ media_id: source.media_id, media_name: source.name, duration_frames: source.duration_frames,
           confirmed: proposals.length === 1 && proposals[0].boundary_source === 'whole_clip', segments: proposals });
-        progress('takes', 3, 68 + ((i + 1) / Math.max(1, sources.length)) * 12, `Confini take: ${i + 1}/${sources.length} clip`, i + 1, sources.length);
+        progress('takes', 4, 68 + ((i + 1) / Math.max(1, sources.length)) * 12, `Confini take: ${i + 1}/${sources.length} clip`, i + 1, sources.length);
       }
       const planningSources = takes.flatMap(group => group.confirmed ? group.segments.map(take => ({ ...sources.find(source => source.media_id === group.media_id), ...take,
         segments: sources.find(source => source.media_id === group.media_id).segments.filter(segment => segment.start_frame >= take.start_frame && segment.start_frame < take.end_frame) })) : []);
       const audio = {};
       const audioSources = this.state.pacingSettings.enabled ? sources.filter(source => source.path) : [];
-      progress('audio', 4, 81, 'Misuro le pause nell’audio locale');
+      progress('audio', 5, 81, 'Misuro le pause nell’audio locale');
       for (let i=0;i<audioSources.length;i++) {
         const source=audioSources[i];
-        progress('audio',4,81+(i/Math.max(1,audioSources.length))*7, 'Audio · '+source.name,i,audioSources.length);
+        progress('audio',5,81+(i/Math.max(1,audioSources.length))*7, 'Audio · '+source.name,i,audioSources.length);
         try { audio[source.media_id] = await this.request('analyze_audio',{media:source},180000); }
         catch(error) { audio[source.media_id] = {status:'unavailable',reason:error.message}; }
+        progress('audio',5,81+((i+1)/audioSources.length)*7,'Audio · '+source.name+' · '+(audio[source.media_id].status==='ok' ? (audio[source.media_id].cache_hit?'cache verificata':'misurato') : 'non disponibile: pause conservate'),i+1,audioSources.length);
       }
-      progress('plan', 5, 89, 'Abbino il significato delle battute alle take confermate');
+      progress('plan', 6, 89, 'Abbino il significato delle battute alle take confermate');
       let plan = selectedScene && takes.every(group => group.confirmed)
         ? await this.request('build_plan', { beats, sources: planningSources, shots, semantic: true, fps: this.state.fps || 25 },300000) : null;
-      progress('pacing',6,95,'Regolo pause e durata delle inquadrature');
+      progress('pacing',7,95,'Regolo pause e durata delle inquadrature');
       if (plan) plan=await this.request('pace_plan',{plan,sources:planningSources,audio,beats,fps:this.state.fps || 25,settings:this.state.pacingSettings});
+      if (plan && visualReview) plan.visual_review_required = !visualReview.confirmed;
       const warnings = selectedScene
         ? [...(plan?.warnings || ['Conferma i confini delle take suggerite prima di calcolare il premontato.'])]
         : ['Non ho trovato una corrispondenza sufficientemente chiara tra dialoghi e copione; controlla trascrizione e clip selezionate.'];
       if (shotCacheHits) warnings.push(`Analisi visiva riusata dalla cache locale per ${shotCacheHits} clip.`);
       if (this.state.error) warnings.push(this.state.error);
-      this.state.analysis = { script: parsed, sceneSelection, selectedScene, warnings, takes, shots, audio, planningSources, plan, parsedBeats: beats };
+      this.state.analysis = { script: parsed, sceneSelection, selectedScene, warnings, takes, shots, audio, planningSources, plan, visualReview, parsedBeats: beats };
       this.state.stage = 'review';
-      progress('complete', 7, 100, 'Analisi completata');
+      progress('complete', 8, 100, 'Analisi completata');
       return this.getReviewState();
     } catch (error) { this.state.error = error.message; this.state.stage = 'error'; progress('error', lastPhaseIndex, 0, `Analisi interrotta: ${error.message}`); throw error; }
   }
@@ -183,6 +193,34 @@ class Session {
     if(this.state.analysis?.plan)this.state.analysis.plan=result;
     return this.getReviewState();
   }
+  async confirmVisualReview(request) {
+    const analysis=this.state.analysis, review=analysis?.visualReview;
+    if (!review || request?.confirmed !== true || !Array.isArray(request.intervals) || request.intervals.length !== review.intervals.length) throw new Error('Conferma tutte le inquadrature della revisione visiva');
+    const cast=new Set((analysis.parsedBeats || []).filter(b=>b.kind==='dialogue').map(b=>b.character).filter(Boolean));
+    const names=request.person_names || {};
+    const people=new Set((review.faces || []).map(face=>face.person_id).filter(Boolean));
+    if (!names || typeof names!=='object' || Array.isArray(names) || Object.entries(names).some(([id,name])=>!people.has(id) || (name!=='' && !cast.has(name)))) throw new Error('Associazione personaggio non valida');
+    const seen=new Set();
+    const updated=request.intervals.map(item=>{
+      const original=review.intervals.find(s=>s.segment_id===item.segment_id);
+      if (!original || seen.has(item.segment_id)) throw new Error('Intervallo visivo inatteso'); seen.add(item.segment_id);
+      if (!['wide','medium','close','detail','unknown'].includes(item.shot_size)) throw new Error('Scala non valida');
+      if (!Array.isArray(item.visible_subjects) || item.visible_subjects.some(name=>!cast.has(name))) throw new Error('Personaggio non presente nel copione');
+      return {...original,shot_size:item.shot_size,confidence:1,visible_subjects:[...new Set(item.visible_subjects)],reviewed:true,source:'manual'};
+    });
+    if (!updated.length) throw new Error('Nessuna still disponibile: ripeti la revisione visiva');
+    // Compute first: a failed rebuild must not mark stale decisions as confirmed.
+    let plan=analysis.plan;
+    if (analysis.planningSources?.length && analysis.takes?.every(t=>t.confirmed)) {
+      this.onProgress?.({phase:'plan',phaseIndex:6,percent:89,label:'Ricalcolo con campi e personaggi confermati'});
+      plan=await this.request('build_plan',{beats:analysis.parsedBeats,sources:analysis.planningSources,shots:updated,semantic:true,fps:this.state.fps || 25},300000);
+      plan=await this.request('pace_plan',{plan,sources:analysis.planningSources,audio:analysis.audio || {},beats:analysis.parsedBeats,fps:this.state.fps || 25,settings:this.state.pacingSettings});
+    }
+    if(plan)plan.visual_review_required=false;
+    analysis.shots=updated; analysis.visualReview={...review,intervals:updated,confirmed:true,personNames:names};analysis.plan=plan;
+    this.onProgress?.({phase:'complete',phaseIndex:8,percent:100,label:'Campi e personaggi confermati; piano aggiornato'});
+    return this.getReviewState();
+  }
   async confirmTakes(segments) {
     const grouped = new Map();
     for (const segment of segments) { if (!grouped.has(segment.media_id)) grouped.set(segment.media_id, []); grouped.get(segment.media_id).push(segment); }
@@ -200,6 +238,7 @@ class Session {
       segments: this.state.transcripts.find(source => source.media_id === group.media_id).segments.filter(segment => segment.start_frame >= take.start_frame && segment.start_frame < take.end_frame) })));
     this.state.analysis.planningSources = sources;
     this.state.analysis.plan = await this.request('build_plan', { beats: this.state.analysis.parsedBeats, sources, shots: this.state.analysis.shots, semantic: true, fps: this.state.fps || 25 },300000);
+    if (this.state.analysis.visualReview) this.state.analysis.plan.visual_review_required=!this.state.analysis.visualReview.confirmed;
     return this.applyPacing();
   }
 }

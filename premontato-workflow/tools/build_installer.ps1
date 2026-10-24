@@ -13,6 +13,7 @@ try {
     Copy-Item (Join-Path $root 'worker\requirements.txt') (Join-Path $payload 'worker')
     Copy-Item (Join-Path $root 'install\Install-Premontato.ps1') (Join-Path $payload 'install')
     Copy-Item -LiteralPath (Join-Path $root 'runtime\models') -Destination (Join-Path $payload 'runtime\models') -Recurse -Force
+    Copy-Item -LiteralPath (Join-Path $root 'runtime\THIRD_PARTY_NOTICES.txt') -Destination (Join-Path $payload 'runtime\THIRD_PARTY_NOTICES.txt') -Force
     Compress-Archive -Path (Join-Path $payload '*') -DestinationPath (Join-Path $temp 'payload.zip') -CompressionLevel Optimal
     $out = [IO.Path]::GetFullPath($OutputPath); New-Item -ItemType Directory -Force -Path (Split-Path $out) | Out-Null
     $launcher = Join-Path $PSScriptRoot 'launcher'

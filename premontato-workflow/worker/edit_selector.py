@@ -99,7 +99,7 @@ def pace_plan(plan, sources, audio, beats, fps, options=None):
     previous=None;group_duration=0
     for decision in decisions:
         if settings['enabled'] and previous and decision['end_frame']-decision['start_frame']<minimum and decision['media_id']!=previous['media_id'] and not decision.get('manual'):
-            good=[a for a in decision.get('alternatives',[]) if a['media_id']==previous['media_id'] and a.get('score',0)>=decision.get('score',0)-.025 and a['media_id'] in by_media]
+            good=[a for a in decision.get('alternatives',[]) if a.get('speaker_coverage') != 'absent' and (decision.get('speaker_coverage') != 'visible' or a.get('speaker_coverage') == 'visible') and a['media_id']==previous['media_id'] and a.get('score',0)>=decision.get('score',0)-.025 and a['media_id'] in by_media]
             if good:
                 alt=max(good,key=lambda a:a.get('score',0));original=copy.deepcopy(decision)
                 decision.update({k:v for k,v in alt.items() if k!='alternatives'})

@@ -60,6 +60,7 @@ test('analysis scopes planning to the single automatically matched screenplay sc
   assert.equal(session.state.analysis.selectedScene.heading, 'SCENA 01');
   assert.deepEqual([...new Set(progress.map(event => event.phase))], ['script', 'scene', 'shots', 'takes', 'audio', 'plan', 'pacing', 'complete']);
   assert.equal(progress.at(-1).percent, 100);
+  assert.equal(progress.every((event,index)=>!index || event.phaseIndex>=progress[index-1].phaseIndex),true);
 });
 
 test('rejects transcription results from a different timeline', () => {

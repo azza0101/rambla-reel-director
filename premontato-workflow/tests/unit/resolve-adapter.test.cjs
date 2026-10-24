@@ -17,10 +17,13 @@ test('transcribes only selected clips without cached text and enables speaker de
   const sdk = { GetResolvePromise: async () => ({ GetProjectManager: async () => ({ GetCurrentProject: async () => ({
     GetCurrentTimeline: async () => ({}), GetMediaPool: async () => ({ GetSelectedClips: async () => items })
   }) }) }) };
-  assert.deepEqual(await transcribeSelected(sdk), [
+  const events=[];
+  assert.deepEqual(await transcribeSelected(sdk, event=>events.push(event)), [
     { media_id: 'cached', ok: true, reused: true }, { media_id: 'new', ok: true, reused: false }
   ]);
   assert.equal(detected, true);
+  assert.deepEqual(events.map(e=>e.current),[0,1,1,2]);
+  assert.equal(events.at(-1).total,2);
 });
 
 test('IntelliSearch is explicitly scoped to selected clips and enables face identification', async () => {

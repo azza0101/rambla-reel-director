@@ -46,10 +46,11 @@ async function start() {
   handle('transcribeSelected', async () => {
     const before = await adapter.snapshot(await getSdk());
     session.assertContext(before);
-    const results = await adapter.transcribeSelected(await getSdk());
+    const results = await adapter.transcribeSelected(await getSdk(), event=>session.onProgress?.({phase:'transcript',phaseIndex:-1,percent:Math.round(event.current/event.total*100),label:'Trascrizione · '+event.name+' · '+event.current+'/'+event.total+(event.reused?' · cache Resolve':''),...event}));
     const resolveSnapshot = await adapter.snapshot(await getSdk());
     const sources = await adapter.getSelectedTranscriptions(await getSdk());
     const total = session.setTranscripts(sources, resolveSnapshot.fps, resolveSnapshot);
+    session.onProgress?.({phase:'transcript-complete',phaseIndex:-1,percent:100,label:'Trascrizione pronta · '+total.count+' segmenti'});
     return { results, ...total };
   });
   handle('analyzeIntellisearch', async () => {
@@ -61,6 +62,7 @@ async function start() {
   handle('cancelAnalysis', async () => session.cancelAnalysis());
   handle('getReviewState', async () => session.getReviewState());
   handle('updateDecision', async request => { session.updateDecision(request); return session.applyPacing(); });
+  handle('confirmVisualReview', async request => session.confirmVisualReview(request));
   handle('setPacing', async options => session.setPacing(options));
   handle('confirmTakes', async segments => session.confirmTakes(segments));
   handle('createReviewTimeline', async request => {

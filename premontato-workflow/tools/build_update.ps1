@@ -18,6 +18,7 @@ try{
     $archiveName='Premontato-'+$version+'.zip';$archive=Join-Path $out $archiveName
     New-Item -ItemType Directory -Force -Path $out|Out-Null
     if(Test-Path -LiteralPath $archive){Remove-Item -LiteralPath $archive -Force}
+    Copy-Item -LiteralPath (Join-Path $root 'runtime\THIRD_PARTY_NOTICES.txt') -Destination (Join-Path $stage 'runtime\THIRD_PARTY_NOTICES.txt') -Force
     Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive -CompressionLevel Optimal
     $digest=(Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
     $manifest=[ordered]@{version=$version;archive=$archiveName;sha256=$digest}

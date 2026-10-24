@@ -8,7 +8,7 @@ from pdf_script import extract_pdf_text
 from transcript_align import select_scene
 
 PROTOCOL = 1
-ACTIONS = {"ping", "parse_script", "extract_pdf_script", "select_scene", "align", "propose_take_segments", "choose_take", "build_plan", "analyze_shots", "analyze_audio", "pace_plan"}
+ACTIONS = {"ping", "parse_script", "extract_pdf_script", "select_scene", "align", "propose_take_segments", "choose_take", "build_plan", "analyze_shots", "analyze_audio", "pace_plan", "visual_review"}
 
 
 def dispatch(request):
@@ -52,6 +52,34 @@ def dispatch(request):
     elif action == "pace_plan":
         from edit_selector import pace_plan
         result=pace_plan(payload['plan'],payload.get('sources',[]),payload.get('audio',{}),payload.get('beats',[]),float(payload['fps']),payload.get('settings'))
+    elif action == "visual_review":
+        from shot_analyzer import visual_review_media, cluster_faces, VISUAL_REVIEW_VERSION
+        from cache import get_cache, cache_key, write_cache
+        from pathlib import Path
+        import os
+        intervals=[]; observations=[]; warnings=[]; hits=0
+        media_list=payload.get('media',[])
+        for index, media in enumerate(media_list):
+            stat=Path(media['path']).stat()
+            fingerprint=f"{media['media_id']}:{stat.st_size}:{stat.st_mtime_ns}"
+            bounds=[(s['start_frame'],s['end_frame']) for s in payload.get('shots',[]) if s.get('media_id')==media['media_id']]
+            def report(current,total):
+                sys.stdout.write(json.dumps({'protocol':1,'request_id':request['request_id'],'status':'progress','result':{'current':current,'total':total,'clip_index':index,'clip_total':len(media_list),'name':media.get('name','')}})+'\n');sys.stdout.flush()
+            try:
+                cache_root=os.environ.get('PREMONTATO_CACHE_DIR','.premontato-cache'); options={'bounds':bounds}
+                def reusable(value):
+                    return bool(value and not value.get('recognition_error') and not value.get('extraction_errors') and value.get('intervals') and all(s.get('stills') for s in value['intervals']))
+                data=get_cache(cache_root,fingerprint,VISUAL_REVIEW_VERSION,options);cached=reusable(data)
+                if not cached:
+                    data=visual_review_media(media,payload.get('shots',[]),report)
+                    if reusable(data): write_cache(cache_root,cache_key(fingerprint,VISUAL_REVIEW_VERSION,options),data)
+                hits+=int(cached); intervals.extend(data['intervals']);observations.extend(data['observations'])
+                if data.get('recognition_error'): warnings.append(data['recognition_error'])
+                if data.get('extraction_errors'): warnings.append(f"{media.get('name','clip')}: {data['extraction_errors']} still non leggibili; ripeti l’analisi")
+            except Exception as error: warnings.append(f"Revisione visiva non disponibile per {media.get('name','clip')}: {error}")
+            report(1,1)
+        faces=cluster_faces(observations)
+        result={'intervals':intervals,'faces':faces,'warnings':warnings,'cache_hits':hits,'confirmed':False}
     elif action == "analyze_shots":
         from shot_analyzer import analyze_video, ANALYZER_VERSION
         from cache import get_or_compute
@@ -77,6 +105,7 @@ def dispatch(request):
         if payload.get("semantic"):
             from transcript_align import semantic_scene_hits
             semantic_hits = semantic_scene_hits(beats, sources, fps)
+        from shot_analyzer import speaker_coverage
         previous_shot_size = None
         for beat in beats:
             if beat.get("kind") != "dialogue":
@@ -100,6 +129,10 @@ def dispatch(request):
             best_score = max(row[1] for row in candidates)
             best_coverage = max(row[4].get("coverage", 1.0) for row in candidates)
             credible = [row for row in candidates if row[1] >= best_score - (0.025 if payload.get("semantic") else 0.10) and (payload.get("semantic") or row[4].get("coverage", 1.0) >= best_coverage - 0.08)]
+            statuses = {id(row):speaker_coverage(shot_segments,row[2]['media_id'],row[4]['start_frame'],row[4]['end_frame'],beat.get('character','')) for row in credible}
+            visible = [row for row in credible if statuses[id(row)]=='visible']
+            unknown = [row for row in credible if statuses[id(row)]=='unknown']
+            credible = visible or unknown or credible
             classified = [row for row in credible if row[5] and row[5].get("shot_size") in {"wide", "medium", "close"} and row[5].get("confidence", 0) >= 0.55]
             alternating = [row for row in classified if previous_shot_size and row[5]["shot_size"] != previous_shot_size]
             opening = [row for row in classified if row[5]["shot_size"] == "wide"] if not decisions else []
@@ -114,6 +147,8 @@ def dispatch(request):
                               "end_frame": min(source.get("end_frame", source["duration_frames"]), hit["end_frame"] + round(0.35 * fps)),
                               "matched_start_frame": hit["start_frame"], "matched_end_frame": hit["end_frame"],
                               "camera_id": source.get("camera_id", "camera_1"), "shot_size": shot.get("shot_size", "unknown") if shot else "unknown",
+                              "speaker_coverage": speaker_coverage(shot_segments,source['media_id'],hit['start_frame'],hit['end_frame'],beat.get('character','')),
+                              "visible_subjects": shot.get('visible_subjects',[]) if shot else [],
                               "shot_confidence": shot.get("confidence", 0.0) if shot else 0.0,
                               "match_method": hit.get("match_method", "lexical"), "semantic_score": hit.get("semantic_score"),
                               "score": score, "confidence": score, "coverage": hit.get("coverage", 1.0), "matched_text": hit["text"],
@@ -121,6 +156,7 @@ def dispatch(request):
                               "warnings": (["Abbinamento per significato da verificare"] if hit.get("semantic_score", 1.0) < .7 else []) if payload.get("semantic") else (["Battuta parziale: verificare le parole mancanti"] if hit.get("coverage", 1.0) < .75 else []) + (["inquadratura da verificare"] if not shot else []), "alternatives": [
                                   {"take_id": row[2]["take_id"], "media_id": row[2]["media_id"], "start_frame": row[4]["start_frame"],
                                    "end_frame": row[4]["end_frame"], "score": row[1], "coverage": row[4].get("coverage", 0.0),
+                                   "speaker_coverage":speaker_coverage(shot_segments,row[2]['media_id'],row[4]['start_frame'],row[4]['end_frame'],beat.get('character','')),
                                    "matched_text": row[4]["text"], "semantic_score": row[4].get("semantic_score"), "match_method": row[4].get("match_method", "lexical"), "shot_size": row[5].get("shot_size", "unknown") if row[5] else "unknown"} for row in candidates if row[2]["take_id"] != source["take_id"] or row[4]["start_frame"] != hit["start_frame"]]})
         for left, right in zip(decisions, decisions[1:]):
             if left["media_id"] == right["media_id"] and left["matched_end_frame"] <= right["matched_start_frame"] and left["end_frame"] > right["start_frame"]:

@@ -46,14 +46,19 @@ async function getTranscript(sdk, mediaId) {
   return { status: 'ok', language: transcription.language || null, segments: transcription.segments };
 }
 
-async function transcribeSelected(sdk) {
+async function transcribeSelected(sdk, onProgress) {
   const { pool } = await getResolve(sdk), clips = await pool.GetSelectedClips() || [];
   if (!clips.length) throw new Error('Seleziona i media nel Media Pool');
-  return Promise.all(clips.map(async item => {
-    const existing = await item.GetTranscription(true);
-    if (Array.isArray(existing?.segments) && existing.segments.length) return { media_id: String(await item.GetMediaId()), ok: true, reused: true };
-    return { media_id: String(await item.GetMediaId()), ok: Boolean(await item.TranscribeAudio(true)), reused: false };
-  }));
+  const results=[];
+  for (let i=0;i<clips.length;i++) {
+    const item=clips[i], name=String(await item.GetName?.() || ('Clip '+(i+1)));
+    onProgress?.({current:i,total:clips.length,name});
+    const existing=await item.GetTranscription(true);
+    const reused=Array.isArray(existing?.segments) && existing.segments.length>0;
+    const result={media_id:String(await item.GetMediaId()),ok:reused || Boolean(await item.TranscribeAudio(true)),reused};
+    results.push(result);onProgress?.({current:i+1,total:clips.length,name,reused,ok:result.ok});
+  }
+  return results;
 }
 
 // IntelliSearch is opt-in; face clusters are read separately through GetMetadata('People').
