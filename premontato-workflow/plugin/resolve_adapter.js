@@ -146,17 +146,37 @@ async function createTimeline(sdk, name, edits, expected = {}) {
   const items=expectedIds ? await analyzedMediaItems(pool,expectedIds,expected.media || [],sourceTimeline) : await selectedClips(pool);
   const byId = new Map(await Promise.all(items.map(async item => [String(await item.GetMediaId()), item])));
   if (!edits.length || edits.some(edit => !byId.has(edit.media_id) || edit.end_frame <= edit.start_frame)) throw new Error('Piano incompleto o sorgente analizzata non disponibile; timeline non creata');
+  const security=require('./ipc_security');
   const reviewed=edits.flatMap(edit=>{
-    if(!edit.reaction_before || edit.reaction_enabled===false)return [edit];
-    const reaction=require('./ipc_security').validateReaction(edit.reaction_before,expected.media?.find(m=>m.media_id===edit.reaction_before.media_id));
-    if(!byId.has(reaction.media_id))throw new Error('Sorgente della reazione non disponibile');
-    return reaction.enabled?[{...reaction,beat_id:edit.beat_id},edit]:[edit];
+    const rows=[];
+    if(edit.reaction_before && edit.reaction_enabled!==false){const reaction=security.validateReaction(edit.reaction_before,expected.media?.find(m=>m.media_id===edit.reaction_before.media_id));if(reaction.enabled)rows.push({...reaction,beat_id:edit.beat_id});}
+    rows.push(edit);
+    if(edit.action_after!==undefined){if(!Array.isArray(edit.action_after))throw Error('Raccordi azione non validi');for(const action of edit.action_after)rows.push(security.validateAction(action,expected.media?.find(m=>m.media_id===action.media_id)));}
+    return rows;
   });
-  const expanded = reviewed.flatMap(edit => {
+  const raw=reviewed.flatMap(edit=>{
+    if(!byId.has(edit.media_id))throw Error('Sorgente del raccordo non disponibile');
     const ranges=edit.source_ranges ?? [{start_frame:edit.start_frame,end_frame:edit.end_frame}];
-    if (!Array.isArray(ranges) || !ranges.length || ranges.some((range,index)=>!Number.isInteger(range.start_frame)||!Number.isInteger(range.end_frame)||range.end_frame<=range.start_frame||range.start_frame<edit.start_frame||range.end_frame>edit.end_frame||(index>0 && range.start_frame<ranges[index-1].end_frame))) throw new Error('Intervalli ritmo non validi');
-    return ranges.map(range=>({...edit,...range}));
+    if(!Array.isArray(ranges) || !ranges.length || ranges.some((r,i)=>!Number.isInteger(r.start_frame)||!Number.isInteger(r.end_frame)||r.end_frame<=r.start_frame||r.start_frame<edit.start_frame||r.end_frame>edit.end_frame||(i>0 && r.start_frame<ranges[i-1].end_frame)))throw Error('Intervalli ritmo non validi');
+    const overlay=edit.reaction_overlay && security.validateOverlay(edit.reaction_overlay,edit,expected.media?.find(m=>m.media_id===edit.reaction_overlay.media_id));
+    if(overlay && !byId.has(overlay.media_id))throw Error('Sorgente della reazione non disponibile');
+    let offset=0;const output=[];
+    for(const r of ranges){
+      const length=r.end_frame-r.start_frame,split=overlay?Math.max(0,Math.min(length,overlay.offset_frames-offset)):length;
+      if(split)output.push({...edit,start_frame:r.start_frame,end_frame:r.start_frame+split});
+      if(split<length){const delta=offset+split-overlay.offset_frames;output.push({...overlay,start_frame:overlay.start_frame+delta,end_frame:overlay.start_frame+delta+length-split,audio_source:{media_id:edit.media_id,start_frame:r.start_frame+split,end_frame:r.end_frame}});}
+      offset+=length;
+    }return output;
   });
+  const expanded=[];
+  for(const edit of raw){
+    const left=expanded.at(-1),audio=edit.audio_source || edit,priorAudio=left?.audio_source || left;
+    if(left && left.media_id===edit.media_id && left.shot_size===edit.shot_size){
+      if(left.end_frame!==edit.start_frame)throw Error('Jump cut sulla stessa inquadratura: ricalcola il premontato per ripristinare la continuità');
+      if(priorAudio.media_id===audio.media_id && priorAudio.end_frame===audio.start_frame){left.end_frame=edit.end_frame;if(left.audio_source)left.audio_source.end_frame=audio.end_frame;continue;}
+    }
+    expanded.push({...edit,audio_source:edit.audio_source?{...edit.audio_source}:undefined});
+  }
   // Only the new timeline is changed. Source audio mapping and Media Pool colors stay intact.
   const layout = size => size === 'medium' ? {track:2,color:'Green'} : ['close','detail'].includes(size) ? {track:3,color:'Orange'} : {track:1,color:size==='wide'?'Blue':'Tan'};
   const version=require('./package.json').version;
@@ -218,13 +238,13 @@ async function createTimeline(sdk, name, edits, expected = {}) {
       const item=video[0],nativeStart=Number(await item.GetStart()),nativeEnd=Number(await item.GetEnd());
       if(nativeStart!==cursor || !Number.isFinite(nativeEnd) || nativeEnd<=cursor)throw new Error('Resolve ha alterato la posizione del taglio '+(i+1));
       const sourceMedia=await item.GetMediaPoolItem(),mediaId=sourceMedia && String(await sourceMedia.GetMediaId());
-      const sourceFps=Number(expected.media?.find(m=>m.media_id===edit.media_id)?.fps) || Number(await sourceTimeline.GetSetting?.('timelineFrameRate')) || 25;
-      const record=expected.media?.find(m=>m.media_id===edit.media_id);
-      const sourceTc=record?.start_tc || (typeof media.GetClipProperty==='function' ? await media.GetClipProperty('Start TC') : null);
-      const sourceBase=sourceTc ? timecodeToFrames(sourceTc,sourceFps)/sourceFps : 0;
-      const verifySource=async target=>{
+      const verifySource=async(target,sourceEdit=edit)=>{
+        const record=expected.media?.find(m=>m.media_id===sourceEdit.media_id),sourceMedia=byId.get(sourceEdit.media_id);
+        const sourceFps=Number(record?.fps) || Number(await sourceTimeline.GetSetting?.('timelineFrameRate')) || 25;
+        const sourceTc=record?.start_tc || (typeof sourceMedia.GetClipProperty==='function' ? await sourceMedia.GetClipProperty('Start TC') : null);
+        const sourceBase=sourceTc ? timecodeToFrames(sourceTc,sourceFps)/sourceFps : 0;
         const start=Number(await target.GetSourceStartTime()),end=Number(await target.GetSourceEndTime());
-        if(!Number.isFinite(start)||!Number.isFinite(end)||Math.abs(start-sourceBase-edit.start_frame/sourceFps)>.5/sourceFps||Math.abs(end-sourceBase-edit.end_frame/sourceFps)>.5/sourceFps)throw new Error('Resolve ha alterato il taglio '+(i+1)+'; timeline di prova annullata');
+        if(!Number.isFinite(start)||!Number.isFinite(end)||Math.abs(start-sourceBase-sourceEdit.start_frame/sourceFps)>.5/sourceFps||Math.abs(end-sourceBase-sourceEdit.end_frame/sourceFps)>.5/sourceFps)throw Error('Resolve ha alterato il taglio '+(i+1)+'; timeline di prova annullata');
       };
       if(mediaId!==String(edit.media_id))throw new Error('Sorgente del taglio non corretta');
       const videoTrack=await item.GetTrackTypeAndIndex();if(videoTrack[0]!=='video' || Number(videoTrack[1])!==track)throw new Error('Resolve ha inserito il video sulla traccia errata');
@@ -232,18 +252,19 @@ async function createTimeline(sdk, name, edits, expected = {}) {
       const setColor=async target=>{if(!await target.SetClipColor(color) || await target.GetClipColor()!==color)throw new Error('Resolve non ha applicato il colore del campo');};
       await setColor(item);
       // A video-only source may legitimately have no audio mapping.
+      const audioSource=edit.audio_source || edit,audioMedia=byId.get(audioSource.media_id);
       let hasAudio=true;
-      if(mappingBefore.has(edit.media_id)) {
-        let mapping=mappingBefore.get(edit.media_id);if(typeof mapping==='string'){try{mapping=JSON.parse(mapping);}catch{throw new Error('Mappatura audio sorgente non leggibile');}}
+      if(mappingBefore.has(audioSource.media_id)) {
+        let mapping=mappingBefore.get(audioSource.media_id);if(typeof mapping==='string'){try{mapping=JSON.parse(mapping);}catch{throw new Error('Mappatura audio sorgente non leggibile');}}
         if(mapping && Number(mapping.embedded_audio_channels)===0 && !Number(mapping.linked_audio_channels) && !Object.keys(mapping.track_mapping || {}).length)hasAudio=false;
       }
       if(hasAudio){
-        const audio=await pool.AppendToTimeline([{...clip,mediaType:2}]) || [];
+        const audio=await pool.AppendToTimeline([{...clip,mediaPoolItem:audioMedia,startFrame:audioSource.start_frame,endFrame:audioSource.end_frame,mediaType:2}]) || [];
         if(audio.length!==1)throw new Error('Resolve non ha inserito una sola clip audio sulla traccia mono; timeline di prova annullata');
         const sound=audio[0];
-        if(Number(await sound.GetStart())!==nativeStart || Number(await sound.GetEnd())!==nativeEnd || String(await (await sound.GetMediaPoolItem()).GetMediaId())!==mediaId)throw new Error('Audio e video non sincronizzati');
+        if(Number(await sound.GetStart())!==nativeStart || Number(await sound.GetEnd())!==nativeEnd || String(await (await sound.GetMediaPoolItem()).GetMediaId())!==String(audioSource.media_id))throw new Error('Audio e video non sincronizzati');
         const audioTrack=await sound.GetTrackTypeAndIndex();if(audioTrack[0]!=='audio' || Number(audioTrack[1])!==track)throw new Error('Resolve ha inserito l’audio sulla traccia errata');
-        await verifySource(sound);await setColor(sound);
+        await verifySource(sound,audioSource);await setColor(sound);
         if(!await newTimeline.SetClipsLinked([item,sound],true))throw new Error('Resolve non ha collegato audio e video');
         audioSegments++;
       }

@@ -14,11 +14,11 @@ class PacingTests(unittest.TestCase):
   samples=np.concatenate([np.ones(16000,dtype='float32')*.1,np.zeros(32000,dtype='float32'),np.ones(16000,dtype='float32')*.1])
   result=rms_silences(samples,16000,25)
   self.assertTrue(any(s['start_frame']<=26 and s['end_frame']>=74 for s in result['silences']))
- def test_shortens_internal_silence_and_preserves_every_word(self):
+ def test_preserves_internal_silence_to_avoid_same_angle_jump_cuts(self):
   source,plan,audio=self.fixture()
   out=pace_plan(plan,[source],audio,[],25,{'max_pause_seconds':.4,'minimum_shot_seconds':1.2})
   ranges=out['decisions'][0]['source_ranges']
-  self.assertEqual(sum(r['end_frame']-r['start_frame'] for r in ranges),110)
+  self.assertEqual(sum(r['end_frame']-r['start_frame'] for r in ranges),150)
   for word in source['segments'][0]['words']:
    self.assertTrue(any(r['start_frame']<=word['start_frame'] and r['end_frame']>=word['end_frame'] for r in ranges))
  def test_script_pause_is_preserved(self):
@@ -62,7 +62,7 @@ class PacingTests(unittest.TestCase):
  def test_script_pause_can_be_overridden_per_beat(self):
   source,plan,audio=self.fixture();plan['decisions'][0]['preserve_pause']=False
   out=pace_plan(plan,[source],audio,[{'beat_id':'a','kind':'dialogue'},{'kind':'action','text':'Pausa'}],25,{})
-  self.assertGreater(out['pacing_summary']['removed_frames'],0)
+  self.assertFalse(out['decisions'][0]['pacing']['protected_pause']);self.assertEqual(len(out['decisions'][0]['source_ranges']),1)
  def test_same_view_across_two_short_beats_is_one_sufficiently_long_shot(self):
   source,plan,audio=self.fixture();plan['decisions'][0].update({'end_frame':20,'shot_size':'wide'})
   plan['decisions'].append({'beat_id':'b','take_id':'t','media_id':'m','start_frame':21,'end_frame':41,'shot_size':'wide'})

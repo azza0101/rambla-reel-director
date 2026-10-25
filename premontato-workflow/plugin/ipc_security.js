@@ -22,4 +22,13 @@ function validateReaction(value, media) {
   if(value.still!==undefined && (!value.still || !Number.isSafeInteger(value.still.frame) || value.still.frame<value.start_frame || value.still.frame>=value.end_frame || typeof value.still.image!=='string' || value.still.image.length>500000 || !/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(value.still.image)))throw new Error('Still di reazione non valida');
   return value;
 }
-module.exports = { assertTrusted, validateMediaRecords, validateReaction };
+function validateAction(value,media){
+ if(!value || value.kind!=='action' || !['script_between_anchors','script_take_tail'].includes(value.basis) || value.shot_size!=='wide' || !media || value.media_id!==media.media_id || typeof value.take_id!=='string' || typeof value.beat_id!=='string' || !Number.isSafeInteger(value.start_frame) || !Number.isSafeInteger(value.end_frame) || value.start_frame<0 || value.end_frame<=value.start_frame || value.end_frame>media.duration_frames || value.source_ranges!==undefined || value.action_after!==undefined || value.reaction_overlay!==undefined)throw Error('Raccordo azione non valido');
+ return value;
+}
+function validateOverlay(value,parent,media){
+ const duration=(parent.source_ranges || [parent]).reduce((n,r)=>n+r.end_frame-r.start_frame,0);
+ if(!value || value.kind!=='reaction' || value.basis!=='verified_listener' || value.media_id===parent.media_id || !['close','medium'].includes(value.shot_size) || value.speaker_coverage!=='visible' || !value.evidence || value.evidence.verified!==true || value.enabled!==true || !media || value.media_id!==media.media_id || typeof value.take_id!=='string' || !Number.isSafeInteger(value.start_frame) || !Number.isSafeInteger(value.end_frame) || !Number.isSafeInteger(value.offset_frames) || value.offset_frames<0 || value.start_frame<0 || value.end_frame<=value.start_frame || value.end_frame>media.duration_frames || value.offset_frames+value.end_frame-value.start_frame!==duration || value.source_ranges!==undefined || value.reaction_before!==undefined || value.reaction_overlay!==undefined)throw Error('Reazione in ascolto non valida');
+ return value;
+}
+module.exports = { assertTrusted, validateMediaRecords, validateReaction, validateAction, validateOverlay };

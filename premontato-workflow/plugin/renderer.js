@@ -130,11 +130,11 @@ function renderEditors(state, beats, decisions) {
     panel.append(pauseLabel);
     if(edit.opening_checked){const checked=document.createElement('small');checked.textContent='Attacco della battuta verificato nel contesto del copione';panel.append(checked);}
     if(edit.reaction_status){
-      const reaction=edit.reaction_before,box=document.createElement('div');box.className='reaction-review';
-      if(edit.reaction_status==='unavailable'){const note=document.createElement('small');note.textContent='Reazione non inserita: manca una pausa senza parole in una stretta verificata del personaggio, oppure la battuta è stata modificata manualmente.';box.append(note);}
+      const reaction=edit.reaction_before || state.analysis.plan.decisions[state.analysis.plan.decisions.findIndex(d=>d.beat_id===edit.beat_id)-1]?.reaction_overlay,box=document.createElement('div');box.className='reaction-review';
+      if(edit.reaction_status==='unavailable'){const note=document.createElement('small');note.textContent='Reazione non inserita: manca una copertura in ascolto verificata, oppure la battuta è stata modificata manualmente.';box.append(note);}
       else {
         const label=document.createElement('label'),check=document.createElement('input');check.type='checkbox';check.dataset.reaction='';check.checked=Boolean(reaction);label.className='review-confirm';
-        label.append(check,document.createTextNode(' Inserisci la reazione silenziosa prima della risposta'+(reaction?' · '+((reaction.end_frame-reaction.start_frame)/(state.analysis.plan.fps || 25)).toFixed(2)+' s':'')));box.append(label);
+        label.append(check,document.createTextNode((reaction?.basis==='verified_listener'?' Reazione in ascolto prima della larga · audio della battuta precedente conservato':' Inserisci la reazione silenziosa prima della risposta')+(reaction?' · '+((reaction.end_frame-reaction.start_frame)/(state.analysis.plan.fps || 25)).toFixed(2)+' s':'')));box.append(label);
         if(reaction?.still){const figure=document.createElement('figure'),image=document.createElement('img'),caption=document.createElement('figcaption');image.src=safeStill(reaction.still.image);image.alt='Anteprima della stretta silenziosa di '+reaction.character;caption.textContent=reaction.character+' · frame '+reaction.still.frame+' · pausa audio verificata, senza parole trascritte';figure.append(image,caption);box.append(figure);}
         check.addEventListener('change',async()=>{try{const next=await window.premontato.updateDecision({beat_id:edit.beat_id,reaction_enabled:check.checked});$('reviewed').checked=false;render(next);message('Scelta della reazione salvata nel piano.');}catch(error){showError(error);}});
       }panel.append(box);
@@ -151,7 +151,7 @@ function renderPacing(state) {
  if(options.minimum_shot_seconds!==undefined)$('pacing-minimum').value=options.minimum_shot_seconds;
  if(options.respect_script_pauses!==undefined)$('pacing-script').checked=options.respect_script_pauses;
  const summary=state.analysis?.plan?.pacing_summary;
- if(summary)$('pacing-status').textContent=options.enabled===false ? 'Regolazione silenzi disattivata.' : 'Audio misurato: '+summary.measured_media+' clip · '+summary.removed_seconds+' s rimossi · '+summary.protected_beats+' pause protette · '+summary.short_shot_exceptions+' inquadrature brevi da verificare'+(summary.unavailable_media.length?' · Audio non disponibile per '+summary.unavailable_media.length+' clip: pause conservate.':'');
+ if(summary)$('pacing-status').textContent=options.enabled===false ? 'Regolazione silenzi disattivata.' : 'Audio misurato: '+summary.measured_media+' clip · '+summary.removed_seconds+' s rimossi · '+summary.protected_beats+' pause protette · '+(summary.reaction_count || 0)+' reazioni · '+(summary.action_count || 0)+' raccordi d’azione · '+summary.short_shot_exceptions+' inquadrature brevi da verificare'+(summary.unavailable_media.length?' · Audio non disponibile per '+summary.unavailable_media.length+' clip: pause conservate.':'');
 }
 $('pacing-apply').addEventListener('click',async()=>{
  const button=$('pacing-apply');button.disabled=true;

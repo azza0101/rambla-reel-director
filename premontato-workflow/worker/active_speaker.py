@@ -7,7 +7,7 @@ import numpy as np
 from cache import get_or_compute
 from asd_features import mfcc
 MODEL_SHA256='87fd38c0d3ebb9b31abff607662820c2622aef6ce54e1f808528f50e1ba77c38'
-VERSION='light-asd-talkset-track5-pcm-v2'
+VERSION='light-asd-talkset-track5-pcm-v3'
 _ANALYZER=None
 
 def classify_evidence(faces, frames):
@@ -86,10 +86,20 @@ class ActiveSpeaker:
             full=self.session.run(None,{'audio':features,'video':crops})[0];parts=[]
             for k in range(0,length,25):parts.append(self.session.run(None,{'audio':features[:,k*4:min(length,k+25)*4],'video':crops[:,k:min(length,k+25)]})[0])
             values=((full+np.concatenate(parts))*.5)[lo:hi]
-            rows.append({'mean':round(float(values.mean()),4),'positive':round(float((values>0).mean()),4),'height':round(float(np.median(boxes[:,3])/540),4),'tracking':round(len(positions)/len(indices),4)})
+            rows.append({'mean':round(float(values.mean()),4),'positive':round(float((values>0).mean()),4),'height':round(float(np.median(boxes[:,3])/540),4),'tracking':round(len(positions)/len(indices),4),'box':[round(float(x),2) for x in np.median(boxes,axis=0)]})
         return {'status':classify_evidence(rows,hi-lo),'faces':rows,'sample_start_frame':offset,'sample_end_frame':min(int(source['duration_frames']),offset+round(length/25*fps)),'seconds':round(time.perf_counter()-clock,3),'method':VERSION,'sampled':True}
 
 def analyze_candidate(source,start,end):
     global _ANALYZER
     if _ANALYZER is None:_ANALYZER=ActiveSpeaker()
     return _ANALYZER.analyze(source,start,end)
+
+
+def verify_listener(source,start,end,answer_start,answer_end):
+    answer=analyze_candidate(source,answer_start,answer_end)
+    if answer.get('status')!='visible':return {'verified':False,'reason':'answer speaker uncertain'}
+    responding=[face for face in answer.get('faces',[]) if classify_evidence([face],25)=='visible' and len(face.get('box',[]))==4]
+    listening=analyze_candidate(source,start,end)
+    inactive=[face for face in listening.get('faces',[]) if face.get('tracking',0)>=.6 and face.get('height',0)>=.1 and face.get('mean',0)<-.5 and face.get('positive',1)<.25 and len(face.get('box',[]))==4]
+    stable=any(_iou(a['box'],b['box'])>=.35 for a in responding for b in inactive)
+    return {'verified':stable,'method':'local_answer_speaker_and_inactive_face_continuity','answer_status':answer['status'],'listener_status':listening.get('status'),'cache_hit':bool(answer.get('cache_hit') and listening.get('cache_hit'))}

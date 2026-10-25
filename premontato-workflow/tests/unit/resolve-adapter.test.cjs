@@ -136,7 +136,7 @@ function timelineSdk({ appendResultCount = 3, sourceBase = 0 } = {}) {
 
 test('appends every repeated source edit and restores the original timeline', async () => {
   const { sdk, project, reviewTimeline, sourceTimeline } = timelineSdk();
-  const edits = [179, 250, 400].map(start_frame => ({ media_id: 'm1', start_frame, end_frame: start_frame + 50 }));
+  const edits = [179, 250, 400].map(start_frame => ({ media_id: 'm1', start_frame, end_frame: start_frame + 50,shot_size:start_frame===250?'close':'wide' }));
   const created = await createTimeline(sdk, 'PREMONTATO TEST', edits, { projectId: 'project', timelineId: 'source-timeline', media: [{ media_id: 'm1' }] });
   assert.equal(created.included, 3);
   assert.deepEqual(await Promise.all(reviewTimeline.items.map(item => item.GetSourceStartTime())), [179 / 25, 250 / 25, 400 / 25]);
@@ -145,7 +145,7 @@ test('appends every repeated source edit and restores the original timeline', as
 
 test('rejects and removes a review timeline when Resolve appends only part of the edit list', async () => {
   const context = timelineSdk({ appendResultCount: 1 });
-  const edits = [100, 250, 400].map(start_frame => ({ media_id: 'm1', start_frame, end_frame: start_frame + 50 }));
+  const edits = [100, 250, 400].map(start_frame => ({ media_id: 'm1', start_frame, end_frame: start_frame + 50,shot_size:start_frame===250?'close':'wide' }));
   await assert.rejects(createTimeline(context.sdk, 'PREMONTATO TEST', edits, {
     projectId: 'project', timelineId: 'source-timeline', media: [{ media_id: 'm1' }]
   }), /inserito 1 di 3/);
@@ -158,13 +158,9 @@ test('verifies absolute camera source timecodes against the media base', async (
  assert.equal(result.included,1);
 });
 
-test('applies silence source ranges as separate synchronized timeline inserts',async()=>{
+test('rejects legacy silence source ranges that jump on the same angle',async()=>{
  const context=timelineSdk();
- const result=await createTimeline(context.sdk,'PACED',[{media_id:'m1',start_frame:100,end_frame:300,source_ranges:[{start_frame:100,end_frame:150},{start_frame:250,end_frame:300}]},{media_id:'m1',start_frame:400,end_frame:450}],{media:[{media_id:'m1',fps:25}]});
- assert.equal(context.reviewTimeline.items.length,3);
- assert.deepEqual(await Promise.all(context.reviewTimeline.items.map(i=>i.GetSourceStartTime())),[4,10,16]);
- assert.equal(result.included,2);
- assert.equal(result.segments,3);
+ await assert.rejects(createTimeline(context.sdk,'PACED',[{media_id:'m1',start_frame:100,end_frame:300,source_ranges:[{start_frame:100,end_frame:150},{start_frame:250,end_frame:300}]}],{media:[{media_id:'m1',fps:25}]}),/Jump cut/);
 });
 test('rejects paced ranges outside the reviewed source interval before creation',async()=>{
  const context=timelineSdk();
@@ -173,13 +169,13 @@ test('rejects paced ranges outside the reviewed source interval before creation'
 
 test('groups shot sizes on three video/mono audio tracks, colors and links each paced range without source mutations',async()=>{
  const c=timelineSdk({appendResultCount:100});
- const edits=[{media_id:'m1',start_frame:10,end_frame:60,shot_size:'wide'},{media_id:'m1',start_frame:100,end_frame:200,shot_size:'close',source_ranges:[{start_frame:100,end_frame:125},{start_frame:175,end_frame:200}]},{media_id:'m1',start_frame:210,end_frame:240,shot_size:'medium'},{media_id:'m1',start_frame:250,end_frame:270,shot_size:'detail'},{media_id:'m1',start_frame:280,end_frame:300,shot_size:'unknown'}];
+ const edits=[{media_id:'m1',start_frame:10,end_frame:60,shot_size:'wide'},{media_id:'m1',start_frame:100,end_frame:200,shot_size:'close',source_ranges:[{start_frame:100,end_frame:150},{start_frame:150,end_frame:200}]},{media_id:'m1',start_frame:210,end_frame:240,shot_size:'medium'},{media_id:'m1',start_frame:250,end_frame:270,shot_size:'detail'},{media_id:'m1',start_frame:280,end_frame:300,shot_size:'unknown'}];
  const result=await createTimeline(c.sdk,'LAYOUT',edits,{media:[{media_id:'m1',fps:25,duration_frames:500}]});
  assert.equal(await c.reviewTimeline.GetTrackCount('video'),3);assert.equal(await c.reviewTimeline.GetTrackCount('audio'),3);
  for(let n=1;n<=3;n++)assert.equal(await c.reviewTimeline.GetTrackSubType('audio',n),'mono');
- assert.deepEqual(c.reviewTimeline.items.map(i=>[i.clip.trackIndex,i.clip.recordFrame,i.color]),[[1,90000,'Blue'],[3,90050,'Orange'],[3,90075,'Orange'],[2,90100,'Green'],[3,90130,'Orange'],[1,90150,'Tan']]);
- assert.deepEqual(c.reviewTimeline.audio.map(i=>[i.clip.trackIndex,i.clip.recordFrame]),[[1,90000],[3,90050],[3,90075],[2,90100],[3,90130],[1,90150]]);
- assert.equal(c.reviewTimeline.links.length,6);assert.equal(c.reviewTimeline.sourceMutations,0);assert.equal(result.audioSegments,6);assert.equal(c.project.active,c.sourceTimeline);
+ assert.deepEqual(c.reviewTimeline.items.map(i=>[i.clip.trackIndex,i.clip.recordFrame,i.color]),[[1,90000,'Blue'],[3,90050,'Orange'],[2,90150,'Green'],[3,90180,'Orange'],[1,90200,'Tan']]);
+ assert.deepEqual(c.reviewTimeline.audio.map(i=>[i.clip.trackIndex,i.clip.recordFrame]),[[1,90000],[3,90050],[2,90150],[3,90180],[1,90200]]);
+ assert.equal(c.reviewTimeline.links.length,5);assert.equal(c.reviewTimeline.sourceMutations,0);assert.equal(result.audioSegments,5);assert.equal(c.project.active,c.sourceTimeline);
 });
 test('rejects and removes a layout whose audio format changes to stereo during insertion',async()=>{
  const c=timelineSdk({appendResultCount:100});c.reviewTimeline.GetTrackSubType=async()=> 'stereo';
@@ -227,3 +223,25 @@ test('missing analyzed sources fail before timeline or folders are created',asyn
 test('relinked analyzed media fail before creating a timeline',async()=>{const c=timelineSdk();c.sourceFolder.clips.push(c.media);c.media.GetClipProperty=async()=>({'File Path':'E:/replacement.mp4',Frames:'100',FPS:'25'});await assert.rejects(createTimeline(c.sdk,'RELINKED',[{media_id:'m1',start_frame:10,end_frame:40}],{media:[{media_id:'m1',path:'E:/original.mp4',fps:25,duration_frames:100}]}),/sorgente.*cambiat|media.*cambiat/i);assert.equal(c.reviewTimeline.requestedName,undefined);});
 
 test('user creation activates the new timeline when explicitly requested',async()=>{const c=timelineSdk();await createTimeline(c.sdk,'OPEN GENERATED',[{media_id:'m1',start_frame:10,end_frame:40}],{media:[{media_id:'m1'}],activateCreated:true});assert.equal(c.project.active,c.reviewTimeline);assert.equal(c.reviewTimeline.sourceMutations,0);});
+
+test('listening cutaway uses its video and preserves preceding dialogue audio',async()=>{
+ const c=timelineSdk({appendResultCount:10});const other={...c.media,GetMediaId:async()=>'m2'};c.sourceFolder.clips.push(other);
+ const overlay={kind:'reaction',basis:'verified_listener',media_id:'m2',take_id:'t2',start_frame:200,end_frame:230,offset_frames:70,shot_size:'close',speaker_coverage:'visible',enabled:true,character:'BOY',evidence:{verified:true}};
+ await createTimeline(c.sdk,'LISTEN',[{media_id:'m1',start_frame:0,end_frame:100,shot_size:'close',reaction_overlay:overlay}],{media:[{media_id:'m1',duration_frames:500},{media_id:'m2',duration_frames:500}]});
+ assert.deepEqual(c.reviewTimeline.items.map(i=>[i.clip.mediaPoolItem===other?'m2':'m1',i.clip.startFrame,i.clip.endFrame]),[['m1',0,70],['m2',200,230]]);
+ assert.deepEqual(c.reviewTimeline.audio.map(i=>[i.clip.mediaPoolItem===other?'m2':'m1',i.clip.startFrame,i.clip.endFrame]),[['m1',0,70],['m1',70,100]]);
+});
+test('contiguous source angles become one physical clip without an edit point',async()=>{
+ const c=timelineSdk({appendResultCount:10});await createTimeline(c.sdk,'CONTINUOUS',[{media_id:'m1',start_frame:0,end_frame:50,shot_size:'wide'},{media_id:'m1',start_frame:50,end_frame:100,shot_size:'wide'}]);assert.equal(c.reviewTimeline.items.length,1);assert.equal(c.reviewTimeline.audio.length,1);assert.equal(c.reviewTimeline.items[0].clip.endFrame,100);
+});
+test('discontinuous same-angle ranges fail before creating a timeline',async()=>{
+ const c=timelineSdk();await assert.rejects(createTimeline(c.sdk,'JUMP',[{media_id:'m1',start_frame:0,end_frame:100,shot_size:'wide',source_ranges:[{start_frame:0,end_frame:40},{start_frame:60,end_frame:100}]}]),/jump|continuit/i);assert.equal(c.reviewTimeline.requestedName,undefined);
+});
+test('script action coverage is appended with original synchronized audio',async()=>{
+ const c=timelineSdk({appendResultCount:10});await createTimeline(c.sdk,'ACTION',[{media_id:'m1',start_frame:0,end_frame:50,shot_size:'wide',action_after:[{kind:'action',beat_id:'exit',take_id:'t',media_id:'m1',start_frame:50,end_frame:150,shot_size:'wide',basis:'script_between_anchors'}]}],{media:[{media_id:'m1',duration_frames:500}]});assert.equal(c.reviewTimeline.items.length,1);assert.equal(c.reviewTimeline.items[0].clip.endFrame,150);assert.equal(c.reviewTimeline.audio[0].clip.endFrame,150);
+});
+
+test('invalid listening overlay duration is rejected before timeline creation',async()=>{
+ const c=timelineSdk();const overlay={kind:'reaction',basis:'verified_listener',media_id:'m1',take_id:'t',start_frame:200,end_frame:230,offset_frames:80,shot_size:'close',speaker_coverage:'visible',enabled:true,evidence:{verified:true}};
+ await assert.rejects(createTimeline(c.sdk,'BAD OVERLAY',[{media_id:'m1',start_frame:0,end_frame:100,reaction_overlay:overlay}],{media:[{media_id:'m1',duration_frames:500}]}),/ascolto non valida/);assert.equal(c.reviewTimeline.requestedName,undefined);
+});

@@ -37,6 +37,8 @@ function validateProjectState(state){
   if(row.shot_size!==undefined&&!sizes.includes(row.shot_size)||row.matched_text!==undefined&&!str(row.matched_text))return false;
   if(row.reaction_enabled!==undefined && typeof row.reaction_enabled!=='boolean')return false;
   if(row.reaction_before!==undefined){try{require('./ipc_security').validateReaction(row.reaction_before,media.get(row.reaction_before?.media_id));}catch{return false;}}
+  if(row.reaction_overlay!==undefined){try{require('./ipc_security').validateOverlay(row.reaction_overlay,row,media.get(row.reaction_overlay?.media_id));}catch{return false;}}
+  if(row.action_after!==undefined){if(!Array.isArray(row.action_after) || row.action_after.length>100)return false;try{for(const action of row.action_after)require('./ipc_security').validateAction(action,media.get(action?.media_id));}catch{return false;}}
   if(row.alternatives===undefined && !alt)row.alternatives=[];
   if(row.alternatives!==undefined&&(!Array.isArray(row.alternatives)||!row.alternatives.every(value=>decision(value,true))))return false;
   if(row.source_ranges!==undefined&&(!Array.isArray(row.source_ranges)||!row.source_ranges.every(value=>range(value,row.end_frame)&&value.start_frame>=row.start_frame)))return false;
@@ -318,7 +320,7 @@ class Session {
     }
     const manual=updated.manual || ['start_frame','end_frame','shot_size','alternative_index'].some(key=>request[key]!==undefined);
     Object.assign(updated, { start_frame: start, end_frame: end, shot_size: request.shot_size ?? updated.shot_size, manual, reaction_enabled:request.reaction_enabled ?? updated.reaction_enabled, preserve_pause: request.preserve_pause ?? updated.preserve_pause });
-    delete updated.source_ranges; delete updated.pacing; delete updated.reaction_before;
+    delete updated.source_ranges; delete updated.pacing; delete updated.reaction_before; delete updated.reaction_overlay; delete updated.action_after;
     const base=plan.base_decisions?.findIndex(item=>item.beat_id===updated.beat_id);
     if (base !== undefined && base>=0) plan.base_decisions[base]={...updated};
     plan.decisions[plan.decisions.indexOf(decision)] = updated;

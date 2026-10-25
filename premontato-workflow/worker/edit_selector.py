@@ -181,29 +181,8 @@ def pace_plan(plan, sources, audio, beats, fps, options=None, shots=None):
                     new_hi=min(hi,max(silence['start_frame'],last)+round(.25*fps))
             if relevant and new_hi-new_lo>=minimum:
                 edge_removed=(new_lo-lo)+(hi-new_hi);lo,hi=new_lo,new_hi
+        # Keep this angle continuous; shortening an internal silence creates a jump.
         cuts=[]
-        if active and not protect and not decision.get('manual'):
-            # Silence alone is insufficient: never discard an ASR word interval.
-            for silence in silences:
-                a,b=max(lo,silence['start_frame']),min(hi,silence['end_frame'])
-                if b<=a:continue
-                pieces=[(a,b)]
-                for word in words:
-                    if word['end_frame']<=a or word['start_frame']>=b:continue
-                    remainder=[]
-                    for x,y in pieces:
-                        if word['end_frame']<=x or word['start_frame']>=y:remainder.append((x,y))
-                        else:
-                            if x<word['start_frame']:remainder.append((x,word['start_frame']))
-                            if word['end_frame']<y:remainder.append((word['end_frame'],y))
-                    pieces=remainder
-                for x,y in pieces:
-                    if y-x<=keep+round(.18*fps):continue
-                    # Leave real breathing room, and avoid producing flash edits.
-                    left=x+keep//2;right=y-(keep-keep//2)
-                    segment_start=cuts[-1][1] if cuts else lo
-                    if left-segment_start<minimum or hi-right<minimum:continue
-                    cuts.append((left,right))
         ranges=[];position=lo
         for a,b in sorted(cuts):
             if a<position:continue
@@ -231,6 +210,9 @@ def pace_plan(plan, sources, audio, beats, fps, options=None, shots=None):
             left['pacing']['duration_frames']=sum(r['end_frame']-r['start_frame'] for r in left['source_ranges'])
             left['pacing']['added_hold_frames']=max(0,left['pacing']['added_hold_frames']-overlap)
             left.setdefault('rationale_codes',[]).append('HOLD_CLAMPED_TO_NEXT_BEAT')
+    from continuity_editor import preserve_continuity
+    continuity=preserve_continuity(decisions,sources,beats,fps)
+    result.setdefault('warnings',[]).extend(continuity['warnings'])
     groups=[]
     for decision in decisions:
         if groups and groups[-1][-1]['media_id']==decision['media_id'] and groups[-1][-1].get('shot_size')==decision.get('shot_size'):groups[-1].append(decision)
@@ -243,19 +225,29 @@ def pace_plan(plan, sources, audio, beats, fps, options=None, shots=None):
     reactions=0;cursor=0;previous=None;occupied=list(decisions)
     for decision in decisions:
         decision.pop('reaction_before',None)
-        reaction=verified_reaction(decision,previous,sources,audio,beats,shots or [],fps,minimum,occupied)
+        from listening_reaction import listening_overlay
+        overlay=listening_overlay(decision,previous,sources,fps,minimum,decisions)
+        if overlay:
+            previous['reaction_overlay']=overlay
+            decision['reaction_status']='inserted_listening'
+            reactions+=1
+        reaction=None if overlay else verified_reaction(decision,previous,sources,audio,beats,shots or [],fps,minimum,occupied)
         requested=previous and previous.get('narrative_role')=='tension' and decision.get('narrative_role')=='resolution'
         if reaction:
             reaction['timeline_start_frame']=cursor
             occupied.append(reaction)
             decision['reaction_before']=reaction;cursor+=reaction['end_frame']-reaction['start_frame'];reactions+=1
             decision['reaction_status']='inserted'
+        elif overlay:pass
         elif requested:decision['reaction_status']='disabled' if decision.get('reaction_enabled') is False else 'unavailable'
         else:decision.pop('reaction_status',None)
-        decision['timeline_start_frame']=cursor;cursor+=decision['pacing']['duration_frames'];previous=decision
+        decision['timeline_start_frame']=cursor;cursor+=decision['pacing']['duration_frames']
+        for action in decision.get('action_after',[]):
+            action['timeline_start_frame']=cursor;cursor+=action['end_frame']-action['start_frame']
+        previous=decision
     result['decisions']=decisions
     result['pacing_settings']=settings
     result['pacing_summary']={'removed_frames':removed,'removed_seconds':round(removed/fps,3),'duration_frames':cursor,
-                              'reaction_count':reactions,'protected_beats':protected_count,'coverage_holds':holds,'short_shot_exceptions':short,
+                              'reaction_count':reactions,'action_count':continuity['action_count'],'protected_beats':protected_count,'coverage_holds':holds,'short_shot_exceptions':short,
                               'unavailable_media':sorted(unavailable),'measured_media':sum(v.get('status')=='ok' for v in audio.values())}
     return result
