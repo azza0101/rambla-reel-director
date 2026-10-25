@@ -110,10 +110,14 @@ class Session {
     this.state.directions={...(this.state.directions || DEFAULT_DIRECTIONS),markers:{}}; this.state.script = { path: file, text }; this.state.analysis = null; return { name: path.basename(file) };
   }
   setMedia(records, identity) { this.state.media = records; this.state.transcripts = []; this.state.mediaFingerprints=null; this.state.uiDraft=null; this.state.analysis = null; this.state.projectId = identity.projectId; this.state.timelineId = identity.timelineId; return records.map(({ media_id, name, duration_frames, people = [] }) => ({ media_id, name, duration_frames, people })); }
+  assertProject(identity) {
+    if (!identity.projectId || identity.projectId !== this.state.projectId) throw new Error('Progetto Resolve cambiato: riapri il progetto delle clip caricate oppure carica una nuova selezione');
+  }
   assertContext(identity) {
-    const ids = (identity.selected || []).map(item => item.media_id);
-    if (identity.projectId !== this.state.projectId || identity.timelineId !== this.state.timelineId || ids.length !== this.state.media.length || ids.some((id, index) => id !== this.state.media[index].media_id)) {
-      throw new Error('Progetto, timeline o selezione media cambiati: riseleziona le clip e ricalcola');
+    this.assertProject(identity);
+    const ids = new Set((identity.selected || []).map(item => item.media_id));
+    if (ids.size !== this.state.media.length || this.state.media.some(item => !ids.has(item.media_id))) {
+      throw new Error('La selezione media è cambiata: seleziona le clip caricate prima di trascrivere');
     }
   }
   async analyze() {

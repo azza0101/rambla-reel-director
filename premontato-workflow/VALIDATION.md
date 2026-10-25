@@ -125,3 +125,10 @@ Local browser UI exercised final confirmation without names/debug, explicit debu
 0.10.1: ritorni master su scambi prolungati al cambio di parlante, esclusi crescendo, dialoghi brevi e monologhi. Regola verificata anche attraverso il protocollo; nessuna inferenza extra per un ritorno master già deciso. Ricalcolate le tre riprese reali: 12 battute e scelte chiave conservate.
 
 0.10.2 migration fix: reproduced installed 0.9.10 updater rejecting worker/active_speaker.py. Updater now accepts safe flat Python modules; installer copies all safe worker modules. Both stage and validate worker imports/dependencies before replacing the old installation. Full installer migration and full in-place update tested in isolated folders with real bundled runtime, plus missing-module payload preserving old files and CPU model load from installed runtime. UAC branch bypassed only in the private update test copy; no UAC behavior claimed tested.
+
+
+## 0.10.3 — analysis preflight
+
+Local analysis validates the loaded Resolve project without depending on the current timeline or Media Pool selection. Transcription still requires the loaded media set, independent of its ordering, and rejects another project. The renderer initializes preflight progress so IPC errors replace the startup label immediately. Regression tests cover project protection, timeline changes, reordered clips, the main IPC handler and preflight error visibility. JavaScript suite: 91 passed.
+
+Actual host check: adapter.snapshot without reading the current selection and SaveProject succeeded against open Resolve project test-mcp. Session analyzed its three saved media using the installed 0.10.2 Python runtime and worker, completed every phase and produced all 12 dialogue decisions. No timeline was created or changed in this check. The Electron button itself was covered by regression harness, not clicked remotely.

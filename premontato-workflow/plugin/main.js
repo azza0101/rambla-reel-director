@@ -87,7 +87,7 @@ async function start() {
     session.assertContext(before);
     return adapter.analyzeIntellisearchSelected(await getSdk(), { identifyFaces: true, isBetterMode: false });
   });
-  handle('analyze', async () => { const current = await adapter.snapshot(await getSdk()); session.assertContext(current); await saveResolve(session.state.projectId).catch(()=>{}); return session.analyze(); });
+  handle('analyze', async () => { const current = await adapter.snapshot(await getSdk(),{includeSelection:false}); session.assertProject(current); await saveResolve(session.state.projectId).catch(()=>{}); return session.analyze(); });
   handle('cancelAnalysis', async () => session.cancelAnalysis());
   handle('getReviewState', async () => session.getReviewState());
   handle('saveDraft',async draft=>{session.setDraft(draft);return {saved:true};});

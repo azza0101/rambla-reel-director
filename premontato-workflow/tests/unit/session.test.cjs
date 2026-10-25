@@ -63,16 +63,16 @@ test('analysis scopes planning to the single automatically matched screenplay sc
   assert.equal(progress.every((event,index)=>!index || event.phaseIndex>=progress[index-1].phaseIndex),true);
 });
 
-test('rejects transcription results from a different timeline', () => {
+test('accepts transcription results after changing timeline in the same project', () => {
   const session = new Session('unused', 'unused');
   session.setMedia([{ media_id: 'm', name: 'clip', duration_frames: 100 }], { projectId: 'p', timelineId: 't1' });
-  assert.throws(() => session.setTranscripts([], 25, { projectId: 'p', timelineId: 't2' }), /cambiati/);
+  assert.doesNotThrow(() => session.setTranscripts([], 25, { projectId: 'p', timelineId: 't2', selected:[{media_id:'m'}] }));
 });
 
 test('rejects a changed Media Pool selection even inside the same project', () => {
   const session = new Session('unused', 'unused');
   session.setMedia([{ media_id: 'm1', name: 'one', duration_frames: 100 }], { projectId: 'p', timelineId: 't' });
-  assert.throws(() => session.assertContext({ projectId: 'p', timelineId: 't', selected: [{ media_id: 'm2' }] }), /selezione media cambiati/);
+  assert.throws(() => session.assertContext({ projectId: 'p', timelineId: 't', selected: [{ media_id: 'm2' }] }), /selezione media è cambiata/);
 });
 
 test('rejects take edits with source gaps before rebuilding a plan', async () => {
@@ -140,4 +140,14 @@ test('saving notes alone preserves manual edits without rebuilding the plan',asy
  session.state.analysis={parsedBeats:[{beat_id:'a',kind:'dialogue'}],planningSources:[{}],takes:[{confirmed:true}],plan};
  session.request=async()=>{throw Error('Must not rebuild notes-only changes');};
  await session.setDirections({...session.state.directions,notes:'new'});assert.equal(session.state.analysis.plan,plan);assert.equal(plan.decisions[0].start_frame,7);
+});
+
+test('local analysis validates project without depending on current timeline or selection',()=>{
+ const session=new Session('unused','unused');session.setMedia([{media_id:'m'}],{projectId:'p',timelineId:'old'});
+ assert.doesNotThrow(()=>session.assertProject({projectId:'p',timelineId:'new',selected:[]}));
+ assert.throws(()=>session.assertProject({projectId:'other'}),/progetto/i);
+});
+test('selection identity is independent of Media Pool ordering',()=>{
+ const session=new Session('unused','unused');session.setMedia([{media_id:'a'},{media_id:'b'}],{projectId:'p',timelineId:'old'});
+ assert.doesNotThrow(()=>session.assertContext({projectId:'p',timelineId:'new',selected:[{media_id:'b'},{media_id:'a'}]}));
 });
