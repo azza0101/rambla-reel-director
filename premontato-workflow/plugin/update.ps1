@@ -75,6 +75,10 @@ if(!$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))
     catch { throw 'Richiesta di autorizzazione amministrativa annullata o non riuscita' }
 }
 
+ $premDrive=[IO.DriveInfo]::new([IO.Path]::GetPathRoot($PluginRoot))
+ $premRequiredSpace=2*$total+64MB
+ if($premDrive.AvailableFreeSpace -lt $premRequiredSpace){throw ('Spazio insufficiente sul disco '+$premDrive.Name+': servono almeno '+[Math]::Ceiling($premRequiredSpace/1MB)+' MB liberi; disponibili '+[Math]::Floor($premDrive.AvailableFreeSpace/1MB)+' MB. Conserva i backup su un altro disco e riprova.')}
+
 $stage=Join-Path $PluginRoot ('.premontato-update-stage-'+[guid]::NewGuid().ToString('N'))
 $backupRoot=Join-Path (Split-Path -Parent $PluginRoot) 'RAMBLA Premontato Update Backups'
 $backup=Join-Path $backupRoot ([DateTime]::Now.ToString('yyyyMMdd-HHmmss-fff'))

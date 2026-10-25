@@ -8,7 +8,7 @@ test('Electron loader bootstraps once even when require.main differs from module
 test('analysis IPC uses loaded media even after Resolve selection or timeline changes',async()=>{
  const source=fs.readFileSync(path.join(__dirname,'../../plugin/main.js'),'utf8');const line=source.split('\n').find(x=>x.includes("handle('analyze',"));let handler,called=0;
  const context=vm.createContext({handle:(name,fn)=>handler=fn,adapter:{snapshot:async(_sdk,options)=>{assert.equal(options.includeSelection,false);return {projectId:'p',timelineId:'changed',selected:[]};}},getSdk:async()=>({}),saveResolve:async()=>{},session:{state:{projectId:'p'},assertProject:value=>assert.equal(value.projectId,'p'),analyze:async()=>++called}});
- vm.runInContext(line,context);assert.equal(await handler(),1);assert.equal(called,1);
+ vm.runInContext(line,context);assert.equal(await handler(),1);assert.equal(called,1);assert.equal(context.session.state.timelineId,'changed');
 });
 test('an analysis preflight failure is shown in its progress panel',()=>{
  const source=fs.readFileSync(path.join(__dirname,'../../plugin/renderer.js'),'utf8');const line=source.split('\n').find(x=>x.startsWith("$('analyze').addEventListener"));assert.match(line,/showProgress\(\{phase:'preflight'/);
