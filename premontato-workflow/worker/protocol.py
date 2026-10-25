@@ -8,7 +8,7 @@ from pdf_script import extract_pdf_text
 from transcript_align import select_scene
 
 PROTOCOL = 1
-ACTIONS = {"ping", "parse_script", "extract_pdf_script", "select_scene", "align", "propose_take_segments", "choose_take", "build_plan", "analyze_shots", "analyze_audio", "pace_plan", "visual_review"}
+ACTIONS = {"ping", "parse_script", "extract_pdf_script", "select_scene", "align", "propose_take_segments", "choose_take", "build_plan", "analyze_shots", "analyze_audio", "pace_plan", "visual_review", "prepare_dialogue", "build_staged"}
 
 
 def dispatch(request):
@@ -19,6 +19,14 @@ def dispatch(request):
         raise ValueError("Azione sconosciuta")
     if action == "ping":
         result = {"ready": True}
+    elif action == "prepare_dialogue":
+        from staged_dialogue import prepare_dialogue
+        result=prepare_dialogue(payload)
+    elif action == "build_staged":
+        from staged_dialogue import build_staged
+        def report(event):
+            sys.stdout.write(json.dumps({'protocol':1,'request_id':request['request_id'],'status':'progress','result':event})+'\n');sys.stdout.flush()
+        result=build_staged(payload,report)
     elif action == "parse_script":
         result = parse_script(payload.get("text", ""), payload.get("format", "auto"))
     elif action == "extract_pdf_script":
@@ -50,6 +58,19 @@ def dispatch(request):
             write_cache(cache_root,cache_key(fingerprint,'audio-rms-v1',options),result)
         result={**result,'cache_hit':cached is not None}
     elif action == "pace_plan":
+        if payload['plan'].get('engine')=='groq_staged_v1':
+            import copy
+            result=copy.deepcopy(payload['plan']);settings=payload.get('settings') or {}
+            result['pacing_settings']=settings
+            decisions=result['decisions']
+            for d in decisions:
+                if d.get('reaction_enabled') is False:d.pop('reaction_before',None)
+            for i,d in enumerate(decisions):
+                if i+1<len(decisions) and decisions[i+1].get('reaction_enabled') is False:d.pop('reaction_overlay',None)
+            cursor=0
+            for d in decisions:
+                d['timeline_start_frame']=cursor;cursor+=sum(r['end_frame']-r['start_frame'] for r in d.get('source_ranges',[d]))+sum(a['end_frame']-a['start_frame'] for a in d.get('action_after',[]))
+            return {"protocol":PROTOCOL,"request_id":request['request_id'],"status":"ok","result":result}
         from edit_selector import pace_plan
         result=pace_plan(payload['plan'],payload.get('sources',[]),payload.get('audio',{}),payload.get('beats',[]),float(payload['fps']),payload.get('settings'),shots=payload.get('shots',[]))
     elif action == "visual_review":

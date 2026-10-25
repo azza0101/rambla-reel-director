@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, safeStorage, net } = require('electron');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { assertTrusted, validateMediaRecords } = require('./ipc_security');
@@ -64,6 +64,7 @@ async function start() {
   await diagnostics.record('application_started');
   const workerPath = path.join(__dirname, 'worker', 'protocol.py');
   session = new Session(root, workerPath);
+  session.groq=new (require('./session').GroqClient)(root,{vault:safeStorage,fetchImpl:net?.fetch ? net.fetch.bind(net) : globalThis.fetch});
   try{await session.restoreAutosave();}catch(error){session.saveError='Recupero automatico non riuscito: '+error.message;}
   win = new BrowserWindow({ width: 1080, height: 820, minWidth: 680, minHeight: 560, title: 'RAMBLA Premontato v'+require('./package.json').version,
     backgroundColor: '#111820', webPreferences: { additionalArguments:['--premontato-version='+require('./package.json').version], preload: path.join(__dirname, 'preload.js'), sandbox: true, contextIsolation: true, nodeIntegration: false } });
@@ -89,6 +90,7 @@ async function start() {
   });
   handle('analyze', async () => { const current = await adapter.snapshot(await getSdk(),{includeSelection:false}); session.assertProject(current); await saveResolve(session.state.projectId).catch(()=>{}); return session.analyze(); });
   handle('cancelAnalysis', async () => session.cancelAnalysis());
+  handle('configureGroq',async options=>{await session.groq.configure(options);session.state.analysis=null;session.state.uiDraft=null;session.state.stage='idle';await session.saveAutosave();return session.getReviewState();});
   handle('getReviewState', async () => session.getReviewState());
   handle('saveDraft',async draft=>{session.setDraft(draft);return {saved:true};});
   handle('saveProject',async request=>{
@@ -179,7 +181,7 @@ async function reloadInHost() {
   for(const name of handlerNames)ipcMain.removeHandler(name);
   handlerNames.clear();
   win?.destroy();win=null;session=null;sdk=null;
-  const modules=['main.js','session.js','updater.js','resolve_adapter.js','ipc_security.js','package.json'];
+  const modules=['main.js','session.js','runtime/premontato/groq_client.js','updater.js','resolve_adapter.js','ipc_security.js','package.json'];
   for(const name of modules)delete require.cache[require.resolve(path.join(__dirname,name))];
   try { await require(__filename).launch({initializedSdk:connectedSdk}); }
   catch(error){await dialog.showMessageBox({type:'error',title:'RAMBLA Premontato',message:'Ricaricamento non riuscito. Riapri il pannello dal menu Workspace > Workflow Integrations di Resolve.',detail:error.message});app.quit();throw error;}

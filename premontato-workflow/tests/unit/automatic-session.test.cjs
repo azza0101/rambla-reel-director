@@ -15,3 +15,14 @@ test('manual movement outside checked speech clears stale active-speaker evidenc
  const s=new Session('unused','unused');s.state.media=[{media_id:'m',duration_frames:500}];s.state.analysis={plan:{decisions:[{beat_id:'b',media_id:'m',take_id:'t',start_frame:20,end_frame:90,matched_start_frame:23,matched_end_frame:86,speaker_coverage:'visible',speaker_coverage_source:'audio_visual',active_speaker:{status:'visible',sample_start_frame:25,sample_end_frame:75},alternatives:[]}]}};
  s.updateDecision({beat_id:'b',start_frame:200,end_frame:250});const d=s.state.analysis.plan.decisions[0];assert.equal(d.speaker_coverage,'unknown');assert.equal(d.active_speaker,undefined);assert.equal(d.speaker_coverage_source,'unverified');
 });
+
+test('configured Groq uses grounded preparation and local staged build, never legacy plan selection',async()=>{
+ const s=new Session('unused','unused');const calls=[];
+ s.groq={status:()=>({enabled:true,configured:true}),classify:async()=>({labels:{t:{S0:'1/P1'}},summary:{calls:1}})};
+ s.request=async(action,payload)=>{calls.push(action);if(action==='prepare_dialogue')return {clips:[]};if(action==='build_staged')return {engine:'groq_staged_v1',decisions:[],warnings:[]};throw Error('Unexpected '+action);};
+ const p=await s.buildPlan({beats:[],sources:[],shots:[],fps:25});assert.equal(p.engine,'groq_staged_v1');assert.deepEqual(calls,['prepare_dialogue','build_staged']);
+});
+test('moment edit updates only the requested decision within a shared screenplay beat',()=>{
+ const s=new Session('unused','unused');s.state.media=[{media_id:'m',duration_frames:500}];s.state.analysis={plan:{decisions:[{decision_id:'one',beat_id:'b',media_id:'m',take_id:'t',start_frame:10,end_frame:30,alternatives:[]},{decision_id:'two',beat_id:'b',media_id:'m',take_id:'t',start_frame:40,end_frame:60,alternatives:[]}]}};
+ s.updateDecision({beat_id:'b',decision_id:'two',start_frame:45});assert.equal(s.state.analysis.plan.decisions[0].start_frame,10);assert.equal(s.state.analysis.plan.decisions[1].start_frame,45);
+});

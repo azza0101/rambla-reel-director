@@ -2,6 +2,8 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
+const connectorPath=[path.join(__dirname,'runtime','premontato','groq_client.js'),path.join(__dirname,'..','runtime','premontato','groq_client.js')].find(p=>require('node:fs').existsSync(p));
+const {GroqClient}=require(connectorPath);
 
 
 const DEFAULT_DIRECTIONS={profile:'VIDEO COLICHE',notes:'Aprire con la master per il contesto. Preferire i piani di chi parla; tornare alla master soprattutto negli scambi lunghi, su un cambio di parlante, o al rilascio della tensione. Evitare alternanze a conteggio fisso. Durante tensione e crescendo mantenere le strette fino al sollievo o alla risoluzione. Aprire sulla larga per distendere. Esempio: dopo l’invito a dormire nel suo letto, primo piano di lui prima dello sbotto, larga quando rifiuta. La reazione richiede copertura verificata: non viene inventata.',markers:{}};
@@ -78,6 +80,7 @@ class Session {
     this.root = root; this.workerPath = workerPath; this.python = python;
     this.state = { directions:JSON.parse(JSON.stringify(DEFAULT_DIRECTIONS)), stage: 'idle', script: null, media: [], analysis: null, error: null, pacingSettings: { enabled: true, max_pause_seconds: .45, minimum_shot_seconds: 1.2, respect_script_pauses: true, comic_hold_seconds: 1 } };
     this.documentId=require('node:crypto').randomUUID(); this.projectFile=null; this.lastSavedAt=null; this.lastAutosaveAt=null; this.saveError=null;
+    this.groq = new GroqClient(root);
     this.child = null; this.pending = new Map(); this.counter = 0;
   }
   async request(action, payload = {}, timeoutMs = 30000, onProgress) {
@@ -162,7 +165,7 @@ class Session {
       progress('takes', 4, 68, `Individuo i confini delle take: 0/${sources.length} clip`);
       for (let i = 0; i < sources.length; i++) {
         const source = sources[i];
-        const proposals = await this.request('propose_take_segments', { media: source, transcript: source.segments, fps: source.fps || this.state.fps || 25, beats });
+        const proposals = this.useGroq() ? [{take_id:source.take_id || source.media_id+':take:1',media_id:source.media_id,start_frame:0,end_frame:source.duration_frames,take_index:1,camera_id:source.camera_id || 'camera_1',boundary_source:'whole_clip',confirmed:true}] : await this.request('propose_take_segments', { media: source, transcript: source.segments, fps: source.fps || this.state.fps || 25, beats });
         takes.push({ media_id: source.media_id, media_name: source.name, duration_frames: source.duration_frames,
           confirmed: proposals.length === 1 && proposals[0].boundary_source === 'whole_clip', segments: proposals });
         progress('takes', 4, 68 + ((i + 1) / Math.max(1, sources.length)) * 12, `Confini take: ${i + 1}/${sources.length} clip`, i + 1, sources.length);
@@ -197,7 +200,18 @@ class Session {
       return this.getReviewState();
     } catch (error) { this.state.error = error.message; this.state.stage = 'error'; progress('error', lastPhaseIndex, 0, `Analisi interrotta: ${error.message}`); throw error; }
   }
+  useGroq(){const s=this.groq?.status();return Boolean(s?.configured && s.enabled);}
   async buildPlan(payload, timeoutMs=300000, onProgress) {
+    if(this.useGroq()){
+      const prepared=await this.request('prepare_dialogue',payload,timeoutMs);
+      const classification=await this.groq.classify(prepared,event=>{
+        const label=event.phase==='quota'?'Quota Groq: attendo '+event.seconds+' secondi': 'Pulizia e allineamento Groq · '+event.current+'/'+event.total+(event.cache_hit?' · cache verificata':'');
+        this.onProgress?.({phase:'plan',phaseIndex:6,percent:89+Math.round(3*event.current/Math.max(1,event.total)),label,current:event.current,total:event.total});
+      });
+      const result=await this.request('build_staged',{...payload,prepared,classifications:classification.labels,classification_summary:classification.summary,settings:this.state.pacingSettings},timeoutMs,event=>this.onProgress?.({phase:'plan',phaseIndex:6,percent:event.phase==='speaker'?92+Math.round(3*event.current/Math.max(1,event.total)):95,label:event.phase==='speaker'?'Controllo locale del parlante · '+event.current+'/'+event.total:'Scelta locale delle camere e verifica continuità',current:event.current,total:event.total}));
+      return result;
+    }
+
     let lastPercent=89;
     return this.request('build_plan',{...payload,active_speaker:true},timeoutMs,onProgress || (event=>{
       lastPercent=Math.max(lastPercent,89+6*((event.beat-1+(event.done?.5:0))/Math.max(1,event.total)));
@@ -217,7 +231,7 @@ class Session {
       return this.getReviewState();
     } catch(error) {this.onProgress?.({phase:'error',phaseIndex:3,percent:0,label:error.message});throw error;}
   }
-  async cancelAnalysis() { this.failAll(new Error('Analisi annullata')); this.child?.kill(); this.child = null; this.state.stage = 'idle'; return true; }
+  async cancelAnalysis() { this.groq?.cancel(); this.failAll(new Error('Analisi annullata')); this.child?.kill(); this.child = null; this.state.stage = 'idle'; return true; }
   async shutdownWorker(timeoutMs = 8000) {
     const child = this.child;
     if (!child) return false;
@@ -294,15 +308,15 @@ class Session {
     try{const binding=JSON.parse(await fs.readFile(path.join(this.root,'projects','current.json'),'utf8'));if(binding.document_id===this.documentId && typeof binding.path==='string' && path.isAbsolute(binding.path)){const stat=await fs.stat(binding.path);if(stat.isFile() && stat.size===binding.fingerprint?.size && stat.mtimeMs===binding.fingerprint?.mtimeMs){this.projectFile=binding.path;this.projectFingerprint=binding.fingerprint;this.lastSavedAt=this.lastAutosaveAt;}else{this.state.restoreWarning='Il file progetto è stato modificato fuori dal plugin: recupero aperto senza sovrascriverlo. Apri il file aggiornato oppure salva con un nuovo nome.';}}}catch{}
     return true;
   }
-  getReviewState() { return { projectStatus:this.projectStatus(), uiDraft:this.state.uiDraft, stage: this.state.stage, scriptName: this.state.script ? path.basename(this.state.script.path) : null,
+  getReviewState() { return { groq:this.groq?.status(), projectStatus:this.projectStatus(), uiDraft:this.state.uiDraft, stage: this.state.stage, scriptName: this.state.script ? path.basename(this.state.script.path) : null,
     media: this.state.media.map(({ media_id, name, duration_frames, people = [] }) => ({ media_id, name, duration_frames, people })), analysis: this.state.analysis, directions:this.state.directions || DEFAULT_DIRECTIONS, pacingSettings: this.state.pacingSettings, error: this.state.error }; }
   setTranscripts(sources, fps, identity) { this.assertContext(identity); this.state.transcripts = sources; this.state.fps = fps; this.state.analysis = null; return { count: sources.reduce((sum, source) => sum + source.segments.length, 0) }; }
   updateDecision(request) {
     const plan = this.state.analysis?.plan;
-    const decision = plan?.decisions.find(item => item.beat_id === request?.beat_id);
+    const decision = plan?.decisions.find(item => request?.decision_id ? item.decision_id===request.decision_id && item.beat_id===request.beat_id : item.beat_id===request?.beat_id);
     if (!decision) throw new Error('Battuta non disponibile');
     const pauseOnly=(request.preserve_pause !== undefined || request.reaction_enabled !== undefined) && !['start_frame','end_frame','shot_size','alternative_index'].some(key=>request[key]!==undefined);
-    const original=pauseOnly ? plan.base_decisions?.find(item=>item.beat_id===decision.beat_id) : null;
+    const original=pauseOnly ? plan.base_decisions?.find(item=>(item.decision_id || item.beat_id)===(decision.decision_id || decision.beat_id)) : null;
     let updated = { ...(original || decision) };
     if (request.alternative_index !== undefined) {
       const alt = decision.alternatives?.[request.alternative_index];
@@ -321,7 +335,7 @@ class Session {
     const manual=updated.manual || ['start_frame','end_frame','shot_size','alternative_index'].some(key=>request[key]!==undefined);
     Object.assign(updated, { start_frame: start, end_frame: end, shot_size: request.shot_size ?? updated.shot_size, manual, reaction_enabled:request.reaction_enabled ?? updated.reaction_enabled, preserve_pause: request.preserve_pause ?? updated.preserve_pause });
     delete updated.source_ranges; delete updated.pacing; delete updated.reaction_before; delete updated.reaction_overlay; delete updated.action_after;
-    const base=plan.base_decisions?.findIndex(item=>item.beat_id===updated.beat_id);
+    const base=plan.base_decisions?.findIndex(item=>(item.decision_id || item.beat_id)===(updated.decision_id || updated.beat_id));
     if (base !== undefined && base>=0) plan.base_decisions[base]={...updated};
     plan.decisions[plan.decisions.indexOf(decision)] = updated;
     let cursor = 0;
@@ -329,8 +343,8 @@ class Session {
     return this.getReviewState();
   }
   keepReactionChoices(plan, previous=this.state.analysis?.plan) {
-    const choices=new Map((previous?.decisions || []).filter(d=>typeof d.reaction_enabled==='boolean').map(d=>[d.beat_id,d.reaction_enabled]));
-    for(const decision of plan?.decisions || [])if(choices.has(decision.beat_id))decision.reaction_enabled=choices.get(decision.beat_id);
+    const choices=new Map((previous?.decisions || []).filter(d=>typeof d.reaction_enabled==='boolean').map(d=>[d.decision_id || d.beat_id,d.reaction_enabled]));
+    for(const decision of plan?.decisions || [])if(choices.has(decision.decision_id || decision.beat_id))decision.reaction_enabled=choices.get(decision.decision_id || decision.beat_id);
     return plan;
   }
   async applyPacing() {
@@ -418,4 +432,4 @@ class Session {
   }
 }
 
-module.exports = { Session, workerEnvironment, prepareReviewTimeline };
+module.exports = { Session, GroqClient, workerEnvironment, prepareReviewTimeline };

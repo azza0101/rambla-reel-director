@@ -12,7 +12,7 @@ const MAX_ARCHIVE_BYTES = 350 * 1024 * 1024;
 const MAX_DIAGNOSTIC_EVENTS = 200;
 const MAX_DIAGNOSTIC_BYTES = 64 * 1024;
 const ALLOWED_DIAGNOSTIC_EVENTS = new Set(['application_started', 'operation_failed']);
-const ALLOWED_OPERATIONS = new Set(['resolveSnapshot', 'selectScript', 'selectMedia', 'transcribeSelected', 'analyzeIntellisearch', 'analyze', 'cancelAnalysis', 'getReviewState', 'saveDraft', 'saveProject', 'openProject', 'updateDecision', 'setPacing', 'setDirections', 'confirmVisualReview', 'confirmTakes', 'createReviewTimeline', 'update', 'prepareSupportReport', 'submitSupportReport']);
+const ALLOWED_OPERATIONS = new Set(['configureGroq', 'resolveSnapshot', 'selectScript', 'selectMedia', 'transcribeSelected', 'analyzeIntellisearch', 'analyze', 'cancelAnalysis', 'getReviewState', 'saveDraft', 'saveProject', 'openProject', 'updateDecision', 'setPacing', 'setDirections', 'confirmVisualReview', 'confirmTakes', 'createReviewTimeline', 'update', 'prepareSupportReport', 'submitSupportReport']);
 
 function parseVersion(value) {
   if (typeof value !== 'string' || !/^\d+\.\d+\.\d+$/.test(value)) throw new Error('Versione Premontato non valida');
