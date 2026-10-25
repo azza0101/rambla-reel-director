@@ -19,12 +19,23 @@ def narrative_roles(beats, directions):
         roles[beat['beat_id']]={'role':'resolution' if marker=='resolution' else 'tension' if tension else 'free','automatic':automatic}
     return roles
 
-def evaluate_candidates(candidates,shots,beat,opening,role,stats,report):
+def context_return_due(recent,role,fps=25,character=None):
+    # A contextual return is earned by a sustained exchange, not a shot counter.
+    if role!='free' or not recent or not character or fps<=0:return False
+    tail=[]
+    for decision in reversed(recent):
+        if decision.get('shot_size') not in {'close','medium'}:break
+        tail.append(decision)
+    speakers={d.get('dialogue_character') for d in tail if d.get('dialogue_character')}
+    frames=sum(sum(r['end_frame']-r['start_frame'] for r in d.get('source_ranges',[])) if d.get('source_ranges') else max(0,d.get('end_frame',0)-d.get('start_frame',0)) for d in tail)
+    return len(speakers)>=2 and recent[-1].get('dialogue_character') not in {None,character} and frames>=30*fps
+
+def evaluate_candidates(candidates,shots,beat,opening,role,stats,report,context_due=False):
     from active_speaker import analyze_candidate
     statuses={id(row):speaker_coverage(shots,row[2]['media_id'],row[4]['start_frame'],row[4]['end_frame'],beat.get('character','')) for row in candidates}
     evidence={}
     wide=[r for r in candidates if r[5] and r[5].get('shot_size')=='wide' and r[5].get('confidence',0)>=.55 and statuses[id(r)]!='absent']
-    if ((opening or role=='resolution') and wide) or len(normalize(beat.get('text','')).split())<=2 or len({r[2]['media_id'] for r in candidates})<2:return statuses,evidence
+    if ((opening or role=='resolution' or context_due) and wide) or len(normalize(beat.get('text','')).split())<=2 or len({r[2]['media_id'] for r in candidates})<2:return statuses,evidence
     # Evaluate only useful tight views, newest matching occurrence first. A master is
     # context/fallback, not a reason to decode a second ASD sample of the same line.
     useful=sorted((r for r in candidates if statuses[id(r)]=='unknown' and r[5] and r[5].get('shot_size') in {'close','medium'} and r[5].get('confidence',0)>=.55),key=lambda r:(r[0],r[1],r[4]['start_frame']),reverse=True)
@@ -44,11 +55,11 @@ def evaluate_candidates(candidates,shots,beat,opening,role,stats,report):
         report(row,True)
     return statuses,evidence
 
-def choose_automatic_pool(credible,statuses,role,opening,recent):
+def choose_automatic_pool(credible,statuses,role,opening,recent,fps=25,character=None):
     classified=[r for r in credible if r[5] and r[5].get('confidence',0)>=.55]
     wide=[r for r in classified if r[5].get('shot_size')=='wide' and statuses[id(r)]!='absent']
     tight=[r for r in classified if r[5].get('shot_size') in {'close','medium'} and statuses[id(r)]=='visible']
-    if wide and (opening or role=='resolution'):return wide
+    if wide and (opening or role=='resolution' or context_return_due(recent,role,fps,character)):return wide
     if tight:return [r for r in tight if r[5].get('shot_size')=='close'] or tight
     if wide:return wide
     known=[r for r in credible if statuses[id(r)]=='visible']

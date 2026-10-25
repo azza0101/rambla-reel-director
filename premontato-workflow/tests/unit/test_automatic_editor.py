@@ -38,6 +38,31 @@ class AutomaticEditorTests(unittest.TestCase):
   wide=(1,1,{}, {},{}, {'shot_size':'wide','confidence':1});close=(1,1,{}, {},{}, {'shot_size':'close','confidence':1})
   pool=choose_automatic_pool([wide,close],{id(wide):'unknown',id(close):'visible'},'free',False,[{'shot_size':'close'}]*3)
   self.assertEqual(pool,[close])
+ def test_long_exchange_can_open_master_at_new_turn_but_not_during_tension(self):
+  from automatic_editor import choose_automatic_pool
+  wide=(1,1,{}, {},{}, {'shot_size':'wide','confidence':1});close=(1,1,{}, {},{}, {'shot_size':'close','confidence':1})
+  statuses={id(wide):'unknown',id(close):'visible'}
+  recent=[{'shot_size':'close','dialogue_character':c,'start_frame':0,'end_frame':400} for c in ['A','B']]
+  self.assertEqual(choose_automatic_pool([wide,close],statuses,'free',False,recent,25,'A'),[wide])
+  self.assertEqual(choose_automatic_pool([wide,close],statuses,'tension',False,recent,25,'A'),[close])
+  self.assertEqual(choose_automatic_pool([wide,close],statuses,'free',False,recent,25,'B'),[close])
+ def test_long_exchange_is_wired_into_plan_and_skips_unneeded_asd(self):
+  req=self.request();req['payload']['beats'].append({'beat_id':'3','kind':'dialogue','character':'B','text':'quarta battuta intera'})
+  for i,beat in enumerate(req['payload']['beats']):beat['character']='A' if i%2==0 else 'B'
+  for source in req['payload']['sources']:
+   source['duration_frames']=2000;source['segments']=[{'start_frame':20+i*450,'end_frame':420+i*450,'text':b['text']} for i,b in enumerate(req['payload']['beats'])]
+  for shot in req['payload']['shots']:shot['end_frame']=2000
+  calls=[]
+  def analyze(source,start,end):calls.append(start);return {'status':'visible' if source['media_id']=='close' else 'absent'}
+  plan=self.runplan(req,analyze)
+  self.assertEqual([d['shot_size'] for d in plan['decisions']],['wide','close','close','wide'])
+  self.assertIn('MASTER_LONG_EXCHANGE',plan['decisions'][-1]['rationale_codes']);self.assertNotIn(1370,calls)
+ def test_short_exchange_or_monologue_does_not_force_master(self):
+  from automatic_editor import choose_automatic_pool
+  wide=(1,1,{}, {},{}, {'shot_size':'wide','confidence':1});close=(1,1,{}, {},{}, {'shot_size':'close','confidence':1})
+  statuses={id(wide):'unknown',id(close):'visible'}
+  for recent in [[{'shot_size':'close','dialogue_character':c,'start_frame':0,'end_frame':100} for c in ['A','B']], [{'shot_size':'close','dialogue_character':'A','start_frame':0,'end_frame':1200}]]:
+   self.assertEqual(choose_automatic_pool([wide,close],statuses,'free',False,recent,25,'B'),[close])
  def test_low_quality_master_or_visible_close_cannot_displace_complete_dialogue(self):
   for poor in ['wide','close']:
    req=self.request()

@@ -4,7 +4,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 
 
-const DEFAULT_DIRECTIONS={profile:'VIDEO COLICHE',notes:'Durante tensione e crescendo mantenere le strette fino al sollievo o alla risoluzione. Aprire sulla larga per distendere. Esempio: dopo l’invito a dormire nel suo letto, primo piano di lui prima dello sbotto, larga quando rifiuta. La reazione richiede copertura verificata: non viene inventata.',markers:{}};
+const DEFAULT_DIRECTIONS={profile:'VIDEO COLICHE',notes:'Aprire con la master per il contesto. Preferire i piani di chi parla; tornare alla master soprattutto negli scambi lunghi, su un cambio di parlante, o al rilascio della tensione. Evitare alternanze a conteggio fisso. Durante tensione e crescendo mantenere le strette fino al sollievo o alla risoluzione. Aprire sulla larga per distendere. Esempio: dopo l’invito a dormire nel suo letto, primo piano di lui prima dello sbotto, larga quando rifiuta. La reazione richiede copertura verificata: non viene inventata.',markers:{}};
 function validateDirections(value){
  if(!value || typeof value!=='object' || Array.isArray(value) || !['none','VIDEO COLICHE'].includes(value.profile) || typeof value.notes!=='string' || value.notes.length>20000 || !value.markers || typeof value.markers!=='object' || Array.isArray(value.markers) || Object.keys(value.markers).length>10000 || Object.entries(value.markers).some(([id,role])=>!id || id.length>128 || !['tension','resolution','free'].includes(role)))throw new Error('Direzioni di montaggio non valide');
  return JSON.parse(JSON.stringify(value));

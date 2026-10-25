@@ -108,7 +108,7 @@ def dispatch(request):
         from shot_analyzer import speaker_coverage
         automatic = bool(payload.get('active_speaker'))
         asd_stats = {'checked':0,'cache_hits':0,'warnings':[]}
-        from automatic_editor import narrative_roles, evaluate_candidates, choose_automatic_pool
+        from automatic_editor import narrative_roles, evaluate_candidates, choose_automatic_pool, context_return_due
         auto_roles = narrative_roles(beats, payload.get('directions') or {}) if automatic else {}
         previous_shot_size = None
         directions = payload.get("directions") or {}
@@ -151,14 +151,15 @@ def dispatch(request):
             def speaker_progress(row, done):
                 sys.stdout.write(json.dumps({'protocol':1,'request_id':request['request_id'],'status':'progress','result':{'beat':len(decisions)+1,'total':sum(b.get('kind')=='dialogue' for b in beats),'name':row[2].get('name','clip'),'done':done,'checked':asd_stats['checked'],'cache_hits':asd_stats['cache_hits']}})+'\n');sys.stdout.flush()
             if automatic:
-                statuses,evidence=evaluate_candidates(candidates,shot_segments,beat,not decisions,role,asd_stats,speaker_progress)
+                long_exchange=context_return_due(decisions,role,fps,beat.get('character'))
+                statuses,evidence=evaluate_candidates(candidates,shot_segments,beat,not decisions,role,asd_stats,speaker_progress,long_exchange)
             else:
                 statuses = {id(row):speaker_coverage(shot_segments,row[2]['media_id'],row[4]['start_frame'],row[4]['end_frame'],beat.get('character','')) for row in candidates}
             visible = [row for row in candidates if statuses[id(row)]=='visible']
             unknown = [row for row in candidates if statuses[id(row)]=='unknown']
             scoped = visible or unknown or candidates
             if automatic:
-                scoped = choose_automatic_pool(candidates,statuses,role,not decisions,decisions)
+                scoped = choose_automatic_pool(candidates,statuses,role,not decisions,decisions,fps,beat.get('character'))
             best_score = max(row[1] for row in scoped)
             best_coverage = max(row[4].get('coverage',1.0) for row in scoped)
             credible = [row for row in scoped if row[1] >= best_score - (0.025 if payload.get('semantic') else 0.10) and (payload.get('semantic') or row[4].get('coverage',1.0) >= best_coverage - 0.08)]
@@ -167,7 +168,7 @@ def dispatch(request):
             opening = [row for row in classified if row[5]["shot_size"] == "wide"] if not decisions else []
             desired = "close" if role == "tension" else "wide" if role == "resolution" else None
             narrative = [row for row in classified if row[5]["shot_size"] == desired] if desired else []
-            pool = choose_automatic_pool(credible,statuses,role,not decisions,decisions) if automatic else (narrative or opening or alternating or classified or credible)
+            pool = choose_automatic_pool(credible,statuses,role,not decisions,decisions,fps,beat.get('character')) if automatic else (narrative or opening or alternating or classified or credible)
             latest_index = max(row[0] for row in pool)
             latest = [row for row in pool if row[0] == latest_index]
             _, score, source, segment, hit, shot = max(latest, key=lambda row: (row[4]["start_frame"], row[1]))
@@ -180,7 +181,7 @@ def dispatch(request):
                               "end_frame": handle_end,
                               "matched_start_frame": hit["start_frame"], "matched_end_frame": hit["end_frame"],
                               "narrative_role": role, "style_satisfied": bool(narrative) if desired else None,
-                              "camera_id": source.get("camera_id", "camera_1"), "shot_size": shot.get("shot_size", "unknown") if shot else "unknown",
+                              "dialogue_character": beat.get("character"), "camera_id": source.get("camera_id", "camera_1"), "shot_size": shot.get("shot_size", "unknown") if shot else "unknown",
                               "speaker_coverage": statuses[id(selected_row)],
                               "speaker_coverage_source": "audio_visual" if id(selected_row) in evidence else "manual" if statuses[id(selected_row)]!='unknown' else "unverified",
                               "active_speaker": evidence.get(id(selected_row)),
@@ -188,7 +189,7 @@ def dispatch(request):
                               "shot_confidence": shot.get("confidence", 0.0) if shot else 0.0,
                               "match_method": hit.get("match_method", "lexical"), "semantic_score": hit.get("semantic_score"), "opening_checked": hit.get("opening_checked", False),
                               "score": score, "confidence": score, "coverage": hit.get("coverage", 1.0), "matched_text": hit["text"],
-                              "rationale_codes": ["LATEST_MATCHING_TAKE", "LOCAL_TRANSCRIPT_MATCH"],
+                              "rationale_codes": ["LATEST_MATCHING_TAKE", "LOCAL_TRANSCRIPT_MATCH"] + (["MASTER_LONG_EXCHANGE"] if automatic and long_exchange and shot and shot.get("shot_size")=="wide" else []),
                               "warnings": (["Abbinamento per significato da verificare"] if hit.get("semantic_score", 1.0) < .7 else []) if payload.get("semantic") else (["Battuta parziale: verificare le parole mancanti"] if hit.get("coverage", 1.0) < .75 else []) + (["inquadratura da verificare"] if not shot else []), "alternatives": [
                                   {"take_id": row[2]["take_id"], "media_id": row[2]["media_id"], "start_frame": row[4]["start_frame"],
                                    "end_frame": row[4]["end_frame"], "score": row[1], "coverage": row[4].get("coverage", 0.0),
