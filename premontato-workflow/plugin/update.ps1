@@ -25,18 +25,17 @@ function Send-UpdateFailure([string]$Message){
  if(!$ProgressPipe){return}
  try{Send-UpdateProgress 'error' 0 1;if($script:progressWriter){$script:progressWriter.WriteLine((@{phase='error';message=$Message}|ConvertTo-Json -Compress))}}catch{}
 }
-trap { Send-UpdateFailure $_.Exception.Message; throw }
+trap { Send-UpdateFailure $_.Exception.Message; throw $_ }
 function Quote-Argument([string]$Value) { '"' + $Value.Replace('"','\"') + '"' }
 function Get-TargetRelativePath([string]$Name) {
     $parts=$Name.Split('/')
     if($parts.Count -lt 2 -or $parts | Where-Object { $_ -in @('', '.', '..') -or $_ -match ':' }) { throw 'Percorso non consentito nel pacchetto' }
     $prefix=$parts[0];$leaf=($parts[1..($parts.Count-1)] -join '\')
     $pluginFiles=@('main.js','preload.js','resolve_adapter.js','session.js','ipc_security.js','index.html','style.css','renderer.js','updater.js','update.ps1','manifest.xml','package.json')
-    $workerFiles=@('protocol.py','script_parser.py','transcript_align.py','edit_selector.py','pdf_script.py','shot_analyzer.py','cache.py','requirements.txt')
     if($prefix -eq 'plugin' -and $parts.Count -eq 2 -and $pluginFiles -contains $parts[1]) { return $leaf }
-    if($prefix -eq 'worker' -and $parts.Count -eq 2 -and $workerFiles -contains $parts[1]) { return ('worker\'+$leaf) }
+    if($prefix -eq 'worker' -and $parts.Count -eq 2 -and ($parts[1] -eq 'requirements.txt' -or $parts[1] -match '^[a-z_][a-z0-9_]*\.py$')) { return ('worker\'+$leaf) }
     if($prefix -eq 'runtime' -and $parts.Count -ge 2) { return ('runtime\'+$leaf) }
-    throw 'File non consentito nel pacchetto aggiornamento'
+    throw ('File non consentito nel pacchetto aggiornamento: '+$Name)
 }
 
 $PluginRoot=[IO.Path]::GetFullPath($PluginRoot);$ArchivePath=[IO.Path]::GetFullPath($ArchivePath)
@@ -97,6 +96,13 @@ try {
             $processed++;if($processed % [Math]::Max(1,[Math]::Floor($entries.Count/100)) -eq 0 -or $processed -eq $entries.Count){Send-UpdateProgress 'extract' $processed $entries.Count}
         }
     } finally { $zip.Dispose() }
+    $stagedManifest=Get-Content -Raw -LiteralPath (Join-Path $stage 'package.json')|ConvertFrom-Json
+    if($stagedManifest.name -ne 'rambla-premontato' -or $stagedManifest.version -ne $Version){throw 'Versione o identità del pacchetto non corrispondente'}
+    Send-UpdateProgress 'validate' 0 1
+    $workerCheck="import sys, pathlib, ast; sys.path.insert(0,sys.argv[1]); [ast.parse(p.read_text(encoding='utf-8-sig')) for p in pathlib.Path(sys.argv[1]).glob('*.py')]; import protocol, automatic_editor, active_speaker, local_audio, cv2, onnxruntime, tokenizers, pypdf; from active_speaker import ActiveSpeaker; assert ActiveSpeaker().session.get_providers()==['CPUExecutionProvider']"
+    & (Join-Path $stage 'runtime\python.exe') -X utf8 -E -s -c $workerCheck (Join-Path $stage 'worker')
+    if($LASTEXITCODE -ne 0){throw 'Runtime aggiornamento non valido: moduli Python o dipendenze mancanti'}
+    Send-UpdateProgress 'validate' 1 1
     $processed=0
     foreach($entry in $entries) {
         $source=Join-Path $stage $entry.Relative;$target=Join-Path $PluginRoot $entry.Relative
