@@ -104,3 +104,8 @@ Prova nativa nel progetto test-mcp: nuova timeline PREMONTATO v0.9.7 - TEST SORG
 84 test Node superati. Regressione discovery: eventi ricerca/manifest prima delle rispettive risposte di rete, avanzamento manifest misurato e nessuna credenziale negli eventi. Browser con Session/worker e servizio aggiornamento simulato: barra visibile immediatamente prima della risposta, timer attivo, percentuale/MB da byte ricevuti, errore di riapertura visibile con ripristino del pulsante. Immagine del pannello di avanzamento ispezionata.
 
 Prova nativa Resolve: PREMONTATO v0.9.8 - TEST APERTURA AUTO, 12 battute/14 segmenti AV e tre tracce mono; verificato che la timeline appena creata diventi attiva. La prova QA ripristina poi esplicitamente la timeline iniziale, verificata invariata. Il comando utente passa activateCreated=true e aggiorna il contesto del pannello alla nuova timeline. Il test nativo non è un click-through del pannello installato.
+
+
+## 0.9.9 — conferma visiva compatta
+
+Browser locale con renderer e Session/worker: tendina esterna chiusa inizialmente, conferma e ricalcolo visibili all’esterno, collegamento dal blocco timeline che apre la tendina, ricalcolo e abilitazione timeline anche dopo averla richiusa. Verificate anche le regressioni su associazioni, zoom e progressi aggiornamento. Screenshot della sezione chiusa ispezionato. Nessuna modifica al motore di montaggio o prova nativa aggiuntiva richiesta per questa modifica di presentazione.

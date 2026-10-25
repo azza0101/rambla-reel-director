@@ -24,3 +24,5 @@
 #update-progress-clock{display:block;color:var(--muted);margin-top:8px}#update-progress-steps{list-style:none;padding:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;font-size:12px}#update-progress-steps li{padding:8px;border:1px solid var(--line);border-radius:5px}#update-progress-steps li[data-state="In corso"]{border-color:var(--teal);color:var(--teal)}@media(max-width:600px){#update-progress-steps{grid-template-columns:1fr}}
 
 #update-progress-bar{display:block;width:100%;height:12px;accent-color:var(--teal)}
+
+#visual-controls>summary{cursor:pointer;font-weight:700;font-size:18px;color:var(--text);padding:8px 0}#visual-controls[open]>summary{margin-bottom:10px}#visual-controls{margin-bottom:12px}

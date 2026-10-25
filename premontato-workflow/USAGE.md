@@ -76,3 +76,8 @@ Il pannello mostra «Creazione timeline in corso» e risultato o errore accanto 
 Aggiorna mostra immediatamente una barra, tempo trascorso e fasi: credenziale locale, ricerca release, manifest, download, verifica, salvataggio, installazione e riapertura. La ricerca resta indeterminata finché il servizio risponde; download e fasi con quantità note mostrano percentuali misurate. Dopo 15 secondi senza eventi il pannello indica l’attesa senza simulare avanzamento. Errori e assenza di aggiornamenti terminano lo stato di attesa.
 
 «Crea premontato» apre ora la nuova timeline dopo averne verificato la creazione; quella di partenza resta intatta. Il pannello aggiorna il proprio riferimento alla timeline attiva, così è possibile continuare a lavorare con la stessa analisi. Le prove automatiche possono continuare a richiedere esplicitamente il ripristino della timeline precedente.
+
+
+## 0.9.9 — campi e personaggi a tendina
+
+Il controllo visivo è raccolto nella tendina «Campi e personaggi», chiusa all’apertura. La casella di conferma, il comando di ricalcolo e lo stato restano all’esterno. Chiudere la tendina non perde le correzioni. Il collegamento alla conferma mancante vicino alla timeline apre direttamente la tendina.

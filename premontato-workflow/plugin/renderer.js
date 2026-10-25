@@ -249,7 +249,7 @@ function updateTimelineButton(state=window.__lastReviewState || {}){
  if(!plan)return;
  if(!blockers.length){box.textContent='Pronto: puoi creare la nuova timeline di revisione.';return;}
  const heading=document.createElement('strong');heading.textContent='Prima di creare la timeline:';box.append(heading);
- for(const item of blockers){const row=document.createElement('div'),button=document.createElement('button');button.type='button';button.className='quiet';button.textContent=item.message;button.addEventListener('click',()=>{const target=$(item.target);target.scrollIntoView({behavior:'smooth',block:'center'});const focus=target.matches('input,button')?target:target.querySelector('input,select,button');focus?.focus({preventScroll:true});});row.append(button);box.append(row);}
+ for(const item of blockers){const row=document.createElement('div'),button=document.createElement('button');button.type='button';button.className='quiet';button.textContent=item.message;button.addEventListener('click',()=>{const target=$(item.target);if(item.target==='visual-review')$('visual-controls').open=true;target.scrollIntoView({behavior:'smooth',block:'center'});const focus=target.matches('input,button')?target:target.querySelector('input,select,button');focus?.focus({preventScroll:true});});row.append(button);box.append(row);}
 }
 let draftTimer=null,restoringDraft=false;
 function capturePremontatoDraft(){
