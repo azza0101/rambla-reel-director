@@ -18,3 +18,9 @@ class StagedDialogueTests(unittest.TestCase):
   cleaned,changes=clean_restarts(units,labels)
   self.assertEqual(cleaned['S0'],'X');self.assertEqual(cleaned['S1'],'1/P1')
 if __name__=='__main__':unittest.main()
+
+class SpeakerConsistencyTests(unittest.TestCase):
+ def test_dialogue_uses_screenplay_role_but_actions_preserve_inferred_role(self):
+  from staged_dialogue import reconcile_roles
+  scene={'cast':{'P0':'UNKNOWN','P1':'ALICE','P2':'BOB'},'beats':[{'kind':'dialogue','character':'BOB'},{'kind':'action'}]}
+  self.assertEqual(reconcile_roles(scene,{'clip':{'S0':'1/P1','S1':'2/P1','S2':'X'}}),{'clip':{'S0':'1/P2','S1':'2/P1','S2':'X'}})

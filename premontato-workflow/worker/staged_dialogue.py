@@ -43,6 +43,15 @@ def validate_labels(prepared,values):
    match=re.fullmatch(r'(\d+)/(P\d+)',v)
    if not match or not 1<=int(match[1])<=len(prepared['beats']) or match[2] not in prepared['cast']:raise ValueError('Battuta o personaggio non valido nella classificazione')
  return values
+def reconcile_roles(prepared,values):
+ """A screenplay dialogue beat is authoritative for its speaking role."""
+ result=copy.deepcopy(values);role_ids={name:key for key,name in prepared['cast'].items()}
+ for labels in result.values():
+  for uid,label in labels.items():
+   if label=='X':continue
+   number,_=label.split('/');beat=prepared['beats'][int(number)-1]
+   if beat['kind']=='dialogue' and beat.get('character') in role_ids:labels[uid]=number+'/'+role_ids[beat['character']]
+ return result
 def clean_restarts(units,values):
  labels=dict(values);changes=[]
  for u in units:
@@ -69,7 +78,7 @@ def build_staged(payload,report=lambda e:None):
  from automatic_editor import narrative_roles
  from active_speaker import analyze_candidate
  from listening_reaction import listening_overlay
- prepared=payload.get('prepared') or prepare_dialogue(payload);values=validate_labels(prepared,payload['classifications'])
+ prepared=payload.get('prepared') or prepare_dialogue(payload);values=reconcile_roles(prepared,validate_labels(prepared,payload['classifications']))
  beats=[{**b,'text':clean_text(b['text'])} for b in payload['beats']];fps=float(payload['fps']);beatmap={'B'+str(i+1):b['beat_id'] for i,b in enumerate(beats)}
  sources={};units=[];labels={};cleanup=[]
  ordered=sorted(payload['sources'],key=lambda s:(s['media_id'],s.get('take_id','')))
@@ -150,7 +159,7 @@ def build_staged(payload,report=lambda e:None):
    row['score']=score;rows.append(row)
   if not rows:raise RuntimeError('No complete candidate: '+c['text'])
   candidates.append(rows)
- 
+
  words={cid:[w for seg in s['segments'] for w in seg.get('words',[]) if w['end_frame']>w['start_frame']] for cid,s in sources.items()}
  def can_join(a,b):
   if b['matched_start_frame']<a['matched_end_frame']:return False
@@ -207,7 +216,7 @@ def build_staged(payload,report=lambda e:None):
  for d in decisions:
   d['timeline_start_frame']=cursor;cursor+=d['end_frame']-d['start_frame']+sum(a['end_frame']-a['start_frame'] for a in d.get('action_after',[]))
  verification={'model_classification_only':True,'human_cut_plan_used':False,'hardcoded_source_ranges':False,'classified_segments':len(labels),'dialogue_moments':len(canonical),'dialogue_beats':len(covered),'missing_dialogue':missing,'actions':len(actions),'reactions':len(reactions),'cleanup':cleanup,'policy':'semantic alternatives + speaker evidence + constrained continuity search'}
- 
+
  result={'engine':ENGINE,'plan_id':'groq-local','scene_id':payload.get('scene_id','scene'),'fps':fps,'decisions':decisions,'unmatched_beats':missing,'warnings':['Groq classifica il parlato; scelta camere e raccordi locali. Visibilità stimata, non identificazione personale.'],'planning_summary':{**verification,'classification':payload.get('classification_summary',{})},'visual_review_required':False}
  result['review_beats']=[{'beat_id':d['decision_id'],'kind':'dialogue','character':d['dialogue_character'],'text':canonical[i]['text'],'script_beat_id':d['beat_id']} for i,d in enumerate(decisions)]
  result['base_decisions']=copy.deepcopy(decisions)
