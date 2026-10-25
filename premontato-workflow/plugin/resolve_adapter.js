@@ -261,7 +261,10 @@ async function createTimeline(sdk, name, edits, expected = {}) {
   if(failure)throw failure;
   const active=await project.GetCurrentTimeline();
   if(!restored || !active || String(await active.GetUniqueId())!==beforeTimeline)throw new Error('Timeline creata, ma Resolve non ha ripristinato quella di partenza');
-  return {timelineId:String(await newTimeline.GetUniqueId()),timelineName:String(await newTimeline.GetName()),sourceTimelineId:beforeTimeline,included:edits.length,segments:expanded.length,audioSegments,videoTracks:3,audioTracks:3,audioFormat:'mono',version,folderPath:folderPath.join(' / ')};
+  if(expected.activateCreated===true){
+    if(!await project.SetCurrentTimeline(newTimeline) || String(await (await project.GetCurrentTimeline()).GetUniqueId())!==String(await newTimeline.GetUniqueId()))throw new Error('Timeline creata, ma Resolve non l’ha aperta. Cercala in '+folderPath.join(' / '));
+  }
+  return {opened:expected.activateCreated===true,timelineId:String(await newTimeline.GetUniqueId()),timelineName:String(await newTimeline.GetName()),sourceTimelineId:beforeTimeline,included:edits.length,segments:expanded.length,audioSegments,videoTracks:3,audioTracks:3,audioFormat:'mono',version,folderPath:folderPath.join(' / ')};
 }
 
 async function saveCurrentProject(sdk, expectedProjectId) {

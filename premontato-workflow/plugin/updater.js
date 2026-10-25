@@ -237,8 +237,9 @@ async function downloadAssetBytes(asset, token, maxBytes, fetchImpl = globalThis
   return bytes;
 }
 
-async function findLatestUpdate(currentVersion, token, fetchImpl = globalThis.fetch) {
+async function findLatestUpdate(currentVersion, token, fetchImpl = globalThis.fetch, onProgress) {
   parseVersion(currentVersion);
+  onProgress?.({phase:'check',percent:null,detail:'Richiedo a GitHub le release del canale Premontato. Attesa massima della richiesta: 30 secondi.'});
   const releases = await githubJson(RELEASES_URL, token, fetchImpl);
   if (!Array.isArray(releases)) throw new Error('Elenco release GitHub non valido');
   const release = releases.filter(item => !item.draft && /^premontato-v\d+\.\d+\.\d+$/.test(item.tag_name || ''))
@@ -254,8 +255,9 @@ async function findLatestUpdate(currentVersion, token, fetchImpl = globalThis.fe
   const manifestAsset = findReleaseAsset(release, 'premontato-update.json');
   const archiveAsset = findReleaseAsset(release, `Premontato-${version}.zip`);
   if (!manifestAsset || !archiveAsset || archiveAsset.size > MAX_ARCHIVE_BYTES) throw new Error('La release non contiene un pacchetto aggiornamento valido');
+  onProgress?.({phase:'manifest',percent:null,detail:'Trovata versione '+version+'. Scarico il manifest del pacchetto.'});
   let rawManifest;
-  try { rawManifest = JSON.parse((await downloadAssetBytes(manifestAsset, token, 16 * 1024, fetchImpl)).toString('utf8')); }
+  try { rawManifest = JSON.parse((await downloadAssetBytes(manifestAsset, token, 16 * 1024, fetchImpl, event=>onProgress?.({...event,phase:'manifest'}))).toString('utf8')); }
   catch (error) { if (error instanceof SyntaxError) throw new Error('Manifest aggiornamento Premontato non leggibile'); throw error; }
   const manifest = validateReleaseManifest(rawManifest, release.tag_name);
   if (manifest.archive !== archiveAsset.name) throw new Error('Il pacchetto non corrisponde al manifest della release');

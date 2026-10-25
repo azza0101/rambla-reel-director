@@ -69,3 +69,10 @@ I gruppi sono generati nel runtime locale con YuNet/SFace; non sono gruppi impor
 Dopo l’analisi puoi cambiare selezione o cartella nel Media Pool: la creazione ritrova le clip del progetto tramite gli ID salvati. Non occorre riselezionare le riprese o rifare l’analisi per un semplice cambio selezione. Restano i controlli su progetto/timeline, file originali e proprietà Resolve (percorso, durata, fps e timecode). Una sorgente rimossa o ricollegata a un altro file interrompe la creazione prima di aggiungere la timeline.
 
 Il pannello mostra «Creazione timeline in corso» e risultato o errore accanto al pulsante.
+
+
+## 0.9.8 — avanzamento aggiornamenti e apertura timeline
+
+Aggiorna mostra immediatamente una barra, tempo trascorso e fasi: credenziale locale, ricerca release, manifest, download, verifica, salvataggio, installazione e riapertura. La ricerca resta indeterminata finché il servizio risponde; download e fasi con quantità note mostrano percentuali misurate. Dopo 15 secondi senza eventi il pannello indica l’attesa senza simulare avanzamento. Errori e assenza di aggiornamenti terminano lo stato di attesa.
+
+«Crea premontato» apre ora la nuova timeline dopo averne verificato la creazione; quella di partenza resta intatta. Il pannello aggiorna il proprio riferimento alla timeline attiva, così è possibile continuare a lavorare con la stessa analisi. Le prove automatiche possono continuare a richiedere esplicitamente il ripristino della timeline precedente.

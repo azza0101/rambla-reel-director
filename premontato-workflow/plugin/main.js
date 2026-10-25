@@ -115,18 +115,19 @@ async function start() {
     await saveResolve(session.state.projectId);
     const plan = session.state.analysis?.plan;
     const review = prepareReviewTimeline(plan, request?.confirmed);
-    const created = await adapter.createTimeline(await getSdk(), `PREMONTATO v${require('./package.json').version} - ${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}`, review.decisions, session.state);
+    const created = await adapter.createTimeline(await getSdk(), `PREMONTATO v${require('./package.json').version} - ${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}`, review.decisions, {...session.state,activateCreated:true});
+    if(created.opened){session.state.timelineId=created.timelineId;session.state.timeline=created.timelineName;}
     try{await saveResolve(session.state.projectId);}catch{}
     return { ...created, included: review.decisions.length, omitted: review.omitted };
   });
   handle('update', async request => {
     if(request?.draft)session.setDraft(request.draft);
-    updateProgress({phase:'check',percent:null});
+    updateProgress({phase:'credential',percent:null,detail:'Leggo la credenziale di download protetta da Windows.'});
     const credentialPath=updateManager.resolveGithubCredentialPath(process.env.PROGRAMDATA);
     if(!credentialPath)throw new Error('Credenziale GitHub RMBL non trovata: verifica l’installazione Auto-Cut.');
     let token=updateManager.loadProtectedToken(credentialPath),jobRoot=null;
     try{
-      const update=await updateManager.findLatestUpdate(require('./package.json').version,token);
+      const update=await updateManager.findLatestUpdate(require('./package.json').version,token,undefined,updateProgress);
       if(update.status!=='available'){updateProgress({phase:'current',percent:100,version:update.version});return update;}
       if(!/(?:^|[\\/])electron(?:\.exe)?$/i.test(process.execPath))throw new Error('Aggiorna dal pannello Electron di Resolve per consentire il riavvio automatico');
       const fsp=require('node:fs/promises');await fsp.mkdir(path.join(root,'updates'),{recursive:true});jobRoot=await fsp.mkdtemp(path.join(root,'updates','job-'));

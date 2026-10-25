@@ -97,3 +97,10 @@ Test browser con vero Session/worker locale: volti e inquadrature entrambi chius
 Riprodotto il blocco causato dal confronto ordinato con GetSelectedClips. Risoluzione per ID delle sorgenti analizzate nell’albero Media Pool, senza cambiare cartella; controlli sulle proprietà del media e mantenimento della validazione file/progetto/timeline. Test automatici: creazione dopo cambio selezione/cartella con GetSelectedClips che solleva intenzionalmente errore se consultato; sorgenti mancanti e ricollegate fermate prima di creare timeline/cartelle. 82 test Node superati. Test UI con Session/worker locale: errore di creazione mostrato accanto al pulsante e comando riabilitato.
 
 Prova nativa nel progetto test-mcp: nuova timeline PREMONTATO v0.9.7 - TEST SORGENTI SALVATE, cartella Premontato/v0.9.7/Test; 12 battute, 14 segmenti AV, 1788 frame, tre tracce video e tre audio mono. Sorgenti e tagli riletti dalla timeline con adapter reale tramite scripting Python; timeline originale verificata invariata e ripristinata. Il test nativo non è un click-through del pannello Electron e non rifà l’analisi editoriale.
+
+
+## 0.9.8 — progressi aggiornamento e apertura del risultato
+
+84 test Node superati. Regressione discovery: eventi ricerca/manifest prima delle rispettive risposte di rete, avanzamento manifest misurato e nessuna credenziale negli eventi. Browser con Session/worker e servizio aggiornamento simulato: barra visibile immediatamente prima della risposta, timer attivo, percentuale/MB da byte ricevuti, errore di riapertura visibile con ripristino del pulsante. Immagine del pannello di avanzamento ispezionata.
+
+Prova nativa Resolve: PREMONTATO v0.9.8 - TEST APERTURA AUTO, 12 battute/14 segmenti AV e tre tracce mono; verificato che la timeline appena creata diventi attiva. La prova QA ripristina poi esplicitamente la timeline iniziale, verificata invariata. Il comando utente passa activateCreated=true e aggiorna il contesto del pannello alla nuova timeline. Il test nativo non è un click-through del pannello installato.

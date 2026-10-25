@@ -38,20 +38,38 @@ setInterval(()=>{if(!lastProgressEvent || ['complete','error','transcript-comple
 },1000);
 
 $('script').addEventListener('click', async () => { try { const result = await window.premontato.selectScript(); if (!result) return; scriptReady = true; $('script-status').textContent = `Copione: ${result.name}`; $('reviewed').checked = false; $('review').hidden = true; $('make-timeline').disabled = true; updateButton(); } catch (e) { showError(e); } });
+const updateSteps=['Credenziale locale','Ricerca release Premontato','Manifest del pacchetto','Download','Verifica integrità','Salvataggio progetti','Installazione','Riapertura pannello'];
+const updateStepIndexes={credential:0,check:1,manifest:2,download:3,verify:4,save:5,validate:6,extract:6,install:6,rollback:6,restart:7};
+let updateStartedAt=0,updatePhaseStartedAt=0,updateLastAt=0,updateActiveIndex=0,updateRunning=false,updateDetail='',updateCompleted=new Set();
+function updateClock(){
+ if(!updateStartedAt)return;const now=Date.now();
+ $('update-progress-clock').textContent='Tempo trascorso '+phaseClock(Math.floor((now-updateStartedAt)/1000))+(updateRunning?' · fase '+phaseClock(Math.floor((now-updatePhaseStartedAt)/1000)):'');
+ $('update-progress-detail').textContent=updateDetail+(updateRunning && now-updateLastAt>=15000?' · Operazione ancora in corso, in attesa di risposta.':'');
+}
+function showUpdateProgress(event,reset=false){
+ const now=Date.now(),index=updateStepIndexes[event.phase],terminal=['current','unpublished','error','restart-error'].includes(event.phase);
+ if(reset || !updateStartedAt){updateStartedAt=now;updatePhaseStartedAt=now;updateCompleted=new Set();updateActiveIndex=0;}
+ if(index!==undefined && index!==updateActiveIndex){updateCompleted.add(updateActiveIndex);updateActiveIndex=index;updatePhaseStartedAt=now;}
+ updateRunning=!terminal;updateLastAt=now;
+ const labels={credential:'Leggo la credenziale locale protetta',check:'Cerco le release Premontato su GitHub',manifest:'Leggo il manifest della nuova versione',download:'Scarico l’aggiornamento',verify:'Verifico l’integrità del pacchetto',save:'Salvo sessione Premontato e progetto Resolve',validate:'Controllo i file da installare',extract:'Estraggo i file',install:'Installazione · conferma Windows se richiesta',rollback:'Ripristino l’installazione precedente',restart:'Aggiornamento completato · riapro il pannello',current:'Premontato è già aggiornato',unpublished:'Nessun aggiornamento pubblicato',error:'Aggiornamento interrotto','restart-error':'Aggiornato, riapertura non riuscita'};
+ $('update-progress').hidden=false;$('update-progress-label').textContent=labels[event.phase] || event.phase;
+ if(Number.isFinite(event.percent)){$('update-progress-bar').value=event.percent;$('update-progress-percent').textContent=event.percent+'% della fase';}else{$('update-progress-bar').removeAttribute('value');$('update-progress-percent').textContent=terminal?'Terminato':'In corso';}
+ updateDetail=event.error || event.detail || (event.received!==undefined?(event.received/1048576).toFixed(1)+(event.total>0?' / '+(event.total/1048576).toFixed(1):'')+' MB ricevuti':event.current!==undefined?event.current+' / '+event.total+' file':'');
+ const list=$('update-progress-steps');list.replaceChildren();
+ for(let i=0;i<updateSteps.length;i++){const row=document.createElement('li');let status=updateCompleted.has(i)?'Completata':i===updateActiveIndex?'In corso':'In attesa';if(terminal){if(i===updateActiveIndex)status=['error','restart-error'].includes(event.phase)?'Errore':'Completata';else if(!updateCompleted.has(i))status=['current','unpublished'].includes(event.phase)?'Non necessaria':'Non eseguita';}row.textContent=updateSteps[i]+' · '+status;row.dataset.state=status;list.append(row);}
+ if(['error','restart-error'].includes(event.phase)){$('update').disabled=false;$('update-progress-percent').textContent='Errore';}
+ updateClock();
+}
+setInterval(()=>{if(updateRunning)updateClock();},1000);
 $('update').addEventListener('click',async()=>{
  const button=$('update');button.disabled=true;$('update-status').textContent='Controllo gli aggiornamenti…';
+ showUpdateProgress({phase:'credential',percent:null,detail:'Preparo la ricerca degli aggiornamenti.'},true);$('update-progress').scrollIntoView({behavior:'smooth',block:'center'});
  let restarting=false;
- try{const result=await window.premontato.update({draft:capturePremontatoDraft()});restarting=Boolean(result.restarting);$('update-status').textContent=result.status==='updated'?(restarting?'Versione '+result.version+' installata. Riapertura automatica del pannello…':'Versione '+result.version+' installata: riapri il pannello.') : result.status==='current'?'Premontato è aggiornato ('+result.version+').':'Nessun aggiornamento pubblicato.';}
- catch(error){$('update-status').textContent=error.message || String(error);}
+ try{const result=await window.premontato.update({draft:capturePremontatoDraft()});restarting=Boolean(result.restarting);$('update-status').textContent=result.status==='updated'?(restarting?'Versione '+result.version+' installata. Riapertura automatica del pannello…':'Versione '+result.version+' installata: riapri il pannello.') : result.status==='current'?'Premontato è aggiornato ('+result.version+').':'Nessun aggiornamento pubblicato.';if(result.status!=='updated')showUpdateProgress({phase:result.status==='current'?'current':'unpublished',percent:100,detail:$('update-status').textContent});}
+ catch(error){$('update-status').textContent=error.message || String(error);showUpdateProgress({phase:'error',percent:null,error:error.message || String(error)});}
  finally{button.disabled=restarting;}
 });
-window.premontato.onUpdateProgress?.(event=>{
- const labels={check:'Controllo release Premontato',download:'Scarico l’aggiornamento',verify:'Verifico l’integrità del pacchetto',save:'Salvo sessione Premontato e progetto Resolve',validate:'Controllo i file da installare',extract:'Estraggo i file',install:'Installazione · conferma Windows se richiesta',rollback:'Ripristino l’installazione precedente',restart:'Aggiornamento completato · riapro il pannello',current:'Nessun aggiornamento necessario',error:'Aggiornamento interrotto','restart-error':'Aggiornato, riavvio non riuscito'};
- $('update-progress').hidden=false;$('update-progress-label').textContent=labels[event.phase] || event.phase;
- if(Number.isFinite(event.percent)){$('update-progress-bar').value=event.percent;$('update-progress-percent').textContent=event.percent+'%';}else{$('update-progress-bar').removeAttribute('value');$('update-progress-percent').textContent='In corso';}
- $('update-progress-detail').textContent=event.error || (event.received!==undefined?(event.received/1048576).toFixed(1)+' / '+(event.total/1048576).toFixed(1)+' MB':event.current!==undefined?event.current+' / '+event.total+' file':'');
- if(['error','restart-error'].includes(event.phase)){$('update').disabled=false;$('update-progress-percent').textContent='Errore';}
-});
+window.premontato.onUpdateProgress?.(event=>showUpdateProgress(event));
 let supportPreview = null;
 $('debug').addEventListener('click', async () => { const button = $('debug'), status = $('support-status'); button.disabled = true; supportPreview = null; $('support-preview').textContent = ''; $('support-confirm').checked = false; $('support-send').disabled = true; status.textContent = 'Preparo una diagnostica filtrata…'; try { supportPreview = await window.premontato.prepareSupportReport(); $('support-preview').textContent = supportPreview.body; status.textContent = 'Anteprima pronta. Rileggila e conferma prima dell’invio.'; $('support-dialog').showModal(); } catch (error) { status.textContent = error.message || String(error); $('support-dialog').showModal(); } finally { button.disabled = false; } });
 $('support-confirm').addEventListener('change', () => { $('support-send').disabled = !supportPreview || !$('support-confirm').checked; });
