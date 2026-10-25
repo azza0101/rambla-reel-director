@@ -138,6 +138,13 @@ $('pacing-apply').addEventListener('click',async()=>{
 
 let visualNames={},visualDirty=false;const visualOverrides=new Map();
 function safeStill(value){return typeof value==='string' && value.length<500000 && /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(value) ? value : '';}
+function previewImage(image,caption){
+ const button=document.createElement('button');button.type='button';button.className='preview-image';button.setAttribute('aria-label','Ingrandisci: '+image.alt);button.append(image);
+ button.addEventListener('click',()=>{$('still-image').src=image.src;$('still-image').alt=image.alt;$('still-caption').textContent=typeof caption==='function'?caption():caption;$('still-dialog').showModal();});return button;
+}
+$('still-close').addEventListener('click',()=>$('still-dialog').close());
+$('still-dialog').addEventListener('click',event=>{if(event.target===$('still-dialog'))$('still-dialog').close();});
+$('still-dialog').addEventListener('close',()=>{$('still-image').removeAttribute('src');});
 function renderVisualReview(state){
  const review=state.analysis?.visualReview; $('visual-review').hidden=!review;
  if(!review)return;
@@ -147,9 +154,9 @@ function renderVisualReview(state){
  $('visual-people').replaceChildren();
  for(const [id,faces] of [...people.entries()].sort((a,b)=>b[1].length-a[1].length)){
   const card=document.createElement('div');card.className='person-card';
-  const label=document.createElement('strong');label.textContent='Persona '+id.replace('person-','');card.append(label);
+  const label=document.createElement('strong');label.textContent='Gruppo volti '+id.replace('person-','');card.append(label);
   const strip=document.createElement('div');strip.className='face-strip';
-  for(const face of faces.slice(0,3)){const img=document.createElement('img');img.src=safeStill(face.thumbnail);img.alt='Volto suggerito nello stesso gruppo';strip.append(img);}card.append(strip);
+  for(const face of faces.slice(0,3)){const img=document.createElement('img');img.src=safeStill(face.thumbnail);img.alt='Volto suggerito nello stesso gruppo';strip.append(previewImage(img,()=> 'Gruppo volti '+id.replace('person-','')+' · '+(visualNames[id] || 'Personaggio da assegnare')+' · Più gruppi possono appartenere alla stessa persona.'));}card.append(strip);
   const select=document.createElement('select');select.dataset.person=id;
   for(const name of ['',...cast]){const option=document.createElement('option');option.value=name;option.textContent=name || 'Personaggio da assegnare';select.append(option);}select.value=visualNames[id] || '';
   select.addEventListener('change',()=>{captureVisualOverrides(review.confirmed);visualDirty=true;visualNames[id]=select.value;review.confirmed=false;$('reviewed').checked=false;if(state.analysis.plan)state.analysis.plan.visual_review_required=true;renderVisualIntervals(state,cast);$('visual-confirm').checked=false;$('visual-save').disabled=true;$('make-timeline').disabled=true;});card.append(select);$('visual-people').append(card);
@@ -174,8 +181,8 @@ function renderVisualIntervals(state,cast){
   for(const still of interval.stills || []){
     const figure=document.createElement('figure'),img=document.createElement('img'),caption=document.createElement('figcaption');img.src=safeStill(still.image);img.alt='Inquadratura al frame '+still.frame;caption.textContent='Frame '+still.frame;
     const faces=(still.face_ids || []).map(id=>byFace.get(id)).filter(Boolean);
-    for(const face of faces){const name=visualNames[face.person_id];if(name)suggested.add(name);caption.textContent+=' · Volto '+face.face_number+': '+(name || (face.person_id ? 'Persona '+face.person_id.replace('person-','') : 'incerto'));}
-    figure.append(img,caption);strip.append(figure);
+    for(const face of faces){const name=visualNames[face.person_id];if(name)suggested.add(name);caption.textContent+=' · Volto '+face.face_number+': '+(name || (face.person_id ? 'Gruppo '+face.person_id.replace('person-','') : 'incerto'));}
+    figure.append(previewImage(img,()=>caption.textContent+' · Campo: '+(visualOverrides.get(interval.segment_id)?.shot_size || interval.shot_size)+' · Campione dell’intervallo, non dell’intera ripresa.'),caption);strip.append(figure);
   }card.append(strip);
   const select=document.createElement('select');select.dataset.visualScale='';select.setAttribute('aria-label','Scala inquadratura');
   for(const [value,label] of Object.entries({wide:'Larga / master',medium:'Media',close:'Stretta / primo piano',detail:'Dettaglio',unknown:'Non determinata'})){const option=document.createElement('option');option.value=value;option.textContent=label;select.append(option);}select.value=override?.shot_size || interval.shot_size;card.append(select);
@@ -186,6 +193,7 @@ function renderVisualIntervals(state,cast){
   card.addEventListener('change',()=>{card.dataset.changed='true';visualDirty=true;captureVisualOverrides();$('visual-confirm').checked=false;$('visual-save').disabled=true;$('reviewed').checked=false;$('make-timeline').disabled=true;if(state.analysis.plan)state.analysis.plan.visual_review_required=true;});clips.get(interval.media_id).append(card);
  }
 }
+$('visual-debug-toggle').addEventListener('click',()=>{const panel=$('visual-intervals'),button=$('visual-debug-toggle');panel.hidden=!panel.hidden;button.setAttribute('aria-expanded',String(!panel.hidden));button.textContent=panel.hidden?'Apri controllo inquadrature':'Chiudi controllo inquadrature';});
 $('visual-confirm').addEventListener('change',()=>{$('visual-save').disabled=!$('visual-confirm').checked || !window.__lastReviewState?.analysis?.visualReview?.intervals?.length;});
 $('visual-save').addEventListener('click',async()=>{
  const button=$('visual-save');button.disabled=true;$('visual-status').textContent='Ricalcolo usando le correzioni…';
@@ -202,7 +210,23 @@ function hasPendingFormEdits(state=window.__lastReviewState || {},includeDirecti
  const pacing=state.pacingSettings;if(pacing && (pacing.enabled!==$('pacing-enabled').checked || pacing.max_pause_seconds!==Number($('pacing-gap').value) || pacing.minimum_shot_seconds!==Number($('pacing-minimum').value) || pacing.respect_script_pauses!==$('pacing-script').checked))return true;
  return false;
 }
-function updateTimelineButton(state=window.__lastReviewState || {}){const plan=state.analysis?.plan;$('make-timeline').disabled=!plan?.decisions?.length || Boolean(plan.visual_review_required) || visualDirty || hasPendingFormEdits(state) || !$('reviewed').checked;}
+function timelineBlockers({matched,visualPending,dirty,pending,confirmed}){
+ const result=[];
+ if(!matched)result.push({message:'Nessuna battuta abbinata: esegui o verifica l’analisi.',target:'beats'});
+ if(visualPending || dirty)result.push({message:'Conferma campi e personaggi: controlla le still, spunta il controllo visivo e premi «Conferma e ricalcola il montaggio».',target:'visual-review'});
+ if(pending)result.push({message:'Ci sono correzioni in bozza: applica le modifiche a take, battute, ritmo o direzioni.',target:'review'});
+ if(!confirmed)result.push({message:'Spunta la conferma finale degli abbinamenti.',target:'reviewed'});
+ return result;
+}
+function updateTimelineButton(state=window.__lastReviewState || {}){
+ const plan=state.analysis?.plan,blockers=timelineBlockers({matched:plan?.decisions?.length,visualPending:Boolean(plan?.visual_review_required),dirty:visualDirty,pending:hasPendingFormEdits(state),confirmed:$('reviewed').checked});
+ $('make-timeline').disabled=blockers.length>0;
+ const box=$('timeline-readiness');box.replaceChildren();
+ if(!plan)return;
+ if(!blockers.length){box.textContent='Pronto: puoi creare la nuova timeline di revisione.';return;}
+ const heading=document.createElement('strong');heading.textContent='Prima di creare la timeline:';box.append(heading);
+ for(const item of blockers){const row=document.createElement('div'),button=document.createElement('button');button.type='button';button.className='quiet';button.textContent=item.message;button.addEventListener('click',()=>{const target=$(item.target);target.scrollIntoView({behavior:'smooth',block:'center'});const focus=target.matches('input,button')?target:target.querySelector('input,select,button');focus?.focus({preventScroll:true});});row.append(button);box.append(row);}
+}
 let draftTimer=null,restoringDraft=false;
 function capturePremontatoDraft(){
  return {directions:captureDirections(),visual:{dirty:visualDirty,person_names:{...visualNames},intervals:[...$('visual-intervals').querySelectorAll('[data-visual-segment]')].map(card=>({segment_id:card.dataset.visualSegment,shot_size:card.querySelector('[data-visual-scale]').value,visible_subjects:[...card.querySelectorAll('[data-subject]:checked')].map(input=>input.value)}))},

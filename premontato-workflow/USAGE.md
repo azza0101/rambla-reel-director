@@ -48,3 +48,10 @@ Significato, attacco e ricerca delle reazioni sono calcolati nel runtime del plu
 Gli aggiornamenti ricaricano il pannello nello stesso processo Electron registrato da Resolve. La versione e i moduli vengono riletti senza avviare una finestra esterna. Il collegamento viene conservato; una inizializzazione SDK fallita può essere ritentata cliccando sullo stato in alto. Gli errori di selezione clip sono separati dallo stato del collegamento.
 
 Se una versione precedente ha già riaperto il pannello fuori da Resolve, chiudi Premontato e aprilo una volta da Workspace > Workflow Integrations > RAMBLA Premontato. Avviarlo direttamente con Electron non ripristina la registrazione del plugin nel programma.
+
+
+## 0.9.5 — controllo inquadrature e conferme
+
+I gruppi volti restano visibili; la stessa persona può avere più gruppi, ai quali puoi assegnare lo stesso personaggio. Clicca una miniatura per ingrandirla. I frame interi e i controlli dei singoli intervalli sono chiusi per impostazione iniziale: aprili con «Apri controllo inquadrature». Chiudere la sezione non elimina le modifiche.
+
+Accanto alla creazione timeline sono elencati i passaggi mancanti con collegamenti diretti. La conferma finale delle battute non sostituisce «Conferma e ricalcola il montaggio» della revisione visiva. Le correzioni in bozza continuano a bloccare la timeline finché non vengono applicate.

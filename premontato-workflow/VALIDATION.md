@@ -80,3 +80,8 @@ Suite finale 0.9.3: 73 test Node, 66 unittest Python e 9 contratti pacchetto sup
 Riprodotto sul pannello installato 0.9.3: errore nativo «Not initialized, call InitializePromise(<pluginId>) first»; il log Resolve mostra lo scaricamento della integrazione senza un nuovo caricamento dopo app.relaunch(). Riprodotto inoltre il bootstrap inattivo sotto il loader Electron e aggiunto test dedicato. Corretti sia la cache della inizializzazione fallita sia il riavvio che perdeva la registrazione host. Snapshot del collegamento indipendente dalla selezione Media Pool.
 
 77 test Node e 66 unittest Python superati. Prova nel vero Electron distribuito con Resolve, con SDK simulato: recupero da inizializzazione fallita, selezione di tre clip, due ricaricamenti mantenendo il PID e il collegamento, nessun CleanUp durante il ricaricamento; lettura di una nuova versione package.json al primo ricaricamento. Il test usa il vero main, preload, renderer e IPC, ma non dimostra la connessione SDK a Resolve. Correzione applicata localmente; verifica reale dopo riapertura dal menu Resolve ancora da completare.
+
+
+## 0.9.5 — conferme esplicite e anteprime compatte
+
+79 test Node superati, inclusa regressione sulla conferma finale che non deve nascondere una revisione visiva mancante. Browser locale con renderer vero e Session del plugin: motivo del blocco, collegamento alla revisione, frame chiusi per impostazione iniziale, apertura/chiusura, immagini di volti/still ingrandibili e decodificate, timeline abilitata dopo conferma e nuovamente bloccata da una correzione in bozza. Trasporto IPC sostituito dal ponte locale; nessuna timeline creata in Resolve da questo test UI.
