@@ -49,23 +49,12 @@ def rms_silences(samples, sample_rate, fps):
 
 
 def analyze_audio(source):
-    import subprocess,shutil
-    from pathlib import Path
+    from local_audio import load_pcm16
     import numpy as np
-    candidates=[shutil.which('ffmpeg'),r'C:\Program Files\FFmpeg\ffmpeg.exe']
-    executable=next((str(p) for p in candidates if p and Path(p).is_file()),None)
-    if executable is None:return {'status':'unavailable','reason':'FFmpeg non trovato: pause conservate senza tagli audio automatici'}
-    path=Path(source['path'])
-    if not path.is_file():raise ValueError('File audio/video non disponibile')
-    fps=float(source.get('fps',25));seconds=float(source['duration_frames'])/fps
-    if not 0<seconds<=3600:return {'status':'unavailable','reason':'Analisi audio limitata a clip di massimo un’ora'}
-    command=[executable,'-nostdin','-hide_banner','-loglevel','error','-i',str(path),'-t',str(seconds),'-map','0:a:0','-vn','-ac','1','-ar','16000','-f','f32le','pipe:1']
     try:
-        run=subprocess.run(command,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=120,
-                           creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
-    except (OSError,subprocess.TimeoutExpired):return {'status':'unavailable','reason':'Decodifica audio non disponibile o scaduta: pause conservate'}
-    if run.returncode or not run.stdout:return {'status':'unavailable','reason':'Traccia audio non decodificabile: pause conservate'}
-    return {'status':'ok',**rms_silences(np.frombuffer(run.stdout,dtype='<f4'),16000,fps)}
+        audio,metadata=load_pcm16(source)
+        return {'status':'ok',**rms_silences(audio.astype(np.float32)/32768,16000,float(source.get('fps') or 25)),'pcm_cache_hit':metadata['cache_hit']}
+    except Exception as error:return {'status':'unavailable','reason':str(error)+': pause conservate'}
 
 
 def _speech_words(source):
@@ -231,6 +220,17 @@ def pace_plan(plan, sources, audio, beats, fps, options=None, shots=None):
                          'pacing':{'removed_frames':cut_frames,'protected_pause':protect,'short_exception':bool(exception),
                                    'input_start_frame':original_lo,'input_end_frame':original_hi,'audio_measured':active,'duration_frames':duration,'added_hold_frames':max(0,hi-lo-original_length)}})
         cursor+=duration;previous=decision
+    # Extending a protected pause must never replay the next selected utterance's
+    # preroll on the same source. Clamp only added silence, never matched speech.
+    for left,right in zip(decisions,decisions[1:]):
+        boundary=right['start_frame']
+        if left['media_id']==right['media_id'] and not left.get('manual') and left.get('matched_end_frame',left['end_frame'])<=boundary<left['end_frame']:
+            overlap=left['end_frame']-boundary
+            left['source_ranges']=[{'start_frame':r['start_frame'],'end_frame':min(r['end_frame'],boundary)} for r in left['source_ranges'] if r['start_frame']<boundary]
+            left['end_frame']=boundary
+            left['pacing']['duration_frames']=sum(r['end_frame']-r['start_frame'] for r in left['source_ranges'])
+            left['pacing']['added_hold_frames']=max(0,left['pacing']['added_hold_frames']-overlap)
+            left.setdefault('rationale_codes',[]).append('HOLD_CLAMPED_TO_NEXT_BEAT')
     groups=[]
     for decision in decisions:
         if groups and groups[-1][-1]['media_id']==decision['media_id'] and groups[-1][-1].get('shot_size')==decision.get('shot_size'):groups[-1].append(decision)

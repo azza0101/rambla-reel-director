@@ -124,10 +124,10 @@ class Session {
     this.state.error = null;
     let lastPhaseIndex = 0;
     const startedAt = Date.now(); let lastPhase, phaseStartedAt = startedAt;
-    const progress = (phase, phaseIndex, percent, label, current, total) => {
+    const progress = (phase, phaseIndex, percent, label, current, total, skipped=false) => {
       if (phaseIndex >= 0) lastPhaseIndex = phaseIndex;
       if (phase !== lastPhase) { lastPhase = phase; phaseStartedAt = Date.now(); }
-      this.onProgress?.({ phase, phaseIndex, percent: Math.round(percent), label, current, total, elapsedSeconds: Math.round((Date.now()-startedAt)/1000), phaseElapsedSeconds: Math.round((Date.now()-phaseStartedAt)/1000) });
+      this.onProgress?.({ phase, phaseIndex, percent: Math.round(percent), label, current, total, skipped, elapsedSeconds: Math.round((Date.now()-startedAt)/1000), phaseElapsedSeconds: Math.round((Date.now()-phaseStartedAt)/1000) });
     };
     try {
       progress('script', 0, 0, 'Leggo e separo le scene del copione');
@@ -150,11 +150,8 @@ class Session {
         catch (error) { this.state.error = `Analisi inquadrature non disponibile per ${source.name}: ${error.message}`; }
         progress('shots', 2, 24 + ((i + 1) / shotSources.length) * 38, `Inquadrature: ${i + 1}/${shotSources.length} clip`, i + 1, shotSources.length);
       }
-      let visualReview = null;
-      if (shotSources.length) {
-        progress('visual', 3, 62, 'Estraggo le still e confronto i volti localmente');
-        visualReview = await this.request('visual_review', {media:shotSources,shots}, 20*60*1000, event => progress('visual',3,62+((event.clip_index+event.current/Math.max(1,event.total))/Math.max(1,event.clip_total))*6,'Still e volti · '+event.name+' · '+event.current+'/'+event.total,event.clip_index+event.current/Math.max(1,event.total),event.clip_total));
-      }
+      if(shotSources.length)progress('visual',3,62,'Still e volti: caricamento su richiesta',0,0,true);
+      const visualReview = null; // Still and identity clustering are explicit visual-debug work.
       const takes = [];
       progress('takes', 4, 68, `Individuo i confini delle take: 0/${sources.length} clip`);
       for (let i = 0; i < sources.length; i++) {
@@ -178,11 +175,11 @@ class Session {
       }
       progress('plan', 6, 89, 'Verifico significato e attacco delle battute nelle take confermate');
       let plan = selectedScene && takes.every(group => group.confirmed)
-        ? await this.request('build_plan', { beats, sources: planningSources, shots, directions:this.state.directions, semantic: true, fps: this.state.fps || 25 },300000) : null;
+        ? await this.buildPlan( { beats, sources: planningSources, shots, directions:this.state.directions, semantic: true, fps: this.state.fps || 25 },300000) : null;
       progress('pacing',7,95,'Verifico pause e reazioni prima della risoluzione');
       if(plan)plan=this.keepReactionChoices(plan);
       if (plan) plan=await this.request('pace_plan',{plan,sources:planningSources,audio,beats,shots,fps:this.state.fps || 25,settings:this.state.pacingSettings});
-      if (plan && visualReview) plan.visual_review_required = !visualReview.confirmed;
+      if (plan) plan.visual_review_required = false;
       const warnings = selectedScene
         ? [...(plan?.warnings || ['Conferma i confini delle take suggerite prima di calcolare il premontato.'])]
         : ['Non ho trovato una corrispondenza sufficientemente chiara tra dialoghi e copione; controlla trascrizione e clip selezionate.'];
@@ -193,6 +190,26 @@ class Session {
       progress('complete', 8, 100, 'Analisi completata');
       return this.getReviewState();
     } catch (error) { this.state.error = error.message; this.state.stage = 'error'; progress('error', lastPhaseIndex, 0, `Analisi interrotta: ${error.message}`); throw error; }
+  }
+  async buildPlan(payload, timeoutMs=300000, onProgress) {
+    let lastPercent=89;
+    return this.request('build_plan',{...payload,active_speaker:true},timeoutMs,onProgress || (event=>{
+      lastPercent=Math.max(lastPercent,89+6*((event.beat-1+(event.done?.5:0))/Math.max(1,event.total)));
+      this.onProgress?.({phase:'plan',phaseIndex:6,percent:Math.round(lastPercent),label:'Parlante · battuta '+event.beat+'/'+event.total+' · '+event.name+' · '+event.checked+' campioni, '+event.cache_hits+' da cache',current:event.beat-1,total:event.total});
+    }));
+  }
+  async loadVisualReview() {
+    const analysis=this.state.analysis;
+    if(!analysis || this.state.stage==='analyzing')throw new Error('Completa prima l’analisi del montaggio');
+    if(analysis.visualReview)return this.getReviewState();
+    const sources=(this.state.transcripts || []).filter(source=>source.path);
+    this.onProgress?.({phase:'visual',phaseIndex:3,percent:62,label:'Preparo il controllo visivo facoltativo'});
+    try {
+      const result=await this.request('visual_review',{media:sources,shots:analysis.shots || []},20*60*1000,event=>this.onProgress?.({phase:'visual',phaseIndex:3,percent:62+Math.round(6*(event.clip_index+event.current/Math.max(1,event.total))/Math.max(1,event.clip_total)),label:'Still e volti · '+event.name,current:event.current,total:event.total}));
+      analysis.visualReview=result;
+      this.onProgress?.({phase:'complete',phaseIndex:8,percent:100,label:'Controllo visivo pronto; associazioni dei nomi facoltative'});
+      return this.getReviewState();
+    } catch(error) {this.onProgress?.({phase:'error',phaseIndex:3,percent:0,label:error.message});throw error;}
   }
   async cancelAnalysis() { this.failAll(new Error('Analisi annullata')); this.child?.kill(); this.child = null; this.state.stage = 'idle'; return true; }
   async shutdownWorker(timeoutMs = 8000) {
@@ -292,6 +309,9 @@ class Session {
     if (request.shot_size !== undefined && !['wide','medium','close','detail','unknown'].includes(request.shot_size)) throw new Error('Scala non valida');
     if(request.reaction_enabled!==undefined && typeof request.reaction_enabled!=='boolean')throw new Error('Stato reazione non valido');
     if (request.preserve_pause !== undefined && typeof request.preserve_pause !== 'boolean') throw new Error('Blocco pausa non valido');
+    if(updated.speaker_coverage_source==='audio_visual' && ((request.start_frame!==undefined && start!==updated.start_frame) || (request.end_frame!==undefined && end!==updated.end_frame))) {
+      delete updated.active_speaker;updated.speaker_coverage='unknown';updated.speaker_coverage_source='unverified';updated.matched_start_frame=start;updated.matched_end_frame=end;
+    }
     const manual=updated.manual || ['start_frame','end_frame','shot_size','alternative_index'].some(key=>request[key]!==undefined);
     Object.assign(updated, { start_frame: start, end_frame: end, shot_size: request.shot_size ?? updated.shot_size, manual, reaction_enabled:request.reaction_enabled ?? updated.reaction_enabled, preserve_pause: request.preserve_pause ?? updated.preserve_pause });
     delete updated.source_ranges; delete updated.pacing; delete updated.reaction_before;
@@ -321,11 +341,11 @@ class Session {
     const changed=directions.profile!==previous.profile || JSON.stringify(Object.entries(directions.markers).sort())!==JSON.stringify(Object.entries(previous.markers || {}).sort());
     if(changed && analysis?.planningSources?.length && analysis.takes?.every(group=>group.confirmed)) {
       this.onProgress?.({phase:'plan',phaseIndex:6,percent:89,label:'Ricalcolo secondo le direzioni di montaggio'});
-      plan=await this.request('build_plan',{beats,sources:analysis.planningSources,shots:analysis.shots || [],directions,semantic:true,fps:this.state.fps || 25},300000);
+      plan=await this.buildPlan({beats,sources:analysis.planningSources,shots:analysis.shots || [],directions,semantic:true,fps:this.state.fps || 25},300000);
       plan=this.keepReactionChoices(plan);
       this.onProgress?.({phase:'pacing',phaseIndex:7,percent:95,label:'Verifico pause e reazioni prima della risoluzione'});
       plan=await this.request('pace_plan',{plan,sources:analysis.planningSources,audio:analysis.audio || {},shots:analysis.shots || [],beats,fps:this.state.fps || 25,settings:this.state.pacingSettings});
-      if(analysis.visualReview)plan.visual_review_required=!analysis.visualReview.confirmed;
+      if(analysis.visualReview)plan.visual_review_required=Boolean(analysis.plan?.visual_review_required);
     }
     this.state.directions=directions;if(analysis)analysis.plan=plan;
     this.onProgress?.({phase:'complete',phaseIndex:8,percent:100,label:'Direzioni salvate; controlla le scelte narrative'});
@@ -358,7 +378,7 @@ class Session {
     let plan=analysis.plan;
     if (analysis.planningSources?.length && analysis.takes?.every(t=>t.confirmed)) {
       this.onProgress?.({phase:'plan',phaseIndex:6,percent:89,label:'Ricalcolo con campi e personaggi confermati'});
-      plan=await this.request('build_plan',{beats:analysis.parsedBeats,sources:analysis.planningSources,shots:updated,directions:this.state.directions,semantic:true,fps:this.state.fps || 25},300000);
+      plan=await this.buildPlan({beats:analysis.parsedBeats,sources:analysis.planningSources,shots:updated,directions:this.state.directions,semantic:true,fps:this.state.fps || 25},300000);
       plan=this.keepReactionChoices(plan);
       this.onProgress?.({phase:'pacing',phaseIndex:7,percent:95,label:'Verifico pause e reazioni prima della risoluzione'});
       plan=await this.request('pace_plan',{plan,sources:analysis.planningSources,audio:analysis.audio || {},shots:updated,beats:analysis.parsedBeats,fps:this.state.fps || 25,settings:this.state.pacingSettings});
@@ -385,9 +405,9 @@ class Session {
       segments: this.state.transcripts.find(source => source.media_id === group.media_id).segments.filter(segment => segment.start_frame >= take.start_frame && segment.start_frame < take.end_frame) })));
     this.state.analysis.planningSources = sources;
     const previousPlan=this.state.analysis.plan;
-    this.state.analysis.plan = await this.request('build_plan', { beats: this.state.analysis.parsedBeats, sources, shots: this.state.analysis.shots, directions:this.state.directions, semantic: true, fps: this.state.fps || 25 },300000);
+    this.state.analysis.plan = await this.buildPlan( { beats: this.state.analysis.parsedBeats, sources, shots: this.state.analysis.shots, directions:this.state.directions, semantic: true, fps: this.state.fps || 25 },300000);
     this.keepReactionChoices(this.state.analysis.plan,previousPlan);
-    if (this.state.analysis.visualReview) this.state.analysis.plan.visual_review_required=!this.state.analysis.visualReview.confirmed;
+    if (this.state.analysis.visualReview) this.state.analysis.plan.visual_review_required=Boolean(this.state.uiDraft?.visual?.dirty);
     return this.applyPacing();
   }
 }

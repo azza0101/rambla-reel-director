@@ -81,3 +81,10 @@ class PacingTests(unittest.TestCase):
   plan['decisions'].append({'beat_id':'b','take_id':'other','media_id':'other','start_frame':20,'end_frame':30,'score':.9,'alternatives':[{'take_id':'t','media_id':'m','start_frame':160,'end_frame':175,'score':.4}]})
   out=pace_plan(plan,[source,{'media_id':'other','duration_frames':500}],{},[],25,{})
   self.assertEqual(out['decisions'][1]['media_id'],'other')
+
+ def test_protected_hold_never_replays_next_beats_source_handles(self):
+  source={'media_id':'m','take_id':'t','duration_frames':300,'segments':[{'words':[{'text':'uno','start_frame':20,'end_frame':50},{'text':'due','start_frame':100,'end_frame':130}]}]}
+  plan={'decisions':[{'beat_id':'a','media_id':'m','take_id':'t','start_frame':17,'end_frame':60,'matched_end_frame':50,'preserve_pause':True},{'beat_id':'b','media_id':'m','take_id':'t','start_frame':90,'end_frame':140,'matched_start_frame':100,'matched_end_frame':130}]}
+  audio={'m':{'status':'ok','silences':[{'start_frame':50,'end_frame':100}]}}
+  out=pace_plan(plan,[source],audio,[],25,{'comic_hold_seconds':3})
+  left,right=out['decisions'];self.assertLessEqual(left['end_frame'],right['start_frame']);self.assertLessEqual(left['source_ranges'][-1]['end_frame'],right['source_ranges'][0]['start_frame'])

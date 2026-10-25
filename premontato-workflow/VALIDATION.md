@@ -114,3 +114,10 @@ Browser locale con renderer e Session/worker: tendina esterna chiusa inizialment
 ## 0.9.10 — elenco montaggio compatto
 
 Test browser con Session/worker: elenco battute chiuso inizialmente, conferma finale e comando timeline fuori dalla tendina, apertura dei controlli e applicazione dei blocchi per bozze; conservati i test su conferma visiva e progressi aggiornamento. Nessuna modifica al motore o alle sorgenti.
+
+
+0.10.0 — 2026-10-25. Real worker/session tested on the three supplied 25fps clips and full screenplay, with existing Resolve transcripts but without manual shot labels, names, narrative markers or alternative choices. All 12 dialogue beats matched; master opening, girl invitation close, refusal master, Fabrizio homosexual line tight shot verified. First analysis with fresh analysis cache: 85.84s, repeated run 0.40s; transcription time excluded. Still/identity debug deferred. Seven audio/video candidate samples; no cloud calls.
+
+Native Resolve API created and opened PREMONTATO v0.10.0 - TEST PARLANTE AUTO FINALE 181424 in Premontato / v0.10.0 / Test: 12 beats, 13 AV segments, 1707 frames (68.28s), three video tracks and three mono audio tracks, colors/readback verified; prior active timeline contents preserved and restored. Private contact sheet visually inspected. Found and fixed a three-frame repeated pause handle.
+
+Local browser UI exercised final confirmation without names/debug, explicit debug generation, collapsed sections, manual corrections, zoom, and update progress; no page errors. These tests use the actual session/worker and a test UI bridge, not the installed Resolve panel. Narrative interpretation uses conservative text cues and remains an estimate. ASD is sampled, not exhaustive ground truth or actor identity recognition.

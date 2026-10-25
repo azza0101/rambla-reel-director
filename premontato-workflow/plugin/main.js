@@ -34,7 +34,7 @@ function handle(name, fn) {
     try {
       let result=await fn(...args);
       if(['analyze','updateDecision','confirmVisualReview','setPacing','setDirections','confirmTakes','selectMedia','selectScript','transcribeSelected'].includes(name)){const pending=session.state.uiDraft?.directions;session.state.uiDraft=['updateDecision','confirmVisualReview','setPacing','confirmTakes'].includes(name) && pending ? {directions:pending} : null;}
-      if(['selectScript','selectMedia','transcribeSelected','analyze','updateDecision','confirmVisualReview','setPacing','setDirections','confirmTakes','createReviewTimeline','saveDraft'].includes(name)){
+      if(['selectScript','selectMedia','transcribeSelected','analyze','updateDecision','confirmVisualReview','setPacing','setDirections','confirmTakes','createReviewTimeline','loadVisualReview','saveDraft'].includes(name)){
         try{await session.saveAutosave();}catch(error){session.saveError='Salvataggio automatico non riuscito: '+error.message;}
         publishProjectStatus();if(result?.stage)result=session.getReviewState();
       }
@@ -106,6 +106,7 @@ async function start() {
     await session.loadProject(result.filePaths[0]);await session.saveAutosave();publishProjectStatus();return session.getReviewState();
   });
   handle('updateDecision', async request => { session.updateDecision(request); return session.applyPacing(); });
+  handle('loadVisualReview', async () => session.loadVisualReview());
   handle('confirmVisualReview', async request => session.confirmVisualReview(request));
   handle('setDirections', async options => session.setDirections(options));
   handle('setPacing', async options => session.setPacing(options));
