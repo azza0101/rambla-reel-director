@@ -73,6 +73,27 @@ def _size(source,shots,at=None):
  if not rows:return 'unknown'
  totals={size:sum(s['end_frame']-s['start_frame'] for s in rows if s['shot_size']==size) for size in ['wide','medium','close','detail']}
  return max(totals,key=totals.get)
+def recover_cross_camera(units,labels,similarities,fps,threshold=.68,excluded=()):
+ """Restore unique complete speech only with cross-camera consensus and two nearby anchors."""
+ result=dict(labels);recovered=[]
+ for i,u in enumerate(units):
+  if u['id'] in excluded or labels[u['id']]!='X' or len(normalize(u['text']).split())<4 or u['text'].strip().endswith(('...','…')):continue
+  rows=[v for v in units if v['clip']==u['clip'] and labels[v['id']]!='X']
+  before=[v for v in rows if 0<=u['start']-v['end']<=2*fps]
+  after=[v for v in rows if 0<=v['start']-u['end']<=2*fps]
+  if not before or not after:continue
+  allowed={labels[max(before,key=lambda v:v['end'])['id']],labels[min(after,key=lambda v:v['start'])['id']]}
+  evidence={}
+  for j,v in enumerate(units):
+   label=labels[v['id']]
+   if v['clip']==u['clip'] or label=='X':continue
+   evidence[label]=max(evidence.get(label,-1),float(similarities[i,j]))
+  ranked=sorted(evidence.items(),key=lambda x:x[1],reverse=True)
+  if not ranked:continue
+  label,score=ranked[0];runner=ranked[1][1] if len(ranked)>1 else -1
+  if label in allowed and score>=threshold and score-runner>=.08:
+   result[u['id']]=label;recovered.append({'unit':u['id'],'label':label,'evidence':'cross_camera_semantic_consensus','score':score})
+ return result,recovered
 def build_staged(payload,report=lambda e:None):
  from transcript_align import LocalSemanticEncoder
  from automatic_editor import narrative_roles
@@ -90,6 +111,7 @@ def build_staged(payload,report=lambda e:None):
  names=prepared['cast']
  def info(u):
   n,role=labels[u['id']].split('/');return 'B'+n,names[role]
+ encoder=LocalSemanticEncoder();unit_vectors=encoder.encode([u['text'] for u in units]);labels,recovered=recover_cross_camera(units,labels,unit_vectors@unit_vectors.T,fps,excluded={x['clip']+x['unit'] for x in cleanup})
  kept=[u for u in units if labels[u['id']]!='X']
  def block(us):return {'clip_id':us[0]['clip'],'units':[u['id'] for u in us],'start':us[0]['start'],'end':us[-1]['end'],'text':' '.join(clean_text(u['text']) for u in us),'beat':info(us[0])[0],'role':info(us[0])[1]}
  shots=payload.get('shots',[]);data={'clips':[{'clip_id':cid,'shot_size':_size(s,shots)} for cid,s in sources.items()],'style':payload.get('directions',{})}
@@ -133,13 +155,13 @@ def build_staged(payload,report=lambda e:None):
     if labels[v['id']]=='X' or info(v)[0]!=info(u)[0] or (group and v['start']-group[-1]['end']>2.5*fps):break
     if info(v)[1]!=info(u)[1] and len(normalize(beats[int(info(u)[0][1:])-1]['text']).split())>5:break
     group.append(v);windows.append(block(group))
- report({'phase':'align','current':0,'total':1});encoder=LocalSemanticEncoder();vectors=encoder.encode([c['text'] for c in canonical]+[w['text'] for w in windows]);similarities=vectors[:len(canonical)]@vectors[len(canonical):].T
+ report({'phase':'align','current':0,'total':1});vectors=encoder.encode([c['text'] for c in canonical]+[w['text'] for w in windows]);similarities=vectors[:len(canonical)]@vectors[len(canonical):].T
  coverage={}
  for cid in sources:
   for role in names.values():
    rows=[u for u in kept if u['clip']==cid and info(u)[1]==role and u['ASD'] in {'visible','absent'}];yes=sum(u['end']-u['start'] for u in rows if u['ASD']=='visible');no=sum(u['end']-u['start'] for u in rows if u['ASD']=='absent')
    coverage[(cid,role)]='visible' if yes and yes/(yes+no)>=.65 else 'absent' if no and yes/(yes+no)<=.35 else 'unknown'
- roles=narrative_roles(beats,{**data['style'],'profile':'VIDEO COLICHE'});candidates=[]
+ roles=narrative_roles(beats,data['style']);candidates=[]
  for ci,c in enumerate(canonical):
   rows=[];actual=beatmap[c['beat']];narrative=roles.get(actual,{}).get('role','free')
   for wi,w in enumerate(windows):
@@ -215,7 +237,7 @@ def build_staged(payload,report=lambda e:None):
  cursor=0
  for d in decisions:
   d['timeline_start_frame']=cursor;cursor+=d['end_frame']-d['start_frame']+sum(a['end_frame']-a['start_frame'] for a in d.get('action_after',[]))
- verification={'model_classification_only':True,'human_cut_plan_used':False,'hardcoded_source_ranges':False,'classified_segments':len(labels),'dialogue_moments':len(canonical),'dialogue_beats':len(covered),'missing_dialogue':missing,'actions':len(actions),'reactions':len(reactions),'cleanup':cleanup,'policy':'semantic alternatives + speaker evidence + constrained continuity search'}
+ verification={'model_classification_only':True,'human_cut_plan_used':False,'hardcoded_source_ranges':False,'classified_segments':len(labels),'dialogue_moments':len(canonical),'dialogue_beats':len(covered),'missing_dialogue':missing,'actions':len(actions),'reactions':len(reactions),'cleanup':cleanup,'recovered_speech':recovered,'policy':'semantic alternatives + speaker evidence + constrained continuity search'}
 
  result={'engine':ENGINE,'plan_id':'groq-local','scene_id':payload.get('scene_id','scene'),'fps':fps,'decisions':decisions,'unmatched_beats':missing,'warnings':['Groq classifica il parlato; scelta camere e raccordi locali. Visibilità stimata, non identificazione personale.'],'planning_summary':{**verification,'classification':payload.get('classification_summary',{})},'visual_review_required':False}
  result['review_beats']=[{'beat_id':d['decision_id'],'kind':'dialogue','character':d['dialogue_character'],'text':canonical[i]['text'],'script_beat_id':d['beat_id']} for i,d in enumerate(decisions)]

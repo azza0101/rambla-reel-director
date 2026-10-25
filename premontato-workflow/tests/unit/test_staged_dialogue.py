@@ -24,3 +24,21 @@ class SpeakerConsistencyTests(unittest.TestCase):
   from staged_dialogue import reconcile_roles
   scene={'cast':{'P0':'UNKNOWN','P1':'ALICE','P2':'BOB'},'beats':[{'kind':'dialogue','character':'BOB'},{'kind':'action'}]}
   self.assertEqual(reconcile_roles(scene,{'clip':{'S0':'1/P1','S1':'2/P1','S2':'X'}}),{'clip':{'S0':'1/P2','S1':'2/P1','S2':'X'}})
+
+class CrossCameraTests(unittest.TestCase):
+ def test_recovers_only_anchored_complete_cross_camera_speech(self):
+  import numpy as np
+  from staged_dialogue import recover_cross_camera
+  units=[
+   {'id':'a','clip':'A','start':0,'end':30,'text':'Prima frase completa.'},
+   {'id':'b','clip':'A','start':32,'end':60,'text':'Una continuazione unica del dialogo.'},
+   {'id':'c','clip':'A','start':62,'end':90,'text':'La risposta seguente.'},
+   {'id':'d','clip':'B','start':0,'end':30,'text':'La stessa continuazione del dialogo.'},
+   {'id':'e','clip':'A','start':200,'end':230,'text':'Una indicazione della troupe fuori scena.'}]
+  labels={'a':'1/P1','b':'X','c':'2/P2','d':'1/P1','e':'X'}
+  sims=np.eye(5);sims[1,3]=sims[4,3]=.9
+  out,recovered=recover_cross_camera(units,labels,sims,25)
+  self.assertEqual(out['b'],'1/P1');self.assertEqual(out['e'],'X')
+  self.assertEqual(len(recovered),1)
+  out,_=recover_cross_camera(units,labels,sims,25,excluded={'b'})
+  self.assertEqual(out['b'],'X')
