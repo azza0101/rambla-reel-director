@@ -116,20 +116,40 @@ async function getSelectedTranscriptions(sdk) {
   }));
 }
 
+async function analyzedMediaItems(pool,ids,records=[],timeline){
+ if(!Array.isArray(ids) || !ids.length || new Set(ids).size!==ids.length)throw new Error('Elenco sorgenti analizzate non valido');
+ const needed=new Set(ids),found=new Map(),folders=[await pool.GetRootFolder()],visited=new Set();
+ while(folders.length && needed.size){
+  const folder=folders.pop();if(!folder || visited.has(folder))continue;visited.add(folder);
+  for(const item of await folder.GetClipList() || []){const id=String(await item.GetMediaId());if(needed.has(id)){found.set(id,item);needed.delete(id);}}
+  if(needed.size)folders.push(...await folder.GetSubFolderList() || []);
+ }
+ if(needed.size)throw new Error('Sorgenti analizzate non trovate nel Media Pool: '+needed.size+'. Ripristina le clip originali nel progetto.');
+ for(const record of records){
+  const item=found.get(record.media_id);if(!item || !record.path)continue;
+  const props=await item.GetClipProperty() || {},norm=value=>{const p=require('node:path').normalize(String(value));return process.platform==='win32'?p.toLowerCase():p;};
+  let changed=norm(props['File Path'] || props['File Name'] || '')!==norm(record.path) || /timeline/i.test(String(props.Type || ''));
+  const fps=Number(String(props.FPS || props['Frame Rate'] || await timeline.GetSetting('timelineFrameRate')).match(/[0-9]+(?:\.[0-9]+)?/)?.[0]);
+  let frames=Number(props.Frames);if(!Number.isFinite(frames) || frames<=0){const duration=String(props.Duration || '');frames=/^\d{2}:\d{2}:\d{2}[:;]\d{2}$/.test(duration)?timecodeToFrames(duration,fps):Math.round(Number(duration)*fps);}
+  if(record.fps && (!Number.isFinite(fps) || Math.abs(fps-record.fps)>.001))changed=true;
+  if(record.duration_frames && frames!==record.duration_frames)changed=true;
+  if(record.start_tc && String(await item.GetClipProperty('Start TC') || props['Start TC'] || '')!==record.start_tc)changed=true;
+  if(changed)throw new Error('La sorgente analizzata è cambiata in Resolve: '+(record.name || record.media_id)+'. Ripristina il collegamento originale o rianalizza.');
+ }
+ return ids.map(id=>found.get(id));
+}
 async function createTimeline(sdk, name, edits, expected = {}) {
   const { pm, project, pool, timeline: sourceTimeline } = await getResolve(sdk);
   const beforeProject = String(await project.GetUniqueId()), beforeTimeline = String(await sourceTimeline.GetUniqueId());
   if ((expected.projectId && expected.projectId !== beforeProject) || (expected.timelineId && expected.timelineId !== beforeTimeline)) throw new Error('Progetto o timeline cambiati: crea una nuova analisi');
-  const items = await selectedClips(pool);
-  const selectedIds = await Promise.all(items.map(async item => String(await item.GetMediaId())));
-  const expectedIds = expected.mediaIds || expected.media?.map(item => item.media_id);
-  if (expectedIds && (expectedIds.length !== selectedIds.length || expectedIds.some((id, index) => id !== selectedIds[index]))) throw new Error('La selezione dei media è cambiata: riseleziona le clip e ricalcola');
+  const expectedIds=expected.mediaIds || expected.media?.map(item=>item.media_id);
+  const items=expectedIds ? await analyzedMediaItems(pool,expectedIds,expected.media || [],sourceTimeline) : await selectedClips(pool);
   const byId = new Map(await Promise.all(items.map(async item => [String(await item.GetMediaId()), item])));
-  if (!edits.length || edits.some(edit => !byId.has(edit.media_id) || edit.end_frame <= edit.start_frame)) throw new Error('Piano incompleto o media non selezionato; timeline non creata');
+  if (!edits.length || edits.some(edit => !byId.has(edit.media_id) || edit.end_frame <= edit.start_frame)) throw new Error('Piano incompleto o sorgente analizzata non disponibile; timeline non creata');
   const reviewed=edits.flatMap(edit=>{
     if(!edit.reaction_before || edit.reaction_enabled===false)return [edit];
     const reaction=require('./ipc_security').validateReaction(edit.reaction_before,expected.media?.find(m=>m.media_id===edit.reaction_before.media_id));
-    if(!byId.has(reaction.media_id))throw new Error('Media di reazione non selezionato');
+    if(!byId.has(reaction.media_id))throw new Error('Sorgente della reazione non disponibile');
     return reaction.enabled?[{...reaction,beat_id:edit.beat_id},edit]:[edit];
   });
   const expanded = reviewed.flatMap(edit => {

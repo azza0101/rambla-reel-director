@@ -110,7 +110,7 @@ function timelineSdk({ appendResultCount = 3, sourceBase = 0 } = {}) {
  const media={GetMediaId:async()=> 'm1',GetName:async()=> 'master.mp4',GetAudioMapping:async()=>JSON.stringify({embedded_audio_channels:2,track_mapping:{'1':{type:'Stereo',channel_idx:[1,2],mute:false}}}),SetAudioMapping:async()=>{reviewTimeline.sourceMutations++;throw Error('Source mutation forbidden');},SetClipColor:async()=>{reviewTimeline.sourceMutations++;throw Error('Source mutation forbidden');}};
  const sourceTimeline={GetUniqueId:async()=> 'source-timeline',GetName:async()=> 'SOURCE',GetSetting:async()=> '25'};
  const makeFolder=name=>{const f={name,children:[],clips:[],GetName:async()=>name,GetSubFolderList:async()=>f.children,GetClipList:async()=>f.clips};return f;};
- const rootFolder=makeFolder('Master'),sourceFolder=makeFolder('Rushes');rootFolder.children.push(sourceFolder);let currentFolder=sourceFolder;
+ const rootFolder=makeFolder('Master'),sourceFolder=makeFolder('Rushes');rootFolder.children.push(sourceFolder);sourceFolder.clips.push(media);let currentFolder=sourceFolder;
  const timelineMedia={GetMediaId:async()=> 'review-media'};
  const tracks={video:[{}],audio:[{type:'stereo'}]};
  const reviewTimeline={items:[],audio:[],links:[],sourceMutations:0,deleted:false,
@@ -221,3 +221,7 @@ test('connection snapshot remains healthy when selected items cannot be read',as
  const sdk={GetResolvePromise:async()=>({GetProjectManager:async()=>({GetCurrentProject:async()=>project})})};
  const status=await require('../../plugin/resolve_adapter').snapshot(sdk,{includeSelection:false});assert.equal(status.project,'P');assert.deepEqual(status.selected,[]);await assert.rejects(require('../../plugin/resolve_adapter').snapshot(sdk),/invalid selection/);
 });
+
+test('creates from analyzed Media Pool IDs after selection and current bin change',async()=>{const c=timelineSdk();c.sourceFolder.clips.push(c.media);c.pool.GetSelectedClips=async()=>{throw Error('Selection must not be consulted');};await c.pool.SetCurrentFolder(c.rootFolder);const result=await createTimeline(c.sdk,'SAVED SOURCES',[{media_id:'m1',start_frame:10,end_frame:40}],{media:[{media_id:'m1'}]});assert.equal(result.included,1);assert.equal(await c.pool.GetCurrentFolder(),c.rootFolder);assert.equal(c.project.active,c.sourceTimeline);});
+test('missing analyzed sources fail before timeline or folders are created',async()=>{const c=timelineSdk();c.sourceFolder.clips=[];c.pool.GetSelectedClips=async()=>[c.media];await assert.rejects(createTimeline(c.sdk,'MISSING',[{media_id:'m1',start_frame:10,end_frame:40}],{media:[{media_id:'m1'}]}),/non.*trovat|mancant/i);assert.equal(c.reviewTimeline.requestedName,undefined);assert.equal(c.rootFolder.children.length,1);});
+test('relinked analyzed media fail before creating a timeline',async()=>{const c=timelineSdk();c.sourceFolder.clips.push(c.media);c.media.GetClipProperty=async()=>({'File Path':'E:/replacement.mp4',Frames:'100',FPS:'25'});await assert.rejects(createTimeline(c.sdk,'RELINKED',[{media_id:'m1',start_frame:10,end_frame:40}],{media:[{media_id:'m1',path:'E:/original.mp4',fps:25,duration_frames:100}]}),/sorgente.*cambiat|media.*cambiat/i);assert.equal(c.reviewTimeline.requestedName,undefined);});

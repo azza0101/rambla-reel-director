@@ -90,3 +90,10 @@ Riprodotto sul pannello installato 0.9.3: errore nativo «Not initialized, call 
 ## 0.9.6 — gruppi volti compatti
 
 Test browser con vero Session/worker locale: volti e inquadrature entrambi chiusi all’apertura, pulsanti indipendenti e aria-expanded corretto, due gruppi assegnati allo stesso personaggio e valori conservati dopo chiusura/riapertura, zoom di volti e still, conferma visiva tramite il motore e sblocco timeline. Verificata immagine compatta della sezione; nessuna timeline creata da questo test.
+
+
+## 0.9.7 — creazione indipendente dalla selezione corrente
+
+Riprodotto il blocco causato dal confronto ordinato con GetSelectedClips. Risoluzione per ID delle sorgenti analizzate nell’albero Media Pool, senza cambiare cartella; controlli sulle proprietà del media e mantenimento della validazione file/progetto/timeline. Test automatici: creazione dopo cambio selezione/cartella con GetSelectedClips che solleva intenzionalmente errore se consultato; sorgenti mancanti e ricollegate fermate prima di creare timeline/cartelle. 82 test Node superati. Test UI con Session/worker locale: errore di creazione mostrato accanto al pulsante e comando riabilitato.
+
+Prova nativa nel progetto test-mcp: nuova timeline PREMONTATO v0.9.7 - TEST SORGENTI SALVATE, cartella Premontato/v0.9.7/Test; 12 battute, 14 segmenti AV, 1788 frame, tre tracce video e tre audio mono. Sorgenti e tagli riletti dalla timeline con adapter reale tramite scripting Python; timeline originale verificata invariata e ripristinata. Il test nativo non è un click-through del pannello Electron e non rifà l’analisi editoriale.

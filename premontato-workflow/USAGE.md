@@ -62,3 +62,10 @@ Accanto alla creazione timeline sono elencati i passaggi mancanti con collegamen
 Anche i gruppi volti sono chiusi inizialmente: «Apri controllo volti» mostra miniature e associazioni ai personaggi. Il comando è indipendente da «Apri controllo inquadrature». Chiudere una sezione non elimina le associazioni o le correzioni e non sostituisce la conferma visiva richiesta.
 
 I gruppi sono generati nel runtime locale con YuNet/SFace; non sono gruppi importati dal catalogo IntelliSearch. Il comando IntelliSearch avvia separatamente l’analisi nativa Resolve; gli eventuali metadati People delle clip sono informativi.
+
+
+## 0.9.7 — timeline dalle sorgenti analizzate
+
+Dopo l’analisi puoi cambiare selezione o cartella nel Media Pool: la creazione ritrova le clip del progetto tramite gli ID salvati. Non occorre riselezionare le riprese o rifare l’analisi per un semplice cambio selezione. Restano i controlli su progetto/timeline, file originali e proprietà Resolve (percorso, durata, fps e timecode). Una sorgente rimossa o ricollegata a un altro file interrompe la creazione prima di aggiungere la timeline.
+
+Il pannello mostra «Creazione timeline in corso» e risultato o errore accanto al pulsante.
