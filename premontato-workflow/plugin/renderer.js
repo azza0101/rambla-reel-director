@@ -193,6 +193,7 @@ function renderVisualIntervals(state,cast){
   card.addEventListener('change',()=>{card.dataset.changed='true';visualDirty=true;captureVisualOverrides();$('visual-confirm').checked=false;$('visual-save').disabled=true;$('reviewed').checked=false;$('make-timeline').disabled=true;if(state.analysis.plan)state.analysis.plan.visual_review_required=true;});clips.get(interval.media_id).append(card);
  }
 }
+$('visual-faces-toggle').addEventListener('click',()=>{const panel=$('visual-people-panel'),button=$('visual-faces-toggle');panel.hidden=!panel.hidden;button.setAttribute('aria-expanded',String(!panel.hidden));button.textContent=panel.hidden?'Apri controllo volti':'Chiudi controllo volti';});
 $('visual-debug-toggle').addEventListener('click',()=>{const panel=$('visual-intervals'),button=$('visual-debug-toggle');panel.hidden=!panel.hidden;button.setAttribute('aria-expanded',String(!panel.hidden));button.textContent=panel.hidden?'Apri controllo inquadrature':'Chiudi controllo inquadrature';});
 $('visual-confirm').addEventListener('change',()=>{$('visual-save').disabled=!$('visual-confirm').checked || !window.__lastReviewState?.analysis?.visualReview?.intervals?.length;});
 $('visual-save').addEventListener('click',async()=>{

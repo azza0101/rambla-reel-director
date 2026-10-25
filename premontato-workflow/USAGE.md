@@ -55,3 +55,10 @@ Se una versione precedente ha già riaperto il pannello fuori da Resolve, chiudi
 I gruppi volti restano visibili; la stessa persona può avere più gruppi, ai quali puoi assegnare lo stesso personaggio. Clicca una miniatura per ingrandirla. I frame interi e i controlli dei singoli intervalli sono chiusi per impostazione iniziale: aprili con «Apri controllo inquadrature». Chiudere la sezione non elimina le modifiche.
 
 Accanto alla creazione timeline sono elencati i passaggi mancanti con collegamenti diretti. La conferma finale delle battute non sostituisce «Conferma e ricalcola il montaggio» della revisione visiva. Le correzioni in bozza continuano a bloccare la timeline finché non vengono applicate.
+
+
+## 0.9.6 — controllo volti su richiesta
+
+Anche i gruppi volti sono chiusi inizialmente: «Apri controllo volti» mostra miniature e associazioni ai personaggi. Il comando è indipendente da «Apri controllo inquadrature». Chiudere una sezione non elimina le associazioni o le correzioni e non sostituisce la conferma visiva richiesta.
+
+I gruppi sono generati nel runtime locale con YuNet/SFace; non sono gruppi importati dal catalogo IntelliSearch. Il comando IntelliSearch avvia separatamente l’analisi nativa Resolve; gli eventuali metadati People delle clip sono informativi.

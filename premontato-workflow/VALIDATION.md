@@ -85,3 +85,8 @@ Riprodotto sul pannello installato 0.9.3: errore nativo «Not initialized, call 
 ## 0.9.5 — conferme esplicite e anteprime compatte
 
 79 test Node superati, inclusa regressione sulla conferma finale che non deve nascondere una revisione visiva mancante. Browser locale con renderer vero e Session del plugin: motivo del blocco, collegamento alla revisione, frame chiusi per impostazione iniziale, apertura/chiusura, immagini di volti/still ingrandibili e decodificate, timeline abilitata dopo conferma e nuovamente bloccata da una correzione in bozza. Trasporto IPC sostituito dal ponte locale; nessuna timeline creata in Resolve da questo test UI.
+
+
+## 0.9.6 — gruppi volti compatti
+
+Test browser con vero Session/worker locale: volti e inquadrature entrambi chiusi all’apertura, pulsanti indipendenti e aria-expanded corretto, due gruppi assegnati allo stesso personaggio e valori conservati dopo chiusura/riapertura, zoom di volti e still, conferma visiva tramite il motore e sblocco timeline. Verificata immagine compatta della sezione; nessuna timeline creata da questo test.
