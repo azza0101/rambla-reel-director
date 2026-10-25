@@ -81,3 +81,8 @@ Aggiorna mostra immediatamente una barra, tempo trascorso e fasi: credenziale lo
 ## 0.9.9 — campi e personaggi a tendina
 
 Il controllo visivo è raccolto nella tendina «Campi e personaggi», chiusa all’apertura. La casella di conferma, il comando di ricalcolo e lo stato restano all’esterno. Chiudere la tendina non perde le correzioni. Il collegamento alla conferma mancante vicino alla timeline apre direttamente la tendina.
+
+
+## 0.9.10 — elenco battute a tendina
+
+L’elenco completo di battute, trascrizioni, alternative e campi In/Out è raccolto in «Battute e scelte di montaggio», chiuso inizialmente. Il titolo riporta il numero di battute abbinate e non abbinate. La conferma finale, le indicazioni sulle tracce, gli eventuali blocchi e il comando Crea timeline restano all’esterno.

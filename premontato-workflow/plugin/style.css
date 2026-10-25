@@ -26,3 +26,5 @@
 #update-progress-bar{display:block;width:100%;height:12px;accent-color:var(--teal)}
 
 #visual-controls>summary{cursor:pointer;font-weight:700;font-size:18px;color:var(--text);padding:8px 0}#visual-controls[open]>summary{margin-bottom:10px}#visual-controls{margin-bottom:12px}
+
+#beat-review>summary{cursor:pointer;font-weight:700;color:var(--text);padding:12px 0}#beat-review{margin:16px 0;border-block:1px solid var(--line)}

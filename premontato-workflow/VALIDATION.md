@@ -109,3 +109,8 @@ Prova nativa Resolve: PREMONTATO v0.9.8 - TEST APERTURA AUTO, 12 battute/14 segm
 ## 0.9.9 — conferma visiva compatta
 
 Browser locale con renderer e Session/worker: tendina esterna chiusa inizialmente, conferma e ricalcolo visibili all’esterno, collegamento dal blocco timeline che apre la tendina, ricalcolo e abilitazione timeline anche dopo averla richiusa. Verificate anche le regressioni su associazioni, zoom e progressi aggiornamento. Screenshot della sezione chiusa ispezionato. Nessuna modifica al motore di montaggio o prova nativa aggiuntiva richiesta per questa modifica di presentazione.
+
+
+## 0.9.10 — elenco montaggio compatto
+
+Test browser con Session/worker: elenco battute chiuso inizialmente, conferma finale e comando timeline fuori dalla tendina, apertura dei controlli e applicazione dei blocchi per bozze; conservati i test su conferma visiva e progressi aggiornamento. Nessuna modifica al motore o alle sorgenti.
