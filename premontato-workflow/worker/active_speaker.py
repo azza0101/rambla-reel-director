@@ -120,6 +120,7 @@ class ActiveSpeaker:
         stages['decode']=time.perf_counter()-clock;work['decoded_samples']=1;clock=time.perf_counter()
         from local_audio import load_pcm16
         pcm,_=load_pcm16(source)
+        stages['pcm_load']=time.perf_counter()-clock;clock=time.perf_counter()
         audio=pcm[round(offset/fps*16000):round((offset/fps+duration)*16000)];length=len(video)
         if not len(audio):raise RuntimeError('Audio del parlante non leggibile')
         features=mfcc(audio);features=np.pad(features,((0,max(0,length*4-len(features))),(0,0)),mode='edge')[:length*4][None].astype(np.float32)
@@ -163,8 +164,15 @@ class ActiveSpeaker:
 
 def analyze_candidate(source,start,end):
     global _ANALYZER
-    if _ANALYZER is None:_ANALYZER=ActiveSpeaker()
-    return _ANALYZER.analyze(source,start,end)
+    from runtime_trace import record_asd
+    clock=time.perf_counter()
+    try:
+        if _ANALYZER is None:_ANALYZER=ActiveSpeaker()
+        result=_ANALYZER.analyze(source,start,end)
+    except Exception:
+        record_asd({},time.perf_counter()-clock,error=True);raise
+    record_asd(result,time.perf_counter()-clock)
+    return result
 
 
 def verify_listener(source,start,end,answer_start,answer_end):

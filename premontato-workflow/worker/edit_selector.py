@@ -50,11 +50,35 @@ def rms_silences(samples, sample_rate, fps):
 
 def analyze_audio(source):
     from local_audio import load_pcm16
+    from time import perf_counter
     import numpy as np
     try:
-        audio,metadata=load_pcm16(source)
-        return {'status':'ok',**rms_silences(audio.astype(np.float32)/32768,16000,float(source.get('fps') or 25)),'pcm_cache_hit':metadata['cache_hit']}
+        clock=perf_counter();audio,metadata=load_pcm16(source);pcm_seconds=perf_counter()-clock
+        clock=perf_counter();measured=rms_silences(audio.astype(np.float32)/32768,16000,float(source.get('fps') or 25));scan_seconds=perf_counter()-clock
+        return {'status':'ok',**measured,'pcm_cache_hit':metadata['cache_hit'],'timing':{'pcm_seconds':pcm_seconds,'rms_seconds':scan_seconds}}
     except Exception as error:return {'status':'unavailable','reason':str(error)+': pause conservate'}
+
+
+from runtime_trace import trace_rms
+
+@trace_rms
+def cached_audio(source):
+    """One RMS cache for IPC, listening inserts and script breaths."""
+    import os
+    from pathlib import Path
+    from cache import get_cache,cache_key,write_cache
+    try:
+        stat=Path(source['path']).stat()
+        fingerprint=f"{source['media_id']}:{stat.st_size}:{stat.st_mtime_ns}"
+    except (KeyError,OSError):
+        return {**analyze_audio(source),'cache_hit':False}
+    options={'fps':source.get('fps',25),'duration_frames':source['duration_frames']}
+    root=os.environ.get('PREMONTATO_CACHE_DIR','.premontato-cache')
+    cached=get_cache(root,fingerprint,'audio-rms-v1',options)
+    if cached is not None:return {**cached,'cache_hit':True}
+    result=analyze_audio(source)
+    if result.get('status')=='ok':write_cache(root,cache_key(fingerprint,'audio-rms-v1',options),result)
+    return {**result,'cache_hit':False}
 
 
 def _speech_words(source):

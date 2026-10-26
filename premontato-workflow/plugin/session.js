@@ -161,9 +161,10 @@ class Session {
     this.state.error = null;
     let lastPhaseIndex = 0;
     const startedAt = Date.now(); let lastPhase, phaseStartedAt = startedAt;
+    const phaseSeconds={};
     const progress = (phase, phaseIndex, percent, label, current, total, skipped=false) => {
       if (phaseIndex >= 0) lastPhaseIndex = phaseIndex;
-      if (phase !== lastPhase) { lastPhase = phase; phaseStartedAt = Date.now(); }
+      if (phase !== lastPhase) { if(lastPhase)phaseSeconds[lastPhase]=(phaseSeconds[lastPhase] || 0)+(Date.now()-phaseStartedAt)/1000;lastPhase = phase; phaseStartedAt = Date.now(); }
       this.onProgress?.({ phase, phaseIndex, percent: Math.round(percent), label, current, total, skipped, elapsedSeconds: Math.round((Date.now()-startedAt)/1000), phaseElapsedSeconds: Math.round((Date.now()-phaseStartedAt)/1000) });
     };
     try {
@@ -201,7 +202,7 @@ class Session {
       const planningSources = takes.flatMap(group => group.confirmed ? group.segments.map(take => ({ ...sources.find(source => source.media_id === group.media_id), ...take,
         segments: sources.find(source => source.media_id === group.media_id).segments.filter(segment => segment.start_frame >= take.start_frame && segment.start_frame < take.end_frame) })) : []);
       const audio = {};
-      // groq_staged_v1 keeps source timing and does not consume RMS silence data.
+      // groq_staged_v1 preserves timing; targeted listener/breath checks load shared RMS only when needed.
       // Active-speaker checks still load their own PCM samples when needed.
       const measurePauses = this.state.pacingSettings.enabled && !this.useGroq();
       const audioSources = measurePauses ? sources.filter(source => source.path) : [];
@@ -229,6 +230,7 @@ class Session {
         : ['Non ho trovato una corrispondenza sufficientemente chiara tra dialoghi e copione; controlla trascrizione e clip selezionate.'];
       if (shotCacheHits) warnings.push(`Analisi visiva riusata dalla cache locale per ${shotCacheHits} clip.`);
       if (this.state.error) warnings.push(this.state.error);
+      if(plan)plan.performance={...(plan.performance || {}),session:{total_seconds:(Date.now()-startedAt)/1000,phase_seconds:{...phaseSeconds,[lastPhase]:(phaseSeconds[lastPhase] || 0)+(Date.now()-phaseStartedAt)/1000}}};
       this.state.analysis = { script: parsed, sceneSelection, selectedScene, warnings, takes, shots, audio, planningSources, plan, visualReview, parsedBeats: beats };
       this.state.stage = selectedScene?'review':'awaiting_scene';
       if(selectedScene)progress('complete',8,100,'Analisi completata');
@@ -240,16 +242,21 @@ class Session {
   async buildPlan(payload, timeoutMs=300000, onProgress) {
     if(this.useGroq()){
       const prepared=await this.request('prepare_dialogue',payload,timeoutMs);
+      const classificationStarted=performance.now();
       const classification=await this.groq.classify(prepared,event=>{
         const label=event.phase==='quota'?'Quota Groq: attendo '+event.seconds+' secondi': 'Pulizia e allineamento Groq · '+event.current+'/'+event.total+(event.cache_hit?' · cache verificata':'');
         this.onProgress?.({phase:'plan',phaseIndex:6,percent:89+Math.round(3*event.current/Math.max(1,event.total)),label,current:event.current,total:event.total});
       });
+      const classificationSeconds=(performance.now()-classificationStarted)/1000;
+      const editorialStarted=performance.now();
       let editorial;
       if(typeof this.groq.planEditorial==='function'){
         try{editorial=await this.groq.planEditorial(prepared,classification.labels,payload.directions || this.state.directions,event=>this.onProgress?.({phase:'plan',phaseIndex:6,percent:92,label:event.phase==='quota'?'Piano editoriale: attendo quota Groq '+event.seconds+' s':'Lettura editoriale del testo'+(event.cache_hit?' · cache verificata':''),current:0,total:1}));}
         catch(error){if(/annullat|cancel|abort/i.test(error.message))throw error;editorial={events:[],summary:{status:'unavailable'},warnings:['Lettura editoriale non disponibile: '+error.message+'. Uso solo regole locali conservative.']};}
       }
-      const result=await this.request('build_staged',{...payload,prepared,classifications:classification.labels,classification_summary:classification.summary,editorial,settings:this.state.pacingSettings},timeoutMs,event=>this.onProgress?.({phase:'plan',phaseIndex:6,percent:event.phase==='speaker'?92+Math.round(3*event.current/Math.max(1,event.total)):95,label:event.phase==='speaker'?'Controllo locale del parlante · '+event.current+'/'+event.total:event.phase==='listening'?'Reazioni e respiri verificati · '+event.current+'/'+event.total:'Scelta locale delle camere e verifica continuità',current:event.current,total:event.total}));
+      const editorialSeconds=(performance.now()-editorialStarted)/1000;
+      const result=await this.request('build_staged',{...payload,prepared,classifications:classification.labels,classification_summary:classification.summary,editorial,settings:this.state.pacingSettings},timeoutMs,event=>this.onProgress?.({phase:'plan',phaseIndex:6,percent:event.phase==='speaker'?92+Math.round(3*event.current/Math.max(1,event.total)):95,label:event.phase==='speaker'?'Controllo locale del parlante · '+event.current+'/'+event.total:event.phase==='listening'?(event.step==='breaths'?'Verifico respiri':'Cerco reazioni')+' · '+event.current+'/'+event.total+(event.candidates_checked!==undefined?' · '+event.candidates_checked+' candidati verificati':''):'Scelta locale delle camere e verifica continuità',current:event.current,total:event.total}));
+      result.performance={...(result.performance || {}),groq:{classification_seconds:classificationSeconds,editorial_seconds:editorialSeconds}};
       return result;
     }
 

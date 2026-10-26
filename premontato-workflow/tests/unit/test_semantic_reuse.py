@@ -56,7 +56,7 @@ class SemanticReuseTests(unittest.TestCase):
             self.assertEqual(factory.call_count, 1)
             self.assertEqual(sum(encoder.model.run.call_count for encoder in self.encoders), inference_count)
         self.assertIn(('t', 'b'), hits)
-        self.assertEqual(first, second)
+        self.assertEqual({k:v for k,v in first.items() if k!='performance'}, {k:v for k,v in second.items() if k!='performance'})
         self.assertEqual(first['decisions'][0]['matched_start_frame'], 10)
         self.assertEqual(first['decisions'][0]['matched_end_frame'], 59)
         self.assertEqual(self.payload, original)
