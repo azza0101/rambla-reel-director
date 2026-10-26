@@ -27,3 +27,22 @@ Direzione aggiornata: la master serve soprattutto a dare contesto all’inizio, 
 Durante una proposta che crea tensione, inserire la reazione di chi ascolta prima del rilascio sulla larga, quando la copertura è verificata. La reazione può coprire la coda della battuta precedente conservandone l’audio. Non inventare espressioni o attribuzioni personali.
 
 Mai accorciare un intervallo con un jump cut sullo stesso campo: conservare la continuità oppure usare una copertura diversa. Unire fisicamente i tratti contigui della stessa ripresa. Conservare le azioni tra le battute, per esempio l’uscita di lei e l’avvicinamento di Claudio, usando la take larga ancorata ai dialoghi; verificare la durata del raccordo.
+
+
+## Svolte di temperatura e reazione del destinatario
+
+Indicazione dell’autore, 26 ottobre 2026: un richiamo improvviso, un’accusa, una rivelazione, un ordine o un cambio di interlocutore possono cambiare la temperatura della scena. Leggere il testo e il contesto della battuta per individuare il punto della svolta, la persona coinvolta e la priorità di mostrarne l’ascolto. Non usare il volume audio o il solo punto esclamativo come prova sufficiente.
+
+Esempio editoriale: quando la madre chiama «SANDRO!», cercare subito dopo il richiamo la reazione di Ludovica, mantenendo sotto l’audio della madre che prosegue. L’esempio non deve diventare una condizione sul nome SANDRO, sul file o sul secondo 44. L’istante va ancorato alle parole temporizzate; la copertura deve appartenere al momento narrativo pertinente e superare i controlli di ascolto e continuità. Se manca un candidato verificato, segnalarlo invece di prendere un volto silenzioso arbitrario.
+
+## Inserto e ritorno al parlante
+
+Preferenza generale: parlante → ascoltatore → ritorno al parlante prima della chiusura della sua battuta, poi eventuale cambio di turno. La reazione è un inserto motivato e non deve automaticamente diventare la nuova inquadratura principale. Lasciare un ritorno leggibile, evitando un brevissimo lampo del parlante.
+
+Eccezioni intenzionali: si può restare sull’ascoltatore quando sta per prendere la parola, quando la sua reazione è la chiusura della gag o quando la regia richiede di sospendere sul suo volto. Non trasformare A–B–A in un’alternanza meccanica. Motivare l’eccezione nel piano editoriale.
+
+Vincoli confermati: ripresa base e parlato completi su V2/A2; reazioni solo video su V3, almeno 1,5 secondi. Non accorciare una reazione sotto questa soglia per far entrare il ritorno: saltare l’inserto o usare una copertura continua pertinente.
+
+## Stato di implementazione al feedback sulla 0.11.9
+
+Questo documento conserva le preferenze dell’autore; non è un prompt letto automaticamente dal motore. Nella 0.11.9 Groq classifica unità di parlato, non svolte editoriali. Le reazioni locali sono ancorate allo stesso beat e vincolate alla coda: validateOverlay richiede offset + durata = durata della battuta. Per applicare le nuove preferenze servono eventi narrativi strutturati dal testo (con ancore verificabili), ricerca della copertura pertinente e supporto a inserti interni con ritorno. Le due nuove regole sono salvate ma non ancora eseguite dalla 0.11.9.
