@@ -180,6 +180,7 @@ async function createTimeline(sdk, name, edits, expected = {}) {
   const raw=reviewed.flatMap((value,index)=>{
     const edit={...value,field_color_key:fieldColorKey(value,index)};
     if(!byId.has(edit.media_id))throw Error('Sorgente del raccordo non disponibile');
+    if(edit.kind==='reaction' && edit.end_frame-edit.start_frame<Math.ceil(1.5*(Number(timelineFps)||25)))throw Error('Reazione troppo breve: minimo 1,5 secondi');
     const ranges=edit.source_ranges ?? [{start_frame:edit.start_frame,end_frame:edit.end_frame}];
     if(!Array.isArray(ranges) || !ranges.length || ranges.some((r,i)=>!Number.isInteger(r.start_frame)||!Number.isInteger(r.end_frame)||r.end_frame<=r.start_frame||r.start_frame<edit.start_frame||r.end_frame>edit.end_frame||(i>0 && r.start_frame<ranges[i-1].end_frame)))throw Error('Intervalli ritmo non validi');
     const overlay=edit.reaction_overlay && security.validateOverlay(edit.reaction_overlay,edit,expected.media?.find(m=>m.media_id===edit.reaction_overlay.media_id));

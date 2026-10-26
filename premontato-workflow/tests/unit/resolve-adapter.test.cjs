@@ -208,7 +208,7 @@ test('normalizes camera-edge timestamps and excludes nonspoken Resolve placehold
  });
 
 test('inserts a reviewed reaction before the dialogue on synchronized mono audio and close video tracks',async()=>{
- const {sdk,reviewTimeline,project,sourceTimeline}=timelineSdk({appendResultCount:2});const reaction={kind:'reaction',media_id:'m1',take_id:'t',start_frame:150,end_frame:180,shot_size:'close',character:'LUCA',enabled:true,basis:'verified_silent_preroll',speaker_coverage:'visible'};
+ const {sdk,reviewTimeline,project,sourceTimeline}=timelineSdk({appendResultCount:2});const reaction={kind:'reaction',media_id:'m1',take_id:'t',start_frame:150,end_frame:190,shot_size:'close',character:'LUCA',enabled:true,basis:'verified_silent_preroll',speaker_coverage:'visible'};
  const result=await createTimeline(sdk,'REACTION',[{media_id:'m1',start_frame:200,end_frame:240,shot_size:'wide',reaction_before:reaction}],{media:[{media_id:'m1',duration_frames:500}]});
  assert.equal(result.included,1);assert.equal(result.segments,2);assert.equal(result.audioSegments,2);assert.deepEqual(reviewTimeline.items.map(x=>[x.clip.startFrame,x.clip.trackIndex]),[[150,3],[200,2]]);assert.equal(project.active,sourceTimeline);
  const broken=timelineSdk();await assert.rejects(createTimeline(broken.sdk,'BAD',[{media_id:'m1',start_frame:200,end_frame:240,reaction_before:{...reaction,end_frame:900}}],{media:[{media_id:'m1',duration_frames:500}]}),/reazione/i);
@@ -291,3 +291,5 @@ test('scripted close hold requires verified listening and measured silence',()=>
 });
 
 test('refuses a listening overlay shorter than 1.5 seconds before creating a timeline',async()=>{const c=timelineSdk();const other={...c.media,GetMediaId:async()=>'m2'};c.sourceFolder.clips.push(other);const o={kind:'reaction',basis:'verified_listener',media_id:'m2',take_id:'t',start_frame:200,end_frame:230,offset_frames:70,shot_size:'close',speaker_coverage:'visible',enabled:true,evidence:{verified:true}};await assert.rejects(createTimeline(c.sdk,'SHORT',[{media_id:'m1',start_frame:0,end_frame:100,reaction_overlay:o}],{media:[{media_id:'m1',duration_frames:500,fps:25},{media_id:'m2',duration_frames:500,fps:25}]}),/1[,.]5|breve/);assert.equal(c.reviewTimeline.requestedName,undefined);});
+
+test('saved standalone reactions also respect the hard 1.5-second floor',async()=>{const c=timelineSdk();const reaction={kind:'reaction',media_id:'m1',take_id:'t',start_frame:150,end_frame:180,shot_size:'close',character:'L',enabled:true,basis:'verified_silent_preroll',speaker_coverage:'visible'};await assert.rejects(createTimeline(c.sdk,'SHORT OLD',[{media_id:'m1',start_frame:200,end_frame:250,reaction_before:reaction}],{media:[{media_id:'m1',duration_frames:500}]}),/1[,.]5|breve/);assert.equal(c.reviewTimeline.requestedName,undefined);});
