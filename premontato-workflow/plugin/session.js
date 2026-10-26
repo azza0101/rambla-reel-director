@@ -237,7 +237,12 @@ class Session {
         const label=event.phase==='quota'?'Quota Groq: attendo '+event.seconds+' secondi': 'Pulizia e allineamento Groq · '+event.current+'/'+event.total+(event.cache_hit?' · cache verificata':'');
         this.onProgress?.({phase:'plan',phaseIndex:6,percent:89+Math.round(3*event.current/Math.max(1,event.total)),label,current:event.current,total:event.total});
       });
-      const result=await this.request('build_staged',{...payload,prepared,classifications:classification.labels,classification_summary:classification.summary,settings:this.state.pacingSettings},timeoutMs,event=>this.onProgress?.({phase:'plan',phaseIndex:6,percent:event.phase==='speaker'?92+Math.round(3*event.current/Math.max(1,event.total)):95,label:event.phase==='speaker'?'Controllo locale del parlante · '+event.current+'/'+event.total:event.phase==='listening'?'Reazioni e respiri verificati · '+event.current+'/'+event.total:'Scelta locale delle camere e verifica continuità',current:event.current,total:event.total}));
+      let editorial;
+      if(typeof this.groq.planEditorial==='function'){
+        try{editorial=await this.groq.planEditorial(prepared,classification.labels,payload.directions || this.state.directions,event=>this.onProgress?.({phase:'plan',phaseIndex:6,percent:92,label:event.phase==='quota'?'Piano editoriale: attendo quota Groq '+event.seconds+' s':'Lettura editoriale del testo'+(event.cache_hit?' · cache verificata':''),current:0,total:1}));}
+        catch(error){if(/annullat|cancel|abort/i.test(error.message))throw error;editorial={events:[],summary:{status:'unavailable'},warnings:['Lettura editoriale non disponibile: '+error.message+'. Uso solo regole locali conservative.']};}
+      }
+      const result=await this.request('build_staged',{...payload,prepared,classifications:classification.labels,classification_summary:classification.summary,editorial,settings:this.state.pacingSettings},timeoutMs,event=>this.onProgress?.({phase:'plan',phaseIndex:6,percent:event.phase==='speaker'?92+Math.round(3*event.current/Math.max(1,event.total)):95,label:event.phase==='speaker'?'Controllo locale del parlante · '+event.current+'/'+event.total:event.phase==='listening'?'Reazioni e respiri verificati · '+event.current+'/'+event.total:'Scelta locale delle camere e verifica continuità',current:event.current,total:event.total}));
       return result;
     }
 
@@ -363,9 +368,10 @@ class Session {
     }
     const manual=updated.manual || ['start_frame','end_frame','shot_size','alternative_index'].some(key=>request[key]!==undefined);
     Object.assign(updated, { start_frame: start, end_frame: end, shot_size: request.shot_size ?? updated.shot_size, manual, reaction_enabled:request.reaction_enabled ?? updated.reaction_enabled, preserve_pause: request.preserve_pause ?? updated.preserve_pause });
-    delete updated.source_ranges; delete updated.pacing; delete updated.reaction_before; delete updated.reaction_overlay; delete updated.action_after;
+    if(!pauseOnly){delete updated.source_ranges; delete updated.pacing; delete updated.reaction_before; delete updated.reaction_overlay; delete updated.action_after;delete updated.editorial_event;}
+    else if(updated.reaction_enabled===false){delete updated.reaction_before;delete updated.reaction_overlay;}
     const base=plan.base_decisions?.findIndex(item=>(item.decision_id || item.beat_id)===(updated.decision_id || updated.beat_id));
-    if (base !== undefined && base>=0) plan.base_decisions[base]={...updated};
+    if (base !== undefined && base>=0){if(!pauseOnly)plan.base_decisions[base]={...updated};else{if(request.reaction_enabled!==undefined)plan.base_decisions[base].reaction_enabled=request.reaction_enabled;if(request.preserve_pause!==undefined)plan.base_decisions[base].preserve_pause=request.preserve_pause;}}
     plan.decisions[plan.decisions.indexOf(decision)] = updated;
     let cursor = 0;
     for (const item of plan.decisions) { item.timeline_start_frame = cursor; cursor += item.source_ranges?.reduce((sum,r)=>sum+r.end_frame-r.start_frame,0) ?? item.end_frame - item.start_frame; }
@@ -387,7 +393,7 @@ class Session {
     if(Object.keys(directions.markers).some(id=>!beats.some(b=>b.beat_id===id && b.kind==='dialogue')))throw new Error('Battuta delle direzioni non presente nella scena');
     let plan=analysis?.plan;
     const previous=this.state.directions || DEFAULT_DIRECTIONS;
-    const changed=directions.profile!==previous.profile || JSON.stringify(Object.entries(directions.markers).sort())!==JSON.stringify(Object.entries(previous.markers || {}).sort());
+    const changed=(analysis?.plan?.engine==='groq_staged_v1' && directions.notes!==previous.notes) || directions.profile!==previous.profile || JSON.stringify(Object.entries(directions.markers).sort())!==JSON.stringify(Object.entries(previous.markers || {}).sort());
     if(changed && analysis?.planningSources?.length && analysis.takes?.every(group=>group.confirmed)) {
       this.onProgress?.({phase:'plan',phaseIndex:6,percent:89,label:'Ricalcolo secondo le direzioni di montaggio'});
       plan=await this.buildPlan({beats,sources:analysis.planningSources,shots:analysis.shots || [],directions,semantic:true,fps:this.state.fps || 25},300000);

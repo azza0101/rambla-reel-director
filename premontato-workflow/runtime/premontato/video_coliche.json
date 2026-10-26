@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "provenance": "Author-approved preferences distilled from user-supplied Gemini reference; original video not independently verified",
+  "preferences": [
+    "Preserve a coherent two-shot for physical comedy and simultaneous reactions when available; do not alternate merely to add cuts.",
+    "During a crescendo prefer tighter coverage; a release or meaningful group entrance can justify wider coverage if it exists.",
+    "Use a listener reaction on a meaningful revelation, challenge or emotional shift while preserving full speaker audio; prefer a readable return, with intentional endings as exceptions.",
+    "Preserve an existing natural silent response or visual punchline; never manufacture silence, freeze footage or add a fixed pause quota.",
+    "Do not truncate dialogue, cut words or apply subsecond reference pacing. Reaction inserts must last at least 1.5 seconds.",
+    "Reference timing estimates and cast identifiers are not rules or mappings for the current scene. Explicit author directions prevail."
+  ]
+}

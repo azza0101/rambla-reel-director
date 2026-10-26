@@ -1,6 +1,6 @@
 {
   "name": "rambla-premontato",
-  "version": "0.11.9",
+  "version": "0.11.11",
   "private": true,
   "main": "main.js",
   "scripts": {

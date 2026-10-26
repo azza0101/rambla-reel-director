@@ -134,6 +134,9 @@ def build_staged(payload,report=lambda e:None):
   cleaned,changes=clean_restarts(c['units'],values[c['key']]);cleanup.extend({'clip':cid,**x} for x in changes)
   for u in c['units']:
    uid=cid+u['id'];labels[uid]=cleaned[u['id']];units.append({**u,'id':uid,'clip':cid,'ASD':'unknown'})
+ from editorial_director import valid_editorial,resolve_event,offcamera_candidates
+ editorial_events=valid_editorial({**payload,'prepared':prepared},beats)
+ directed=(payload.get('editorial') or {}).get('summary',{}).get('status')=='ready'
  names=prepared['cast']
  def info(u):
   n,role=labels[u['id']].split('/');return 'B'+n,names[role]
@@ -214,7 +217,10 @@ def build_staged(payload,report=lambda e:None):
     if info(v)[1]!=info(u)[1] and len(normalize(beats[int(info(u)[0][1:])-1]['text']).split())>5:break
     group.append(v);windows.append(block(group))
  report({'phase':'align','current':0,'total':1});vectors=encoder.encode([c['text'] for c in canonical]+[w['text'] for w in windows]);similarities=vectors[:len(canonical)]@vectors[len(canonical):].T
- roles=narrative_roles(beats,data['style']);candidates=[];listening_candidates=[]
+ effective_style=copy.deepcopy(data['style'])
+ for event in editorial_events:
+  if event.get('kind')=='release' and not effective_style.get('markers',{}).get(event['beat_id']):effective_style.setdefault('markers',{})[event['beat_id']]='resolution'
+ roles=narrative_roles(beats,effective_style);candidates=[];listening_candidates=[]
  for ci,c in enumerate(canonical):
   rows=[];listener_rows=[];actual=beatmap[c['beat']];narrative=roles.get(actual,{}).get('role','free')
   for wi,w in enumerate(windows):
@@ -295,7 +301,7 @@ def build_staged(payload,report=lambda e:None):
     d['action_after']=[action];actions.append(action)
  reactions=[]
  for i,d in enumerate(decisions):
-  if i:
+  if i and not directed:
    overlay=listening_overlay(d,decisions[i-1],list(sources.values()),fps,round(float(payload.get('settings',{}).get('minimum_shot_seconds',1.2))*fps),decisions)
    if overlay:decisions[i-1]['reaction_overlay']=overlay;reactions.append(overlay)
  profiles={}
@@ -305,8 +311,14 @@ def build_staged(payload,report=lambda e:None):
   if len(distinct)==1:
    anchor=max(visible,key=lambda u:u['end']-u['start']);profiles[source['media_id']]={'role':info(anchor)[1],'start':anchor['start'],'end':anchor['end']}
  from listening_reaction import add_dialogue_listening,add_scripted_breaths
+ for cid,source in sources.items():source['_editorial_shot_size']=_size(source,shots)
+ if directed:
+  context_similarities=vectors[:len(canonical)]@unit_vectors.T
+  for i,d in enumerate(decisions):
+   event=resolve_event(d,editorial_events)
+   listening_candidates[i].extend(offcamera_candidates(d,units,labels,sources,profiles,context_similarities,i,beats,event))
  report({'phase':'listening','current':0,'total':len(decisions)})
- reactions.extend(add_dialogue_listening(decisions,listening_candidates,list(sources.values()),beats,profiles,fps,minimum_shot))
+ reactions.extend(add_dialogue_listening(decisions,listening_candidates,list(sources.values()),beats,profiles,fps,minimum_shot,editorial_events if directed else None))
  actions.extend(add_scripted_breaths(decisions,list(sources.values()),beats,profiles,fps))
  report({'phase':'listening','current':len(decisions),'total':len(decisions)})
  errors=[]
@@ -317,12 +329,18 @@ def build_staged(payload,report=lambda e:None):
  cursor=0
  for d in decisions:
   d['timeline_start_frame']=cursor;cursor+=d['end_frame']-d['start_frame']+sum(a['end_frame']-a['start_frame'] for a in d.get('action_after',[]))
- verification={'model_classification_only':True,'human_cut_plan_used':False,'hardcoded_source_ranges':False,'classified_segments':len(labels),'dialogue_moments':len(canonical),'master_available':bool(masters),'reference_mode':'single_camera_continuous' if len(sources)==1 else 'master_with_coverage_recovery' if masters else 'per_beat','dialogue_beats':len(covered),'missing_dialogue':missing,'actions':len(actions),'reactions':len(reactions),'cleanup':cleanup,'recovered_speech':recovered,'policy':'semantic alternatives + speaker evidence + constrained continuity search'}
+ verification={'model_classification_only':not directed,'human_cut_plan_used':False,'hardcoded_source_ranges':False,'classified_segments':len(labels),'dialogue_moments':len(canonical),'master_available':bool(masters),'reference_mode':'single_camera_continuous' if len(sources)==1 else 'master_with_coverage_recovery' if masters else 'per_beat','dialogue_beats':len(covered),'missing_dialogue':missing,'actions':len(actions),'reactions':len(reactions),'cleanup':cleanup,'recovered_speech':recovered,'policy':'semantic alternatives + speaker evidence + constrained continuity search'}
 
  result={'engine':ENGINE,'plan_id':'groq-local','scene_id':payload.get('scene_id','scene'),'fps':fps,'decisions':decisions,'unmatched_beats':missing,'warnings':['Groq classifica il parlato; scelta camere e raccordi locali. Visibilità stimata, non identificazione personale.'],'planning_summary':{**verification,'classification':payload.get('classification_summary',{})},'visual_review_required':False}
  if not masters:result['warnings'].append('Nessuna master disponibile: montaggio dai campi presenti, senza larghe inventate o alternanze obbligatorie.')
  uncertain=[d for d in decisions if d['speaker_coverage']!='visible']
  result['planning_summary']['speaker_uncertain_moments']=len(uncertain)
+ result['editorial']={'events':editorial_events,'summary':(payload.get('editorial') or {}).get('summary',{'status':'not_available'})}
+ result['warnings'].extend((payload.get('editorial') or {}).get('warnings',[]))
+ result['planning_summary']['editorial_events']=len(editorial_events)
+ result['planning_summary']['editorial_covered_by_base']=sum(d.get('editorial_event',{}).get('status')=='covered_by_base' for d in decisions)
+ if directed:result['warnings'][0]='Groq classifica il parlato e propone intenzioni narrative; scelta delle riprese e tempi verificati localmente. Espressioni ed emozioni non sono identificate.'
+ result['planning_summary']['editorial_insertions']=sum(d.get('editorial_event',{}).get('status')=='inserted' for d in decisions)
  if uncertain:result['warnings'].append(str(len(uncertain))+' momenti con parlante fuori campo o non verificato: controlla le alternative in revisione.')
  if missing:result['warnings'].append(str(len(missing))+' dialoghi del copione senza copertura nelle riprese: visibili in revisione e omessi dalla timeline.')
  result['review_beats']=[{'beat_id':d['decision_id'],'kind':'dialogue','character':d['dialogue_character'],'text':canonical[i]['text'],'script_beat_id':d['beat_id']} for i,d in enumerate(decisions)]

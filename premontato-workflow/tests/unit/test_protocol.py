@@ -115,3 +115,16 @@ class ProtocolTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InternalReactionOwnershipTests(unittest.TestCase):
+    def test_excluding_next_turn_does_not_remove_current_internal_reaction(self):
+        sys.path.insert(0, str(ROOT / 'worker'))
+        from protocol import dispatch
+        overlay={'return_to_speaker': True, 'start_frame': 10, 'end_frame': 50, 'offset_frames': 35}
+        plan={'engine':'groq_staged_v1','decisions':[{'beat_id':'a','start_frame':0,'end_frame':120,'reaction_overlay':overlay},{'beat_id':'b','start_frame':200,'end_frame':300,'reaction_enabled':False}]}
+        result=dispatch({'protocol':1,'request_id':'internal','action':'pace_plan','payload':{'plan':plan}})['result']
+        self.assertEqual(result['decisions'][0]['reaction_overlay'],overlay)
+        plan['decisions'][0]['reaction_enabled']=False
+        result=dispatch({'protocol':1,'request_id':'disabled','action':'pace_plan','payload':{'plan':plan}})['result']
+        self.assertNotIn('reaction_overlay',result['decisions'][0])

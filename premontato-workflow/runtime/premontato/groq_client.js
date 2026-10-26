@@ -47,4 +47,5 @@ class GroqClient{
   }finally{this.controller=null;}
  }
 }
+GroqClient.prototype.planEditorial=function(scene,labels,directions,onProgress){return require('./editorial_client').planEditorial(this,scene,labels,directions,onProgress);};
 module.exports={GroqClient,validateLabels,makeRequest};

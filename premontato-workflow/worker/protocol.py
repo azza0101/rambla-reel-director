@@ -64,9 +64,11 @@ def dispatch(request):
             result['pacing_settings']=settings
             decisions=result['decisions']
             for d in decisions:
-                if d.get('reaction_enabled') is False:d.pop('reaction_before',None)
+                if d.get('reaction_enabled') is False:
+                    d.pop('reaction_before',None)
+                    if 'return_to_speaker' in d.get('reaction_overlay',{}):d.pop('reaction_overlay',None)
             for i,d in enumerate(decisions):
-                if i+1<len(decisions) and decisions[i+1].get('reaction_enabled') is False:d.pop('reaction_overlay',None)
+                if 'return_to_speaker' not in d.get('reaction_overlay',{}) and i+1<len(decisions) and decisions[i+1].get('reaction_enabled') is False:d.pop('reaction_overlay',None)
             cursor=0
             for d in decisions:
                 d['timeline_start_frame']=cursor;cursor+=sum(r['end_frame']-r['start_frame'] for r in d.get('source_ranges',[d]))+sum(a['end_frame']-a['start_frame'] for a in d.get('action_after',[]))

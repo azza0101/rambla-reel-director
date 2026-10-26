@@ -46,3 +46,9 @@ Vincoli confermati: ripresa base e parlato completi su V2/A2; reazioni solo vide
 ## Stato di implementazione al feedback sulla 0.11.9
 
 Questo documento conserva le preferenze dell’autore; non è un prompt letto automaticamente dal motore. Nella 0.11.9 Groq classifica unità di parlato, non svolte editoriali. Le reazioni locali sono ancorate allo stesso beat e vincolate alla coda: validateOverlay richiede offset + durata = durata della battuta. Per applicare le nuove preferenze servono eventi narrativi strutturati dal testo (con ancore verificabili), ricerca della copertura pertinente e supporto a inserti interni con ritorno. Le due nuove regole sono salvate ma non ancora eseguite dalla 0.11.9.
+
+
+## Profilo editoriale 0.11.11
+Il motore legge le direzioni e le preferenze curate in runtime/premontato/video_coliche.json con un passaggio Groq testuale, separato dalla classificazione del parlato e con cache propria. Le osservazioni Gemini del video di riferimento non sono verificate sul filmato originale e non sono importate direttamente come regole o timecode. Le preferenze includono reazioni motivate, ritorno leggibile al parlante, mantenimento del piano a due nelle gag fisiche se la copertura lo consente, distensione sulla larga disponibile e conservazione dei respiri già presenti. Non si autorizzano parole troncate, pause inventate o reazioni sotto 1,5 secondi.
+
+Il modello propone soltanto eventi e ancore testuali reali; il codice locale conserva la responsabilità di selezionare le riprese e temporizzare gli inserti. Questa versione implementa eventi di ascolto e distensione, non un riconoscitore generale di azioni fisiche o oggetti. Il semplice consiglio di mantenere il piano a due non costituisce una verifica automatica del gesto. Se non c’è spazio per una reazione e un ritorno leggibile, o non c’è prova di ascolto, l’intenzione resta segnalata in revisione.
