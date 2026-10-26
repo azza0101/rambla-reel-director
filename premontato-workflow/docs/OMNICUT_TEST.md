@@ -24,14 +24,12 @@ Il packaging e il canale aggiornamenti vengono verificati con test automatici, i
 
 Suite di consegna: 163 test JavaScript e 186 test Python superati, nessuno saltato. I test del profilo eseguono il codice updater generato contro release miste e verificano il rifiuto di manifest dell’altro prodotto.
 
-## Riuso progressivo dei miglioramenti Auto-Cut
+## Riuso progressivo dei miglioramenti Premontato
 
-Requisito dell'utente: poter portare miglioramenti Auto-Cut in Omni-Cut test senza copiarli a mano. La separazione dei prodotti non deve diventare una duplicazione dei motori.
+L'utente ha chiarito che il prodotto di riferimento è Premontato, non Auto-Cut. Omni-Cut test è generato dallo stesso albero sorgente Premontato con un profilo di build: il motore non viene duplicato né ricopiato a mano.
 
-Stato attuale: il profilo Omni-Cut riusa automaticamente il codice Premontato durante la build; non riusa ancora un core estratto da Auto-Cut. La base Auto-Cut ispezionata è il checkout locale api-first-v5-cloud, commit 1af7433d6e64c1e96d5f5e022de4680fd97b1c7d: il servizio FastAPI e il worker JSONL di Premontato hanno interfacce diverse. Non collegare la cartella dell'app installata né importare automaticamente l'ultimo HEAD.
+Per adottare un miglioramento: portare sul branch Omni-Cut il commit Premontato verificato, rieseguire le suite e il collaudo pertinente, incrementare la versione Omni-Cut e ricostruire con build_omnicut_test.ps1. Il builder applica soltanto le differenze di identità; worker, planner, catalogazione, modelli e dipendenze vengono ereditati dal sorgente aggiornato. Non fare merge su main senza autorizzazione.
 
-Direzione per il nucleo comune: componenti puri per trascrizione normalizzata, segmentazione e ripartenze, ripetizioni, intervalli frame e controlli del piano. UI, regia narrativa, scelta inquadrature e applicazione Resolve restano adattatori specifici. Contratti espliciti: ID sorgente, FPS, intervalli sorgente [inizio,fine), parole originali, stato e provenienza. I timestamp di Resolve, compresi quelli quantizzati, non vanno reinterpretati implicitamente da funzioni Auto-Cut che assumono tempi ASR in secondi.
-
-Ogni adozione deve indicare versione/commit del componente, eseguire i test del componente e i test di montaggio Omni-Cut (incluse reazioni V3 e gap), quindi produrre la sola release Omni-Cut. La versione comune va fissata nella build, non aggiornata al volo mentre il plugin è in uso. Interfacce e componenti vanno estratti prima di introdurre un file lock che dichiarerebbe una condivisione non ancora reale.
+L'adozione è fissata al commit della build: aggiornare Premontato sul PC non modifica al volo Omni-Cut, e viceversa. Ogni pacchetto può essere confrontato con il commit sorgente e distribuito sul proprio canale. Nessuna estrazione da Auto-Cut è necessaria.
 
 Collaudo di questa build: installer estratto e installato in cartella isolata, 18 moduli confrontati con la trasformazione sorgente, tutti i moduli Python identici. Test nativo dei moduli installati su Resolve 21.1.0.17: timeline OMNI-CUT TEST v0.1.0 nella cartella Omni-Cut test/v0.1.0/Test, due scene, gap, titoli V4, reazione V3 e audio mono corretti; timeline preesistenti preservate. Archivio aggiornamento valido, 4103 file. Apertura contemporanea dei pannelli e ciclo reale con UAC/riavvio non collaudati.
