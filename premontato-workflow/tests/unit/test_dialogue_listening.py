@@ -50,3 +50,10 @@ class MinimumReaction(unittest.TestCase):
   ds,cs,s,b,p=self.fixture();ds[0].update(end_frame=150,source_ranges=[{'start_frame':100,'end_frame':150}])
   with patch('active_speaker.verify_listener',return_value={'verified':True}),patch('edit_selector.analyze_audio',return_value={'status':'ok','silences':[]}):add_dialogue_listening(ds,cs,s,b,p,25,30)
   self.assertNotIn('reaction_overlay',ds[0]);self.assertEqual(ds[0]['end_frame'],150)
+
+class ListeningProgress(unittest.TestCase):
+ fixture=DialogueListening.fixture
+ def test_progress_is_reported_between_candidate_checks_and_at_completion(self):
+  ds,cs,s,b,p=self.fixture();events=[]
+  with patch('active_speaker.verify_listener',return_value={'verified':True}):add_dialogue_listening(ds,cs,s,b,p,25,30,report=events.append)
+  self.assertTrue(any(e.get('candidates_checked',0)>0 for e in events[:-1]));self.assertEqual(events[-1]['current'],len(ds));self.assertTrue(ds[0]['reaction_overlay']['return_to_speaker'])

@@ -28,7 +28,7 @@ def payload(sources,sizes,missing=False):
  return p
 class CameraAvailabilityTests(unittest.TestCase):
  def run_plan(self,p):
-  with patch('transcript_align.LocalSemanticEncoder',Encoder),patch('active_speaker.analyze_candidate',return_value={'status':'visible'}),patch('listening_reaction.listening_overlay',return_value=None):
+  with patch('transcript_align._SEMANTIC_ENCODER',Encoder()),patch('active_speaker.analyze_candidate',return_value={'status':'visible'}),patch('listening_reaction.listening_overlay',return_value=None):
    return build_staged(p)
  def test_two_singles_work_without_a_master(self):
   p=payload([source('a',['Prima frase completa adesso.']),source('b',['Seconda risposta completa qui.'])],['close','close'])

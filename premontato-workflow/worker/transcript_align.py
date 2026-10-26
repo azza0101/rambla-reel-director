@@ -419,6 +419,9 @@ class LocalSemanticEncoder:
         self.cache={}
     def encode(self,texts):
         import numpy as np
+        from time import perf_counter
+        from runtime_trace import record_semantic
+        clock=perf_counter()
         missing=list(dict.fromkeys(text for text in texts if text not in self.cache))
         if len(self.cache)>5000:self.cache.clear();missing=list(dict.fromkeys(texts))
         for start in range(0,len(missing),32):
@@ -429,10 +432,23 @@ class LocalSemanticEncoder:
             if output.ndim==3:output=(output*mask[:,:,None]).sum(1)/np.maximum(mask.sum(1)[:,None],1)
             output=output/np.maximum(np.linalg.norm(output,axis=1,keepdims=True),1e-9)
             self.cache.update(zip(missing[start:start+32],output))
-        return np.array([self.cache[text] for text in texts])
+        result=np.array([self.cache[text] for text in texts])
+        record_semantic('encode',perf_counter()-clock,requested=len(texts),computed=len(missing))
+        return result
 
 
 _SEMANTIC_ENCODER=None
+
+
+def get_semantic_encoder():
+    """Reuse the validated model and text embeddings for this worker's lifetime."""
+    global _SEMANTIC_ENCODER
+    from time import perf_counter
+    from runtime_trace import record_semantic
+    clock=perf_counter();created=int(_SEMANTIC_ENCODER is None)
+    if _SEMANTIC_ENCODER is None:_SEMANTIC_ENCODER=LocalSemanticEncoder()
+    record_semantic('load',perf_counter()-clock,created=created)
+    return _SEMANTIC_ENCODER
 
 
 def fragment_supports_line(text, beat):
@@ -471,13 +487,11 @@ def extend_utterance_end(hit, words, limit, fps):
     return {**hit,'end_frame':sentence_end,'text':' '.join(w['text'].strip() for w in words if w['start_frame']>=hit['start_frame'] and w['end_frame']<=sentence_end)}
 
 def semantic_scene_hits(beats, sources, fps):
-    global _SEMANTIC_ENCODER
-    if _SEMANTIC_ENCODER is None:_SEMANTIC_ENCODER=LocalSemanticEncoder()
+    encoder=get_semantic_encoder()
     dialogue=[b for b in beats if b.get('kind')=='dialogue']
     windows=[(s,semantic_windows(s,fps)) for s in sources]
     flat=[w for s,rows in windows for w in rows]
     if not flat or not dialogue:return {}
-    encoder=_SEMANTIC_ENCODER
     queries=encoder.encode([b['text'] for b in dialogue]);vectors=encoder.encode([w['text'] for w in flat])
     similarities=queries@vectors.T
     clause_vectors=[encoder.encode(beat_phrases(beat)) for beat in dialogue]

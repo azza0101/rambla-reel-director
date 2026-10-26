@@ -44,19 +44,8 @@ def dispatch(request):
     elif action == "choose_take":
         result = choose_latest_complete(payload["takes"])
     elif action == "analyze_audio":
-        from edit_selector import analyze_audio
-        from cache import get_cache, cache_key, write_cache
-        from pathlib import Path
-        import os
-        media=payload['media'];stat=Path(media['path']).stat()
-        fingerprint=f"{media['media_id']}:{stat.st_size}:{stat.st_mtime_ns}"
-        options={'fps':media.get('fps',25),'duration_frames':media['duration_frames']}
-        cache_root=os.environ.get('PREMONTATO_CACHE_DIR','.premontato-cache')
-        cached=get_cache(cache_root,fingerprint,'audio-rms-v1',options)
-        result=cached or analyze_audio(media)
-        if not cached and result.get('status')=='ok':
-            write_cache(cache_root,cache_key(fingerprint,'audio-rms-v1',options),result)
-        result={**result,'cache_hit':cached is not None}
+        from edit_selector import cached_audio
+        result=cached_audio(payload['media'])
     elif action == "pace_plan":
         if payload['plan'].get('engine')=='groq_staged_v1':
             import copy
