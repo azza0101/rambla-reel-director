@@ -14,3 +14,10 @@ test('an analysis preflight failure is shown in its progress panel',()=>{
  const source=fs.readFileSync(path.join(__dirname,'../../plugin/renderer.js'),'utf8');const line=source.split('\n').find(x=>x.startsWith("$('analyze').addEventListener"));assert.match(line,/showProgress\(\{phase:'preflight'/);
  const fn=source.split('\n').find(x=>x.startsWith('function showError'));let progress,messageText;const context=vm.createContext({message:x=>messageText=x,showProgress:x=>progress=x,lastProgressEvent:{phase:'preflight',phaseIndex:-1,percent:0}});vm.runInContext(fn,context);vm.runInContext("showError(new Error('Progetto cambiato'))",context);assert.equal(progress.phase,'error');assert.equal(progress.label,'Progetto cambiato');assert.equal(messageText,'Progetto cambiato');
 });
+
+test('analysis IPC fills missing loaded transcripts before starting the worker',async()=>{
+ const source=fs.readFileSync(path.join(__dirname,'../../plugin/main.js'),'utf8'),line=source.split('\n').find(x=>x.includes("handle('analyze',"));let handler;const media=[{media_id:'m'}],sources=[{media_id:'m',segments:[{text:'ciao'}]}],calls=[];
+ const session={state:{projectId:'p',media,transcripts:[]},assertProject:()=>{},setTranscripts:(rows,fps,identity)=>{assert.equal(rows,sources);assert.equal(identity.selected,media);session.state.transcripts=rows;calls.push('transcripts');},analyze:async()=>{assert.equal(session.state.transcripts,sources);calls.push('analyze');return 'ready';}};
+ const context=vm.createContext({handle:(_,fn)=>handler=fn,adapter:{snapshot:async()=>({projectId:'p',timelineId:'t',fps:25}),getSelectedTranscriptions:async(_,options)=>{assert.equal(options.media,media);assert.equal(options.transcribeMissing,true);calls.push('lookup');return sources;}},getSdk:async()=>({}),saveResolve:async()=>{},session});
+ vm.runInContext(line,context);assert.equal(await handler(),'ready');assert.deepEqual(calls,['lookup','transcripts','analyze']);
+});
