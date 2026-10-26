@@ -1,0 +1,12 @@
+{
+  "repository": "Junhua-Liao/Light-ASD",
+  "revision": "ed38c232de5efe0261dbd68627c0ade7cdfe14eb",
+  "source": "weight/finetuning_TalkSet.model",
+  "license": "MIT",
+  "sha256": "87fd38c0d3ebb9b31abff607662820c2622aef6ce54e1f808528f50e1ba77c38",
+  "format": "ONNX opset 17, batch 1, variable temporal length",
+  "conversion": "PyTorch 2.5.1 CPU; equivalent MaxPool2d substitution for audio pools; original Torch/ONNX max error under 0.001 for 25,50,75 frames",
+  "score": "raw class-1 logit; not a probability",
+  "preprocessing": "16kHz mono PCM16, 13 MFCC/10ms, 25fps tracked grayscale 112x112 crops",
+  "runtime": "onnxruntime CPU; no Torch, body-pose model or cloud calls"
+}

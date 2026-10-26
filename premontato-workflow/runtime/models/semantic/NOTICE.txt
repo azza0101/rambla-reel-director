@@ -1,0 +1,1 @@
+sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2. Quantized ONNX model and tokenizer. Apache-2.0 per official model card. Revision and SHA256 in model-lock.json. https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
