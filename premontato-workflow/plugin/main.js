@@ -29,8 +29,8 @@ function handle(name, fn) {
   ipcMain.handle(`premontato:${name}`, async (event, ...args) => {
     assertTrusted(event, win, page);
     if (updateRestartPending) throw new Error('Riavvio del pannello in corso');
-    if (busy && name !== 'cancelAnalysis') throw new Error('Operazione già in corso');
-    if (name !== 'cancelAnalysis') busy = true;
+    if (busy && !['cancelAnalysis','cancelCatalog'].includes(name)) throw new Error('Operazione già in corso');
+    if (!['cancelAnalysis','cancelCatalog'].includes(name)) busy = true;
     try {
       let result=await fn(...args);
       if(['analyze','updateDecision','confirmVisualReview','setPacing','setDirections','selectScenes','setScriptPages','confirmTakes','selectMedia','selectScript','transcribeSelected'].includes(name)){const pending=session.state.uiDraft?.directions;session.state.uiDraft=['updateDecision','confirmVisualReview','setPacing','confirmTakes'].includes(name) && pending ? {directions:pending} : null;}
@@ -42,9 +42,9 @@ function handle(name, fn) {
     }
     catch (error) {
       if(/Not initialized|InitializePromise rifiutata/i.test(error.message || ''))sdk=null;
-      try { await diagnostics?.record('operation_failed', { operation: name, error }); } catch {}
+      try { await diagnostics?.record('operation_failed', { operation: name, error: /^(catalog|cancelCatalog)/.test(name)?new Error('Operazione catalogo non riuscita; dettagli nel checkpoint locale'):error }); } catch {}
       throw error;
-    } finally { if (name !== 'cancelAnalysis') busy = false; }
+    } finally { if (!['cancelAnalysis','cancelCatalog'].includes(name)) busy = false; }
   });
 }
 let resolveSaveStatus=null,lastUpdateEvent=null;
@@ -64,6 +64,9 @@ async function start() {
   await diagnostics.record('application_started');
   const workerPath = path.join(__dirname, 'worker', 'protocol.py');
   session = new Session(root, workerPath);
+  const catalog=new (require('./day_catalog_session').DayCatalog)(root,session);
+  catalog.onProgress=value=>win?.webContents.send('premontato:catalogProgress',value);
+  require('./day_catalog_ipc').registerCatalogHandlers({handle,catalog,getSdk});
   session.groq=new (require('./session').GroqClient)(root,{vault:safeStorage,fetchImpl:net?.fetch ? net.fetch.bind(net) : globalThis.fetch});
   try{await session.restoreAutosave();}catch(error){session.saveError='Recupero automatico non riuscito: '+error.message;}
   win = new BrowserWindow({ width: 1080, height: 820, minWidth: 680, minHeight: 560, title: 'RAMBLA Premontato v'+require('./package.json').version,
@@ -183,7 +186,7 @@ async function reloadInHost() {
   for(const name of handlerNames)ipcMain.removeHandler(name);
   handlerNames.clear();
   win?.destroy();win=null;session=null;sdk=null;
-  const modules=['main.js','session.js','runtime/premontato/groq_client.js','runtime/premontato/editorial_client.js','runtime/premontato/video_coliche.json','updater.js','resolve_adapter.js','ipc_security.js','package.json'];
+  const modules=['main.js','session.js','runtime/premontato/groq_client.js','runtime/premontato/editorial_client.js','runtime/premontato/video_coliche.json','updater.js','resolve_adapter.js','ipc_security.js','day_catalog_resolve.js','day_catalog_store.js','day_catalog_session.js','day_catalog_ipc.js','package.json'];
   for(const name of modules)delete require.cache[require.resolve(path.join(__dirname,name))];
   try { await require(__filename).launch({initializedSdk:connectedSdk}); }
   catch(error){await dialog.showMessageBox({type:'error',title:'RAMBLA Premontato',message:'Ricaricamento non riuscito. Riapri il pannello dal menu Workspace > Workflow Integrations di Resolve.',detail:error.message});app.quit();throw error;}

@@ -31,7 +31,7 @@ function Get-TargetRelativePath([string]$Name) {
     $parts=$Name.Split('/')
     if($parts.Count -lt 2 -or $parts | Where-Object { $_ -in @('', '.', '..') -or $_ -match ':' }) { throw 'Percorso non consentito nel pacchetto' }
     $prefix=$parts[0];$leaf=($parts[1..($parts.Count-1)] -join '\')
-    $pluginFiles=@('main.js','preload.js','resolve_adapter.js','session.js','ipc_security.js','index.html','style.css','renderer.js','updater.js','update.ps1','manifest.xml','package.json')
+    $pluginFiles=@('performance.js','day_catalog_resolve.js','day_catalog_store.js','day_catalog_session.js','day_catalog_ipc.js','day_catalog_ui.js','main.js','preload.js','resolve_adapter.js','session.js','ipc_security.js','index.html','style.css','renderer.js','updater.js','update.ps1','manifest.xml','package.json')
     if($prefix -eq 'plugin' -and $parts.Count -eq 2 -and $pluginFiles -contains $parts[1]) { return $leaf }
     if($prefix -eq 'worker' -and $parts.Count -eq 2 -and ($parts[1] -eq 'requirements.txt' -or $parts[1] -match '^[a-z_][a-z0-9_]*\.py$')) { return ('worker\'+$leaf) }
     if($prefix -eq 'runtime' -and $parts.Count -ge 2) { return ('runtime\'+$leaf) }

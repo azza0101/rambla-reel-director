@@ -1,7 +1,7 @@
 # PREMONTATO — Catalogazione automatica del girato per scena (design V1)
 
-**Data:** 26 ottobre 2026  
-**Stato:** proposta di progettazione; **non** è codice prodotto né una release.  
+**Data:** 26 ottobre 2026
+**Stato:** proposta di progettazione; **non** è codice prodotto né una release.
 **Base osservata:** `feat/premontato-workflow` @ `52244b93f9437b04e430132d918fe744f8b02bb0` (v0.11.11); verificare nuovamente prima di implementare.
 
 ## Obiettivo utente
@@ -140,9 +140,9 @@ Nuovo tab `Cataloga giornata`, distinto dall'attuale `Analizza scena`:
 
 ## Milestone e non-obiettivi
 
-**V1a:** inventory + ASR progressivo + catalogo per intervalli + review in Premontato, nessuna mutazione Media Pool.  
-**V1b:** publishing Resolve dry-run/readback, bin scena e SELECTS/subclip con capability probe; mobilità degli originali esclusivamente opt-in.  
-**V2:** job di montaggio per scena, timeout/retry/skip/checkpoint e master finale che concatena scene riuscite nell'ordine copione, senza perdere le funzionalità editoriali v0.11.11.  
+**V1a:** inventory + ASR progressivo + catalogo per intervalli + review in Premontato, nessuna mutazione Media Pool.
+**V1b:** publishing Resolve dry-run/readback, bin scena e SELECTS/subclip con capability probe; mobilità degli originali esclusivamente opt-in.
+**V2:** job di montaggio per scena, timeout/retry/skip/checkpoint e master finale che concatena scene riuscite nell'ordine copione, senza perdere le funzionalità editoriali v0.11.11.
 **Non-obiettivi iniziali:** edit multicam completo, riconoscimento emozioni, sincronizzazione di camere senza timecode/ciak valido, inventare testo per scene mute, automazione UI con click a coordinate, trascinare ogni frame in timeline globale.
 
 **Da verificare sul PC reale:** versione Studio/Workflow SDK, effettivo supporto bounded-subclips e semantica endFrame, bin move con readback, folder IDs, campioni audio senza parola, tempo ASR con GPU libera, rendering e convenzioni di timecode.

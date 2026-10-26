@@ -15,6 +15,8 @@ class UpdatePayloadTests(unittest.TestCase):
    return result.returncode,result.stdout+result.stderr
  def test_accepts_new_and_future_flat_python_modules(self):
   code,output=self.validate(['worker/active_speaker.py','worker/asd_features.py','worker/automatic_editor.py','worker/local_audio.py','worker/future_algorithm.py']);self.assertEqual(code,0,output)
+ def test_accepts_day_catalog_and_performance_panel_modules(self):
+  code,output=self.validate(['plugin/day_catalog_resolve.js','plugin/day_catalog_store.js','plugin/day_catalog_session.js','plugin/day_catalog_ipc.js','plugin/day_catalog_ui.js','plugin/performance.js','worker/scene_catalog.py']);self.assertEqual(code,0,output)
  def test_still_rejects_traversal_executables_and_sdk_with_useful_error(self):
   for name in ['worker/../escape.py','worker/evil.ps1','plugin/WorkflowIntegration.node']:
    code,output=self.validate([name]);self.assertNotEqual(code,0);self.assertNotIn('FullyQualifiedErrorId : ScriptHalted',output)
