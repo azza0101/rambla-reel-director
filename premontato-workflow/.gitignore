@@ -18,3 +18,7 @@ tools/launcher/obj/
 tools/launcher/publish/
 __pycache__/
 *.py[cod]
+/review/
+
+/.premontato-installer-*/
+/dist-catalog-test/

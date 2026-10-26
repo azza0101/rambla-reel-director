@@ -16,8 +16,13 @@ def load_pcm16(source):
     key=hashlib.sha256(json.dumps(fingerprint,sort_keys=True).encode()).hexdigest()
     folder=Path(os.environ.get('PREMONTATO_CACHE_DIR','.premontato-cache'))/'audio-pcm';folder.mkdir(parents=True,exist_ok=True);target=folder/(key+'.npy')
     try:
-        data=np.load(target,allow_pickle=False)
-        if data.dtype==np.dtype('<i2') and data.ndim==1 and 0<len(data)<=round((seconds+1)*16000):return data,{'cache_hit':True,'sample_rate':16000}
+        # ASD reads short slices; map cached samples without allocating the whole clip.
+        data=np.load(target,mmap_mode='r',allow_pickle=False)
+        if isinstance(data,np.memmap):
+            if data.dtype==np.dtype('<i2') and data.ndim==1 and 0<len(data)<=round((seconds+1)*16000):return data,{'cache_hit':True,'sample_rate':16000}
+            # Windows cannot replace a cache file while a rejected mapping is open.
+            data._mmap.close()
+        elif hasattr(data,'close'):data.close()
     except (OSError,ValueError,EOFError):pass
     command=[ffmpeg_path(),'-nostdin','-hide_banner','-loglevel','error','-threads','2','-i',str(path),'-t',str(seconds),'-map','0:a:0','-vn','-ac','1','-ar','16000','-f','s16le','pipe:1']
     run=subprocess.run(command,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=120,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))

@@ -1,0 +1,17 @@
+
+Tasks 1/2 RED→GREEN: 2 JS inventory, 4 Python matching; full Python167 and JS143 passed. Task3 store RED→GREEN, queue pending verification. Native Resolve21.1.0.17 isolated probe bounded25..74=50frames; Append25..74 readback duration49/sourceEnd74 (adapter must verify). Original test-mcp restored.
+
+Tasks1–5 implementati, core tests RED→GREEN. Full147JS e181Python (runner include9 funzioni packaging prima escluse da unittest). ProbeResolve21.1.0.17: boundedend inclusivo, Appendend esclusivo, MoveClips roundtrip solo subclip sintetica. Native6memberships2scenes,1failure isolato, pause/resume e secondapply2skip passati. Statoeditoriale originale invariato. Finalnative replay/build pending.
+Ruling: fallback SELECTS in V1 anche con bounded probe positivo: una sola verifica non certifica subclip su tutti fps/codecs; nessun originale spostato. Ruling: nessun agente aggiuntivo, review autore per costo richiesto.
+
+Tasks1–6: core e UI implementati; 149JS/181Python pass, nessun skip. Native e native da EXE installato pass (2scene/6membership/1fallimento, pause/resume,2skip al secondoapply, sourceframes+audio e originali verificati). Installer EXE/installazioneisolata pass; ZIPcreato, updateapply temporaneo in corso. Ricalcolo reale5clip2.19s/.119s,4auto22review, nessun gold finto. Self-review separata: capabprobe, identityguard, noMoveoriginals, journalprefix idempotente, nessun GROQ/catalog. Ruling: risultato provvisorio con filefalliti pubblicabile solo con anteprima/conferma, esplicitamente segnato. Ruling: nessuna promessa di restore «nessuna timeline» viaSDK; limite documentato.
+
+Final review fixed: contesto ereditava score/ancore della candidata iniziale; test_context_keeps_the_score_of_the_selected_scene RED→GREEN, full182Python. Artefatti ricostruiti dal codice congelato. No ulteriori modifiche funzionali.
+
+Distribuzione: apply updater nella copia temporanea interrotto (exit1) perché attende UAC; non dichiarato passato. Nessun aggiramento elevazione, nessuna richiesta di nuova credenziale. ZIP ValidateOnly e installer finale rieseguiti. Spec importata normalizzata solo negli spazi Markdown; staged diff check ora pulito.
+
+Gate reale aggiuntivo: lettura GetTranscription grezza su5clipprogetto iniziale (read-only) trovava4errori che le fixture normalizzate nascondevano: segmenti a−1frame e parole start=end. Due testRED→GREEN: reader tollera SOLO1framequantizzazione fisica (rawframesconservati), pointwordsconservate senza inventare durata; matcherflagreview. RipetutoGetTranscription reale5/5ok,0errori,ASRriusato,27proposte3auto24review,2.034smatching. Full150JS/184Pythonverdi. Pacchetti precedenti invalidati, ricostruzione necessaria con il fix.
+
+UI no-timeline RED→GREEN: lettura cartelle aggiorna connessione SDK indipendentemente dalla timeline; messaggio apply non dichiara restore se non esisteva timeline. Full151JS/184Python. Tool nativo esteso a inventory reale prima della creazione della timeline di baseline. Codice definitivo congelato; solo documentazione da completare.
+
+Gate DEFINITIVO: EXE nuovo installato inreview, moduli SHAidentici ai sorgenti; Native con file/runtime EXE exit0 inclusoinventorysenzaTimeline,2scene6membership,1fallimentoASRatteso,pause/resume,2SELECTS,2skip. Poi5trascrizionirealiDirette+matcherEXE exit0,5riusi0errori27proposte3auto24review2.289s. ZIPValidateOnly0,4101file. UpdaterapplyUACinterrotto noncertificato; pannelloElectronnonverificatovisivamente. Full151JS184Python. Sourcecodefrozen, nuova release SOLOprova prerelease/latestfalse, nessun merge.

@@ -28,3 +28,7 @@
 #visual-controls>summary{cursor:pointer;font-weight:700;font-size:18px;color:var(--text);padding:8px 0}#visual-controls[open]>summary{margin-bottom:10px}#visual-controls{margin-bottom:12px}
 
 #beat-review>summary{cursor:pointer;font-weight:700;color:var(--text);padding:12px 0}#beat-review{margin:16px 0;border-block:1px solid var(--line)}
+
+.performance-summary { white-space: pre-line; font-size: .85rem; color: var(--muted, #9caeb7); }
+
+#day-catalog progress{width:100%}.catalog-membership{padding:12px;margin:8px 0;border:1px solid #354650;border-radius:6px}.catalog-membership input{width:110px}.catalog-membership label{display:inline-block;margin:8px}#day-catalog details{margin:14px 0}

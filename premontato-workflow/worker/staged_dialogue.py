@@ -120,8 +120,11 @@ def recover_single_camera_asides(units,labels,scores,beats,fps,verify,excluded=(
   result[u['id']]=label;changes.append({'unit':u['id'],'label':label,'evidence':'single_camera_semantic_aside','score':score})
  return result,changes
 
+from runtime_trace import trace_pipeline
+
+@trace_pipeline
 def build_staged(payload,report=lambda e:None):
- from transcript_align import LocalSemanticEncoder
+ from transcript_align import get_semantic_encoder
  from automatic_editor import narrative_roles
  from active_speaker import analyze_candidate
  from listening_reaction import listening_overlay
@@ -130,7 +133,7 @@ def build_staged(payload,report=lambda e:None):
  sources={};units=[];labels={};cleanup=[]
  ordered=sorted(payload['sources'],key=lambda s:(s['media_id'],s.get('take_id','')))
  for i,source in enumerate(ordered):
-  cid='C'+str(i+1);sources[cid]=source;c=next(c for c in prepared['clips'] if c['key']==source.get('take_id',source['media_id']))
+  cid='C'+str(i+1);sources[cid]=dict(source);c=next(c for c in prepared['clips'] if c['key']==source.get('take_id',source['media_id']))
   cleaned,changes=clean_restarts(c['units'],values[c['key']]);cleanup.extend({'clip':cid,**x} for x in changes)
   for u in c['units']:
    uid=cid+u['id'];labels[uid]=cleaned[u['id']];units.append({**u,'id':uid,'clip':cid,'ASD':'unknown'})
@@ -140,7 +143,7 @@ def build_staged(payload,report=lambda e:None):
  names=prepared['cast']
  def info(u):
   n,role=labels[u['id']].split('/');return 'B'+n,names[role]
- encoder=LocalSemanticEncoder();unit_vectors=encoder.encode([u['text'] for u in units]);labels,recovered=recover_cross_camera(units,labels,unit_vectors@unit_vectors.T,fps,excluded={x['clip']+x['unit'] for x in cleanup})
+ encoder=get_semantic_encoder();unit_vectors=encoder.encode([u['text'] for u in units]);labels,recovered=recover_cross_camera(units,labels,unit_vectors@unit_vectors.T,fps,excluded={x['clip']+x['unit'] for x in cleanup})
  if len(sources)==1:
   beat_vectors=encoder.encode([b['text'] for b in beats])
   labels,asides=recover_single_camera_asides(units,labels,unit_vectors@beat_vectors.T,beats,fps,lambda u:analyze_candidate(sources[u['clip']],u['start'],u['end']),excluded={x['clip']+x['unit'] for x in cleanup})
@@ -299,6 +302,7 @@ def build_staged(payload,report=lambda e:None):
    if 0<end-start<=30*fps:
     action={'kind':'action','beat_id':movement[0]['beat_id'],'action_beats':[m['beat_id'] for m in movement],'media_id':sources[master]['media_id'],'take_id':sources[master]['take_id'],'start_frame':start,'end_frame':end,'shot_size':'wide','basis':'script_between_anchors' if right else 'script_take_tail'}
     d['action_after']=[action];actions.append(action)
+ report({'phase':'listening','current':0,'total':len(decisions)})
  reactions=[]
  for i,d in enumerate(decisions):
   if i and not directed:
@@ -318,8 +322,8 @@ def build_staged(payload,report=lambda e:None):
    event=resolve_event(d,editorial_events)
    listening_candidates[i].extend(offcamera_candidates(d,units,labels,sources,profiles,context_similarities,i,beats,event))
  report({'phase':'listening','current':0,'total':len(decisions)})
- reactions.extend(add_dialogue_listening(decisions,listening_candidates,list(sources.values()),beats,profiles,fps,minimum_shot,editorial_events if directed else None))
- actions.extend(add_scripted_breaths(decisions,list(sources.values()),beats,profiles,fps))
+ reactions.extend(add_dialogue_listening(decisions,listening_candidates,list(sources.values()),beats,profiles,fps,minimum_shot,editorial_events if directed else None,report=report))
+ actions.extend(add_scripted_breaths(decisions,list(sources.values()),beats,profiles,fps,report=report))
  report({'phase':'listening','current':len(decisions),'total':len(decisions)})
  errors=[]
  for d in decisions:

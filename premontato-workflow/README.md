@@ -1,6 +1,8 @@
 # RAMBLA Premontato
 
-Da Resolve Studio, il pannello legge la selezione corrente del Media Pool e la timeline di riferimento. Il worker locale confronta le trascrizioni Resolve con il copione, individua la scena corrispondente, propone i confini delle take e prepara una nuova timeline di revisione. I file originali restano invariati. L’analisi dei volti/inquadrature usa OpenCV localmente; SFace confronta localmente i volti e propone gruppi anonimi. I nomi dei personaggi richiedono conferma sulle still. Non invia media, impronte facciali o copione a servizi cloud.
+**0.12.0 — Catalogazione giornata, build di prova:** inventario ricorsivo di un bin, trascrizioni Resolve riusate/progressive, assegnazioni per intervalli con revisione e SELECTS per scena. [Istruzioni e limiti](docs/DAY_CATALOG.md), [collaudo nativo](docs/performance/2026-10-26-day-catalog-validation.md). Il montaggio esistente resta separato.
+
+Da Resolve Studio, il pannello legge la selezione corrente del Media Pool e la timeline di riferimento. Il worker locale confronta le trascrizioni Resolve con il copione, individua la scena corrispondente, propone i confini delle take e prepara una nuova timeline di revisione. I file originali restano invariati. L’analisi dei volti/inquadrature usa OpenCV localmente; SFace confronta localmente i volti e propone gruppi anonimi. I nomi dei personaggi richiedono conferma sulle still. Media e impronte facciali restano locali. Groq, se attivato per il montaggio, riceve i testi; la catalogazione giornata non usa Groq.
 
 Il primo target è Windows x64 e una camera. La logica del worker non assume un solo file per take: gestisce anche più take nel medesimo file quando i confini sono confermati. Multicam resta fuori dal prototipo. Campo, intervallo, alternativa, pause e personaggi visibili sono correggibili dal pannello.
 

@@ -32,18 +32,22 @@ def _retained(decisions,media_id):
         if o and o['media_id']==media_id:rows.append(o)
     return rows
 
-def add_dialogue_listening(decisions,candidates,sources,beats,profiles,fps,minimum,events=None):
+def add_dialogue_listening(decisions,candidates,sources,beats,profiles,fps,minimum,events=None,report=None):
     """Same-beat listening coverage; original speaking audio remains untouched."""
     from active_speaker import verify_listener
-    from edit_selector import analyze_audio
+    from edit_selector import cached_audio as analyze_audio
     minimum=max(minimum,__import__('math').ceil(1.5*fps))
     by_media={s['media_id']:s for s in sources};rooms={}
     for b in beats:
         if b.get('kind')=='dialogue' and b.get('character'):rooms.setdefault(b.get('scene_id'),set()).add(b['character'])
     partners={r:set().union(*(cast-{r} for cast in rooms.values() if r in cast)) for r in set().union(*rooms.values())} if rooms else {}
     from editorial_director import resolve_event,listening_window,existing_listener
+    from runtime_trace import candidate_checked
+    report=report or (lambda event:None)
+    checked=0
     reactions=[];cursor=0;last=-10*fps;directed=events is not None;events=events or []
     for i,d in enumerate(decisions):
+        report({'phase':'listening','step':'coverage','current':i,'total':len(decisions),'candidates_checked':checked})
         length=sum(r['end_frame']-r['start_frame'] for r in d.get('source_ranges',[d]));at=cursor;cursor+=length
         if d.get('reaction_overlay') or d.get('manual') or d.get('reaction_enabled') is False:continue
         event=resolve_event(d,events)
@@ -81,6 +85,7 @@ def add_dialogue_listening(decisions,candidates,sources,beats,profiles,fps,minim
         nxt=decisions[i+1] if i+1<len(decisions) else None
         ranked=sorted(candidates[i],key=lambda row:row.get('semantic',0),reverse=True)
         for row in ranked:
+            candidate_checked()
             mid=row['media_id'];profile=profiles.get(mid);source=by_media.get(mid)
             if mid==d['media_id'] or not profile or not source or row.get('shot_size') not in {'close','medium'}:continue
             if profile['role'] not in partners.get(d.get('dialogue_character'),set()):continue
@@ -92,6 +97,8 @@ def add_dialogue_listening(decisions,candidates,sources,beats,profiles,fps,minim
             start=end-duration
             if start<source.get('start_frame',0) or end>source.get('end_frame',source['duration_frames']):continue
             if any(r['start_frame']<end and start<r['end_frame'] for r in _retained(decisions,mid)):continue
+            checked+=1;candidate_checked(True)
+            report({'phase':'listening','step':'candidate','current':i,'total':len(decisions),'candidates_checked':checked})
             try:proof=verify_listener(source,start,end,profile['start'],profile['end'])
             except Exception:continue
             if not proof.get('verified'):continue
@@ -106,15 +113,18 @@ def add_dialogue_listening(decisions,candidates,sources,beats,profiles,fps,minim
             if event:d['editorial_event']['status']='inserted';overlay['editorial_reason']=event.get('reason','')
             d['reaction_overlay']=overlay;reactions.append(overlay);last=at+offset+duration;break
         if event and d['editorial_event']['status']=='searching_coverage':d['editorial_event']['status']='no_verified_coverage'
+    report({'phase':'listening','step':'coverage','current':len(decisions),'total':len(decisions),'candidates_checked':checked})
     return reactions
 
-def add_scripted_breaths(decisions,sources,beats,profiles,fps,audio=None):
+def add_scripted_breaths(decisions,sources,beats,profiles,fps,audio=None,report=None):
     """Short continuous holds only on explicit script pauses and measured silent source."""
     import re
     from active_speaker import verify_listener
-    from edit_selector import analyze_audio
+    from edit_selector import cached_audio as analyze_audio
     by_media={s['media_id']:s for s in sources};positions={b['beat_id']:i for i,b in enumerate(beats)};audio={} if audio is None else audio;holds=[]
+    report=report or (lambda event:None)
     for i,d in enumerate(decisions):
+        report({'phase':'listening','step':'breaths','current':i,'total':len(decisions)})
         if d.get('manual') or d.get('action_after'):continue
         nxt=decisions[i+1] if i+1<len(decisions) else None
         if nxt and nxt['beat_id']==d['beat_id']:continue
