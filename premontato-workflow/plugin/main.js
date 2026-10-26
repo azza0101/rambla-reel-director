@@ -188,7 +188,7 @@ async function reloadInHost() {
   for(const name of handlerNames)ipcMain.removeHandler(name);
   handlerNames.clear();
   win?.destroy();win=null;session=null;sdk=null;
-  const modules=['main.js','session.js','runtime/premontato/groq_client.js','runtime/premontato/editorial_client.js','runtime/premontato/video_coliche.json','updater.js','resolve_adapter.js','ipc_security.js','day_catalog_resolve.js','day_catalog_store.js','day_catalog_session.js','day_catalog_ipc.js','package.json'];
+  const modules=['main.js','session.js','runtime/premontato/groq_client.js','runtime/premontato/editorial_client.js','runtime/premontato/video_coliche.json','updater.js','resolve_adapter.js','ipc_security.js','day_catalog_resolve.js','day_catalog_store.js','day_catalog_session.js','day_catalog_ipc.js','day_catalog_clips.js','day_catalog_vision.js','package.json'];
   for(const name of modules)delete require.cache[require.resolve(path.join(__dirname,name))];
   try { await require(__filename).launch({initializedSdk:connectedSdk}); }
   catch(error){await dialog.showMessageBox({type:'error',title:'RAMBLA Premontato',message:'Ricaricamento non riuscito. Riapri il pannello dal menu Workspace > Workflow Integrations di Resolve.',detail:error.message});app.quit();throw error;}

@@ -1,5 +1,6 @@
 'use strict';
 function registerCatalogHandlers({handle,catalog,getSdk,adapter=require('./day_catalog_resolve')}){
+ handle('catalogPreviewFrames',async request=>catalog.previewFrames(await getSdk(),request));
  handle('catalogInventory',async()=>adapter.listDayFolders(await getSdk()));
  handle('catalogAnalyze',async request=>catalog.analyze(await getSdk(),request));
  handle('catalogResume',async request=>catalog.analyze(await getSdk(),request));
