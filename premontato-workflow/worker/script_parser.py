@@ -4,7 +4,7 @@ import re
 import unicodedata
 
 SCENE = re.compile(r"^(?:INT\.?|EXT\.?|INT\.?/EXT\.?|EST\.?)(?:\s|\.)", re.I)
-SCENE_LABEL = re.compile(r"^SCENA\s+\d+[A-Z]?(?:\s|$)", re.I)
+SCENE_LABEL = re.compile(r"^SCENA\s+\d+[A-Z]?(?=\s|[.:)–—-]|$)", re.I)
 CUE = re.compile(r"^[A-ZÀ-ÖØ-Þ][A-ZÀ-ÖØ-Þ0-9 ._'’-]{0,39}(?:\s*\([^)]*\))?$", re.I)
 
 
@@ -21,15 +21,12 @@ def parse_script(text, format="auto"):
         raise ValueError("Il copione è vuoto")
     raw_lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     has_scene_headings = any(_is_scene_heading(line.strip()) for line in raw_lines)
-    pdf_layout = any(
-        len(raw) - len(raw.lstrip()) >= 24 and CUE.fullmatch(raw.strip())
-        for raw in raw_lines
-    )
     scenes, heading, rows, speaker = [], "SCENA 1", [], None
+    speaker_indent = 0
     in_script = not has_scene_headings
 
     def flush():
-        nonlocal rows, speaker
+        nonlocal rows, speaker, speaker_indent
         if not rows:
             return
         scene_id = _stable("scene", heading.casefold() + "|" + str(len(scenes)))
@@ -41,7 +38,7 @@ def parse_script(text, format="auto"):
             beats.append({"beat_id": beat_id, "scene_id": scene_id, "order": index, "kind": kind,
                           "character": character, "text": norm, "tags": tags})
         scenes.append({"scene_id": scene_id, "heading": heading, "beats": beats})
-        rows, speaker = [], None
+        rows, speaker, speaker_indent = [], None, 0
 
     for raw_line in raw_lines:
         indent = len(raw_line) - len(raw_line.lstrip())
@@ -60,10 +57,11 @@ def parse_script(text, format="auto"):
         elif line.startswith("(") and line.endswith(")"):
             rows.append(("parenthetical", speaker, line[1:-1].strip()))
         elif CUE.fullmatch(line) and not line.endswith((".", "!", "?")) and (
-                indent >= 24 or line == line.upper()):
+                indent >= 24 or re.sub(r"\s*\([^)]*\)$", "", line).strip().isupper()):
             speaker = re.sub(r"\s*\([^)]*\)$", "", line).strip()
+            speaker_indent = indent
         else:
-            if pdf_layout and indent == 0:
+            if speaker_indent >= 24 and indent == 0:
                 speaker = None
             kind = "dialogue" if speaker else "action"
             body = line
