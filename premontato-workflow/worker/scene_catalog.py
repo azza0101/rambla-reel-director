@@ -10,19 +10,25 @@ def stable(*values):return hashlib.sha256('|'.join(map(str,values)).encode()).he
 def speech_units(segment,fps):
     words=segment.get('words') or []
     if not words:return [segment]
-    units=[];group=[]
+    units=[];group=[];flags=set()
     def flush():
         if group:
-            units.append({'text':' '.join(w['text'].strip() for w in group),'start_frame':group[0]['start_frame'],'end_frame':group[-1]['end_frame'],'words':list(group)})
+            start=min(w['start_frame'] for w in group);end=max(w['end_frame'] for w in group)
+            if end>start:units.append({'text':' '.join(w['text'].strip() for w in group),'start_frame':start,'end_frame':end,'words':list(group),'timing_warnings':sorted(flags)})
             group.clear()
+            flags.clear()
     previous=segment['start_frame']
     for word in words:
-        if not isinstance(word.get('start_frame'),int) or not isinstance(word.get('end_frame'),int) or word['start_frame']<previous or word['end_frame']<=word['start_frame'] or word['end_frame']>segment['end_frame']:
+        if not isinstance(word.get('start_frame'),int) or not isinstance(word.get('end_frame'),int) or word['start_frame']<segment['start_frame'] or word['end_frame']<word['start_frame'] or word['end_frame']>segment['end_frame']:
             raise ValueError('INVALID_WORD_TIMING')
-        previous=word['end_frame']
+        overlap=word['start_frame']<previous
+        previous=max(previous,word['end_frame'])
         if not normalize(word.get('text','')):
             flush();continue
         if group and word['start_frame']-group[-1]['end_frame']>round(.8*fps):flush()
+        flags.update(word.get('timing_warnings',[]))
+        if word['start_frame']==word['end_frame']:flags.add('RESOLVE_POINT_WORD')
+        if overlap:flags.add('ASR_WORD_OVERLAP')
         group.append(word)
         if re.search(r'[.!?]$',word['text'].strip()) or len(group)>=24:flush()
     flush();return units
@@ -39,6 +45,7 @@ def catalog_scenes(payload,on_progress=None,encoder=None):
         except Exception:
             warnings.append({'code':'SEMANTIC_UNAVAILABLE','message':'Encoder non disponibile: solo ancore lessicali, verificare le proposte'})
     for source in sources:
+        warnings.extend(source.get('transcript_warnings',[]))
         media=source['media_id'];fps=float(source['fps']);limit=source['duration_frames'];rows=[]
         for segment in source.get('segments',[]):
             start=segment.get('start_frame');end=segment.get('end_frame')
@@ -69,8 +76,8 @@ def catalog_scenes(payload,on_progress=None,encoder=None):
             ranked=sorted(byscene.values(),reverse=True);best=ranked[0] if ranked else (0,None,0,None,0,0);margin=best[0]-(ranked[1][0] if len(ranked)>1 else 0)
             if best[0]<.57 or len(content)<3:
                 classified.append(None);continue
-            confident=best[0]>=.78 and margin>=.14 and len(content)>=4 and (best[4]>=3 or best[5]>=.88)
-            classified.append({'scene_id':best[1],'order':best[2],'confidence':round(best[0],4),'runner_up_margin':round(margin,4),'status':'auto_ready' if confident else 'review','evidence':[{'beat_id':best[3],'score':round(best[0],4),'lexical_anchors':best[4],'semantic_score':round(best[5],4),'text':row['text']}],'candidates':[{'scene_id':r[1],'score':round(r[0],4),'line_order':r[2],'beat_id':r[3],'lexical_anchors':r[4],'semantic_score':round(r[5],4)} for r in ranked[:3]],'timing_precision':'words' if row.get('words') else 'segment'})
+            confident=best[0]>=.78 and margin>=.14 and len(content)>=4 and (best[4]>=3 or best[5]>=.88) and not row.get('timing_warnings')
+            classified.append({'scene_id':best[1],'order':best[2],'confidence':round(best[0],4),'runner_up_margin':round(margin,4),'status':'auto_ready' if confident else 'review','evidence':[{'beat_id':best[3],'score':round(best[0],4),'lexical_anchors':best[4],'semantic_score':round(best[5],4),'text':row['text']}],'candidates':[{'scene_id':r[1],'score':round(r[0],4),'line_order':r[2],'beat_id':r[3],'lexical_anchors':r[4],'semantic_score':round(r[5],4)} for r in ranked[:3]],'timing_precision':'word_points' if row.get('timing_warnings') else 'words' if row.get('words') else 'segment','timing_warnings':row.get('timing_warnings',[])})
         # Shared lines may inherit a scene only from two independent adjacent anchors.
         # Keep the low margin visible and require review instead of fabricating certainty.
         for i in range(1,len(classified)-1):

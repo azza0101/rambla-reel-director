@@ -6,6 +6,15 @@ SCENES=[{'scene_id':'s1','heading':'INT CASA','beats':[{'beat_id':'b1','kind':'d
 def seg(text,start,end):return {'text':text,'start_frame':start,'end_frame':end,'words':[{'text':text,'start_frame':start,'end_frame':end}]}
 def run(rows,scenes=SCENES):return catalog_scenes({'scenes':scenes,'sources':[{'media_id':'m','fps':25,'duration_frames':1000,'segments':rows}],'settings':{'semantic':False}})
 class CatalogTest(unittest.TestCase):
+ def test_point_timed_words_preserve_text_but_require_review(self):
+  words=[{'text':w,'start_frame':i*10,'end_frame':(i+1)*10 if i!=3 else i*10} for i,w in enumerate(SCENES[0]['beats'][0]['text'].split())]
+  r=run([{'text':SCENES[0]['beats'][0]['text'],'start_frame':0,'end_frame':100,'words':words}]);self.assertEqual(len(r['memberships']),1);self.assertEqual(r['memberships'][0]['status'],'review');self.assertIn('chiavi',r['memberships'][0]['evidence'][0]['text']);self.assertEqual(r['memberships'][0]['source_end_frame'],words[-1]['end_frame'])
+ def test_thirty_unordered_clips_across_eight_scenes(self):
+  texts=['Ho nascosto le chiavi della macchina nel frigorifero.','La barca rossa sta affondando vicino al porto.','Il direttore ordina una pizza enorme senza pomodoro.','Abbiamo trovato un pinguino ubriaco dentro la farmacia.','Domani partiranno dodici astronauti verso il pianeta ghiacciato.','Tua sorella ripara biciclette elettriche sotto il temporale.','Questa cassaforte contiene diamanti falsi rubati ieri notte.','Il cantante vuole vendere tutti i suoi violini antichi.']
+  scenes=[{'scene_id':'s'+str(i),'beats':[{'beat_id':'b'+str(i),'kind':'dialogue','text':text}]} for i,text in enumerate(texts)]
+  sources=[{'media_id':'m'+str(i),'fps':25,'duration_frames':300,'segments':[seg(texts[i%8],10,90)]} for i in reversed(range(30))]
+  result=catalog_scenes({'scenes':scenes,'sources':sources,'settings':{'semantic':False}})
+  self.assertEqual(len(result['memberships']),30);self.assertEqual({m['media_id']:m['scene_id'] for m in result['memberships']},{'m'+str(i):'s'+str(i%8) for i in range(30)})
  def test_two_scenes_inside_one_resolve_segment(self):
   words=[]
   for i,text in enumerate([SCENES[0]['beats'][0]['text'],SCENES[1]['beats'][0]['text']]):
