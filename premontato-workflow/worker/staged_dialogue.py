@@ -121,7 +121,7 @@ def recover_single_camera_asides(units,labels,scores,beats,fps,verify,excluded=(
  return result,changes
 
 def build_staged(payload,report=lambda e:None):
- from transcript_align import LocalSemanticEncoder
+ from transcript_align import get_semantic_encoder
  from automatic_editor import narrative_roles
  from active_speaker import analyze_candidate
  from listening_reaction import listening_overlay
@@ -140,7 +140,7 @@ def build_staged(payload,report=lambda e:None):
  names=prepared['cast']
  def info(u):
   n,role=labels[u['id']].split('/');return 'B'+n,names[role]
- encoder=LocalSemanticEncoder();unit_vectors=encoder.encode([u['text'] for u in units]);labels,recovered=recover_cross_camera(units,labels,unit_vectors@unit_vectors.T,fps,excluded={x['clip']+x['unit'] for x in cleanup})
+ encoder=get_semantic_encoder();unit_vectors=encoder.encode([u['text'] for u in units]);labels,recovered=recover_cross_camera(units,labels,unit_vectors@unit_vectors.T,fps,excluded={x['clip']+x['unit'] for x in cleanup})
  if len(sources)==1:
   beat_vectors=encoder.encode([b['text'] for b in beats])
   labels,asides=recover_single_camera_asides(units,labels,unit_vectors@beat_vectors.T,beats,fps,lambda u:analyze_candidate(sources[u['clip']],u['start'],u['end']),excluded={x['clip']+x['unit'] for x in cleanup})

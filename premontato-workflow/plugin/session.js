@@ -118,7 +118,7 @@ class Session {
     const directions={...(this.state.directions || DEFAULT_DIRECTIONS),markers:{}};
     this.onProgress?.({phase:'plan',phaseIndex:6,percent:89,label:'Preparo il montaggio delle scene selezionate'});
     let plan=await this.buildPlan({beats:selectedScene.beats,sources:analysis.planningSources,shots:analysis.shots || [],directions,semantic:true,fps:this.state.fps || 25},300000);
-    plan=await this.request('pace_plan',{plan,sources:analysis.planningSources,audio:analysis.audio || {},beats:selectedScene.beats,shots:analysis.shots || [],fps:this.state.fps || 25,settings:this.state.pacingSettings});
+    plan=await this.pacePlan({plan,sources:analysis.planningSources,audio:analysis.audio || {},beats:selectedScene.beats,shots:analysis.shots || [],fps:this.state.fps || 25,settings:this.state.pacingSettings});
     plan.visual_review_required=false;
     this.state.analysis={...analysis,selectedScene,parsedBeats:selectedScene.beats,sceneSelection:{scene:selectedScene,confidence:1,manual:true,candidates:analysis.sceneSelection?.candidates || []},plan,warnings:plan.warnings || [],visualReview:null};
     this.state.directions=directions;this.state.uiDraft=null;this.state.stage='review';
@@ -201,8 +201,15 @@ class Session {
       const planningSources = takes.flatMap(group => group.confirmed ? group.segments.map(take => ({ ...sources.find(source => source.media_id === group.media_id), ...take,
         segments: sources.find(source => source.media_id === group.media_id).segments.filter(segment => segment.start_frame >= take.start_frame && segment.start_frame < take.end_frame) })) : []);
       const audio = {};
-      const audioSources = this.state.pacingSettings.enabled ? sources.filter(source => source.path) : [];
-      progress('audio', 5, 81, 'Misuro le pause nell’audio locale');
+      // groq_staged_v1 keeps source timing and does not consume RMS silence data.
+      // Active-speaker checks still load their own PCM samples when needed.
+      const measurePauses = this.state.pacingSettings.enabled && !this.useGroq();
+      const audioSources = measurePauses ? sources.filter(source => source.path) : [];
+      const audioLabel = audioSources.length ? 'Misuro le pause nell’audio locale'
+        : !this.state.pacingSettings.enabled ? 'Misura pause disattivata'
+        : !measurePauses ? 'Pause originali conservate nel montaggio dialogato'
+        : 'Nessun file audio da analizzare';
+      progress('audio', 5, 81, audioLabel, 0, audioSources.length, !audioSources.length);
       for (let i=0;i<audioSources.length;i++) {
         const source=audioSources[i];
         progress('audio',5,81+(i/Math.max(1,audioSources.length))*7, 'Audio · '+source.name,i,audioSources.length);
@@ -215,7 +222,7 @@ class Session {
         ? await this.buildPlan( { beats, sources: planningSources, shots, directions:this.state.directions, semantic: true, fps: this.state.fps || 25 },300000) : null;
       progress('pacing',7,95,'Verifico pause e reazioni prima della risoluzione');
       if(plan)plan=this.keepReactionChoices(plan);
-      if (plan) plan=await this.request('pace_plan',{plan,sources:planningSources,audio,beats,shots,fps:this.state.fps || 25,settings:this.state.pacingSettings});
+      if (plan) plan=await this.pacePlan({plan,sources:planningSources,audio,beats,shots,fps:this.state.fps || 25,settings:this.state.pacingSettings});
       if (plan) plan.visual_review_required = false;
       const warnings = selectedScene
         ? [...(plan?.warnings || ['Conferma i confini delle take suggerite prima di calcolare il premontato.'])]
@@ -382,9 +389,40 @@ class Session {
     for(const decision of plan?.decisions || [])if(choices.has(decision.decision_id || decision.beat_id))decision.reaction_enabled=choices.get(decision.decision_id || decision.beat_id);
     return plan;
   }
+  async pacePlan(payload) {
+    const audio=payload.audio || {};
+    let measuredAudio=false;
+    // Saved Groq projects and analyses made with pacing off may lack RMS data.
+    // Fill it only when the actual local plan needs it, including alternate cameras.
+    if(payload.plan?.engine!=='groq_staged_v1' && payload.plan?.decisions?.length && payload.settings?.enabled===true) {
+      const originals=new Map([...(this.state.media || []),...(this.state.transcripts || [])].map(source=>[source.media_id,source]));
+      const missing=new Map();
+      for(const source of payload.sources || []) {
+        const media=originals.get(source.media_id) || source;
+        if(media.path && !Object.hasOwn(audio,media.media_id))missing.set(media.media_id,media);
+      }
+      let current=0;
+      for(const media of missing.values()) {
+        measuredAudio=true;
+        this.onProgress?.({phase:'pacing',phaseIndex:7,percent:95,label:'Misuro le pause · '+(media.name || media.media_id),current,total:missing.size});
+        try { audio[media.media_id]=await this.request('analyze_audio',{media},180000); }
+        catch(error) { audio[media.media_id]={status:'unavailable',reason:error.message}; }
+        current++;
+      }
+      if(this.state.analysis)this.state.analysis.audio=audio;
+    }
+    try {
+      const result=await this.request('pace_plan',{...payload,audio});
+      if(measuredAudio)this.onProgress?.({phase:'complete',phaseIndex:8,percent:100,label:'Ritmo aggiornato'});
+      return result;
+    } catch(error) {
+      if(measuredAudio)this.onProgress?.({phase:'error',phaseIndex:7,percent:0,label:'Verifica pause interrotta: '+error.message});
+      throw error;
+    }
+  }
   async applyPacing() {
     if (!this.state.analysis?.plan) return this.getReviewState();
-    this.state.analysis.plan=await this.request('pace_plan',{plan:this.state.analysis.plan,sources:this.state.analysis?.planningSources || this.state.transcripts || [],audio:this.state.analysis.audio || {},shots:this.state.analysis.shots || [],beats:this.state.analysis.parsedBeats || [],fps:this.state.fps || 25,settings:this.state.pacingSettings});
+    this.state.analysis.plan=await this.pacePlan({plan:this.state.analysis.plan,sources:this.state.analysis?.planningSources || this.state.transcripts || [],audio:this.state.analysis.audio || {},shots:this.state.analysis.shots || [],beats:this.state.analysis.parsedBeats || [],fps:this.state.fps || 25,settings:this.state.pacingSettings});
     return this.getReviewState();
   }
   async setDirections(value) {
@@ -399,7 +437,7 @@ class Session {
       plan=await this.buildPlan({beats,sources:analysis.planningSources,shots:analysis.shots || [],directions,semantic:true,fps:this.state.fps || 25},300000);
       plan=this.keepReactionChoices(plan);
       this.onProgress?.({phase:'pacing',phaseIndex:7,percent:95,label:'Verifico pause e reazioni prima della risoluzione'});
-      plan=await this.request('pace_plan',{plan,sources:analysis.planningSources,audio:analysis.audio || {},shots:analysis.shots || [],beats,fps:this.state.fps || 25,settings:this.state.pacingSettings});
+      plan=await this.pacePlan({plan,sources:analysis.planningSources,audio:analysis.audio || {},shots:analysis.shots || [],beats,fps:this.state.fps || 25,settings:this.state.pacingSettings});
       if(analysis.visualReview)plan.visual_review_required=Boolean(analysis.plan?.visual_review_required);
     }
     this.state.directions=directions;if(analysis)analysis.plan=plan;
@@ -408,7 +446,7 @@ class Session {
   }
   async setPacing(options) {
     const plan=this.state.analysis?.plan || {decisions:[],warnings:[]};
-    const result=await this.request('pace_plan',{plan,sources:this.state.analysis?.planningSources || this.state.transcripts || [],audio:this.state.analysis?.audio || {},shots:this.state.analysis?.shots || [],beats:this.state.analysis?.parsedBeats || [],fps:this.state.fps || 25,settings:{...this.state.pacingSettings,...options}});
+    const result=await this.pacePlan({plan,sources:this.state.analysis?.planningSources || this.state.transcripts || [],audio:this.state.analysis?.audio || {},shots:this.state.analysis?.shots || [],beats:this.state.analysis?.parsedBeats || [],fps:this.state.fps || 25,settings:{...this.state.pacingSettings,...options}});
     this.state.pacingSettings=result.pacing_settings;
     if(this.state.analysis?.plan)this.state.analysis.plan=result;
     return this.getReviewState();
@@ -436,7 +474,7 @@ class Session {
       plan=await this.buildPlan({beats:analysis.parsedBeats,sources:analysis.planningSources,shots:updated,directions:this.state.directions,semantic:true,fps:this.state.fps || 25},300000);
       plan=this.keepReactionChoices(plan);
       this.onProgress?.({phase:'pacing',phaseIndex:7,percent:95,label:'Verifico pause e reazioni prima della risoluzione'});
-      plan=await this.request('pace_plan',{plan,sources:analysis.planningSources,audio:analysis.audio || {},shots:updated,beats:analysis.parsedBeats,fps:this.state.fps || 25,settings:this.state.pacingSettings});
+      plan=await this.pacePlan({plan,sources:analysis.planningSources,audio:analysis.audio || {},shots:updated,beats:analysis.parsedBeats,fps:this.state.fps || 25,settings:this.state.pacingSettings});
     }
     if(plan)plan.visual_review_required=false;
     analysis.shots=updated; analysis.visualReview={...review,intervals:updated,confirmed:true,personNames:names};analysis.plan=plan;
