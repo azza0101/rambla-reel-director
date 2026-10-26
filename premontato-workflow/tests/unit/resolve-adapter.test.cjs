@@ -173,7 +173,9 @@ test('groups shot sizes on three video/mono audio tracks, colors and links each 
  const result=await createTimeline(c.sdk,'LAYOUT',edits,{media:[{media_id:'m1',fps:25,duration_frames:500}]});
  assert.equal(await c.reviewTimeline.GetTrackCount('video'),3);assert.equal(await c.reviewTimeline.GetTrackCount('audio'),3);
  for(let n=1;n<=3;n++)assert.equal(await c.reviewTimeline.GetTrackSubType('audio',n),'mono');
- assert.deepEqual(c.reviewTimeline.items.map(i=>[i.clip.trackIndex,i.clip.recordFrame,i.color]),[[1,90000,'Blue'],[3,90050,'Orange'],[2,90150,'Green'],[3,90180,'Orange'],[1,90200,'Tan']]);
+ assert.deepEqual(c.reviewTimeline.items.map(i=>[i.clip.trackIndex,i.clip.recordFrame]),[[1,90000],[3,90050],[2,90150],[3,90180],[1,90200]]);
+ assert.equal(new Set(c.reviewTimeline.items.map(i=>i.color)).size,5);
+ assert.deepEqual(c.reviewTimeline.audio.map(i=>i.color),c.reviewTimeline.items.map(i=>i.color));
  assert.deepEqual(c.reviewTimeline.audio.map(i=>[i.clip.trackIndex,i.clip.recordFrame]),[[1,90000],[3,90050],[2,90150],[3,90180],[1,90200]]);
  assert.equal(c.reviewTimeline.links.length,5);assert.equal(c.reviewTimeline.sourceMutations,0);assert.equal(result.audioSegments,5);assert.equal(c.project.active,c.sourceTimeline);
 });
@@ -244,4 +246,29 @@ test('script action coverage is appended with original synchronized audio',async
 test('invalid listening overlay duration is rejected before timeline creation',async()=>{
  const c=timelineSdk();const overlay={kind:'reaction',basis:'verified_listener',media_id:'m1',take_id:'t',start_frame:200,end_frame:230,offset_frames:80,shot_size:'close',speaker_coverage:'visible',enabled:true,evidence:{verified:true}};
  await assert.rejects(createTimeline(c.sdk,'BAD OVERLAY',[{media_id:'m1',start_frame:0,end_frame:100,reaction_overlay:overlay}],{media:[{media_id:'m1',duration_frames:500}]}),/ascolto non valida/);assert.equal(c.reviewTimeline.requestedName,undefined);
+});
+
+test('field colors separate subjects and angles, but share alternative takes of the same field',()=>{
+ const {assignFieldColors}=require('../../plugin/resolve_adapter');
+ const edits=[
+ {media_id:'angle-a',shot_size:'close',dialogue_character:'ALICE',take_id:'take-1'},
+ {media_id:'angle-a',shot_size:'close',dialogue_character:'ALICE',take_id:'take-2'},
+ {media_id:'angle-b',shot_size:'close',dialogue_character:'BOB'},
+ {media_id:'angle-a',shot_size:'medium',dialogue_character:'ALICE'},
+ {media_id:'angle-a',shot_size:'close',dialogue_character:'BOB'}];
+ const colors=assignFieldColors(edits);
+ assert.equal(colors[0],colors[1]);assert.equal(new Set([colors[0],...colors.slice(2)]).size,4);
+ const reversed=assignFieldColors([...edits].reverse()).reverse();assert.deepEqual(reversed,colors);
+});
+test('confirmed visible subjects define a shared field independently of who speaks',()=>{
+ const {assignFieldColors}=require('../../plugin/resolve_adapter');
+ const colors=assignFieldColors([
+ {media_id:'two-shot',shot_size:'close',visible_subjects:['BOB','ALICE'],dialogue_character:'ALICE'},
+ {media_id:'two-shot',shot_size:'close',visible_subjects:['ALICE','BOB'],dialogue_character:'BOB'},
+ {media_id:'two-shot',shot_size:'close',visible_subjects:['ALICE'],dialogue_character:'ALICE'}]);
+ assert.equal(colors[0],colors[1]);assert.notEqual(colors[0],colors[2]);
+});
+test('color palette exhaustion is explicit instead of reusing a different field color',()=>{
+ const {assignFieldColors}=require('../../plugin/resolve_adapter');
+ assert.throws(()=>assignFieldColors(Array.from({length:17},(_,i)=>({media_id:'angle-'+i,shot_size:'wide'}))),/colori.*Resolve/i);
 });

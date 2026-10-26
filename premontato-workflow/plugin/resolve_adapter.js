@@ -138,6 +138,22 @@ async function analyzedMediaItems(pool,ids,records=[],timeline){
  }
  return ids.map(id=>found.get(id));
 }
+const FIELD_COLORS=['Blue','Green','Orange','Purple','Yellow','Teal','Pink','Lime','Apricot','Olive','Navy','Violet','Tan','Beige','Brown','Chocolate'];
+function fieldColorKey(edit,index=0){
+ const size=edit.shot_size || 'unknown',normalize=value=>String(value).normalize('NFKC').trim().toLocaleUpperCase('it');
+ const subjects=[...new Set((edit.visible_subjects || []).filter(Boolean).map(normalize))].sort();
+ if(!subjects.length && size!=='wide'){const person=edit.character || edit.dialogue_character;if(person)subjects.push(normalize(person));}
+ const field=edit.framing_group_id || edit.media_id;
+ const identity=size==='wide'?'context':subjects.length?subjects.join('|'):'unverified:'+(edit.decision_id || edit.beat_id || [edit.start_frame,edit.end_frame,index].join(':'));
+ return JSON.stringify([size,field,identity]);
+}
+function assignFieldColors(edits){
+ const keys=edits.map((e,i)=>e.field_color_key || fieldColorKey(e,i));
+ const ordered=[...new Set(keys)].sort((a,b)=>(JSON.parse(a)[0]==='wide'?0:1)-(JSON.parse(b)[0]==='wide'?0:1) || a.localeCompare(b));
+ if(ordered.length>FIELD_COLORS.length)throw Error('Troppi campi distinti per i '+FIELD_COLORS.length+' colori disponibili in Resolve: i colori non vengono riutilizzati su campi diversi');
+ const colors=new Map(ordered.map((key,i)=>[key,FIELD_COLORS[i]]));return keys.map(key=>colors.get(key));
+}
+
 async function createTimeline(sdk, name, edits, expected = {}) {
   const { pm, project, pool, timeline: sourceTimeline } = await getResolve(sdk);
   const beforeProject = String(await project.GetUniqueId()), beforeTimeline = String(await sourceTimeline.GetUniqueId());
@@ -154,7 +170,10 @@ async function createTimeline(sdk, name, edits, expected = {}) {
     if(edit.action_after!==undefined){if(!Array.isArray(edit.action_after))throw Error('Raccordi azione non validi');for(const action of edit.action_after)rows.push(security.validateAction(action,expected.media?.find(m=>m.media_id===action.media_id)));}
     return rows;
   });
-  const raw=reviewed.flatMap(edit=>{
+  const raw=reviewed.flatMap((value,index)=>{
+    const shot=expected.analysis?.shots?.find(s=>s.media_id===value.media_id && s.start_frame<value.end_frame && s.end_frame>value.start_frame && s.visible_subjects?.length);
+    const edit={...value,visible_subjects:value.visible_subjects?.length?value.visible_subjects:shot?.visible_subjects};
+    edit.field_color_key=fieldColorKey(edit,index);
     if(!byId.has(edit.media_id))throw Error('Sorgente del raccordo non disponibile');
     const ranges=edit.source_ranges ?? [{start_frame:edit.start_frame,end_frame:edit.end_frame}];
     if(!Array.isArray(ranges) || !ranges.length || ranges.some((r,i)=>!Number.isInteger(r.start_frame)||!Number.isInteger(r.end_frame)||r.end_frame<=r.start_frame||r.start_frame<edit.start_frame||r.end_frame>edit.end_frame||(i>0 && r.start_frame<ranges[i-1].end_frame)))throw Error('Intervalli ritmo non validi');
@@ -164,7 +183,7 @@ async function createTimeline(sdk, name, edits, expected = {}) {
     for(const r of ranges){
       const length=r.end_frame-r.start_frame,split=overlay?Math.max(0,Math.min(length,overlay.offset_frames-offset)):length;
       if(split)output.push({...edit,start_frame:r.start_frame,end_frame:r.start_frame+split});
-      if(split<length){const delta=offset+split-overlay.offset_frames;output.push({...overlay,start_frame:overlay.start_frame+delta,end_frame:overlay.start_frame+delta+length-split,audio_source:{media_id:edit.media_id,start_frame:r.start_frame+split,end_frame:r.end_frame}});}
+      if(split<length){const delta=offset+split-overlay.offset_frames;output.push({...overlay,field_color_key:fieldColorKey(overlay,index),start_frame:overlay.start_frame+delta,end_frame:overlay.start_frame+delta+length-split,audio_source:{media_id:edit.media_id,start_frame:r.start_frame+split,end_frame:r.end_frame}});}
       offset+=length;
     }return output;
   });
@@ -173,12 +192,13 @@ async function createTimeline(sdk, name, edits, expected = {}) {
     const left=expanded.at(-1),audio=edit.audio_source || edit,priorAudio=left?.audio_source || left;
     if(left && left.media_id===edit.media_id && left.shot_size===edit.shot_size){
       if(left.end_frame!==edit.start_frame)throw Error('Jump cut sulla stessa inquadratura: ricalcola il premontato per ripristinare la continuità');
-      if(priorAudio.media_id===audio.media_id && priorAudio.end_frame===audio.start_frame){left.end_frame=edit.end_frame;if(left.audio_source)left.audio_source.end_frame=audio.end_frame;continue;}
+      if(left.field_color_key===edit.field_color_key && priorAudio.media_id===audio.media_id && priorAudio.end_frame===audio.start_frame){left.end_frame=edit.end_frame;if(left.audio_source)left.audio_source.end_frame=audio.end_frame;continue;}
     }
     expanded.push({...edit,audio_source:edit.audio_source?{...edit.audio_source}:undefined});
   }
   // Only the new timeline is changed. Source audio mapping and Media Pool colors stay intact.
-  const layout = size => size === 'medium' ? {track:2,color:'Green'} : ['close','detail'].includes(size) ? {track:3,color:'Orange'} : {track:1,color:size==='wide'?'Blue':'Tan'};
+  const layout = size => size === 'medium' ? 2 : ['close','detail'].includes(size) ? 3 : 1;
+  const fieldColors=assignFieldColors(expanded);
   const version=require('./package.json').version;
   const originalFolder=await pool.GetCurrentFolder();
   let targetFolder=await pool.GetRootFolder();
@@ -231,7 +251,7 @@ async function createTimeline(sdk, name, edits, expected = {}) {
     const mappingBefore=new Map();
     for(const [id,media] of byId)if(typeof media.GetAudioMapping==='function')mappingBefore.set(id,await media.GetAudioMapping());
     for (let i=0;i<expanded.length;i++) {
-      const edit=expanded[i],{track,color}=layout(edit.shot_size),media=byId.get(edit.media_id);
+      const edit=expanded[i],track=layout(edit.shot_size),color=fieldColors[i],media=byId.get(edit.media_id);
       const clip={mediaPoolItem:media,startFrame:edit.start_frame,endFrame:edit.end_frame,trackIndex:track,recordFrame:cursor};
       const video=await pool.AppendToTimeline([{...clip,mediaType:1}]) || [];
       if(video.length!==1)throw new Error('Resolve ha inserito '+i+' di '+expanded.length+' tagli; timeline di prova annullata');
@@ -299,4 +319,4 @@ async function saveCurrentProject(sdk, expectedProjectId) {
  return {projectId,name,savedAt:new Date().toISOString()};
 }
 
-module.exports = { saveCurrentProject, getResolve, snapshot, getTranscript, getSelectedTranscriptions, transcribeSelected, analyzeIntellisearchSelected, parsePeopleMetadata, timecodeToFrames, createTimeline };
+module.exports = { assignFieldColors, saveCurrentProject, getResolve, snapshot, getTranscript, getSelectedTranscriptions, transcribeSelected, analyzeIntellisearchSelected, parsePeopleMetadata, timecodeToFrames, createTimeline };
