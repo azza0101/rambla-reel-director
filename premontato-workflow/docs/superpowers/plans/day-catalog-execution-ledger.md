@@ -1,0 +1,9 @@
+
+Tasks 1/2 RED→GREEN: 2 JS inventory, 4 Python matching; full Python167 and JS143 passed. Task3 store RED→GREEN, queue pending verification. Native Resolve21.1.0.17 isolated probe bounded25..74=50frames; Append25..74 readback duration49/sourceEnd74 (adapter must verify). Original test-mcp restored.
+
+Tasks1–5 implementati, core tests RED→GREEN. Full147JS e181Python (runner include9 funzioni packaging prima escluse da unittest). ProbeResolve21.1.0.17: boundedend inclusivo, Appendend esclusivo, MoveClips roundtrip solo subclip sintetica. Native6memberships2scenes,1failure isolato, pause/resume e secondapply2skip passati. Statoeditoriale originale invariato. Finalnative replay/build pending.
+Ruling: fallback SELECTS in V1 anche con bounded probe positivo: una sola verifica non certifica subclip su tutti fps/codecs; nessun originale spostato. Ruling: nessun agente aggiuntivo, review autore per costo richiesto.
+
+Tasks1–6: core e UI implementati; 149JS/181Python pass, nessun skip. Native e native da EXE installato pass (2scene/6membership/1fallimento, pause/resume,2skip al secondoapply, sourceframes+audio e originali verificati). Installer EXE/installazioneisolata pass; ZIPcreato, updateapply temporaneo in corso. Ricalcolo reale5clip2.19s/.119s,4auto22review, nessun gold finto. Self-review separata: capabprobe, identityguard, noMoveoriginals, journalprefix idempotente, nessun GROQ/catalog. Ruling: risultato provvisorio con filefalliti pubblicabile solo con anteprima/conferma, esplicitamente segnato. Ruling: nessuna promessa di restore «nessuna timeline» viaSDK; limite documentato.
+
+Final review fixed: contesto ereditava score/ancore della candidata iniziale; test_context_keeps_the_score_of_the_selected_scene RED→GREEN, full182Python. Artefatti ricostruiti dal codice congelato. No ulteriori modifiche funzionali.

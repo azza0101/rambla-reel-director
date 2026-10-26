@@ -8,7 +8,7 @@ from pdf_script import extract_pdf_text
 from transcript_align import select_scene
 
 PROTOCOL = 1
-ACTIONS = {"ping", "parse_script", "extract_pdf_script", "select_scene", "align", "propose_take_segments", "choose_take", "build_plan", "analyze_shots", "analyze_audio", "pace_plan", "visual_review", "prepare_dialogue", "build_staged"}
+ACTIONS = {"catalog_scenes", "ping", "parse_script", "extract_pdf_script", "select_scene", "align", "propose_take_segments", "choose_take", "build_plan", "analyze_shots", "analyze_audio", "pace_plan", "visual_review", "prepare_dialogue", "build_staged"}
 
 
 def dispatch(request):
@@ -19,6 +19,9 @@ def dispatch(request):
         raise ValueError("Azione sconosciuta")
     if action == "ping":
         result = {"ready": True}
+    elif action == "catalog_scenes":
+        from scene_catalog import catalog_scenes
+        result=catalog_scenes(payload)
     elif action == "prepare_dialogue":
         from staged_dialogue import prepare_dialogue
         result=prepare_dialogue(payload)
