@@ -1,5 +1,5 @@
 'use strict';
-const base=require('./day_catalog_resolve'),store=require('./day_catalog_store');
+const path=require('node:path'),fs=require('node:fs');const pluginRoot=[path.resolve(__dirname,'../../plugin'),path.resolve(__dirname,'../..')].find(p=>fs.existsSync(path.join(p,'day_catalog_resolve.js')));if(!pluginRoot)throw Error('Catalog plugin root missing');const base=require(path.join(pluginRoot,'day_catalog_resolve')),store=require(path.join(pluginRoot,'day_catalog_store'));
 function chooseAssignment(c,source,visual){
  const votes=new Map(),rows=c.memberships.filter(m=>m.media_id===source.media_id&&m.status!=='rejected'&&!m.stale_due_script&&c.scenes.some(s=>s.scene_id===m.scene_id));
  for(const m of rows)votes.set(m.scene_id,(votes.get(m.scene_id)||0)+(m.source_end_frame-m.source_start_frame)*(m.confidence||.6));

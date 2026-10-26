@@ -1,5 +1,5 @@
 'use strict';
-const adapterDefault=require('./day_catalog_resolve'),store=require('./day_catalog_store'),clips=require('./day_catalog_clips'),{CatalogVision}=require('./day_catalog_vision');
+const adapterDefault=require('./day_catalog_resolve'),store=require('./day_catalog_store'),path=require('node:path'),fs=require('node:fs');const sharedRoot=[path.join(__dirname,'runtime','premontato'),path.join(__dirname,'..','runtime','premontato')].find(p=>fs.existsSync(path.join(p,'day_catalog_clips.js')));const clips=require(path.join(sharedRoot,'day_catalog_clips')),{CatalogVision}=require(path.join(sharedRoot,'day_catalog_vision'));
 class DayCatalog{
  constructor(root,session,adapter=adapterDefault,{vision=new CatalogVision(root,session)}={}){this.vision=vision;this.root=root;this.session=session;this.adapter=adapter;this.catalog=null;this.running=false;this.cancelled=false;}
  view(){if(!this.catalog)return null;const c=JSON.parse(JSON.stringify(this.catalog));for(const source of c.sources){delete source.segments;delete source.path;}c.unassigned_ranges=c.unassigned_ranges.map(r=>({...r,assignment_id:store.hash([r.media_id,r.source_start_frame,r.source_end_frame])}));return c;}
