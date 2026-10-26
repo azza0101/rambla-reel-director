@@ -39,3 +39,5 @@ Usare l’installer EXE della prerelease dedicata; chiudere il pannello Premonta
 - Native: tools/create_catalog_smoke_fixtures.ps1 crea soltanto media sintetici in una NUOVA cartella sotto review. Imposta PREMONTATO_PYTHON al runtime incluso e PREMONTATO_SDK_PYTHON al Python che accede all’SDK locale, quindi node tools/day_catalog_native_smoke.cjs <cartella-fixture>. Il test crea un progetto isolato, lo conserva come prova e ripristina quello iniziale. PREMONTATO_PLUGIN_ROOT consente di testare una copia installata isolata.
 
 Dettagli misure e collaudo: performance/2026-10-26-day-catalog-validation.md.
+
+Resolve può quantizzare i tempi con un anticipo di un frame o parole puntuali (start=end). Il catalogatore conserva i dati grezzi, limita il range al media fisicamente disponibile e mantiene il testo; i timing incerti richiedono revisione. Non vengono inventate durate per le parole.
