@@ -4,7 +4,7 @@ let scriptReady = false, mediaReady = false;
  if(/^\d+\.\d+\.\d+$/.test(window.premontato.version || ''))$('version').textContent = `v${window.premontato.version}`;
 function updateButton() { $('analyze').disabled = !(scriptReady && mediaReady); $('transcribe').disabled = !mediaReady; $('intellisearch').disabled = !mediaReady; }
 function message(text) { $('message').textContent = text; }
-function showError(error) { message(error.message || String(error)); if(lastProgressEvent && !['complete','error','transcript-complete'].includes(lastProgressEvent.phase))showProgress({...lastProgressEvent,phase:'error',label:error.message || String(error)}); }
+function showError(error) { message(error.message || String(error)); if(lastProgressEvent && !['complete','error','transcript-complete','awaiting-scene'].includes(lastProgressEvent.phase))showProgress({...lastProgressEvent,phase:'error',label:error.message || String(error)}); }
 const phaseNames=['Copione','Scena','Inquadrature','Controllo visivo facoltativo','Confini take','Audio','Battute e parlante','Ritmo e reazioni'];
 const phaseBounds=[0,12,24,62,68,81,89,95,100];
 const phaseState=[]; let progressStarted=0,lastProgressEvent=null;
@@ -19,25 +19,25 @@ function showProgress(event){
  $('progress-percent').textContent=event.percent+'%';$('progress-bar').value=event.percent;
  $('progress-bar').setAttribute('aria-valuenow',event.percent);
  [...$('progress-steps').children].forEach((row,index)=>{
-   const complete=event.phase==='complete' || index<event.phaseIndex;
-   const active=index===event.phaseIndex && !['complete','error'].includes(event.phase);
+   const complete=event.phase==='complete' || index<event.phaseIndex || event.phase==='awaiting-scene' && phaseState[index]?.done;
+   const active=index===event.phaseIndex && !['complete','error','awaiting-scene'].includes(event.phase);
    const failed=index===event.phaseIndex && event.phase==='error';
    row.classList.toggle('done',complete);row.classList.toggle('active',active);row.classList.toggle('error',failed);
    const detail=row.querySelector('[data-phase-detail]'),bar=row.querySelector('progress');
    if(complete){if(!phaseState[index]?.done)phaseState[index]={...(phaseState[index] || {}),done:true};detail.textContent=phaseState[index]?.skipped?'Facoltativa · su richiesta':'Completata'+(phaseState[index]?.label?' · '+phaseState[index].label:'');bar.value=phaseState[index]?.skipped?0:100;}
    else if(active){phaseState[index]={label:event.label,skipped:Boolean(event.skipped),startedAt:phaseState[index]?.startedAt || Date.now()};detail.textContent=event.label; if(event.total)bar.value=100*(event.current || 0)/event.total;else bar.removeAttribute('value');}
    else if(failed){detail.textContent=event.label;bar.value=0;}
-   else{detail.textContent='In attesa';bar.value=0;}
+   else{detail.textContent=event.phase==='awaiting-scene' && index===1?'Scegli le scene del copione':'In attesa';bar.value=0;}
  });
 }
 window.premontato.onProgress(showProgress);
-setInterval(()=>{if(!lastProgressEvent || ['complete','error','transcript-complete'].includes(lastProgressEvent.phase))return;
+setInterval(()=>{if(!lastProgressEvent || ['complete','error','transcript-complete','awaiting-scene'].includes(lastProgressEvent.phase))return;
  const now=Date.now(),elapsed=Math.round((now-progressStarted)/1000);$('progress-percent').textContent=lastProgressEvent.percent+'% · '+phaseClock(elapsed);
  const index=lastProgressEvent.phaseIndex,row=$('progress-steps').children[index];
  if(row && phaseState[index])row.querySelector('[data-phase-detail]').textContent=phaseState[index].label+' · '+phaseClock(Math.round((now-phaseState[index].startedAt)/1000));
 },1000);
 
-$('script').addEventListener('click', async () => { try { const result = await window.premontato.selectScript(); if (!result) return; scriptReady = true; $('script-status').textContent = `Copione: ${result.name}`;  $('review').hidden = true; $('make-timeline').disabled = true; updateButton(); } catch (e) { showError(e); } });
+$('script').addEventListener('click', async () => { try { const result = await window.premontato.selectScript(); if (!result) return; scriptReady = true;renderScriptPages({scriptIsPdf:result.isPdf,scriptPages:null}); $('script-status').textContent = `Copione: ${result.name}`;  $('review').hidden = true; $('make-timeline').disabled = true; updateButton(); } catch (e) { showError(e); } });
 const updateSteps=['Credenziale locale','Ricerca release Premontato','Manifest del pacchetto','Download','Verifica integrità','Salvataggio progetti','Installazione','Riapertura pannello'];
 const updateStepIndexes={credential:0,check:1,manifest:2,download:3,verify:4,save:5,validate:6,extract:6,install:6,rollback:6,restart:7};
 let updateStartedAt=0,updatePhaseStartedAt=0,updateLastAt=0,updateActiveIndex=0,updateRunning=false,updateDetail='',updateCompleted=new Set();
@@ -79,7 +79,7 @@ $('support-send').addEventListener('click', async () => { if (!supportPreview ||
 $('media').addEventListener('click', async () => { try { const items = await window.premontato.selectMedia(); mediaReady = items.length > 0;  $('review').hidden = true; $('make-timeline').disabled = true; $('media-list').innerHTML = items.map(item => `<div>${escapeHtml(item.name)} <span class="pill">${item.duration_frames} frame</span>${item.people?.length ? `<small>Volti IntelliSearch nel clip: ${escapeHtml(item.people.join(', '))}</small>` : ''}</div>`).join('') || 'Nessuna clip selezionata in Resolve'; updateButton(); await refreshConnection(); } catch (e) { showError(e); } });
 $('transcribe').addEventListener('click', async () => { $('transcribe').disabled = true; message('Controllo trascrizioni Resolve…'); try { const result = await window.premontato.transcribeSelected(); message(`Trascrizione pronta: ${result.count} segmenti; ${result.results.filter(item => item.reused).length} clip riusate dalla cache Resolve.`); } catch (e) { showError(e); } finally { updateButton(); } });
 $('intellisearch').addEventListener('click', async () => { $('intellisearch').disabled = true; message('Resolve sta analizzando le clip selezionate con IntelliSearch…'); try { const result = await window.premontato.analyzeIntellisearch(); message(`Richiesta IntelliSearch inviata a ${result.filter(item => item.ok).length}/${result.length} clip. I risultati restano nel catalogo Resolve.`); } catch (e) { showError(e); } finally { updateButton(); } });
-$('analyze').addEventListener('click', async () => { $('analyze').disabled = true; $('cancel').hidden = false; $('analysis-progress').hidden = false; $('progress-bar').value = 0; visualNames={}; visualDirty=false; visualOverrides.clear(); showProgress({phase:'preflight',phaseIndex:-1,percent:0,label:'Verifico il progetto Resolve e preparo l’analisi…'}); message('Analisi locale del copione…'); try { const state = await window.premontato.analyze(); render(state); $('review').hidden = false; message('Analisi completata. Controlla i beat prima della timeline.'); } catch (e) { showError(e); } finally { $('cancel').hidden = true; updateButton(); } });
+$('analyze').addEventListener('click', async () => { $('analyze').disabled = true; $('cancel').hidden = false; $('analysis-progress').hidden = false; $('progress-bar').value = 0; visualNames={}; visualDirty=false; visualOverrides.clear(); showProgress({phase:'preflight',phaseIndex:-1,percent:0,label:'Verifico il progetto Resolve e preparo l’analisi…'}); message('Analisi locale del copione…'); try { const state = await window.premontato.analyze(); render(state); $('review').hidden = false; message(state.analysis?.selectedScene?'Analisi completata. Controlla i beat prima della timeline.':'Scegli le scene del copione per preparare il montaggio.'); } catch (e) { showError(e); } finally { $('cancel').hidden = true; updateButton(); } });
 $('cancel').addEventListener('click', async () => { await window.premontato.cancelAnalysis(); $('cancel').hidden = true; message('Analisi annullata.'); });
 $('make-timeline').addEventListener('click', async () => {
  const status=$('timeline-result');$('make-timeline').disabled=true;status.textContent='Creazione timeline in corso…';message(status.textContent);
@@ -99,7 +99,7 @@ function render(state){
  }
  updateTimelineButton(state);
 }
-function renderBase(state) { window.__lastReviewState = state; renderGroq(state.groq); $('load-visual-review').disabled=!state.analysis;  window.__lastReviewState = state; renderPacing(state); renderDirections(state); renderVisualReview(state); const takes = state.analysis?.takes || []; const needsConfirm = takes.some(group => !group.confirmed); $('confirm-takes').hidden = !needsConfirm; $('takes').innerHTML = takes.map(group => `<h3>${escapeHtml(group.media_name)}</h3>${group.segments.map(segment => `<div class="take-row" data-take='${escapeHtml(JSON.stringify(segment))}'><span>Take ${escapeHtml(segment.take_index)}${segment.boundary_source === 'suggested' ? ' · suggerita' : ''}</span><label>In <input data-start type="number" min="0" max="${escapeHtml(group.duration_frames)}" value="${escapeHtml(segment.start_frame)}"></label><label>Out <input data-end type="number" min="1" max="${escapeHtml(group.duration_frames)}" value="${escapeHtml(segment.end_frame)}"></label><small>${segment.confirmed ? 'confermata' : 'da verificare'}</small></div>`).join('')}`).join(''); const selectedScene = state.analysis?.selectedScene; const beats = state.analysis?.plan?.review_beats || selectedScene?.beats || []; const decisions = new Map((state.analysis?.plan?.decisions || []).map(item => [item.decision_id || item.beat_id, item])); $('beats').innerHTML = selectedScene ? `<div class="notice">Scena individuata dal parlato: ${escapeHtml(selectedScene.heading)} · confidenza ${Math.round((state.analysis.sceneSelection?.confidence || 0) * 100)}%</div>` : ''; $('beats').innerHTML += beats.map((beat, i) => { const edit = decisions.get(beat.beat_id); const framing = edit ? ` · ${escapeHtml(edit.shot_size)} (${Math.round((edit.shot_confidence || 0) * 100)}%)` : ''; const status = edit ? `Visibilità parlante: ${edit.speaker_coverage === 'visible' ? (edit.speaker_coverage_source === 'audio_visual' ? 'stimata da audio/video' : 'confermata nelle still') : edit.speaker_coverage === 'absent' ? 'fuori campo: verifica' : 'da verificare'} · Take ${escapeHtml(edit.take_id)}${framing} · ${["semantic_context","groq_context"].includes(edit.match_method) ? `significato · indice ${(edit.semantic_score ?? edit.semantic ?? 0).toFixed(2)}` : `copertura parole ${Math.round((edit.coverage ?? 1) * 100)}%`} · ${edit.alternatives.length} alternative${edit.warnings?.length ? ` · ${escapeHtml(edit.warnings.join("; "))}` : ""}` : beat.kind === 'dialogue' ? 'Nessuna battuta trovata nella trascrizione' : 'Indicazione di scena, non richiede corrispondenza audio'; return `<div class="beat"><span class="num">${String(i + 1).padStart(2, '0')}</span><span class="character">${escapeHtml(beat.character || beat.kind.toUpperCase())}</span><span>${escapeHtml(beat.text)}<small>${status}</small></span></div>`; }).join(''); const plan = state.analysis?.plan; const matched = plan?.decisions.length || 0, omitted = plan?.unmatched_beats.length || 0; $('make-timeline').disabled = !plan || !matched || visualDirty || plan.visual_review_required; if (plan) { const summary = document.createElement('div'); summary.className = 'notice'; summary.textContent = `${matched} ${plan?.engine === "groq_staged_v1" ? "momenti dialogati" : "battute abbinate"} · ${omitted} dialoghi senza corrispondenza · ${state.analysis.shots.length} segmenti video analizzati`; $('beats').append(summary); } renderEditors(state, beats, decisions); updateTimelineButton(state); for (const warning of state.analysis?.warnings || []) { const notice = document.createElement('div'); notice.className = 'notice'; notice.textContent = warning; $('beats').append(notice); } }
+function renderBase(state) { renderScriptPages(state);renderSceneScope(state); window.__lastReviewState = state; renderGroq(state.groq); $('load-visual-review').disabled=!state.analysis;  window.__lastReviewState = state; renderPacing(state); renderDirections(state); renderVisualReview(state); const takes = state.analysis?.takes || []; const needsConfirm = takes.some(group => !group.confirmed); $('confirm-takes').hidden = !needsConfirm; $('takes').innerHTML = takes.map(group => `<h3>${escapeHtml(group.media_name)}</h3>${group.segments.map(segment => `<div class="take-row" data-take='${escapeHtml(JSON.stringify(segment))}'><span>Take ${escapeHtml(segment.take_index)}${segment.boundary_source === 'suggested' ? ' · suggerita' : ''}</span><label>In <input data-start type="number" min="0" max="${escapeHtml(group.duration_frames)}" value="${escapeHtml(segment.start_frame)}"></label><label>Out <input data-end type="number" min="1" max="${escapeHtml(group.duration_frames)}" value="${escapeHtml(segment.end_frame)}"></label><small>${segment.confirmed ? 'confermata' : 'da verificare'}</small></div>`).join('')}`).join(''); const selectedScene = state.analysis?.selectedScene; const beats = state.analysis?.plan?.review_beats || selectedScene?.beats || []; const decisions = new Map((state.analysis?.plan?.decisions || []).map(item => [item.decision_id || item.beat_id, item])); $('beats').innerHTML = selectedScene ? `<div class="notice">Scena individuata dal parlato: ${escapeHtml(selectedScene.heading)} · confidenza ${state.analysis.sceneSelection?.manual?'scelta manuale':Math.round((state.analysis.sceneSelection?.confidence || 0) * 100)+'%'}</div>` : ''; $('beats').innerHTML += beats.map((beat, i) => { const edit = decisions.get(beat.beat_id); const framing = edit ? ` · ${escapeHtml(edit.shot_size)} (${Math.round((edit.shot_confidence || 0) * 100)}%)` : ''; const status = edit ? `Visibilità parlante: ${edit.speaker_coverage === 'visible' ? (edit.speaker_coverage_source === 'audio_visual' ? 'stimata da audio/video' : 'confermata nelle still') : edit.speaker_coverage === 'absent' ? 'fuori campo: verifica' : 'da verificare'} · Take ${escapeHtml(edit.take_id)}${framing} · ${["semantic_context","groq_context"].includes(edit.match_method) ? `significato · indice ${(edit.semantic_score ?? edit.semantic ?? 0).toFixed(2)}` : `copertura parole ${Math.round((edit.coverage ?? 1) * 100)}%`} · ${edit.alternatives.length} alternative${edit.warnings?.length ? ` · ${escapeHtml(edit.warnings.join("; "))}` : ""}` : beat.kind === 'dialogue' ? 'Nessuna battuta trovata nella trascrizione' : 'Indicazione di scena, non richiede corrispondenza audio'; return `<div class="beat"><span class="num">${String(i + 1).padStart(2, '0')}</span><span class="character">${escapeHtml(beat.character || beat.kind.toUpperCase())}</span><span>${escapeHtml(beat.text)}<small>${status}</small></span></div>`; }).join(''); const plan = state.analysis?.plan; const matched = plan?.decisions.length || 0, omitted = plan?.unmatched_beats.length || 0; $('make-timeline').disabled = !plan || !matched || visualDirty || plan.visual_review_required; if (plan) { const summary = document.createElement('div'); summary.className = 'notice'; summary.textContent = `${matched} ${plan?.engine === "groq_staged_v1" ? "momenti dialogati" : "battute abbinate"} · ${omitted} dialoghi senza corrispondenza · ${state.analysis.shots.length} segmenti video analizzati`; $('beats').append(summary); } renderEditors(state, beats, decisions); updateTimelineButton(state); for (const warning of state.analysis?.warnings || []) { const notice = document.createElement('div'); notice.className = 'notice'; notice.textContent = warning; $('beats').append(notice); } }
 function escapeHtml(value) { return String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]); }
 
 
@@ -252,7 +252,7 @@ function hasPendingFormEdits(state=window.__lastReviewState || {},includeDirecti
 }
 function timelineBlockers({matched,visualPending,dirty,pending}){
  const result=[];
- if(!matched)result.push({message:'Nessuna battuta abbinata: esegui o verifica l’analisi.',target:'beats'});
+ if(!matched)result.push({message:'Nessun piano pronto: scegli le scene del copione oppure verifica gli abbinamenti.',target:'scene-scope'});
  if(visualPending || dirty)result.push({message:'Conferma campi e personaggi: controlla le still, spunta il controllo visivo e premi «Conferma e ricalcola il montaggio».',target:'visual-review'});
  if(pending)result.push({message:'Ci sono correzioni in bozza: applica le modifiche a take, battute, ritmo o direzioni.',target:'review'});
  return result;
@@ -264,7 +264,7 @@ function updateTimelineButton(state=window.__lastReviewState || {}){
  const box=$('timeline-readiness');box.replaceChildren();
  if(!blockers.length){box.textContent='Pronto: puoi creare la nuova timeline di revisione.';return;}
  const heading=document.createElement('strong');heading.textContent='Prima di creare la timeline:';box.append(heading);
- for(const item of blockers){const row=document.createElement('div'),button=document.createElement('button');button.type='button';button.className='quiet';button.textContent=item.message;button.addEventListener('click',()=>{const target=$(item.target);if(item.target==='visual-review'){visualReviewOpen=true;syncVisualVisibility(state);$('visual-controls').open=true;}if(item.target==='beats')$('beat-review').open=true;target.scrollIntoView({behavior:'smooth',block:'center'});const focus=target.matches('input,button')?target:target.querySelector('input,select,button');focus?.focus({preventScroll:true});});row.append(button);box.append(row);}
+ for(const item of blockers){const row=document.createElement('div'),button=document.createElement('button');button.type='button';button.className='quiet';button.textContent=item.message;button.addEventListener('click',()=>{const target=$(item.target);if(item.target==='visual-review'){visualReviewOpen=true;syncVisualVisibility(state);$('visual-controls').open=true;}if(item.target==='beats')$('beat-review').open=true;if(item.target==='scene-scope')$('scene-scope-options').open=true;target.scrollIntoView({behavior:'smooth',block:'center'});const focus=target.matches('input,button')?target:target.querySelector('input,select,button');focus?.focus({preventScroll:true});});row.append(button);box.append(row);}
 }
 let draftTimer=null,restoringDraft=false;
 function capturePremontatoDraft(){
@@ -360,4 +360,39 @@ $('groq-save').addEventListener('click',async()=>{
  const key=$('groq-key').value.trim(),button=$('groq-save');button.disabled=true;
  try{const state=await window.premontato.configureGroq({...(key?{key}:{}),enabled:$('groq-enabled').checked});$('groq-key').value='';hydrateProject(state);message('Impostazioni salvate. Rilancia l’analisi per applicare il motore scelto.');}
  catch(error){showError(error);}finally{$('groq-key').value='';button.disabled=false;}
+});
+
+function renderScriptPages(state){
+ $('script-pages').hidden=!state.scriptIsPdf;
+ $('script-page-start').value=state.scriptPages?.start || '';
+ $('script-page-end').value=state.scriptPages?.end || '';
+ $('script-pages-status').textContent=state.scriptPages?'Intervallo attivo: pagine '+state.scriptPages.start+'–'+state.scriptPages.end:'Riconoscimento automatico su tutto il copione';
+}
+$('script-pages-apply').addEventListener('click',async()=>{
+ const start=$('script-page-start').value.trim(),end=$('script-page-end').value.trim(),button=$('script-pages-apply');button.disabled=true;
+ try{const state=await window.premontato.setScriptPages({start:start===''?null:Number(start),end:end===''?null:Number(end)});hydrateProject(state);message('Intervallo del copione salvato. Premi Analizza: le analisi in cache saranno riutilizzate.');}
+ catch(error){showError(error);}finally{button.disabled=false;}
+});
+function renderSceneScope(state){
+ const analysis=state.analysis,scenes=analysis?.script?.scenes || [];
+ $('scene-scope').hidden=!scenes.length;
+ if(!scenes.length)return;
+ const selected=analysis.selectedScene,ids=selected?.source_scene_ids || (selected?[selected.scene_id]:[]);
+ $('scene-scope-status').textContent=selected?'Ambito individuato: '+selected.heading:'Il parlato corrisponde a più scene: seleziona una o più scene per proseguire.';
+ $('scene-scope-options').open=!selected;
+ $('scene-scope-list').replaceChildren();
+ for(const [index,scene] of scenes.entries()){
+  const row=document.createElement('label');row.className='direction-row';
+  const check=document.createElement('input');check.type='checkbox';check.dataset.scopeScene=scene.scene_id;check.checked=ids.includes(scene.scene_id);
+  const text=document.createElement('span'),preview=scene.beats.filter(beat=>beat.kind==='dialogue').slice(0,2).map(beat=>(beat.character || '')+': '+beat.text).join(' / ');
+  text.textContent=(index+1)+'. '+scene.heading+' · '+(preview.slice(0,240) || 'Indicazioni di scena');
+  row.append(check,text);$('scene-scope-list').append(row);
+ }
+}
+$('scene-scope-apply').addEventListener('click',async()=>{
+ const button=$('scene-scope-apply');button.disabled=true;
+ try{const scene_ids=[...$('scene-scope-list').querySelectorAll('[data-scope-scene]:checked')].map(input=>input.dataset.scopeScene);
+ if(!scene_ids.length)throw new Error('Seleziona almeno una scena del copione');
+ const state=await window.premontato.selectScenes({scene_ids});visualReviewOpen=false;visualDirty=false;visualOverrides.clear();hydrateProject(state);message('Montaggio pronto sulle scene selezionate. Puoi creare la timeline.');}
+ catch(error){showError(error);}finally{button.disabled=false;}
 });

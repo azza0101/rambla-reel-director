@@ -96,6 +96,38 @@ def beat_phrases(beat):
     return phrases or [text]
 
 
+def scene_sequence_candidates(scenes):
+    """Add maximal adjacent intercuts between recurring locations; never join distant scenes."""
+    import hashlib
+    def locations(scene):
+        heading = re.sub(r"^(?:INT\.?/EXT\.?|INT\.?|EXT\.?|EST\.?)\s*", "", scene.get("heading", ""), flags=re.I)
+        heading = re.split(r"\s*[-–]\s*", heading, maxsplit=1)[0]
+        return {normalize(part) for part in heading.split("/") if normalize(part)}
+    runs = []
+    for start in range(len(scenes)):
+        seen, counts = set(), {}
+        end = start
+        for end in range(start, min(len(scenes), start + 12)):
+            keys = locations(scenes[end])
+            if not keys or len(seen | keys) > 2:
+                break
+            seen |= keys
+            for key in keys:
+                counts[key] = counts.get(key, 0) + 1
+            if len(seen) == 2 and min(counts.values()) >= 2:
+                runs.append((start, end + 1))
+    maximal = [(start, end) for start, end in runs if not any(a <= start and b >= end and (a, b) != (start, end) for a, b in runs)]
+    result = []
+    for start, end in maximal:
+        members = scenes[start:end]
+        ids = [s["scene_id"] for s in members]
+        key = "sequence_" + hashlib.sha1("|".join(ids).encode()).hexdigest()[:12]
+        beats = [{**beat, "order": i} for i, beat in enumerate(beat for scene in members for beat in scene.get("beats", []))]
+        result.append({"scene_id": key, "heading": "SEQUENZA · scene " + str(start + 1) + "–" + str(end),
+                       "source_scene_ids": ids, "beats": beats})
+    return result
+
+
 def select_scene(scenes, transcript_segments, minimum_similarity=0.42, minimum_margin=0.08):
     """Identify one script scene from its spoken lines; abstain on weak/generic matches."""
     transcript = []
@@ -108,7 +140,7 @@ def select_scene(scenes, transcript_segments, minimum_similarity=0.42, minimum_m
             if normalize(part) and normalize(part) != "":
                 transcript.append({**segment, "segment_id": f"{segment.get('segment_id', 's')}:{part_index}", "text": part})
     ranked = []
-    for scene in scenes:
+    for scene in [*scenes, *scene_sequence_candidates(scenes)]:
         beats = []
         for beat in scene.get("beats", []):
             if beat.get("kind") != "dialogue":
@@ -128,6 +160,8 @@ def select_scene(scenes, transcript_segments, minimum_similarity=0.42, minimum_m
             if beat_index in used_beats or segment_index in used_segments:
                 continue
             used_beats.add(beat_index); used_segments.add(segment_index); matches.append(score)
+        if scene.get("source_scene_ids") and len({beats[i].get("scene_id") for i in used_beats}) < 2:
+            continue
         count = len(matches)
         coverage = count / len(beats) if beats else 0.0
         mean_score = sum(matches) / count if count else 0.0

@@ -19,5 +19,15 @@ class PdfScriptTests(unittest.TestCase):
         self.assertTrue(all(page.extract_text.call_args.kwargs["extraction_mode"] == "layout" for page in pages))
 
 
+class PdfRangeTests(unittest.TestCase):
+    def test_extracts_only_the_requested_physical_pages(self):
+        pages=[unittest.mock.Mock() for _ in range(5)]
+        for i,p in enumerate(pages):p.extract_text.return_value=str(i+1)
+        with patch('pypdf.PdfReader',return_value=unittest.mock.Mock(pages=pages,is_encrypted=False)):
+            self.assertEqual(extract_pdf_text('script.pdf',3,5),'3\n\n4\n\n5')
+            with self.assertRaises(ValueError):extract_pdf_text('script.pdf',5,6)
+        pages[0].extract_text.assert_not_called()
+        pages[1].extract_text.assert_not_called()
+
 if __name__ == "__main__":
     unittest.main()

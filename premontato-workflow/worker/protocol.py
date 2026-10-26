@@ -30,7 +30,7 @@ def dispatch(request):
     elif action == "parse_script":
         result = parse_script(payload.get("text", ""), payload.get("format", "auto"))
     elif action == "extract_pdf_script":
-        result = {"text": extract_pdf_text(payload["path"])}
+        result = {"text": extract_pdf_text(payload["path"], payload.get("page_start"), payload.get("page_end"))}
     elif action == "select_scene":
         result = select_scene(payload["scenes"], payload.get("transcript", []))
     elif action == "align":

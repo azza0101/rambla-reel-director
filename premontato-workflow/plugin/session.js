@@ -108,11 +108,37 @@ class Session {
     message.status === 'ok' ? task.resolve(message.result) : task.reject(new Error(message.error?.message || 'Errore worker'));
   }
   failAll(error) { for (const task of this.pending.values()) { clearTimeout(task.timer); task.reject(error); } this.pending.clear(); }
+  async selectScenes(request) {
+    const analysis=this.state.analysis,scenes=analysis?.script?.scenes || [],ids=request?.scene_ids;
+    if(!Array.isArray(ids) || !ids.length || ids.length>100 || new Set(ids).size!==ids.length || ids.some(id=>typeof id!=='string' || !scenes.some(scene=>scene.scene_id===id)))throw new Error('Selezione scene non valida');
+    const members=scenes.filter(scene=>ids.includes(scene.scene_id));
+    const selectedScene=members.length===1?members[0]:{scene_id:'selection_'+require('node:crypto').createHash('sha1').update(members.map(scene=>scene.scene_id).join('|')).digest('hex').slice(0,12),heading:'SEQUENZA · scene '+members.map(scene=>scenes.indexOf(scene)+1).join(', '),source_scene_ids:members.map(scene=>scene.scene_id),beats:members.flatMap(scene=>scene.beats).map((beat,order)=>({...beat,order}))};
+    if(!selectedScene.beats.some(beat=>beat.kind==='dialogue'))throw new Error('Le scene scelte non contengono dialoghi');
+    if(!analysis.planningSources?.length || !analysis.takes?.every(group=>group.confirmed))throw new Error('Conferma prima i confini delle take');
+    const directions={...(this.state.directions || DEFAULT_DIRECTIONS),markers:{}};
+    this.onProgress?.({phase:'plan',phaseIndex:6,percent:89,label:'Preparo il montaggio delle scene selezionate'});
+    let plan=await this.buildPlan({beats:selectedScene.beats,sources:analysis.planningSources,shots:analysis.shots || [],directions,semantic:true,fps:this.state.fps || 25},300000);
+    plan=await this.request('pace_plan',{plan,sources:analysis.planningSources,audio:analysis.audio || {},beats:selectedScene.beats,shots:analysis.shots || [],fps:this.state.fps || 25,settings:this.state.pacingSettings});
+    plan.visual_review_required=false;
+    this.state.analysis={...analysis,selectedScene,parsedBeats:selectedScene.beats,sceneSelection:{scene:selectedScene,confidence:1,manual:true,candidates:analysis.sceneSelection?.candidates || []},plan,warnings:plan.warnings || [],visualReview:null};
+    this.state.directions=directions;this.state.uiDraft=null;this.state.stage='review';
+    this.onProgress?.({phase:'complete',phaseIndex:8,percent:100,label:'Montaggio pronto per la revisione'});
+    return this.getReviewState();
+  }
+  async setScriptPages(request) {
+    if(!this.state.script || path.extname(this.state.script.path).toLowerCase()!=='.pdf')throw new Error('Scegli un copione PDF');
+    const {start,end}=request || {},all=start===null && end===null;
+    if(!all && (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start<1 || end<start || end>10000))throw new Error('Intervallo pagine non valido');
+    const result=await this.request('extract_pdf_script',{path:this.state.script.path,...(all?{}:{page_start:start,page_end:end})});
+    this.state.script={...this.state.script,text:result.text,pages:all?null:{start,end}};
+    this.state.analysis=null;this.state.uiDraft=null;this.state.directions={...(this.state.directions || DEFAULT_DIRECTIONS),markers:{}};
+    this.state.stage='idle';return this.getReviewState();
+  }
   async setScript(file) {
     const text = path.extname(file).toLowerCase() === '.pdf'
       ? (await this.request('extract_pdf_script', { path: file })).text
       : await fs.readFile(file, 'utf8');
-    this.state.directions={...(this.state.directions || DEFAULT_DIRECTIONS),markers:{}}; this.state.script = { path: file, text }; this.state.analysis = null; return { name: path.basename(file) };
+    this.state.directions={...(this.state.directions || DEFAULT_DIRECTIONS),markers:{}}; this.state.script = { path: file, text }; this.state.analysis = null; return { name: path.basename(file),isPdf:path.extname(file).toLowerCase()==='.pdf' };
   }
   setMedia(records, identity) { this.state.media = records; this.state.transcripts = []; this.state.mediaFingerprints=null; this.state.uiDraft=null; this.state.analysis = null; this.state.projectId = identity.projectId; this.state.timelineId = identity.timelineId; return records.map(({ media_id, name, duration_frames, people = [] }) => ({ media_id, name, duration_frames, people })); }
   assertProject(identity) {
@@ -197,8 +223,9 @@ class Session {
       if (shotCacheHits) warnings.push(`Analisi visiva riusata dalla cache locale per ${shotCacheHits} clip.`);
       if (this.state.error) warnings.push(this.state.error);
       this.state.analysis = { script: parsed, sceneSelection, selectedScene, warnings, takes, shots, audio, planningSources, plan, visualReview, parsedBeats: beats };
-      this.state.stage = 'review';
-      progress('complete', 8, 100, 'Analisi completata');
+      this.state.stage = selectedScene?'review':'awaiting_scene';
+      if(selectedScene)progress('complete',8,100,'Analisi completata');
+      else progress('awaiting-scene',1,12,'Scena ambigua: scegli una o più scene del copione per proseguire');
       return this.getReviewState();
     } catch (error) { this.state.error = error.message; this.state.stage = 'error'; progress('error', lastPhaseIndex, 0, `Analisi interrotta: ${error.message}`); throw error; }
   }
@@ -310,7 +337,7 @@ class Session {
     try{const binding=JSON.parse(await fs.readFile(path.join(this.root,'projects','current.json'),'utf8'));if(binding.document_id===this.documentId && typeof binding.path==='string' && path.isAbsolute(binding.path)){const stat=await fs.stat(binding.path);if(stat.isFile() && stat.size===binding.fingerprint?.size && stat.mtimeMs===binding.fingerprint?.mtimeMs){this.projectFile=binding.path;this.projectFingerprint=binding.fingerprint;this.lastSavedAt=this.lastAutosaveAt;}else{this.state.restoreWarning='Il file progetto è stato modificato fuori dal plugin: recupero aperto senza sovrascriverlo. Apri il file aggiornato oppure salva con un nuovo nome.';}}}catch{}
     return true;
   }
-  getReviewState() { return { groq:this.groq?.status(), projectStatus:this.projectStatus(), uiDraft:this.state.uiDraft, stage: this.state.stage, scriptName: this.state.script ? path.basename(this.state.script.path) : null,
+  getReviewState() { return { groq:this.groq?.status(), projectStatus:this.projectStatus(), uiDraft:this.state.uiDraft, stage: this.state.stage, scriptName: this.state.script ? path.basename(this.state.script.path) : null, scriptIsPdf:path.extname(this.state.script?.path || '').toLowerCase()==='.pdf',scriptPages:this.state.script?.pages || null,
     media: this.state.media.map(({ media_id, name, duration_frames, people = [] }) => ({ media_id, name, duration_frames, people })), analysis: this.state.analysis, directions:this.state.directions || DEFAULT_DIRECTIONS, pacingSettings: this.state.pacingSettings, error: this.state.error }; }
   setTranscripts(sources, fps, identity) { this.assertContext(identity); this.state.transcripts = sources; this.state.fps = fps; this.state.analysis = null; return { count: sources.reduce((sum, source) => sum + source.segments.length, 0) }; }
   updateDecision(request) {
