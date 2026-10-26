@@ -128,6 +128,8 @@ class Session {
   async analyze() {
     if (!this.state.script || !this.state.media.length) throw new Error('Prima scegli un copione e media dal Media Pool');
     if (this.state.stage === 'analyzing') throw new Error('Analisi già in corso');
+    const missing=this.state.media.filter(media=>!(this.state.transcripts || []).some(source=>source.media_id===media.media_id && source.segments?.some(segment=>segment.end_frame>segment.start_frame && /[\p{L}\p{N}]/u.test(segment.text || ''))));
+    if(missing.length)throw new Error('Trascrizioni mancanti o vuote: '+missing.map(media=>media.name || media.media_id).join(', ')+'. Trascrivi le clip e riprova.');
     this.state.mediaFingerprints=await this.captureMediaFingerprints();
     this.state.stage = 'analyzing';
     this.state.error = null;

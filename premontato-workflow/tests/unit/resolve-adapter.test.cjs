@@ -274,3 +274,13 @@ test('color palette exhaustion is explicit instead of reusing a different field 
 });
 
 test('wide field color remains stable when people enter or leave',()=>{ const {assignFieldColors}=require('../../plugin/resolve_adapter'); const colors=assignFieldColors([{media_id:'wide',shot_size:'wide',visible_subjects:['ALICE']},{media_id:'wide',shot_size:'wide',visible_subjects:['BOB']}]);assert.equal(colors[0],colors[1]); });
+
+test('analysis retrieves loaded media by identity and reuses cached transcripts without current selection',async()=>{
+ let transcribes=0,cached=false;const media={media_id:'loaded',name:'rush',fps:25,start_tc:'00:00:00:00',duration_frames:100};
+ const item={GetMediaId:async()=>media.media_id,GetTranscription:async()=>cached?{segments:[{start:'00:00:00:00',end:'00:00:01:00',text:'ciao'}]}:{},TranscribeAudio:async()=>{transcribes++;cached=true;return true;}};
+ const pool={GetRootFolder:async()=>({GetClipList:async()=>[item],GetSubFolderList:async()=>[]}),GetSelectedClips:async()=>{throw Error('must not read selection');}};
+ const sdk={GetResolvePromise:async()=>({GetProjectManager:async()=>({GetCurrentProject:async()=>({GetCurrentTimeline:async()=>({}),GetMediaPool:async()=>pool})})})};
+ const events=[];let sources=await getSelectedTranscriptions(sdk,{media:[media],transcribeMissing:true,onProgress:e=>events.push(e)});
+ assert.equal(sources[0].segments[0].end_frame,25);assert.equal(transcribes,1);assert.equal(events.at(-1).current,1);
+ await getSelectedTranscriptions(sdk,{media:[media],transcribeMissing:true});assert.equal(transcribes,1);
+});

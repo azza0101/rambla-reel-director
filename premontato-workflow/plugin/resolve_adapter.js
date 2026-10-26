@@ -95,10 +95,17 @@ function parsePeopleMetadata(value) {
   return [...new Set(raw.map(item => String(item).trim()).filter(Boolean))];
 }
 
-async function getSelectedTranscriptions(sdk) {
-  const snapshotData = await snapshot(sdk);
-  return Promise.all(snapshotData.selected.map(async source => {
-    const transcription = await source.item.GetTranscription(true);
+async function getSelectedTranscriptions(sdk,{media,transcribeMissing=false,onProgress}={}) {
+  let snapshotData;
+  if(media){const {pool,timeline}=await getResolve(sdk);const items=await analyzedMediaItems(pool,media.map(source=>source.media_id),media,timeline);snapshotData={selected:media.map((source,index)=>({...source,item:items[index]}))};}
+  else snapshotData=await snapshot(sdk);
+  const results=[];
+  for(const source of snapshotData.selected){
+    onProgress?.({current:results.length,total:snapshotData.selected.length,name:source.name});
+    let transcription = await source.item.GetTranscription(true);
+    if(transcribeMissing && !transcription?.segments?.some(segment=>/[\p{L}\p{N}]/u.test(segment.text || ''))){
+      await source.item.TranscribeAudio(true);transcription=await source.item.GetTranscription(true);
+    }
     const clipFrame=value=>Math.max(0,Math.min(source.duration_frames,timecodeToFrames(value,source.fps)-timecodeToFrames(source.start_tc,source.fps)));
     const segments = Array.isArray(transcription?.segments) ? transcription.segments.map((segment, index) => ({
       segment_id: `${source.media_id}:${index}`, media_id: source.media_id,
@@ -111,9 +118,11 @@ async function getSelectedTranscriptions(sdk) {
         text: String(word.text || '')
       })).filter(word => word.end_frame > word.start_frame && /[\p{L}\p{N}]/u.test(word.text)) : []
     })).filter(segment => segment.end_frame > segment.start_frame && /[\p{L}\p{N}]/u.test(segment.text)) : [];
-    return { ...source, item: undefined, take_id: `${source.media_id}:take:1`, take_index: snapshotData.selected.indexOf(source) + 1,
-      camera_id: 'camera_1', segments };
-  }));
+    results.push({ ...source, item: undefined, take_id: `${source.media_id}:take:1`, take_index: snapshotData.selected.indexOf(source) + 1,
+      camera_id: 'camera_1', segments });
+    onProgress?.({current:results.length,total:snapshotData.selected.length,name:source.name});
+  }
+  return results;
 }
 
 async function analyzedMediaItems(pool,ids,records=[],timeline){

@@ -1,7 +1,7 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const {Session}=require('../../plugin/session');
 test('default analysis verifies speaker but defers stills and identity clustering',async()=>{
- const s=new Session('unused','unused');s.state.script={path:'script.pdf',text:'copione'};s.state.media=[{media_id:'m',path:'rush.mp4',duration_frames:100}];s.state.transcripts=[{...s.state.media[0],name:'clip',fps:25,segments:[]}];const calls=[];const scene={heading:'SCENA 01',beats:[{beat_id:'b',kind:'dialogue',text:'prima battuta intera'}]};
+ const s=new Session('unused','unused');s.state.script={path:'script.pdf',text:'copione'};s.state.media=[{media_id:'m',path:'rush.mp4',duration_frames:100}];s.state.transcripts=[{...s.state.media[0],name:'clip',fps:25,segments:[{start_frame:0,end_frame:20,text:'prima battuta intera'}]}];const calls=[];const scene={heading:'SCENA 01',beats:[{beat_id:'b',kind:'dialogue',text:'prima battuta intera'}]};
  s.request=async(action,payload)=>{calls.push({action,payload});if(action==='parse_script')return {scenes:[scene]};if(action==='select_scene')return {scene};if(action==='analyze_shots')return {segments:[]};if(action==='propose_take_segments')return [{take_id:'t',media_id:'m',start_frame:0,end_frame:100,take_index:1,boundary_source:'whole_clip'}];if(action==='analyze_audio')return {status:'ok',silences:[]};if(action==='build_plan')return {decisions:[],warnings:[],unmatched_beats:[]};if(action==='pace_plan')return payload.plan;throw Error('Unexpected '+action);};
  await s.analyze();assert.equal(calls.some(c=>c.action==='visual_review'),false);assert.equal(calls.find(c=>c.action==='build_plan').payload.active_speaker,true);assert.equal(s.state.analysis.plan.visual_review_required,false);
 });
@@ -26,3 +26,5 @@ test('moment edit updates only the requested decision within a shared screenplay
  const s=new Session('unused','unused');s.state.media=[{media_id:'m',duration_frames:500}];s.state.analysis={plan:{decisions:[{decision_id:'one',beat_id:'b',media_id:'m',take_id:'t',start_frame:10,end_frame:30,alternatives:[]},{decision_id:'two',beat_id:'b',media_id:'m',take_id:'t',start_frame:40,end_frame:60,alternatives:[]}]}};
  s.updateDecision({beat_id:'b',decision_id:'two',start_frame:45});assert.equal(s.state.analysis.plan.decisions[0].start_frame,10);assert.equal(s.state.analysis.plan.decisions[1].start_frame,45);
 });
+
+test("analysis rejects missing transcripts before claiming completion",async()=>{const s=new Session("unused","unused");s.state.script={text:"copione"};s.state.media=[{media_id:"m",name:"clip"}];let called=false;s.request=async()=>{called=true;return {};};await assert.rejects(s.analyze(),/trascrizion/i);assert.equal(called,false);});

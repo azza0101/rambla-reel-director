@@ -37,7 +37,7 @@ setInterval(()=>{if(!lastProgressEvent || ['complete','error','transcript-comple
  if(row && phaseState[index])row.querySelector('[data-phase-detail]').textContent=phaseState[index].label+' · '+phaseClock(Math.round((now-phaseState[index].startedAt)/1000));
 },1000);
 
-$('script').addEventListener('click', async () => { try { const result = await window.premontato.selectScript(); if (!result) return; scriptReady = true; $('script-status').textContent = `Copione: ${result.name}`; $('reviewed').checked = false; $('review').hidden = true; $('make-timeline').disabled = true; updateButton(); } catch (e) { showError(e); } });
+$('script').addEventListener('click', async () => { try { const result = await window.premontato.selectScript(); if (!result) return; scriptReady = true; $('script-status').textContent = `Copione: ${result.name}`;  $('review').hidden = true; $('make-timeline').disabled = true; updateButton(); } catch (e) { showError(e); } });
 const updateSteps=['Credenziale locale','Ricerca release Premontato','Manifest del pacchetto','Download','Verifica integrità','Salvataggio progetti','Installazione','Riapertura pannello'];
 const updateStepIndexes={credential:0,check:1,manifest:2,download:3,verify:4,save:5,validate:6,extract:6,install:6,rollback:6,restart:7};
 let updateStartedAt=0,updatePhaseStartedAt=0,updateLastAt=0,updateActiveIndex=0,updateRunning=false,updateDetail='',updateCompleted=new Set();
@@ -76,18 +76,17 @@ $('support-confirm').addEventListener('change', () => { $('support-send').disabl
 $('support-close').addEventListener('click', () => $('support-dialog').close());
 $('support-dialog').addEventListener('click', event => { if (event.target === $('support-dialog')) $('support-dialog').close(); });
 $('support-send').addEventListener('click', async () => { if (!supportPreview || !$('support-confirm').checked) return; const button = $('support-send'); button.disabled = true; $('support-status').textContent = 'Invio a GitHub…'; try { const result = await window.premontato.submitSupportReport({ reportId: supportPreview.reportId, confirmed: true }); $('support-status').textContent = 'Segnalazione inviata.'; const link = document.createElement('a'); link.href = result.url; link.target = '_blank'; link.rel = 'noreferrer'; link.textContent = result.url; $('support-status').append(document.createTextNode(' '), link); supportPreview = null; } catch (error) { $('support-status').textContent = error.message || String(error); button.disabled = false; } });
-$('media').addEventListener('click', async () => { try { const items = await window.premontato.selectMedia(); mediaReady = items.length > 0; $('reviewed').checked = false; $('review').hidden = true; $('make-timeline').disabled = true; $('media-list').innerHTML = items.map(item => `<div>${escapeHtml(item.name)} <span class="pill">${item.duration_frames} frame</span>${item.people?.length ? `<small>Volti IntelliSearch nel clip: ${escapeHtml(item.people.join(', '))}</small>` : ''}</div>`).join('') || 'Nessuna clip selezionata in Resolve'; updateButton(); await refreshConnection(); } catch (e) { showError(e); } });
+$('media').addEventListener('click', async () => { try { const items = await window.premontato.selectMedia(); mediaReady = items.length > 0;  $('review').hidden = true; $('make-timeline').disabled = true; $('media-list').innerHTML = items.map(item => `<div>${escapeHtml(item.name)} <span class="pill">${item.duration_frames} frame</span>${item.people?.length ? `<small>Volti IntelliSearch nel clip: ${escapeHtml(item.people.join(', '))}</small>` : ''}</div>`).join('') || 'Nessuna clip selezionata in Resolve'; updateButton(); await refreshConnection(); } catch (e) { showError(e); } });
 $('transcribe').addEventListener('click', async () => { $('transcribe').disabled = true; message('Controllo trascrizioni Resolve…'); try { const result = await window.premontato.transcribeSelected(); message(`Trascrizione pronta: ${result.count} segmenti; ${result.results.filter(item => item.reused).length} clip riusate dalla cache Resolve.`); } catch (e) { showError(e); } finally { updateButton(); } });
 $('intellisearch').addEventListener('click', async () => { $('intellisearch').disabled = true; message('Resolve sta analizzando le clip selezionate con IntelliSearch…'); try { const result = await window.premontato.analyzeIntellisearch(); message(`Richiesta IntelliSearch inviata a ${result.filter(item => item.ok).length}/${result.length} clip. I risultati restano nel catalogo Resolve.`); } catch (e) { showError(e); } finally { updateButton(); } });
 $('analyze').addEventListener('click', async () => { $('analyze').disabled = true; $('cancel').hidden = false; $('analysis-progress').hidden = false; $('progress-bar').value = 0; visualNames={}; visualDirty=false; visualOverrides.clear(); showProgress({phase:'preflight',phaseIndex:-1,percent:0,label:'Verifico il progetto Resolve e preparo l’analisi…'}); message('Analisi locale del copione…'); try { const state = await window.premontato.analyze(); render(state); $('review').hidden = false; message('Analisi completata. Controlla i beat prima della timeline.'); } catch (e) { showError(e); } finally { $('cancel').hidden = true; updateButton(); } });
 $('cancel').addEventListener('click', async () => { await window.premontato.cancelAnalysis(); $('cancel').hidden = true; message('Analisi annullata.'); });
 $('make-timeline').addEventListener('click', async () => {
  const status=$('timeline-result');$('make-timeline').disabled=true;status.textContent='Creazione timeline in corso…';message(status.textContent);
- try { const result=await window.premontato.createReviewTimeline({confirmed:$('reviewed').checked});const omitted=result.omitted?'; '+result.omitted+' dialoghi non abbinati omessi':'';status.textContent='Creata '+result.timelineName+' con '+result.included+' battute abbinate'+omitted+'. Verifica i tagli e l’audio in Resolve.';message(status.textContent); }
+ try { const result=await window.premontato.createReviewTimeline({confirmed:true});const omitted=result.omitted?'; '+result.omitted+' dialoghi non abbinati omessi':'';status.textContent='Creata '+result.timelineName+' con '+result.included+' battute abbinate'+omitted+'. Verifica i tagli e l’audio in Resolve.';message(status.textContent); }
  catch(error){status.textContent=error.message || String(error);showError(error);}
  finally{updateTimelineButton();}
 });
- $('reviewed').addEventListener('change', () => {updateTimelineButton();if(hasPendingFormEdits())message('Applica le correzioni in bozza prima di creare la timeline.');});
 $('confirm-takes').addEventListener('click', async () => { try { const fields = [...$('takes').querySelectorAll('[data-take]')]; const segments = fields.map(row => ({ ...JSON.parse(row.dataset.take), start_frame: Number(row.querySelector('[data-start]').value), end_frame: Number(row.querySelector('[data-end]').value) })); const state = await window.premontato.confirmTakes(segments); render(state); message('Confini confermati e montaggio ricalcolato.'); } catch (e) { showError(e); } });
 function render(state){
  const previous=window.__lastReviewState;
@@ -100,7 +99,7 @@ function render(state){
  }
  updateTimelineButton(state);
 }
-function renderBase(state) { window.__lastReviewState = state; renderGroq(state.groq); $('load-visual-review').disabled=!state.analysis;  window.__lastReviewState = state; renderPacing(state); renderDirections(state); renderVisualReview(state); const takes = state.analysis?.takes || []; const needsConfirm = takes.some(group => !group.confirmed); $('confirm-takes').hidden = !needsConfirm; $('takes').innerHTML = takes.map(group => `<h3>${escapeHtml(group.media_name)}</h3>${group.segments.map(segment => `<div class="take-row" data-take='${escapeHtml(JSON.stringify(segment))}'><span>Take ${escapeHtml(segment.take_index)}${segment.boundary_source === 'suggested' ? ' · suggerita' : ''}</span><label>In <input data-start type="number" min="0" max="${escapeHtml(group.duration_frames)}" value="${escapeHtml(segment.start_frame)}"></label><label>Out <input data-end type="number" min="1" max="${escapeHtml(group.duration_frames)}" value="${escapeHtml(segment.end_frame)}"></label><small>${segment.confirmed ? 'confermata' : 'da verificare'}</small></div>`).join('')}`).join(''); const selectedScene = state.analysis?.selectedScene; const beats = state.analysis?.plan?.review_beats || selectedScene?.beats || []; const decisions = new Map((state.analysis?.plan?.decisions || []).map(item => [item.decision_id || item.beat_id, item])); $('beats').innerHTML = selectedScene ? `<div class="notice">Scena individuata dal parlato: ${escapeHtml(selectedScene.heading)} · confidenza ${Math.round((state.analysis.sceneSelection?.confidence || 0) * 100)}%</div>` : ''; $('beats').innerHTML += beats.map((beat, i) => { const edit = decisions.get(beat.beat_id); const framing = edit ? ` · ${escapeHtml(edit.shot_size)} (${Math.round((edit.shot_confidence || 0) * 100)}%)` : ''; const status = edit ? `Visibilità parlante: ${edit.speaker_coverage === 'visible' ? (edit.speaker_coverage_source === 'audio_visual' ? 'stimata da audio/video' : 'confermata nelle still') : edit.speaker_coverage === 'absent' ? 'fuori campo: verifica' : 'da verificare'} · Take ${escapeHtml(edit.take_id)}${framing} · ${["semantic_context","groq_context"].includes(edit.match_method) ? `significato · indice ${(edit.semantic_score ?? edit.semantic ?? 0).toFixed(2)}` : `copertura parole ${Math.round((edit.coverage ?? 1) * 100)}%`} · ${edit.alternatives.length} alternative${edit.warnings?.length ? ` · ${escapeHtml(edit.warnings.join("; "))}` : ""}` : beat.kind === 'dialogue' ? 'Nessuna battuta trovata nella trascrizione' : 'Indicazione di scena, non richiede corrispondenza audio'; return `<div class="beat"><span class="num">${String(i + 1).padStart(2, '0')}</span><span class="character">${escapeHtml(beat.character || beat.kind.toUpperCase())}</span><span>${escapeHtml(beat.text)}<small>${status}</small></span></div>`; }).join(''); const plan = state.analysis?.plan; const matched = plan?.decisions.length || 0, omitted = plan?.unmatched_beats.length || 0; $('make-timeline').disabled = !plan || !matched || visualDirty || plan.visual_review_required || !$('reviewed').checked; $('reviewed-copy').textContent = omitted ? `Ho controllato: crea una timeline di prova con ${matched} battute abbinate e ometti ${omitted} dialoghi senza corrispondenza.` : 'Ho controllato gli abbinamenti e voglio creare una timeline di prova.'; if (plan) { const summary = document.createElement('div'); summary.className = 'notice'; summary.textContent = `${matched} ${plan?.engine === "groq_staged_v1" ? "momenti dialogati" : "battute abbinate"} · ${omitted} dialoghi senza corrispondenza · ${state.analysis.shots.length} segmenti video analizzati`; $('beats').append(summary); } renderEditors(state, beats, decisions); updateTimelineButton(state); for (const warning of state.analysis?.warnings || []) { const notice = document.createElement('div'); notice.className = 'notice'; notice.textContent = warning; $('beats').append(notice); } }
+function renderBase(state) { window.__lastReviewState = state; renderGroq(state.groq); $('load-visual-review').disabled=!state.analysis;  window.__lastReviewState = state; renderPacing(state); renderDirections(state); renderVisualReview(state); const takes = state.analysis?.takes || []; const needsConfirm = takes.some(group => !group.confirmed); $('confirm-takes').hidden = !needsConfirm; $('takes').innerHTML = takes.map(group => `<h3>${escapeHtml(group.media_name)}</h3>${group.segments.map(segment => `<div class="take-row" data-take='${escapeHtml(JSON.stringify(segment))}'><span>Take ${escapeHtml(segment.take_index)}${segment.boundary_source === 'suggested' ? ' · suggerita' : ''}</span><label>In <input data-start type="number" min="0" max="${escapeHtml(group.duration_frames)}" value="${escapeHtml(segment.start_frame)}"></label><label>Out <input data-end type="number" min="1" max="${escapeHtml(group.duration_frames)}" value="${escapeHtml(segment.end_frame)}"></label><small>${segment.confirmed ? 'confermata' : 'da verificare'}</small></div>`).join('')}`).join(''); const selectedScene = state.analysis?.selectedScene; const beats = state.analysis?.plan?.review_beats || selectedScene?.beats || []; const decisions = new Map((state.analysis?.plan?.decisions || []).map(item => [item.decision_id || item.beat_id, item])); $('beats').innerHTML = selectedScene ? `<div class="notice">Scena individuata dal parlato: ${escapeHtml(selectedScene.heading)} · confidenza ${Math.round((state.analysis.sceneSelection?.confidence || 0) * 100)}%</div>` : ''; $('beats').innerHTML += beats.map((beat, i) => { const edit = decisions.get(beat.beat_id); const framing = edit ? ` · ${escapeHtml(edit.shot_size)} (${Math.round((edit.shot_confidence || 0) * 100)}%)` : ''; const status = edit ? `Visibilità parlante: ${edit.speaker_coverage === 'visible' ? (edit.speaker_coverage_source === 'audio_visual' ? 'stimata da audio/video' : 'confermata nelle still') : edit.speaker_coverage === 'absent' ? 'fuori campo: verifica' : 'da verificare'} · Take ${escapeHtml(edit.take_id)}${framing} · ${["semantic_context","groq_context"].includes(edit.match_method) ? `significato · indice ${(edit.semantic_score ?? edit.semantic ?? 0).toFixed(2)}` : `copertura parole ${Math.round((edit.coverage ?? 1) * 100)}%`} · ${edit.alternatives.length} alternative${edit.warnings?.length ? ` · ${escapeHtml(edit.warnings.join("; "))}` : ""}` : beat.kind === 'dialogue' ? 'Nessuna battuta trovata nella trascrizione' : 'Indicazione di scena, non richiede corrispondenza audio'; return `<div class="beat"><span class="num">${String(i + 1).padStart(2, '0')}</span><span class="character">${escapeHtml(beat.character || beat.kind.toUpperCase())}</span><span>${escapeHtml(beat.text)}<small>${status}</small></span></div>`; }).join(''); const plan = state.analysis?.plan; const matched = plan?.decisions.length || 0, omitted = plan?.unmatched_beats.length || 0; $('make-timeline').disabled = !plan || !matched || visualDirty || plan.visual_review_required; if (plan) { const summary = document.createElement('div'); summary.className = 'notice'; summary.textContent = `${matched} ${plan?.engine === "groq_staged_v1" ? "momenti dialogati" : "battute abbinate"} · ${omitted} dialoghi senza corrispondenza · ${state.analysis.shots.length} segmenti video analizzati`; $('beats').append(summary); } renderEditors(state, beats, decisions); updateTimelineButton(state); for (const warning of state.analysis?.warnings || []) { const notice = document.createElement('div'); notice.className = 'notice'; notice.textContent = warning; $('beats').append(notice); } }
 function escapeHtml(value) { return String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]); }
 
 
@@ -116,17 +115,17 @@ function renderEditors(state, beats, decisions) {
       '<button data-save>Applica correzioni</button></div>';
     panel.querySelector('[data-save]').addEventListener('click',async()=>{try {
       const next=await window.premontato.updateDecision({beat_id:edit.beat_id,decision_id:edit.decision_id,start_frame:Number(panel.querySelector('[data-in]').value),end_frame:Number(panel.querySelector('[data-out]').value),shot_size:panel.querySelector('[data-scale]').value});
-      $('reviewed').checked=false;render(next);message('Correzione salvata nel piano.');
+      render(next);message('Correzione salvata nel piano.');
     }catch(error){showError(error);}});
     if(edit.alternatives?.length){
       const select=document.createElement('select'); const placeholder=document.createElement('option');placeholder.textContent='Scegli una ripresa alternativa…';placeholder.value='';select.append(placeholder);
       edit.alternatives.forEach((alt,i)=>{const option=document.createElement('option');option.value=String(i);option.textContent=(state.media.find(m=>m.media_id===alt.media_id)?.name || alt.take_id)+' · '+alt.start_frame+'–'+alt.end_frame+' · '+Math.round((alt.coverage??alt.score)*100)+'%';select.append(option);});
-      select.addEventListener('change',async()=>{if(select.value==='')return;try{const next=await window.premontato.updateDecision({beat_id:edit.beat_id,decision_id:edit.decision_id,alternative_index:Number(select.value)});$('reviewed').checked=false;render(next);}catch(error){showError(error);}});panel.append(select);
+      select.addEventListener('change',async()=>{if(select.value==='')return;try{const next=await window.premontato.updateDecision({beat_id:edit.beat_id,decision_id:edit.decision_id,alternative_index:Number(select.value)});render(next);}catch(error){showError(error);}});panel.append(select);
     }
     const pauseLabel=document.createElement('label');pauseLabel.className='review-confirm';
     const pauseCheck=document.createElement('input');pauseCheck.type='checkbox';pauseCheck.checked=Boolean(edit.preserve_pause || edit.pacing?.protected_pause);
     pauseLabel.append(pauseCheck,document.createTextNode(' Conserva le pause di questa battuta'));
-    pauseCheck.addEventListener('change',async()=>{try{const next=await window.premontato.updateDecision({beat_id:edit.beat_id,decision_id:edit.decision_id,preserve_pause:pauseCheck.checked});$('reviewed').checked=false;render(next);}catch(error){showError(error);}});
+    pauseCheck.addEventListener('change',async()=>{try{const next=await window.premontato.updateDecision({beat_id:edit.beat_id,decision_id:edit.decision_id,preserve_pause:pauseCheck.checked});render(next);}catch(error){showError(error);}});
     panel.append(pauseLabel);
     if(edit.opening_checked){const checked=document.createElement('small');checked.textContent='Attacco della battuta verificato nel contesto del copione';panel.append(checked);}
     if(edit.reaction_status){
@@ -136,7 +135,7 @@ function renderEditors(state, beats, decisions) {
         const label=document.createElement('label'),check=document.createElement('input');check.type='checkbox';check.dataset.reaction='';check.checked=Boolean(reaction);label.className='review-confirm';
         label.append(check,document.createTextNode((reaction?.basis==='verified_listener'?' Reazione in ascolto prima della larga · audio della battuta precedente conservato':' Inserisci la reazione silenziosa prima della risposta')+(reaction?' · '+((reaction.end_frame-reaction.start_frame)/(state.analysis.plan.fps || 25)).toFixed(2)+' s':'')));box.append(label);
         if(reaction?.still){const figure=document.createElement('figure'),image=document.createElement('img'),caption=document.createElement('figcaption');image.src=safeStill(reaction.still.image);image.alt='Anteprima della stretta silenziosa di '+reaction.character;caption.textContent=reaction.character+' · frame '+reaction.still.frame+' · pausa audio verificata, senza parole trascritte';figure.append(image,caption);box.append(figure);}
-        check.addEventListener('change',async()=>{try{const next=await window.premontato.updateDecision({beat_id:edit.beat_id,decision_id:edit.decision_id,reaction_enabled:check.checked});$('reviewed').checked=false;render(next);message('Scelta della reazione salvata nel piano.');}catch(error){showError(error);}});
+        check.addEventListener('change',async()=>{try{const next=await window.premontato.updateDecision({beat_id:edit.beat_id,decision_id:edit.decision_id,reaction_enabled:check.checked});render(next);message('Scelta della reazione salvata nel piano.');}catch(error){showError(error);}});
       }panel.append(box);
     }
     if(edit.narrative_role && edit.narrative_role!=='free'){const narrative=document.createElement('small');narrative.textContent='Regia: '+(edit.narrative_role==='tension'?'tensione · stretta':'risoluzione · larga')+(edit.style_satisfied?' · copertura trovata':' · copertura richiesta non disponibile');panel.append(narrative);}
@@ -155,10 +154,11 @@ function renderPacing(state) {
 }
 $('pacing-apply').addEventListener('click',async()=>{
  const button=$('pacing-apply');button.disabled=true;
- try {const state=await window.premontato.setPacing({enabled:$('pacing-enabled').checked,max_pause_seconds:Number($('pacing-gap').value),minimum_shot_seconds:Number($('pacing-minimum').value),respect_script_pauses:$('pacing-script').checked});$('reviewed').checked=false;render(state);message(state.analysis?.plan?'Ritmo ricalcolato. Controlla gli intervalli e le eccezioni.':'Impostazioni pronte per la prossima analisi.');}
+ try {const state=await window.premontato.setPacing({enabled:$('pacing-enabled').checked,max_pause_seconds:Number($('pacing-gap').value),minimum_shot_seconds:Number($('pacing-minimum').value),respect_script_pauses:$('pacing-script').checked});render(state);message(state.analysis?.plan?'Ritmo ricalcolato. Controlla gli intervalli e le eccezioni.':'Impostazioni pronte per la prossima analisi.');}
  catch(error){showError(error);}finally{button.disabled=false;}
 });
 
+let visualReviewOpen=false;
 let visualNames={},visualDirty=false;const visualOverrides=new Map();
 function safeStill(value){return typeof value==='string' && value.length<500000 && /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(value) ? value : '';}
 function previewImage(image,caption){
@@ -169,7 +169,7 @@ $('still-close').addEventListener('click',()=>$('still-dialog').close());
 $('still-dialog').addEventListener('click',event=>{if(event.target===$('still-dialog'))$('still-dialog').close();});
 $('still-dialog').addEventListener('close',()=>{$('still-image').removeAttribute('src');});
 function renderVisualReview(state){
- const review=state.analysis?.visualReview; $('visual-review').hidden=!review;
+ const review=state.analysis?.visualReview; syncVisualVisibility(state);
  if(!review)return;
  visualNames={...(review.personNames || {}),...visualNames};
  const cast=[...new Set((state.analysis.parsedBeats || []).filter(b=>b.kind==='dialogue').map(b=>b.character).filter(Boolean))];
@@ -182,7 +182,7 @@ function renderVisualReview(state){
   for(const face of faces.slice(0,3)){const img=document.createElement('img');img.src=safeStill(face.thumbnail);img.alt='Volto suggerito nello stesso gruppo';strip.append(previewImage(img,()=> 'Gruppo volti '+id.replace('person-','')+' · '+(visualNames[id] || 'Personaggio da assegnare')+' · Più gruppi possono appartenere alla stessa persona.'));}card.append(strip);
   const select=document.createElement('select');select.dataset.person=id;
   for(const name of ['',...cast]){const option=document.createElement('option');option.value=name;option.textContent=name || 'Personaggio da assegnare';select.append(option);}select.value=visualNames[id] || '';
-  select.addEventListener('change',()=>{captureVisualOverrides(review.confirmed);visualDirty=true;visualNames[id]=select.value;review.confirmed=false;$('reviewed').checked=false;if(state.analysis.plan)state.analysis.plan.visual_review_required=true;renderVisualIntervals(state,cast);$('visual-confirm').checked=false;$('visual-save').disabled=true;$('make-timeline').disabled=true;});card.append(select);$('visual-people').append(card);
+  select.addEventListener('change',()=>{captureVisualOverrides(review.confirmed);visualDirty=true;visualNames[id]=select.value;review.confirmed=false;if(state.analysis.plan)state.analysis.plan.visual_review_required=true;renderVisualIntervals(state,cast);$('visual-confirm').checked=false;$('visual-save').disabled=true;$('make-timeline').disabled=true;});card.append(select);$('visual-people').append(card);
  }
  $('visual-confirm').checked=false;$('visual-save').disabled=true;
  const unknown=(review.faces || []).filter(f=>!f.person_id).length;
@@ -213,17 +213,32 @@ function renderVisualIntervals(state,cast){
   const checks=document.createElement('div');checks.className='subject-checks';
   for(const name of cast){const label=document.createElement('label'),input=document.createElement('input');input.type='checkbox';input.value=name;input.dataset.subject='';input.checked=subjects.includes(name);label.append(input,document.createTextNode(name));checks.append(label);}card.append(checks);
   const note=document.createElement('small');note.textContent='Personaggi visibili per tutto l’intervallo. Nessuna selezione = non determinato. Correggi i suggerimenti se il volto cambia o il gruppo è errato.';card.append(note);
-  card.addEventListener('change',()=>{card.dataset.changed='true';visualDirty=true;captureVisualOverrides();$('visual-confirm').checked=false;$('visual-save').disabled=true;$('reviewed').checked=false;$('make-timeline').disabled=true;if(state.analysis.plan)state.analysis.plan.visual_review_required=true;});clips.get(interval.media_id).append(card);
+  card.addEventListener('change',()=>{card.dataset.changed='true';visualDirty=true;captureVisualOverrides();$('visual-confirm').checked=false;$('visual-save').disabled=true;$('make-timeline').disabled=true;if(state.analysis.plan)state.analysis.plan.visual_review_required=true;});clips.get(interval.media_id).append(card);
  }
 }
-$('load-visual-review').addEventListener('click',async()=>{const button=$('load-visual-review');button.disabled=true;try{const state=await window.premontato.loadVisualReview();render(state);$('visual-controls').open=true;message('Controllo visivo pronto. Non serve assegnare nomi per creare il premontato.');}catch(error){showError(error);}finally{button.disabled=false;}});
+function syncVisualVisibility(state=window.__lastReviewState || {}){
+ const open=Boolean(visualReviewOpen && state.analysis?.visualReview);
+ $('visual-review').hidden=!open;
+ const button=$('load-visual-review');button.textContent=open?'Chiudi controllo visivo facoltativo':'Apri controllo visivo facoltativo';button.setAttribute('aria-expanded',String(open));
+ for(const [buttonId,panelId,label] of [['visual-faces-toggle','visual-people-panel','volti'],['visual-debug-toggle','visual-intervals','inquadrature']]){
+  const expanded=!$(panelId).hidden;$(buttonId).textContent=(expanded?'Chiudi':'Apri')+' controllo '+label;$(buttonId).setAttribute('aria-expanded',String(expanded));
+ }
+}
+async function toggleVisualReview(){
+ if(visualReviewOpen){visualReviewOpen=false;syncVisualVisibility();return;}
+ if(window.__lastReviewState?.analysis?.visualReview){visualReviewOpen=true;syncVisualVisibility();return;}
+ const button=$('load-visual-review');button.disabled=true;
+ try{const state=await window.premontato.loadVisualReview();visualReviewOpen=true;render(state);$('visual-controls').open=true;message('Controllo visivo pronto. Non serve assegnare nomi per creare il premontato.');}
+ catch(error){showError(error);}finally{button.disabled=false;}
+}
+$('load-visual-review').addEventListener('click',toggleVisualReview);
 $('visual-faces-toggle').addEventListener('click',()=>{const panel=$('visual-people-panel'),button=$('visual-faces-toggle');panel.hidden=!panel.hidden;button.setAttribute('aria-expanded',String(!panel.hidden));button.textContent=panel.hidden?'Apri controllo volti':'Chiudi controllo volti';});
 $('visual-debug-toggle').addEventListener('click',()=>{const panel=$('visual-intervals'),button=$('visual-debug-toggle');panel.hidden=!panel.hidden;button.setAttribute('aria-expanded',String(!panel.hidden));button.textContent=panel.hidden?'Apri controllo inquadrature':'Chiudi controllo inquadrature';});
 $('visual-confirm').addEventListener('change',()=>{$('visual-save').disabled=!$('visual-confirm').checked || !window.__lastReviewState?.analysis?.visualReview?.intervals?.length;});
 $('visual-save').addEventListener('click',async()=>{
  const button=$('visual-save');button.disabled=true;$('visual-status').textContent='Ricalcolo usando le correzioni…';
  try{const intervals=[...$('visual-intervals').querySelectorAll('[data-visual-segment]')].map(card=>({segment_id:card.dataset.visualSegment,shot_size:card.querySelector('[data-visual-scale]').value,visible_subjects:[...card.querySelectorAll('[data-subject]:checked')].map(x=>x.value)}));
- const next=await window.premontato.confirmVisualReview({confirmed:$('visual-confirm').checked,intervals,person_names:visualNames});visualOverrides.clear();visualDirty=false;$('reviewed').checked=false;render(next);message('Inquadrature confermate. Controlla gli abbinamenti ricalcolati prima della timeline.');
+ const next=await window.premontato.confirmVisualReview({confirmed:$('visual-confirm').checked,intervals,person_names:visualNames});visualOverrides.clear();visualDirty=false;render(next);message('Inquadrature confermate. Controlla gli abbinamenti ricalcolati prima della timeline.');
  }catch(error){showError(error);$('visual-status').textContent=error.message || String(error);button.disabled=false;}
 });
 
@@ -235,23 +250,21 @@ function hasPendingFormEdits(state=window.__lastReviewState || {},includeDirecti
  const pacing=state.pacingSettings;if(pacing && (pacing.enabled!==$('pacing-enabled').checked || pacing.max_pause_seconds!==Number($('pacing-gap').value) || pacing.minimum_shot_seconds!==Number($('pacing-minimum').value) || pacing.respect_script_pauses!==$('pacing-script').checked))return true;
  return false;
 }
-function timelineBlockers({matched,visualPending,dirty,pending,confirmed}){
+function timelineBlockers({matched,visualPending,dirty,pending}){
  const result=[];
  if(!matched)result.push({message:'Nessuna battuta abbinata: esegui o verifica l’analisi.',target:'beats'});
  if(visualPending || dirty)result.push({message:'Conferma campi e personaggi: controlla le still, spunta il controllo visivo e premi «Conferma e ricalcola il montaggio».',target:'visual-review'});
  if(pending)result.push({message:'Ci sono correzioni in bozza: applica le modifiche a take, battute, ritmo o direzioni.',target:'review'});
- if(!confirmed)result.push({message:'Spunta la conferma finale degli abbinamenti.',target:'reviewed'});
  return result;
 }
 function updateTimelineButton(state=window.__lastReviewState || {}){
- const plan=state.analysis?.plan,blockers=timelineBlockers({matched:plan?.decisions?.length,visualPending:Boolean(plan?.visual_review_required),dirty:visualDirty,pending:hasPendingFormEdits(state),confirmed:$('reviewed').checked});
+ const plan=state.analysis?.plan,blockers=timelineBlockers({matched:plan?.decisions?.length,visualPending:Boolean(plan?.visual_review_required),dirty:visualDirty,pending:hasPendingFormEdits(state)});
  $('beat-review-title').textContent='Battute e scelte di montaggio'+(plan?' · '+(plan.decisions?.length || 0)+' abbinate · '+(plan.unmatched_beats?.length || 0)+' da verificare':'');
  $('make-timeline').disabled=blockers.length>0;
  const box=$('timeline-readiness');box.replaceChildren();
- if(!plan)return;
  if(!blockers.length){box.textContent='Pronto: puoi creare la nuova timeline di revisione.';return;}
  const heading=document.createElement('strong');heading.textContent='Prima di creare la timeline:';box.append(heading);
- for(const item of blockers){const row=document.createElement('div'),button=document.createElement('button');button.type='button';button.className='quiet';button.textContent=item.message;button.addEventListener('click',()=>{const target=$(item.target);if(item.target==='visual-review')$('visual-controls').open=true;if(item.target==='beats')$('beat-review').open=true;target.scrollIntoView({behavior:'smooth',block:'center'});const focus=target.matches('input,button')?target:target.querySelector('input,select,button');focus?.focus({preventScroll:true});});row.append(button);box.append(row);}
+ for(const item of blockers){const row=document.createElement('div'),button=document.createElement('button');button.type='button';button.className='quiet';button.textContent=item.message;button.addEventListener('click',()=>{const target=$(item.target);if(item.target==='visual-review'){visualReviewOpen=true;syncVisualVisibility(state);$('visual-controls').open=true;}if(item.target==='beats')$('beat-review').open=true;target.scrollIntoView({behavior:'smooth',block:'center'});const focus=target.matches('input,button')?target:target.querySelector('input,select,button');focus?.focus({preventScroll:true});});row.append(button);box.append(row);}
 }
 let draftTimer=null,restoringDraft=false;
 function capturePremontatoDraft(){
@@ -270,7 +283,7 @@ window.premontato.onProjectStatus?.(showProjectStatus);
 function hydrateProject(state){
  scriptReady=Boolean(state.scriptName);mediaReady=Boolean(state.media?.length);$('script-status').textContent=state.scriptName?'Copione: '+state.scriptName:'Nessun copione scelto';
  $('media-list').innerHTML=(state.media || []).map(item=>'<div>'+escapeHtml(item.name)+' <span class="pill">'+item.duration_frames+' frame</span></div>').join('') || 'Nessuna clip selezionata';
- visualNames={};visualOverrides.clear();visualDirty=false;$('reviewed').checked=false;
+ visualNames={};visualOverrides.clear();visualDirty=false;
  window.__lastReviewState=null;render(state);$('review').hidden=!state.analysis;updateButton();showProjectStatus(state.projectStatus);
  const draft=state.uiDraft;if(!draft)return;
  restoringDraft=true;
@@ -283,8 +296,8 @@ function hydrateProject(state){
  }finally{restoringDraft=false;updateTimelineButton(state);}
 }
 document.addEventListener('input',event=>{
- if(restoringDraft || !window.premontato.saveDraft || !event.target.matches('input,select,textarea') || event.target.closest('#support-dialog') || event.target.closest('#groq-settings') || ['reviewed','visual-confirm'].includes(event.target.id))return;
- if(hasPendingFormEdits())$('reviewed').checked=false;updateTimelineButton();
+ if(restoringDraft || !window.premontato.saveDraft || !event.target.matches('input,select,textarea') || event.target.closest('#support-dialog') || event.target.closest('#groq-settings') || ['visual-confirm'].includes(event.target.id))return;
+ updateTimelineButton();
  clearTimeout(draftTimer);draftTimer=setTimeout(async()=>{try{await window.premontato.saveDraft(capturePremontatoDraft());}catch(error){if(!/Operazione già in corso/.test(error.message))$('project-status').textContent='Salvataggio bozza: '+error.message;}},900);
 });
 for(const [id,saveAs] of [['project-save',false],['project-save-as',true]])$(id).addEventListener('click',async()=>{const button=$(id);button.disabled=true;clearTimeout(draftTimer);try{const state=await window.premontato.saveProject({saveAs,draft:capturePremontatoDraft()});if(state){hydrateProject(state);message('Progetto Premontato salvato.');}}catch(error){showError(error);}finally{button.disabled=false;}});
@@ -316,7 +329,7 @@ $('directions-file').addEventListener('change',async()=>{try{
  }catch(error){showError(error);}finally{$('directions-file').value='';}});
 $('directions-apply').addEventListener('click',async()=>{const button=$('directions-apply');button.disabled=true;try{
  if(visualDirty || hasPendingFormEdits(window.__lastReviewState || {},false))throw new Error('Applica prima le correzioni in bozza a take, clip, ritmo e revisione visiva. Le direzioni restano in bozza.');
- const state=await window.premontato.setDirections(captureDirections());$('reviewed').checked=false;render(state);message('Direzioni salvate. Controlla copertura, tensione e risoluzione nelle scelte ricalcolate.');
+ const state=await window.premontato.setDirections(captureDirections());render(state);message('Direzioni salvate. Controlla copertura, tensione e risoluzione nelle scelte ricalcolate.');
  }catch(error){showError(error);}finally{button.disabled=false;}});
 
 async function refreshConnection(){
