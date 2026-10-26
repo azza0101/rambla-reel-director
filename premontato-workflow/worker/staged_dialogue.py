@@ -50,6 +50,10 @@ def reconcile_roles(prepared,values):
   for uid,label in labels.items():
    if label=='X':continue
    number,_=label.split('/');beat=prepared['beats'][int(number)-1]
+   if beat['kind']=='parenthetical' and re.fullmatch(r"\s*\(?CONTINUED\)?\s*",beat.get('text',''),re.I):
+    preceding=[(i,b) for i,b in enumerate(prepared['beats'][:int(number)-1]) if b.get('scene_id')==beat.get('scene_id') and b.get('kind')=='dialogue' and b.get('character')==beat.get('character')]
+    if preceding:
+     i,beat=preceding[-1];number=str(i+1)
    if beat['kind']=='dialogue' and beat.get('character') in role_ids:labels[uid]=number+'/'+role_ids[beat['character']]
  return result
 def clean_restarts(units,values):
@@ -152,7 +156,7 @@ def build_staged(payload,report=lambda e:None):
     if u['clip']==cid:u['ASD']='visible'
    continue
   for role in names.values():
-   group=[u for u in kept if u['clip']==cid and info(u)[1]==role and u['end']-u['start']>=.8*fps]
+   group=[u for u in kept if u['clip']==cid and info(u)[1]==role and u['end']-u['start']>=.3*fps]
    indices=sorted(set([0,len(group)//2,len(group)-1])) if group else []
    tasks.extend(group[j] for j in indices)
  for i,u in enumerate(tasks):
@@ -210,14 +214,16 @@ def build_staged(payload,report=lambda e:None):
     if info(v)[1]!=info(u)[1] and len(normalize(beats[int(info(u)[0][1:])-1]['text']).split())>5:break
     group.append(v);windows.append(block(group))
  report({'phase':'align','current':0,'total':1});vectors=encoder.encode([c['text'] for c in canonical]+[w['text'] for w in windows]);similarities=vectors[:len(canonical)]@vectors[len(canonical):].T
- roles=narrative_roles(beats,data['style']);candidates=[]
+ roles=narrative_roles(beats,data['style']);candidates=[];listening_candidates=[]
  for ci,c in enumerate(canonical):
-  rows=[];actual=beatmap[c['beat']];narrative=roles.get(actual,{}).get('role','free')
+  rows=[];listener_rows=[];actual=beatmap[c['beat']];narrative=roles.get(actual,{}).get('role','free')
   for wi,w in enumerate(windows):
    if w['beat']!=c['beat'] or w['role']!=c['role']:continue
    cosine=float(similarities[ci,wi]);ratio=len(normalize(w['text']).split())/max(1,len(normalize(c['text']).split()))
    if w['clip_id']==c['clip_id'] and w['units']!=c['units']:continue
    shared=len(set(core(w['text']))&set(core(c['text'])))
+   if w['clip_id']!=c['clip_id'] and (cosine>=.48 or shared>=3):
+    listener_rows.append({**w,'media_id':sources[w['clip_id']]['media_id'],'take_id':sources[w['clip_id']]['take_id'],'start_frame':w['start'],'end_frame':w['end'],'matched_end_frame':w['end'],'shot_size':_size(sources[w['clip_id']],shots,(w['start']+w['end'])//2),'semantic':cosine})
    if (cosine<.48 and shared<3) or not .30<=ratio<=2.0 or (ratio<.45 and cosine<.60):continue
    if w['text'].strip().endswith(('...','…')) and not beats[int(c['beat'][1:])-1]['text'].strip().endswith(('...','…')):continue
    size=_size(sources[w['clip_id']],shots,(w['start']+w['end'])//2);status=coverage[(w['clip_id'],c['role'])];start,end=safe_dialogue_handles({'start_frame':w['start'],'end_frame':w['end']},sources[w['clip_id']],fps)
@@ -229,7 +235,7 @@ def build_staged(payload,report=lambda e:None):
    if narrative=='resolution':score+=5 if size=='wide' else 0
    row['score']=score;rows.append(row)
   if not rows:raise RuntimeError('No complete candidate: '+c['text'])
-  candidates.append(rows)
+  candidates.append(rows);listening_candidates.append(listener_rows)
 
  words={cid:[w for seg in s['segments'] for w in seg.get('words',[]) if w['end_frame']>w['start_frame']] for cid,s in sources.items()}
  positions={b['beat_id']:i for i,b in enumerate(beats)}
@@ -292,6 +298,17 @@ def build_staged(payload,report=lambda e:None):
   if i:
    overlay=listening_overlay(d,decisions[i-1],list(sources.values()),fps,round(float(payload.get('settings',{}).get('minimum_shot_seconds',1.2))*fps),decisions)
    if overlay:decisions[i-1]['reaction_overlay']=overlay;reactions.append(overlay)
+ profiles={}
+ for cid,source in sources.items():
+  visible=[u for u in kept if u['clip']==cid and u['ASD']=='visible']
+  distinct={info(u)[1] for u in visible}
+  if len(distinct)==1:
+   anchor=max(visible,key=lambda u:u['end']-u['start']);profiles[source['media_id']]={'role':info(anchor)[1],'start':anchor['start'],'end':anchor['end']}
+ from listening_reaction import add_dialogue_listening,add_scripted_breaths
+ report({'phase':'listening','current':0,'total':len(decisions)})
+ reactions.extend(add_dialogue_listening(decisions,listening_candidates,list(sources.values()),beats,profiles,fps,minimum_shot))
+ actions.extend(add_scripted_breaths(decisions,list(sources.values()),beats,profiles,fps))
+ report({'phase':'listening','current':len(decisions),'total':len(decisions)})
  errors=[]
  for d in decisions:
   for u in units:

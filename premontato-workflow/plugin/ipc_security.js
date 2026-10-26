@@ -23,7 +23,7 @@ function validateReaction(value, media) {
   return value;
 }
 function validateAction(value,media){
- if(!value || value.kind!=='action' || !['script_between_anchors','script_take_tail'].includes(value.basis) || value.shot_size!=='wide' || !media || value.media_id!==media.media_id || typeof value.take_id!=='string' || typeof value.beat_id!=='string' || !Number.isSafeInteger(value.start_frame) || !Number.isSafeInteger(value.end_frame) || value.start_frame<0 || value.end_frame<=value.start_frame || value.end_frame>media.duration_frames || value.source_ranges!==undefined || value.action_after!==undefined || value.reaction_overlay!==undefined)throw Error('Raccordo azione non valido');
+ if(!value || value.kind!=='action' || !['script_between_anchors','script_take_tail','script_measured_hold'].includes(value.basis) || (value.basis==='script_measured_hold' ? (!['wide','close','medium','detail'].includes(value.shot_size) || value.evidence?.verified!==true || value.evidence?.silence_measured!==true) : value.shot_size!=='wide') || !media || value.media_id!==media.media_id || typeof value.take_id!=='string' || typeof value.beat_id!=='string' || !Number.isSafeInteger(value.start_frame) || !Number.isSafeInteger(value.end_frame) || value.start_frame<0 || value.end_frame<=value.start_frame || value.end_frame>media.duration_frames || value.source_ranges!==undefined || value.action_after!==undefined || value.reaction_overlay!==undefined)throw Error('Raccordo azione non valido');
  return value;
 }
 function validateOverlay(value,parent,media){

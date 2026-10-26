@@ -237,7 +237,7 @@ class Session {
         const label=event.phase==='quota'?'Quota Groq: attendo '+event.seconds+' secondi': 'Pulizia e allineamento Groq · '+event.current+'/'+event.total+(event.cache_hit?' · cache verificata':'');
         this.onProgress?.({phase:'plan',phaseIndex:6,percent:89+Math.round(3*event.current/Math.max(1,event.total)),label,current:event.current,total:event.total});
       });
-      const result=await this.request('build_staged',{...payload,prepared,classifications:classification.labels,classification_summary:classification.summary,settings:this.state.pacingSettings},timeoutMs,event=>this.onProgress?.({phase:'plan',phaseIndex:6,percent:event.phase==='speaker'?92+Math.round(3*event.current/Math.max(1,event.total)):95,label:event.phase==='speaker'?'Controllo locale del parlante · '+event.current+'/'+event.total:'Scelta locale delle camere e verifica continuità',current:event.current,total:event.total}));
+      const result=await this.request('build_staged',{...payload,prepared,classifications:classification.labels,classification_summary:classification.summary,settings:this.state.pacingSettings},timeoutMs,event=>this.onProgress?.({phase:'plan',phaseIndex:6,percent:event.phase==='speaker'?92+Math.round(3*event.current/Math.max(1,event.total)):95,label:event.phase==='speaker'?'Controllo locale del parlante · '+event.current+'/'+event.total:event.phase==='listening'?'Reazioni e respiri verificati · '+event.current+'/'+event.total:'Scelta locale delle camere e verifica continuità',current:event.current,total:event.total}));
       return result;
     }
 

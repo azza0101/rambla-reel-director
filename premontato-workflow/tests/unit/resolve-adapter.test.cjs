@@ -173,10 +173,10 @@ test('groups shot sizes on three video/mono audio tracks, colors and links each 
  const result=await createTimeline(c.sdk,'LAYOUT',edits,{media:[{media_id:'m1',fps:25,duration_frames:500}]});
  assert.equal(await c.reviewTimeline.GetTrackCount('video'),3);assert.equal(await c.reviewTimeline.GetTrackCount('audio'),3);
  for(let n=1;n<=3;n++)assert.equal(await c.reviewTimeline.GetTrackSubType('audio',n),'mono');
- assert.deepEqual(c.reviewTimeline.items.map(i=>[i.clip.trackIndex,i.clip.recordFrame]),[[1,90000],[3,90050],[2,90150],[3,90180],[1,90200]]);
+ assert.deepEqual(c.reviewTimeline.items.map(i=>[i.clip.trackIndex,i.clip.recordFrame]),[[2,90000],[3,90050],[3,90150],[2,90180],[2,90200]]);
  assert.equal(new Set(c.reviewTimeline.items.map(i=>i.color)).size,5);
  assert.deepEqual(c.reviewTimeline.audio.map(i=>i.color),c.reviewTimeline.items.map(i=>i.color));
- assert.deepEqual(c.reviewTimeline.audio.map(i=>[i.clip.trackIndex,i.clip.recordFrame]),[[1,90000],[3,90050],[2,90150],[3,90180],[1,90200]]);
+ assert.deepEqual(c.reviewTimeline.audio.map(i=>[i.clip.trackIndex,i.clip.recordFrame]),[[2,90000],[3,90050],[3,90150],[2,90180],[2,90200]]);
  assert.equal(c.reviewTimeline.links.length,5);assert.equal(c.reviewTimeline.sourceMutations,0);assert.equal(result.audioSegments,5);assert.equal(c.project.active,c.sourceTimeline);
 });
 test('rejects and removes a layout whose audio format changes to stereo during insertion',async()=>{
@@ -210,7 +210,7 @@ test('normalizes camera-edge timestamps and excludes nonspoken Resolve placehold
 test('inserts a reviewed reaction before the dialogue on synchronized mono audio and close video tracks',async()=>{
  const {sdk,reviewTimeline,project,sourceTimeline}=timelineSdk({appendResultCount:2});const reaction={kind:'reaction',media_id:'m1',take_id:'t',start_frame:150,end_frame:180,shot_size:'close',character:'LUCA',enabled:true,basis:'verified_silent_preroll',speaker_coverage:'visible'};
  const result=await createTimeline(sdk,'REACTION',[{media_id:'m1',start_frame:200,end_frame:240,shot_size:'wide',reaction_before:reaction}],{media:[{media_id:'m1',duration_frames:500}]});
- assert.equal(result.included,1);assert.equal(result.segments,2);assert.equal(result.audioSegments,2);assert.deepEqual(reviewTimeline.items.map(x=>[x.clip.startFrame,x.clip.trackIndex]),[[150,3],[200,1]]);assert.equal(project.active,sourceTimeline);
+ assert.equal(result.included,1);assert.equal(result.segments,2);assert.equal(result.audioSegments,2);assert.deepEqual(reviewTimeline.items.map(x=>[x.clip.startFrame,x.clip.trackIndex]),[[150,3],[200,2]]);assert.equal(project.active,sourceTimeline);
  const broken=timelineSdk();await assert.rejects(createTimeline(broken.sdk,'BAD',[{media_id:'m1',start_frame:200,end_frame:240,reaction_before:{...reaction,end_frame:900}}],{media:[{media_id:'m1',duration_frames:500}]}),/reazione/i);
 });
 
@@ -283,4 +283,8 @@ test('analysis retrieves loaded media by identity and reuses cached transcripts 
  const events=[];let sources=await getSelectedTranscriptions(sdk,{media:[media],transcribeMissing:true,onProgress:e=>events.push(e)});
  assert.equal(sources[0].segments[0].end_frame,25);assert.equal(transcribes,1);assert.equal(events.at(-1).current,1);
  await getSelectedTranscriptions(sdk,{media:[media],transcribeMissing:true});assert.equal(transcribes,1);
+});
+
+test('scripted close hold requires verified listening and measured silence',()=>{
+ const {validateAction}=require('../../plugin/ipc_security');const hold={kind:'action',basis:'script_measured_hold',beat_id:'pause',media_id:'m',take_id:'m',start_frame:50,end_frame:70,shot_size:'close',evidence:{verified:true,silence_measured:true}};assert.equal(validateAction(hold,{media_id:'m',duration_frames:100}),hold);assert.throws(()=>validateAction({...hold,evidence:{verified:true}},{media_id:'m',duration_frames:100}),/non valido/);
 });

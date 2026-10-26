@@ -201,7 +201,9 @@ async function createTimeline(sdk, name, edits, expected = {}) {
     expanded.push({...edit,audio_source:edit.audio_source?{...edit.audio_source}:undefined});
   }
   // Only the new timeline is changed. Source audio mapping and Media Pool colors stay intact.
-  const layout = size => size === 'medium' ? 2 : ['close','detail'].includes(size) ? 3 : 1;
+  const fieldKeys=[...new Set(expanded.map(fieldColorKey))].sort((a,b)=>(JSON.parse(a)[0]==='wide'?0:1)-(JSON.parse(b)[0]==='wide'?0:1) || a.localeCompare(b));
+  const fieldTracks=new Map(fieldKeys.map((key,i)=>[key,2+i%2]));
+  const layout = edit => fieldTracks.get(fieldColorKey(edit));
   const fieldColors=assignFieldColors(expanded);
   const version=require('./package.json').version;
   const originalFolder=await pool.GetCurrentFolder();
@@ -241,7 +243,7 @@ async function createTimeline(sdk, name, edits, expected = {}) {
       if ((await newTimeline.GetItemListInTrack('video',i) || []).length || !await newTimeline.DeleteTrack('video',i)) throw new Error('Impossibile preparare le tracce video');
     }
     for(let i=Number(await newTimeline.GetTrackCount('video'));i<3;i++) if(!await newTimeline.AddTrack('video')) throw new Error('Resolve non ha creato le tracce video');
-    const names=['Master e larghe','Medie','Strette e dettagli'];
+    const names=['Riserva','Campi A','Campi B e controcampi'];
     for(let i=1;i<=3;i++) {
       if(!await newTimeline.SetTrackName('video',i,names[i-1]) || !await newTimeline.SetTrackName('audio',i,names[i-1])) throw new Error('Resolve non ha nominato le tracce');
     }
@@ -255,7 +257,7 @@ async function createTimeline(sdk, name, edits, expected = {}) {
     const mappingBefore=new Map();
     for(const [id,media] of byId)if(typeof media.GetAudioMapping==='function')mappingBefore.set(id,await media.GetAudioMapping());
     for (let i=0;i<expanded.length;i++) {
-      const edit=expanded[i],track=layout(edit.shot_size),color=fieldColors[i],media=byId.get(edit.media_id);
+      const edit=expanded[i],track=layout(edit),color=fieldColors[i],media=byId.get(edit.media_id);
       const clip={mediaPoolItem:media,startFrame:edit.start_frame,endFrame:edit.end_frame,trackIndex:track,recordFrame:cursor};
       const video=await pool.AppendToTimeline([{...clip,mediaType:1}]) || [];
       if(video.length!==1)throw new Error('Resolve ha inserito '+i+' di '+expanded.length+' tagli; timeline di prova annullata');

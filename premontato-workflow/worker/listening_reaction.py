@@ -21,3 +21,79 @@ def listening_overlay(decision,previous,sources,fps,minimum,occupied=None):
         if not proof.get('verified'):continue
         return {'kind':'reaction','basis':'verified_listener','media_id':row['media_id'],'take_id':row['take_id'],'start_frame':start,'end_frame':end,'offset_frames':available-duration,'shot_size':row['shot_size'],'character':decision.get('dialogue_character',''),'speaker_coverage':'visible','enabled':True,'evidence':proof}
     return None
+
+def _retained(decisions,media_id):
+    rows=[]
+    for d in decisions:
+        if d['media_id']==media_id:rows.extend(d.get('source_ranges',[d]))
+        rows.extend(a for a in d.get('action_after',[]) if a['media_id']==media_id)
+        o=d.get('reaction_overlay')
+        if o and o['media_id']==media_id:rows.append(o)
+    return rows
+
+def add_dialogue_listening(decisions,candidates,sources,beats,profiles,fps,minimum):
+    """Same-beat listening coverage; original speaking audio remains untouched."""
+    from active_speaker import verify_listener
+    by_media={s['media_id']:s for s in sources};rooms={}
+    for b in beats:
+        if b.get('kind')=='dialogue' and b.get('character'):rooms.setdefault(b.get('scene_id'),set()).add(b['character'])
+    partners={r:set().union(*(cast-{r} for cast in rooms.values() if r in cast)) for r in set().union(*rooms.values())} if rooms else {}
+    reactions=[];cursor=0;last=-10*fps
+    for i,d in enumerate(decisions):
+        length=sum(r['end_frame']-r['start_frame'] for r in d.get('source_ranges',[d]));at=cursor;cursor+=length
+        if d.get('reaction_overlay') or d.get('manual') or d.get('reaction_enabled') is False:continue
+        duration=min(round(2.2*fps),length-round(.8*fps))
+        if duration<minimum or at+length-duration-last<4*fps:continue
+        nxt=decisions[i+1] if i+1<len(decisions) else None
+        ranked=sorted(candidates[i],key=lambda row:row.get('semantic',0),reverse=True)
+        for row in ranked:
+            mid=row['media_id'];profile=profiles.get(mid);source=by_media.get(mid)
+            if mid==d['media_id'] or not profile or not source or row.get('shot_size') not in {'close','medium'}:continue
+            if profile['role'] not in partners.get(d.get('dialogue_character'),set()):continue
+            end=row.get('matched_end_frame',row['end_frame'])
+            if nxt and nxt['media_id']==mid:
+                if abs(nxt['start_frame']-end)>fps:continue
+                end=nxt['start_frame']
+            start=end-duration
+            if start<source.get('start_frame',0) or end>source.get('end_frame',source['duration_frames']):continue
+            if any(r['start_frame']<end and start<r['end_frame'] for r in _retained(decisions,mid)):continue
+            try:proof=verify_listener(source,start,end,profile['start'],profile['end'])
+            except Exception:continue
+            if not proof.get('verified'):continue
+            overlay={'kind':'reaction','basis':'verified_listener','media_id':mid,'take_id':row['take_id'],'start_frame':start,'end_frame':end,'offset_frames':length-duration,'shot_size':row['shot_size'],'character':profile['role'],'speaker_coverage':'visible','enabled':True,'evidence':{**proof,'alignment':'same_script_beat'}}
+            d['reaction_overlay']=overlay;reactions.append(overlay);last=at+length;break
+    return reactions
+
+def add_scripted_breaths(decisions,sources,beats,profiles,fps,audio=None):
+    """Short continuous holds only on explicit script pauses and measured silent source."""
+    import re
+    from active_speaker import verify_listener
+    from edit_selector import analyze_audio
+    by_media={s['media_id']:s for s in sources};positions={b['beat_id']:i for i,b in enumerate(beats)};audio={} if audio is None else audio;holds=[]
+    for i,d in enumerate(decisions):
+        if d.get('manual') or d.get('action_after'):continue
+        nxt=decisions[i+1] if i+1<len(decisions) else None
+        if nxt and nxt['beat_id']==d['beat_id']:continue
+        between=beats[positions[d['beat_id']]+1:positions[nxt['beat_id']] if nxt else len(beats)]
+        pauses=[b for b in between if b.get('kind')=='action' and re.search(r'silenz|tens|guarda|sospett|^nulla$',b.get('text',''),re.I)]
+        if not pauses:continue
+        view=d.get('reaction_overlay') or d;mid=view['media_id'];source=by_media[mid];profile=profiles.get(mid)
+        if not profile:continue
+        if mid not in audio:
+            try:audio[mid]=analyze_audio(source)
+            except Exception:audio[mid]={}
+        measured=audio[mid]
+        if measured.get('status')!='ok':continue
+        start=view['end_frame'];gap=next((g for g in measured.get('silences',[]) if g['start_frame']<=start and g['end_frame']>start),None)
+        if not gap:continue
+        end=min(gap['end_frame'],start+round(.8*fps),source.get('end_frame',source['duration_frames']))
+        if any(w['start_frame']<end and start<w['end_frame'] for seg in source.get('segments',[]) for w in seg.get('words',[]) if w['end_frame']>w['start_frame']):continue
+        if any(r['start_frame']<end and start<r['end_frame'] for r in _retained(decisions,mid)):continue
+        if nxt and nxt['media_id']==mid and end!=nxt['start_frame']:continue
+        if end-start<round(.4*fps):continue
+        try:proof=verify_listener(source,start,end,profile['start'],profile['end'])
+        except Exception:continue
+        if not proof.get('verified'):continue
+        hold={'kind':'action','basis':'script_measured_hold','beat_id':pauses[0]['beat_id'],'media_id':mid,'take_id':view['take_id'],'start_frame':start,'end_frame':end,'shot_size':view['shot_size'],'evidence':{**proof,'silence_measured':True}}
+        d['action_after']=[hold];holds.append(hold)
+    return holds
