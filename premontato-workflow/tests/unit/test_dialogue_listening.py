@@ -39,3 +39,14 @@ class ContinuationLabels(unittest.TestCase):
   from staged_dialogue import reconcile_roles
   prepared={'cast':{'P0':'UNKNOWN','P1':'SON'},'beats':[{'kind':'dialogue','character':'SON','scene_id':'s'},{'kind':'parenthetical','character':'SON','scene_id':'s','text':'CONTINUED'}]}
   self.assertEqual(reconcile_roles(prepared,{'clip':{'u':'2/P1'}})['clip']['u'],'1/P1')
+
+class MinimumReaction(unittest.TestCase):
+ fixture=DialogueListening.fixture
+ def test_short_reply_may_use_only_measured_roomtone_to_reach_minimum(self):
+  ds,cs,s,b,p=self.fixture();ds[0].update(end_frame=150,source_ranges=[{'start_frame':100,'end_frame':150}])
+  with patch('active_speaker.verify_listener',return_value={'verified':True}),patch('edit_selector.analyze_audio',return_value={'status':'ok','silences':[{'start_frame':150,'end_frame':170}]}):add_dialogue_listening(ds,cs,s,b,p,25,30)
+  self.assertGreaterEqual(ds[0]['reaction_overlay']['end_frame']-ds[0]['reaction_overlay']['start_frame'],38);self.assertEqual(ds[0]['end_frame'],158)
+ def test_short_reply_without_clean_roomtone_has_no_flash_reaction(self):
+  ds,cs,s,b,p=self.fixture();ds[0].update(end_frame=150,source_ranges=[{'start_frame':100,'end_frame':150}])
+  with patch('active_speaker.verify_listener',return_value={'verified':True}),patch('edit_selector.analyze_audio',return_value={'status':'ok','silences':[]}):add_dialogue_listening(ds,cs,s,b,p,25,30)
+  self.assertNotIn('reaction_overlay',ds[0]);self.assertEqual(ds[0]['end_frame'],150)

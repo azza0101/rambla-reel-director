@@ -175,21 +175,22 @@ async function createTimeline(sdk, name, edits, expected = {}) {
     if(edit.action_after!==undefined){if(!Array.isArray(edit.action_after))throw Error('Raccordi azione non validi');for(const action of edit.action_after)rows.push(security.validateAction(action,expected.media?.find(m=>m.media_id===action.media_id)));}
     return rows;
   });
+  const timelineFps=await sourceTimeline.GetSetting('timelineFrameRate');
+  const overlays=[];let reviewOffset=0;
   const raw=reviewed.flatMap((value,index)=>{
-    const edit={...value};
-    edit.field_color_key=fieldColorKey(edit,index);
+    const edit={...value,field_color_key:fieldColorKey(value,index)};
     if(!byId.has(edit.media_id))throw Error('Sorgente del raccordo non disponibile');
     const ranges=edit.source_ranges ?? [{start_frame:edit.start_frame,end_frame:edit.end_frame}];
     if(!Array.isArray(ranges) || !ranges.length || ranges.some((r,i)=>!Number.isInteger(r.start_frame)||!Number.isInteger(r.end_frame)||r.end_frame<=r.start_frame||r.start_frame<edit.start_frame||r.end_frame>edit.end_frame||(i>0 && r.start_frame<ranges[i-1].end_frame)))throw Error('Intervalli ritmo non validi');
     const overlay=edit.reaction_overlay && security.validateOverlay(edit.reaction_overlay,edit,expected.media?.find(m=>m.media_id===edit.reaction_overlay.media_id));
-    if(overlay && !byId.has(overlay.media_id))throw Error('Sorgente della reazione non disponibile');
-    let offset=0;const output=[];
-    for(const r of ranges){
-      const length=r.end_frame-r.start_frame,split=overlay?Math.max(0,Math.min(length,overlay.offset_frames-offset)):length;
-      if(split)output.push({...edit,start_frame:r.start_frame,end_frame:r.start_frame+split});
-      if(split<length){const delta=offset+split-overlay.offset_frames;output.push({...overlay,field_color_key:fieldColorKey(overlay,index),start_frame:overlay.start_frame+delta,end_frame:overlay.start_frame+delta+length-split,audio_source:{media_id:edit.media_id,start_frame:r.start_frame+split,end_frame:r.end_frame}});}
-      offset+=length;
-    }return output;
+    if(overlay){
+      if(!byId.has(overlay.media_id))throw Error('Sorgente della reazione non disponibile');
+      const fps=Number(expected.media?.find(m=>m.media_id===overlay.media_id)?.fps) || Number(timelineFps) || 25;
+      if(overlay.end_frame-overlay.start_frame<Math.ceil(1.5*fps))throw Error('Reazione troppo breve: minimo 1,5 secondi');
+      overlays.push({...overlay,record_offset:reviewOffset+overlay.offset_frames,video_only:true,field_color_key:fieldColorKey(overlay)});
+    }
+    reviewOffset+=ranges.reduce((sum,r)=>sum+r.end_frame-r.start_frame,0);
+    return ranges.map(r=>({...edit,start_frame:r.start_frame,end_frame:r.end_frame}));
   });
   const expanded=[];
   for(const edit of raw){
@@ -201,10 +202,10 @@ async function createTimeline(sdk, name, edits, expected = {}) {
     expanded.push({...edit,audio_source:edit.audio_source?{...edit.audio_source}:undefined});
   }
   // Only the new timeline is changed. Source audio mapping and Media Pool colors stay intact.
-  const fieldKeys=[...new Set(expanded.map(fieldColorKey))].sort((a,b)=>(JSON.parse(a)[0]==='wide'?0:1)-(JSON.parse(b)[0]==='wide'?0:1) || a.localeCompare(b));
-  const fieldTracks=new Map(fieldKeys.map((key,i)=>[key,2+i%2]));
-  const layout = edit => fieldTracks.get(fieldColorKey(edit));
-  const fieldColors=assignFieldColors(expanded);
+  let baseOffset=0;
+  const insertions=[...expanded.map(edit=>{const row={...edit,record_offset:baseOffset};baseOffset+=edit.end_frame-edit.start_frame;return row;}),...overlays];
+  const layout = edit => edit.video_only || edit.kind==='reaction' ? 3 : 2;
+  const fieldColors=assignFieldColors(insertions);
   const version=require('./package.json').version;
   const originalFolder=await pool.GetCurrentFolder();
   let targetFolder=await pool.GetRootFolder();
@@ -243,7 +244,7 @@ async function createTimeline(sdk, name, edits, expected = {}) {
       if ((await newTimeline.GetItemListInTrack('video',i) || []).length || !await newTimeline.DeleteTrack('video',i)) throw new Error('Impossibile preparare le tracce video');
     }
     for(let i=Number(await newTimeline.GetTrackCount('video'));i<3;i++) if(!await newTimeline.AddTrack('video')) throw new Error('Resolve non ha creato le tracce video');
-    const names=['Riserva','Campi A','Campi B e controcampi'];
+    const names=['Riserva','Base parlato','Reazioni video'];
     for(let i=1;i<=3;i++) {
       if(!await newTimeline.SetTrackName('video',i,names[i-1]) || !await newTimeline.SetTrackName('audio',i,names[i-1])) throw new Error('Resolve non ha nominato le tracce');
     }
@@ -252,12 +253,14 @@ async function createTimeline(sdk, name, edits, expected = {}) {
       for(let i=1;i<=3;i++)if(String(await newTimeline.GetTrackSubType('audio',i)).toLowerCase()!=='mono')throw new Error('Resolve non ha mantenuto le tracce audio mono; timeline di prova annullata');
     };
     await checkLayout();
-    let cursor=Number(await newTimeline.GetStartFrame());
+    const timelineStart=Number(await newTimeline.GetStartFrame());
+    let cursor=timelineStart;
     if(!Number.isFinite(cursor))throw new Error('Inizio timeline non disponibile');
     const mappingBefore=new Map();
     for(const [id,media] of byId)if(typeof media.GetAudioMapping==='function')mappingBefore.set(id,await media.GetAudioMapping());
-    for (let i=0;i<expanded.length;i++) {
-      const edit=expanded[i],track=layout(edit),color=fieldColors[i],media=byId.get(edit.media_id);
+    for (let i=0;i<insertions.length;i++) {
+      const edit=insertions[i],track=layout(edit),color=fieldColors[i],media=byId.get(edit.media_id);
+      cursor=timelineStart+edit.record_offset;
       const clip={mediaPoolItem:media,startFrame:edit.start_frame,endFrame:edit.end_frame,trackIndex:track,recordFrame:cursor};
       const video=await pool.AppendToTimeline([{...clip,mediaType:1}]) || [];
       if(video.length!==1)throw new Error('Resolve ha inserito '+i+' di '+expanded.length+' tagli; timeline di prova annullata');
@@ -284,7 +287,7 @@ async function createTimeline(sdk, name, edits, expected = {}) {
         let mapping=mappingBefore.get(audioSource.media_id);if(typeof mapping==='string'){try{mapping=JSON.parse(mapping);}catch{throw new Error('Mappatura audio sorgente non leggibile');}}
         if(mapping && Number(mapping.embedded_audio_channels)===0 && !Number(mapping.linked_audio_channels) && !Object.keys(mapping.track_mapping || {}).length)hasAudio=false;
       }
-      if(hasAudio){
+      if(hasAudio && !edit.video_only){
         const audio=await pool.AppendToTimeline([{...clip,mediaPoolItem:audioMedia,startFrame:audioSource.start_frame,endFrame:audioSource.end_frame,mediaType:2}]) || [];
         if(audio.length!==1)throw new Error('Resolve non ha inserito una sola clip audio sulla traccia mono; timeline di prova annullata');
         const sound=audio[0];
@@ -298,7 +301,7 @@ async function createTimeline(sdk, name, edits, expected = {}) {
     }
     let videos=0,audios=0;
     for(let i=1;i<=3;i++){videos+=(await newTimeline.GetItemListInTrack('video',i) || []).length;audios+=(await newTimeline.GetItemListInTrack('audio',i) || []).length;}
-    if(videos!==expanded.length || audios!==audioSegments)throw new Error('Numero di clip non coerente; timeline di prova annullata');
+    if(videos!==insertions.length || audios!==audioSegments)throw new Error('Numero di clip non coerente; timeline di prova annullata');
     for(const [id,before] of mappingBefore)if(JSON.stringify(await byId.get(id).GetAudioMapping())!==JSON.stringify(before))throw new Error('Resolve ha modificato la mappatura audio sorgente');
     if(String(await project.GetUniqueId())!==beforeProject || String(await sourceTimeline.GetUniqueId())!==beforeTimeline)throw new Error('Progetto o timeline di partenza cambiati durante la creazione');
     created=true;
@@ -311,7 +314,7 @@ async function createTimeline(sdk, name, edits, expected = {}) {
   if(expected.activateCreated===true){
     if(!await project.SetCurrentTimeline(newTimeline) || String(await (await project.GetCurrentTimeline()).GetUniqueId())!==String(await newTimeline.GetUniqueId()))throw new Error('Timeline creata, ma Resolve non l’ha aperta. Cercala in '+folderPath.join(' / '));
   }
-  return {opened:expected.activateCreated===true,timelineId:String(await newTimeline.GetUniqueId()),timelineName:String(await newTimeline.GetName()),sourceTimelineId:beforeTimeline,included:edits.length,segments:expanded.length,audioSegments,videoTracks:3,audioTracks:3,audioFormat:'mono',version,folderPath:folderPath.join(' / ')};
+  return {opened:expected.activateCreated===true,timelineId:String(await newTimeline.GetUniqueId()),timelineName:String(await newTimeline.GetName()),sourceTimelineId:beforeTimeline,included:edits.length,segments:insertions.length,audioSegments,videoTracks:3,audioTracks:3,audioFormat:'mono',version,folderPath:folderPath.join(' / ')};
 }
 
 async function saveCurrentProject(sdk, expectedProjectId) {

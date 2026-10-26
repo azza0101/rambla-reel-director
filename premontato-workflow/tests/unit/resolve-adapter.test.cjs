@@ -173,10 +173,10 @@ test('groups shot sizes on three video/mono audio tracks, colors and links each 
  const result=await createTimeline(c.sdk,'LAYOUT',edits,{media:[{media_id:'m1',fps:25,duration_frames:500}]});
  assert.equal(await c.reviewTimeline.GetTrackCount('video'),3);assert.equal(await c.reviewTimeline.GetTrackCount('audio'),3);
  for(let n=1;n<=3;n++)assert.equal(await c.reviewTimeline.GetTrackSubType('audio',n),'mono');
- assert.deepEqual(c.reviewTimeline.items.map(i=>[i.clip.trackIndex,i.clip.recordFrame]),[[2,90000],[3,90050],[3,90150],[2,90180],[2,90200]]);
+ assert.deepEqual(c.reviewTimeline.items.map(i=>[i.clip.trackIndex,i.clip.recordFrame]),[[2,90000],[2,90050],[2,90150],[2,90180],[2,90200]]);
  assert.equal(new Set(c.reviewTimeline.items.map(i=>i.color)).size,5);
  assert.deepEqual(c.reviewTimeline.audio.map(i=>i.color),c.reviewTimeline.items.map(i=>i.color));
- assert.deepEqual(c.reviewTimeline.audio.map(i=>[i.clip.trackIndex,i.clip.recordFrame]),[[2,90000],[3,90050],[3,90150],[2,90180],[2,90200]]);
+ assert.deepEqual(c.reviewTimeline.audio.map(i=>[i.clip.trackIndex,i.clip.recordFrame]),[[2,90000],[2,90050],[2,90150],[2,90180],[2,90200]]);
  assert.equal(c.reviewTimeline.links.length,5);assert.equal(c.reviewTimeline.sourceMutations,0);assert.equal(result.audioSegments,5);assert.equal(c.project.active,c.sourceTimeline);
 });
 test('rejects and removes a layout whose audio format changes to stereo during insertion',async()=>{
@@ -228,10 +228,11 @@ test('user creation activates the new timeline when explicitly requested',async(
 
 test('listening cutaway uses its video and preserves preceding dialogue audio',async()=>{
  const c=timelineSdk({appendResultCount:10});const other={...c.media,GetMediaId:async()=>'m2'};c.sourceFolder.clips.push(other);
- const overlay={kind:'reaction',basis:'verified_listener',media_id:'m2',take_id:'t2',start_frame:200,end_frame:230,offset_frames:70,shot_size:'close',speaker_coverage:'visible',enabled:true,character:'BOY',evidence:{verified:true}};
+ const overlay={kind:'reaction',basis:'verified_listener',media_id:'m2',take_id:'t2',start_frame:200,end_frame:240,offset_frames:60,shot_size:'close',speaker_coverage:'visible',enabled:true,character:'BOY',evidence:{verified:true}};
  await createTimeline(c.sdk,'LISTEN',[{media_id:'m1',start_frame:0,end_frame:100,shot_size:'close',reaction_overlay:overlay}],{media:[{media_id:'m1',duration_frames:500},{media_id:'m2',duration_frames:500}]});
- assert.deepEqual(c.reviewTimeline.items.map(i=>[i.clip.mediaPoolItem===other?'m2':'m1',i.clip.startFrame,i.clip.endFrame]),[['m1',0,70],['m2',200,230]]);
- assert.deepEqual(c.reviewTimeline.audio.map(i=>[i.clip.mediaPoolItem===other?'m2':'m1',i.clip.startFrame,i.clip.endFrame]),[['m1',0,70],['m1',70,100]]);
+ assert.deepEqual(c.reviewTimeline.items.map(i=>[i.clip.mediaPoolItem===other?'m2':'m1',i.clip.startFrame,i.clip.endFrame]),[['m1',0,100],['m2',200,240]]);
+ assert.deepEqual(c.reviewTimeline.audio.map(i=>[i.clip.mediaPoolItem===other?'m2':'m1',i.clip.startFrame,i.clip.endFrame]),[['m1',0,100]]);
+ assert.deepEqual(c.reviewTimeline.items.map(i=>[i.clip.trackIndex,i.clip.recordFrame]),[[2,90000],[3,90060]]);assert.equal(c.reviewTimeline.audio[0].clip.trackIndex,2);
 });
 test('contiguous source angles become one physical clip without an edit point',async()=>{
  const c=timelineSdk({appendResultCount:10});await createTimeline(c.sdk,'CONTINUOUS',[{media_id:'m1',start_frame:0,end_frame:50,shot_size:'wide'},{media_id:'m1',start_frame:50,end_frame:100,shot_size:'wide'}]);assert.equal(c.reviewTimeline.items.length,1);assert.equal(c.reviewTimeline.audio.length,1);assert.equal(c.reviewTimeline.items[0].clip.endFrame,100);
@@ -288,3 +289,5 @@ test('analysis retrieves loaded media by identity and reuses cached transcripts 
 test('scripted close hold requires verified listening and measured silence',()=>{
  const {validateAction}=require('../../plugin/ipc_security');const hold={kind:'action',basis:'script_measured_hold',beat_id:'pause',media_id:'m',take_id:'m',start_frame:50,end_frame:70,shot_size:'close',evidence:{verified:true,silence_measured:true}};assert.equal(validateAction(hold,{media_id:'m',duration_frames:100}),hold);assert.throws(()=>validateAction({...hold,evidence:{verified:true}},{media_id:'m',duration_frames:100}),/non valido/);
 });
+
+test('refuses a listening overlay shorter than 1.5 seconds before creating a timeline',async()=>{const c=timelineSdk();const other={...c.media,GetMediaId:async()=>'m2'};c.sourceFolder.clips.push(other);const o={kind:'reaction',basis:'verified_listener',media_id:'m2',take_id:'t',start_frame:200,end_frame:230,offset_frames:70,shot_size:'close',speaker_coverage:'visible',enabled:true,evidence:{verified:true}};await assert.rejects(createTimeline(c.sdk,'SHORT',[{media_id:'m1',start_frame:0,end_frame:100,reaction_overlay:o}],{media:[{media_id:'m1',duration_frames:500,fps:25},{media_id:'m2',duration_frames:500,fps:25}]}),/1[,.]5|breve/);assert.equal(c.reviewTimeline.requestedName,undefined);});

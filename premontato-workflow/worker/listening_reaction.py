@@ -1,5 +1,6 @@
 """Listening cutaway over the original preceding dialogue audio."""
 def listening_overlay(decision,previous,sources,fps,minimum,occupied=None):
+    minimum=max(minimum,__import__('math').ceil(1.5*fps))
     if not previous or previous.get('narrative_role')!='tension' or decision.get('narrative_role')!='resolution':return None
     if decision.get('manual') or previous.get('manual') or decision.get('reaction_enabled') is False:return None
     ranges=previous.get('source_ranges',[previous]);available=sum(r['end_frame']-r['start_frame'] for r in ranges)
@@ -34,6 +35,8 @@ def _retained(decisions,media_id):
 def add_dialogue_listening(decisions,candidates,sources,beats,profiles,fps,minimum):
     """Same-beat listening coverage; original speaking audio remains untouched."""
     from active_speaker import verify_listener
+    from edit_selector import analyze_audio
+    minimum=max(minimum,__import__('math').ceil(1.5*fps))
     by_media={s['media_id']:s for s in sources};rooms={}
     for b in beats:
         if b.get('kind')=='dialogue' and b.get('character'):rooms.setdefault(b.get('scene_id'),set()).add(b['character'])
@@ -42,8 +45,18 @@ def add_dialogue_listening(decisions,candidates,sources,beats,profiles,fps,minim
     for i,d in enumerate(decisions):
         length=sum(r['end_frame']-r['start_frame'] for r in d.get('source_ranges',[d]));at=cursor;cursor+=length
         if d.get('reaction_overlay') or d.get('manual') or d.get('reaction_enabled') is False:continue
-        duration=min(round(2.2*fps),length-round(.8*fps))
-        if duration<minimum or at+length-duration-last<4*fps:continue
+        extra=0
+        required=minimum+round(.8*fps)-length
+        if 0<required<=round(.5*fps):
+            source=by_media[d['media_id']];end=d['end_frame']+required
+            try:measured=analyze_audio(source)
+            except Exception:measured={}
+            silent=measured.get('status')=='ok' and any(g['start_frame']<=d['end_frame'] and g['end_frame']>=end for g in measured.get('silences',[]))
+            words=[w for seg in source.get('segments',[]) for w in seg.get('words',[]) if w['end_frame']>w['start_frame']]
+            clear=not any(w['start_frame']<end and d['end_frame']<w['end_frame'] for w in words) and not any(r['start_frame']<end and d['end_frame']<r['end_frame'] for r in _retained(decisions,d['media_id']))
+            if silent and clear and end<=source.get('end_frame',source['duration_frames']):extra=required
+        duration=min(round(2.2*fps),length+extra-round(.8*fps))
+        if duration<minimum or at+length+extra-duration-last<4*fps:continue
         nxt=decisions[i+1] if i+1<len(decisions) else None
         ranked=sorted(candidates[i],key=lambda row:row.get('semantic',0),reverse=True)
         for row in ranked:
@@ -60,8 +73,14 @@ def add_dialogue_listening(decisions,candidates,sources,beats,profiles,fps,minim
             try:proof=verify_listener(source,start,end,profile['start'],profile['end'])
             except Exception:continue
             if not proof.get('verified'):continue
-            overlay={'kind':'reaction','basis':'verified_listener','media_id':mid,'take_id':row['take_id'],'start_frame':start,'end_frame':end,'offset_frames':length-duration,'shot_size':row['shot_size'],'character':profile['role'],'speaker_coverage':'visible','enabled':True,'evidence':{**proof,'alignment':'same_script_beat'}}
-            d['reaction_overlay']=overlay;reactions.append(overlay);last=at+length;break
+            overlay={'kind':'reaction','basis':'verified_listener','media_id':mid,'take_id':row['take_id'],'start_frame':start,'end_frame':end,'offset_frames':length+extra-duration,'shot_size':row['shot_size'],'character':profile['role'],'speaker_coverage':'visible','enabled':True,'evidence':{**proof,'alignment':'same_script_beat'}}
+            if extra:
+                d['end_frame']+=extra
+                if d.get('source_ranges'):d['source_ranges'][-1]['end_frame']+=extra
+                d.setdefault('pacing',{})['duration_frames']=length+extra
+                d.setdefault('warnings',[]).append('Coda ambiente misurata conservata per evitare una reazione troppo breve.')
+                cursor+=extra
+            d['reaction_overlay']=overlay;reactions.append(overlay);last=at+length+extra;break
     return reactions
 
 def add_scripted_breaths(decisions,sources,beats,profiles,fps,audio=None):
