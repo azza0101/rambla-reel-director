@@ -41,3 +41,15 @@ Suite di consegna: 178 test JavaScript e 195 Python superati. Preview reale: due
 Prova completa su copia del catalogo reale: 51 clip, 8 scene del PDF, 35 proposte di destinazione e 16 clip senza destinazione o in conflitto. Prima esecuzione completa con alcune cache già presenti: 616,9 s; ripresa a cache aggiornata: 4,4 s. Nessuna chiamata cloud, nuova ASR o scrittura Media Pool durante questa prova. I 35 match sono proposte, non 35 etichette con accuratezza certificata.
 
 I due nuovi moduli JavaScript sono distribuiti sotto runtime/premontato, directory già supportata da installer e updater precedenti. Non si amplia la whitelist degli eseguibili plugin del vecchio updater. Il readback del pacchetto installato deve verificare anche questi moduli, oltre al codice Python e al caricamento del controller.
+
+
+## Omni-Cut test 0.2.1 — details and session recovery
+
+- Whole clips predominantly showing inserts, objects, hands/feet or atmospheric footage can be assigned to **DETTAGLI E B-ROLL**. This is a category, never an invented scene in the PDF. A clear detail plus an inconclusive frame can qualify; contradictory action/dialogue frames do not count as B-roll evidence. A meaningful script dialogue match retains priority.
+- Generic visual setting descriptions cannot veto informative dialogue matched to a particular scene. Concrete conflicting visual actions still require review. Specific action retrieval can accept a consistent majority with a stronger score and margin; unrelated/tied evidence remains uncertain.
+- The panel remembers the selected PDF and source bin locally, scoped to the Resolve project. On reopening, it restores them and the checkpoint without starting analysis, transcription or Media Pool changes. Previous builds can recover selections from the matching autosave/checkpoint pair.
+- Changing the PDF on disk or deleting the bin produces an explicit warning. Changing projects never silently reuses another project's selection. A newly selected PDF requires Match before an older checkpoint is usable.
+- Press **Match girato con copione** after updating to refresh classification rules. Existing transcription and image embeddings remain reusable. Model inference remains offline; no Groq/Codex calls are made by this cataloging path.
+- **Applica al Media Pool** is still the explicit final operation. It moves original whole clips into the scene/category bins; it does not generate subclips or timelines.
+
+Validation on this workstation (Resolve 21.1.0.17, 2026-10-26): 51 source clips / 8 script scenes; final native read-only analysis and publication preview proposed 40 scene destinations plus 11 B-roll destinations, with zero unassigned. Cached speech/image evidence was reused: no ASR or external API calls, no Media Pool writes. The final run took 49.6 s; this is a warm-cache measurement, not a cold-run estimate or an independent accuracy score. A new controller recovered PDF, root bin and 51-source checkpoint. Existing timelines were not changed. Automatic tests: 185 JavaScript and 200 Python tests passed. Live UI restart after an installed update remains a user-side check.

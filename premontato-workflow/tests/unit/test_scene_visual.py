@@ -19,3 +19,25 @@ class VisualCatalogTest(unittest.TestCase):
 class VisualQueryDetailTest(unittest.TestCase):
  def test_separate_actions_are_retrieved_independently(self):
   q=scene_queries([{'scene_id':'s','heading':'ESTERNO','beats':[{'kind':'action','text':'Una donna arriva davanti alla serranda. Bussa tre volte sulla lamiera. Entra nel negozio.'}]}]);self.assertGreaterEqual(len(q),3);self.assertTrue(any('Bussa' in x['text'] and 'Entra' not in x['text'] for x in q))
+
+class VisualRoleTest(unittest.TestCase):
+ def test_queries_separate_broll_from_people_and_actions(self):
+  from scene_visual import role_queries
+  q=role_queries();self.assertTrue(any(r['role']=='broll' for r in q));self.assertTrue(any(r['role']=='action' for r in q));self.assertTrue(any(r['role']=='dialogue' for r in q))
+ def test_pure_detail_is_broll_but_mixed_action_is_not(self):
+  from scene_visual import rank_visual_role
+  q=[{'role':'broll'},{'role':'action'},{'role':'dialogue'}];v=[[1,0,0],[0,1,0],[0,0,1]]
+  self.assertEqual(rank_visual_role(q,v,[[1,0,0],[1,0,0]])['category'],'broll')
+  self.assertIsNone(rank_visual_role(q,v,[[1,0,0],[0,1,0],[0,1,0]])['category'])
+
+class VisualSettingTest(unittest.TestCase):
+ def test_single_concrete_action_is_not_a_generic_setting(self):
+  q=scene_queries([{'scene_id':'s','heading':'ESTERNO','beats':[{'kind':'action','text':'Un uomo apre la porta e fa entrare una donna.'}]}]);self.assertEqual(q[0]['specificity'],'action')
+ def test_setting_description_is_weaker_than_dialogue(self):
+  q=scene_queries([{'scene_id':'s','heading':'INT NEGOZIO','beats':[{'kind':'action','text':"Lui e lei sono all'interno di un negozio."}]}]);self.assertEqual(q[0]['specificity'],'setting')
+
+class VisualUninformativeTest(unittest.TestCase):
+ def test_uninformative_frame_does_not_veto_a_clear_detail(self):
+  from scene_visual import rank_visual_role
+  q=[{'role':'broll'},{'role':'action'},{'role':'dialogue'}]
+  self.assertEqual(rank_visual_role(q,[[1,0,0],[0,1,0],[0,0,1]],[[1,0,0],[0,0,0]])['category'],'broll')

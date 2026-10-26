@@ -9,9 +9,11 @@ function chooseAssignment(c,source,visual){
  if(visual?.scene_id&&c.scenes.some(s=>s.scene_id===visual.scene_id)){
   if(!speech){scene_id=visual.scene_id;basis='visual';reason='VISUAL_MATCH';}
   else if(speech===visual.scene_id){basis='speech_and_visual';reason='AGREEMENT';}
+  else if(visual.specificity==='setting'&&rows.some(r=>r.scene_id===speech&&(r.evidence||[]).some(e=>(e.text||'').split(/\s+/).length>=5))){basis='speech';reason='SPEECH_OVER_SETTING';}
   else if(!strong){scene_id=null;basis='conflict';reason='SPEECH_VISUAL_CONFLICT';}
  }
- return {media_id:source.media_id,scene_id,basis,reason,needs_visual:!strong,speech_support:support,candidate_scenes:rank.map(r=>r[0]),visual:visual||null};
+ if(!speech&&visual?.category==='broll'){scene_id=null;basis='visual_broll';reason='VISUAL_BROLL';}
+ return {media_id:source.media_id,scene_id,category:!speech&&visual?.category==='broll'?'broll':null,basis,reason,needs_visual:!strong,speech_support:support,candidate_scenes:rank.map(r=>r[0]),visual:visual||null};
 }
 async function verify(sdk,c,a){
  if(!a.scanDayMedia)return a.verifiedSources(sdk,c);
@@ -19,7 +21,7 @@ async function verify(sdk,c,a){
  for(const source of c.sources){const actual=scan.media.find(s=>s.media_id===source.media_id);if(!actual)throw Error('Sorgente non trovata');if(actual.fingerprint!==source.fingerprint){const pending=c.operations.some(o=>o.type==='move_clip'&&o.media_id===source.media_id&&o.destination_folder_id===actual.original_folder_id);if(!pending||['path','file_size','mtime_ns','fps','duration_frames','start_tc'].some(k=>source[k]!==actual[k]))throw Error('Sorgente cambiata: rianalizza');}}
  return scan;
 }
-function operations(c){const names=new Map();return (c.clip_assignments||[]).filter(r=>r.scene_id&&!r.stale).map(r=>{const s=c.scenes.find(s=>s.scene_id===r.scene_id);if(!s)throw Error('Scena non più presente');let name=s.heading.replace(/[<>:"/\\|?*\x00-\x1f]/g,' ').trim().replace(/[. ]+$/,'').slice(0,120)||'Scena '+s.ordinal;const collision=c.scenes.filter(x=>x.heading.replace(/[<>:"/\\|?*\x00-\x1f]/g,' ').trim().replace(/[. ]+$/,'').slice(0,120)===name).length>1;if(collision)name+=' ['+s.ordinal+']';names.set(s.scene_id,name);return {type:'move_clip',operation_id:store.hash([c.catalog_id,r.media_id,r.scene_id]).slice(0,24),media_id:r.media_id,scene_id:r.scene_id,folder_name:name};});}
+function operations(c){const names=new Map();return (c.clip_assignments||[]).filter(r=>(r.scene_id||r.category==='broll')&&!r.stale).map(r=>{const s=r.category==='broll'?{scene_id:'catalog_broll',heading:'DETTAGLI E B-ROLL',ordinal:0}:c.scenes.find(s=>s.scene_id===r.scene_id);if(!s)throw Error('Scena non più presente');let name=s.heading.replace(/[<>:"/\\|?*\x00-\x1f]/g,' ').trim().replace(/[. ]+$/,'').slice(0,120)||'Scena '+s.ordinal;const collision=c.scenes.filter(x=>x.heading.replace(/[<>:"/\\|?*\x00-\x1f]/g,' ').trim().replace(/[. ]+$/,'').slice(0,120)===name).length>1;if(collision)name+=' ['+s.ordinal+']';names.set(s.scene_id,name);return {type:'move_clip',operation_id:store.hash([c.catalog_id,r.media_id,s.scene_id]).slice(0,24),media_id:r.media_id,scene_id:s.scene_id,folder_name:name};});}
 async function previewClipMoves(sdk,c,a=base){await verify(sdk,c,a);const ops=operations(c);return {kind:'whole_clip_moves',project_id:c.project_id,catalog_id:c.catalog_id,revision:c.revision,operations:ops,preview_id:store.hash([c.project_id,c.catalog_id,c.revision,ops]),blocked:!ops.length,warnings:['Sposta le clip originali intere nei bin delle scene dentro la cartella riprese. Nessuna subclip o timeline viene creata. Le clip senza scena restano al loro posto.']};}
 async function applyClipMoves(sdk,c,preview,{confirmed,persist}={},a=base){
  if(!confirmed||typeof persist!=='function')throw Error('Conferma richiesta');const now=await previewClipMoves(sdk,c,a);if(now.preview_id!==preview.preview_id||now.blocked)throw Error('Anteprima scaduta');
