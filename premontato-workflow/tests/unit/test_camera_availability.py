@@ -71,6 +71,21 @@ class CameraAvailabilityTests(unittest.TestCase):
    p['classifications'][clip['key']]={u['id']:('3/P1' if 'Terza' in u['text'] else '1/P1' if 'Prima' in u['text'] else '2/P2') for u in clip['units']}
   result=self.run_plan(p);self.assertEqual([d['media_id'] for d in result['decisions']],['a','b','a'])
   self.assertLess(result['decisions'][2]['start_frame'],result['decisions'][0]['start_frame'])
+ def test_single_continuous_performance_preserves_interjected_reply_order(self):
+  s=source('a',['Prima frase completa adesso.','Si.','Ultima frase continua adesso.','Seconda risposta completa qui.'])
+  p=payload([s],['wide']);p['prepared']=prepare_dialogue(p)
+  for clip in p['prepared']['clips']:
+   p['classifications'][clip['key']]={u['id']:('2/P2' if u['text']=='Si.' or 'Seconda' in u['text'] else '1/P1') for u in clip['units']}
+  result=self.run_plan(p);self.assertEqual([d['dialogue_character'] for d in result['decisions']],['ALICE','BOB','ALICE','BOB'])
+  self.assertEqual(result['decisions'][0]['end_frame'],result['decisions'][1]['start_frame'])
+ def test_single_camera_keeps_scripted_action_with_goodbye_between_dialogue(self):
+  p=payload([source('a',['Prima frase completa adesso.','Buonanotte.','Seconda risposta completa qui.'])],['wide'])
+  p['beats'].insert(1,{'beat_id':'action','kind':'action','text':'Lei esce dalla stanza e lui si avvicina.'})
+  p['prepared']=prepare_dialogue(p)
+  for clip in p['prepared']['clips']:
+   p['classifications'][clip['key']]={u['id']:('X' if 'Buonanotte' in u['text'] else '1/P1' if 'Prima' in u['text'] else '3/P2') for u in clip['units']}
+  result=self.run_plan(p);self.assertEqual(result['decisions'][0]['end_frame'],result['decisions'][1]['start_frame'])
+  self.assertTrue(result['decisions'][0]['warnings'])
  def test_unrecorded_script_lines_are_visible_as_unmatched_not_silently_lost(self):
   p=payload([source('a',['Prima frase completa adesso.','Seconda risposta completa qui.'])],['wide'],True)
   result=self.run_plan(p);self.assertEqual(result['unmatched_beats'],['b3'])

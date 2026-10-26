@@ -94,6 +94,28 @@ def recover_cross_camera(units,labels,similarities,fps,threshold=.68,excluded=()
   if label in allowed and score>=threshold and score-runner>=.08:
    result[u['id']]=label;recovered.append({'unit':u['id'],'label':label,'evidence':'cross_camera_semantic_consensus','score':score})
  return result,recovered
+def recover_single_camera_asides(units,labels,scores,beats,fps,verify,excluded=()):
+ """Recover only complete local asides between dialogue anchors, never crew or restart text."""
+ result=dict(labels);changes=[]
+ cues=re.compile(r"\b(stop|ciak|azione|rifacciamo|rifai|riparti|ripartiamo|ricominciamo|microfono|telecamera|regia|battuta|scusami|scusate|aspetta|riprese)\b",re.I)
+ dialogue=[i for i,b in enumerate(beats) if b.get('kind')=='dialogue']
+ for i,u in enumerate(units):
+  if u['id'] in excluded or labels[u['id']]!='X' or len(normalize(u['text']).split())<4 or u['text'].strip().endswith(('...','…')) or cues.search(normalize(u['text'])) or u['end']-u['start']>8*fps:continue
+  before=[v for v in units if labels[v['id']]!='X' and 0<=u['start']-v['end']<=2.5*fps]
+  after=[v for v in units if labels[v['id']]!='X' and 0<=v['start']-u['end']<=2.5*fps]
+  if not before or not after:continue
+  anchors=[max(before,key=lambda v:v['end']),min(after,key=lambda v:v['start'])]
+  ranking=sorted(((float(scores[i][j]),j) for j in dialogue),reverse=True)
+  if not ranking:continue
+  score,j=ranking[0];runner=ranking[1][0] if len(ranking)>1 else -1
+  label=next((labels[v['id']] for v in anchors if int(labels[v['id']].split('/')[0])==j+1),None)
+  if label is None or score<.58 or score-runner<.06:continue
+  try:visible=verify(u).get('status')=='visible'
+  except Exception:visible=False
+  if not visible:continue
+  result[u['id']]=label;changes.append({'unit':u['id'],'label':label,'evidence':'single_camera_semantic_aside','score':score})
+ return result,changes
+
 def build_staged(payload,report=lambda e:None):
  from transcript_align import LocalSemanticEncoder
  from automatic_editor import narrative_roles
@@ -112,6 +134,10 @@ def build_staged(payload,report=lambda e:None):
  def info(u):
   n,role=labels[u['id']].split('/');return 'B'+n,names[role]
  encoder=LocalSemanticEncoder();unit_vectors=encoder.encode([u['text'] for u in units]);labels,recovered=recover_cross_camera(units,labels,unit_vectors@unit_vectors.T,fps,excluded={x['clip']+x['unit'] for x in cleanup})
+ if len(sources)==1:
+  beat_vectors=encoder.encode([b['text'] for b in beats])
+  labels,asides=recover_single_camera_asides(units,labels,unit_vectors@beat_vectors.T,beats,fps,lambda u:analyze_candidate(sources[u['clip']],u['start'],u['end']),excluded={x['clip']+x['unit'] for x in cleanup})
+  recovered.extend(asides)
  kept=[u for u in units if labels[u['id']]!='X']
  def block(us):return {'clip_id':us[0]['clip'],'units':[u['id'] for u in us],'start':us[0]['start'],'end':us[-1]['end'],'text':' '.join(clean_text(u['text']) for u in us),'beat':info(us[0])[0],'role':info(us[0])[1]}
  shots=payload.get('shots',[]);data={'clips':[{'clip_id':cid,'shot_size':_size(s,shots)} for cid,s in sources.items()],'style':payload.get('directions',{})}
@@ -163,7 +189,15 @@ def build_staged(payload,report=lambda e:None):
      canonical.append(block(group));group=[]
    group.append(u)
   if group:canonical.append(block(group))
- canonical=[c for c in canonical if not(c['end']-c['start']<.8*fps and any(d['beat']==c['beat'] and d['start']>c['end'] and d['end']-d['start']>=fps for d in canonical))]
+ if len(sources)==1:
+  canonical=[];group=[]
+  for u in kept:
+   if beats[int(info(u)[0][1:])-1]['kind']!='dialogue':continue
+   if group and (info(group[-1])[0]!=info(u)[0] or u['start']-group[-1]['end']>1.5*fps or group[-1]['end']-group[0]['start']>=3*fps):
+    canonical.append(block(group));group=[]
+   group.append(u)
+  if group:canonical.append(block(group))
+ if len(sources)>1:canonical=[c for c in canonical if not(c['end']-c['start']<.8*fps and any(d['beat']==c['beat'] and d['start']>c['end'] and d['end']-d['start']>=fps for d in canonical))]
  for i,c in enumerate(canonical):c['moment_id']='moment-%02d'%i
  windows=[]
  for cid in sources:
@@ -198,10 +232,13 @@ def build_staged(payload,report=lambda e:None):
   candidates.append(rows)
 
  words={cid:[w for seg in s['segments'] for w in seg.get('words',[]) if w['end_frame']>w['start_frame']] for cid,s in sources.items()}
+ positions={b['beat_id']:i for i,b in enumerate(beats)}
+ def continuous_action(a,b):
+  return len(sources)==1 and 0<b['matched_start_frame']-a['matched_end_frame']<=30*fps and any(beat['kind']=='action' and not re.fullmatch(r'\s*(pausa|silenzio|attesa)\s*',beat['text'],re.I) for beat in beats[positions[a['beat_id']]+1:positions[b['beat_id']]])
  def can_join(a,b):
   if b['matched_start_frame']<a['matched_end_frame']:return False
   between=[w for w in words[b['clip_id']] if w['start_frame']>=a['matched_end_frame'] and w['end_frame']<=b['matched_start_frame']]
-  return not between
+  return not between or continuous_action(a,b)
  minimum_shot=round(float(payload.get('settings',{}).get('minimum_shot_seconds',1.2))*fps)
  def short_reply(row):return (not masters or len(sources)==1) and len(normalize(row['text']).split())<=6 and row['matched_end_frame']-row['matched_start_frame']<minimum_shot
  states=[(0,[],{},0)]
@@ -229,7 +266,9 @@ def build_staged(payload,report=lambda e:None):
     d['warnings'].append('Risposta breve conservata: inquadratura sotto la durata minima obiettivo.');short_exceptions+=1
    run_start=i+1
  for left,right in zip(decisions,decisions[1:]):
-  if left['clip_id']==right['clip_id']:left['end_frame']=right['start_frame'];left['pacing']['duration_frames']=left['end_frame']-left['start_frame']
+  if left['clip_id']==right['clip_id']:
+   if continuous_action(left,right):left['warnings'].append('Raccordo di azione continuo: comprende anche parlato non classificato fra le battute; verifica il piano sequenza.')
+   left['end_frame']=right['start_frame'];left['pacing']['duration_frames']=left['end_frame']-left['start_frame']
  for i,d in enumerate(decisions):
   d['alternatives']=[copy.deepcopy(r) for r in candidates[i] if r['clip_id']!=d['clip_id'] or r['units']!=d['units']];d['source_ranges']=[{'start_frame':d['start_frame'],'end_frame':d['end_frame']}]
  positions={b['beat_id']:i for i,b in enumerate(beats)};actions=[]
@@ -261,7 +300,7 @@ def build_staged(payload,report=lambda e:None):
  cursor=0
  for d in decisions:
   d['timeline_start_frame']=cursor;cursor+=d['end_frame']-d['start_frame']+sum(a['end_frame']-a['start_frame'] for a in d.get('action_after',[]))
- verification={'model_classification_only':True,'human_cut_plan_used':False,'hardcoded_source_ranges':False,'classified_segments':len(labels),'dialogue_moments':len(canonical),'master_available':bool(masters),'reference_mode':'master_with_coverage_recovery' if masters else 'per_beat','dialogue_beats':len(covered),'missing_dialogue':missing,'actions':len(actions),'reactions':len(reactions),'cleanup':cleanup,'recovered_speech':recovered,'policy':'semantic alternatives + speaker evidence + constrained continuity search'}
+ verification={'model_classification_only':True,'human_cut_plan_used':False,'hardcoded_source_ranges':False,'classified_segments':len(labels),'dialogue_moments':len(canonical),'master_available':bool(masters),'reference_mode':'single_camera_continuous' if len(sources)==1 else 'master_with_coverage_recovery' if masters else 'per_beat','dialogue_beats':len(covered),'missing_dialogue':missing,'actions':len(actions),'reactions':len(reactions),'cleanup':cleanup,'recovered_speech':recovered,'policy':'semantic alternatives + speaker evidence + constrained continuity search'}
 
  result={'engine':ENGINE,'plan_id':'groq-local','scene_id':payload.get('scene_id','scene'),'fps':fps,'decisions':decisions,'unmatched_beats':missing,'warnings':['Groq classifica il parlato; scelta camere e raccordi locali. Visibilità stimata, non identificazione personale.'],'planning_summary':{**verification,'classification':payload.get('classification_summary',{})},'visual_review_required':False}
  if not masters:result['warnings'].append('Nessuna master disponibile: montaggio dai campi presenti, senza larghe inventate o alternanze obbligatorie.')
@@ -269,12 +308,8 @@ def build_staged(payload,report=lambda e:None):
  result['planning_summary']['speaker_uncertain_moments']=len(uncertain)
  if uncertain:result['warnings'].append(str(len(uncertain))+' momenti con parlante fuori campo o non verificato: controlla le alternative in revisione.')
  if missing:result['warnings'].append(str(len(missing))+' dialoghi del copione senza copertura nelle riprese: visibili in revisione e omessi dalla timeline.')
- result['review_beats']=[]
- for beat in beats:
-  if beat['kind']!='dialogue':continue
-  moments=[(i,d) for i,d in enumerate(decisions) if d['beat_id']==beat['beat_id']]
-  if not moments:result['review_beats'].append(copy.deepcopy(beat))
-  for i,d in moments:result['review_beats'].append({'beat_id':d['decision_id'],'kind':'dialogue','character':d['dialogue_character'],'text':canonical[i]['text'],'script_beat_id':d['beat_id']})
+ result['review_beats']=[{'beat_id':d['decision_id'],'kind':'dialogue','character':d['dialogue_character'],'text':canonical[i]['text'],'script_beat_id':d['beat_id']} for i,d in enumerate(decisions)]
+ result['review_beats'].extend(copy.deepcopy(beat) for beat in beats if beat['beat_id'] in missing)
  result['base_decisions']=copy.deepcopy(decisions)
  result['pacing_summary']={'measured_media':0,'removed_seconds':0,'protected_beats':0,'reaction_count':len(reactions),'action_count':len(actions),'short_shot_exceptions':short_exceptions,'unavailable_media':[]}
  return result
