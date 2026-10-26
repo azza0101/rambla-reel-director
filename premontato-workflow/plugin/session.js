@@ -16,6 +16,7 @@ function validateDraft(value){
  const obj=v=>v && typeof v==='object' && !Array.isArray(v),str=v=>typeof v==='string',list=(v,check)=>Array.isArray(v) && v.length<=10000 && v.every(check),scalar=v=>str(v)||Number.isFinite(v),sizes=['wide','medium','close','detail','unknown'];
  if(!obj(value) || Buffer.byteLength(JSON.stringify(value))>512*1024 || value.takes!==undefined && !list(value.takes,v=>obj(v)&&str(v.take_id)&&scalar(v.start_frame)&&scalar(v.end_frame)) || value.beats!==undefined && !list(value.beats,v=>obj(v)&&str(v.beat_id)&&scalar(v.start)&&scalar(v.end)&&sizes.includes(v.scale)))throw new Error('Bozza progetto non valida');
  if(value.visual!==undefined && (!obj(value.visual) || value.visual.dirty!==undefined && typeof value.visual.dirty!=='boolean' || value.visual.person_names!==undefined && (!obj(value.visual.person_names)||!Object.values(value.visual.person_names).every(str)) || value.visual.intervals!==undefined && !list(value.visual.intervals,v=>obj(v)&&str(v.segment_id)&&sizes.includes(v.shot_size)&&list(v.visible_subjects,str))))throw new Error('Bozza visiva del progetto non valida');
+ if(value.sceneDebug!==undefined && typeof value.sceneDebug!=='boolean')throw Error('Opzione debug scene non valida');
  if(value.directions!==undefined)validateDirections(value.directions);
  if(value.pacing!==undefined && (!obj(value.pacing)||typeof value.pacing.enabled!=='boolean'||typeof value.pacing.script!=='boolean'||!scalar(value.pacing.gap)||!scalar(value.pacing.minimum)))throw new Error('Bozza ritmo non valida');
 }
@@ -75,6 +76,18 @@ function prepareReviewTimeline(plan, confirmed) {
   return { decisions: plan.decisions, omitted: plan.unmatched_beats?.length || 0 };
 }
 
+
+// Resolve scene boundaries only from script beat identity; never from camera changes.
+function annotateSceneEdits(analysis, decisions) {
+ const scenes=analysis?.script?.scenes || [], byBeat=new Map();
+ scenes.forEach((scene,index)=>{for(const beat of scene.beats || [])byBeat.set(beat.beat_id,{id:scene.scene_id,number:index+1,heading:scene.heading});});
+ return decisions.map(edit=>{
+  const scene=byBeat.get(edit.beat_id);
+  if(!scene?.id)throw Error('Scena del taglio non identificabile: ricalcola il piano oppure disattiva il debug scene');
+  return {...edit,scene_debug:scene,...(edit.reaction_before?{reaction_before:{...edit.reaction_before,scene_debug:scene}}:{}),...(edit.action_after?{action_after:edit.action_after.map(action=>({...action,scene_debug:byBeat.get(action.beat_id) || scene}))}:{})};
+ });
+}
+
 class Session {
   constructor(root, workerPath, python = process.env.PREMONTATO_PYTHON || path.join(__dirname, 'runtime', 'python.exe')) {
     this.root = root; this.workerPath = workerPath; this.python = python;
@@ -108,6 +121,15 @@ class Session {
     message.status === 'ok' ? task.resolve(message.result) : task.reject(new Error(message.error?.message || 'Errore worker'));
   }
   failAll(error) { for (const task of this.pending.values()) { clearTimeout(task.timer); task.reject(error); } this.pending.clear(); }
+  async prepareTimelineDebug(decisions,enabled,settings) {
+    if(typeof enabled!=='boolean')throw Error('Opzione debug scene non valida');
+    if(!enabled)return {decisions,sceneDebug:{enabled:false}};
+    const annotated=annotateSceneEdits(this.state.analysis,decisions),frames=new Map();
+    const add=row=>{const duration=(row.source_ranges || [row]).reduce((n,r)=>n+r.end_frame-r.start_frame,0);frames.set(row.scene_debug.number,(frames.get(row.scene_debug.number)||0)+duration);};
+    for(const edit of annotated){if(edit.reaction_before && edit.reaction_enabled!==false && edit.reaction_before.enabled!==false)add(edit.reaction_before);add(edit);for(const action of edit.action_after || [])add(action);}
+    const rendered=await this.request('render_scene_debug_titles',{...settings,scenes:[...frames].map(([number,frames])=>({number,frames}))},600000);
+    return {decisions:annotated,sceneDebug:{enabled:true,gap_frames:Math.round(2*settings.fps),assets:rendered.assets}};
+  }
   async selectScenes(request) {
     const analysis=this.state.analysis,scenes=analysis?.script?.scenes || [],ids=request?.scene_ids;
     if(!Array.isArray(ids) || !ids.length || ids.length>100 || new Set(ids).size!==ids.length || ids.some(id=>typeof id!=='string' || !scenes.some(scene=>scene.scene_id===id)))throw new Error('Selezione scene non valida');
@@ -512,4 +534,4 @@ class Session {
   }
 }
 
-module.exports = { Session, GroqClient, workerEnvironment, prepareReviewTimeline };
+module.exports = { annotateSceneEdits, Session, GroqClient, workerEnvironment, prepareReviewTimeline };
