@@ -248,7 +248,7 @@ test('invalid listening overlay duration is rejected before timeline creation',a
  await assert.rejects(createTimeline(c.sdk,'BAD OVERLAY',[{media_id:'m1',start_frame:0,end_frame:100,reaction_overlay:overlay}],{media:[{media_id:'m1',duration_frames:500}]}),/ascolto non valida/);assert.equal(c.reviewTimeline.requestedName,undefined);
 });
 
-test('field colors separate subjects and angles, but share alternative takes of the same field',()=>{
+test('field colors separate source angles, while remaining stable across speakers and alternative takes',()=>{
  const {assignFieldColors}=require('../../plugin/resolve_adapter');
  const edits=[
  {media_id:'angle-a',shot_size:'close',dialogue_character:'ALICE',take_id:'take-1'},
@@ -257,18 +257,20 @@ test('field colors separate subjects and angles, but share alternative takes of 
  {media_id:'angle-a',shot_size:'medium',dialogue_character:'ALICE'},
  {media_id:'angle-a',shot_size:'close',dialogue_character:'BOB'}];
  const colors=assignFieldColors(edits);
- assert.equal(colors[0],colors[1]);assert.equal(new Set([colors[0],...colors.slice(2)]).size,4);
+ assert.equal(colors[0],colors[1]);assert.equal(colors[0],colors[4]);assert.equal(new Set([colors[0],...colors.slice(2)]).size,3);
  const reversed=assignFieldColors([...edits].reverse()).reverse();assert.deepEqual(reversed,colors);
 });
-test('confirmed visible subjects define a shared field independently of who speaks',()=>{
+test('changing the speaking or visible person does not recolor an unchanged source field',()=>{
  const {assignFieldColors}=require('../../plugin/resolve_adapter');
  const colors=assignFieldColors([
  {media_id:'two-shot',shot_size:'close',visible_subjects:['BOB','ALICE'],dialogue_character:'ALICE'},
  {media_id:'two-shot',shot_size:'close',visible_subjects:['ALICE','BOB'],dialogue_character:'BOB'},
  {media_id:'two-shot',shot_size:'close',visible_subjects:['ALICE'],dialogue_character:'ALICE'}]);
- assert.equal(colors[0],colors[1]);assert.notEqual(colors[0],colors[2]);
+ assert.equal(colors[0],colors[1]);assert.equal(colors[0],colors[2]);
 });
 test('color palette exhaustion is explicit instead of reusing a different field color',()=>{
  const {assignFieldColors}=require('../../plugin/resolve_adapter');
  assert.throws(()=>assignFieldColors(Array.from({length:17},(_,i)=>({media_id:'angle-'+i,shot_size:'wide'}))),/colori.*Resolve/i);
 });
+
+test('wide field color remains stable when people enter or leave',()=>{ const {assignFieldColors}=require('../../plugin/resolve_adapter'); const colors=assignFieldColors([{media_id:'wide',shot_size:'wide',visible_subjects:['ALICE']},{media_id:'wide',shot_size:'wide',visible_subjects:['BOB']}]);assert.equal(colors[0],colors[1]); });

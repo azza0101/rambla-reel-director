@@ -139,13 +139,9 @@ async function analyzedMediaItems(pool,ids,records=[],timeline){
  return ids.map(id=>found.get(id));
 }
 const FIELD_COLORS=['Blue','Green','Orange','Purple','Yellow','Teal','Pink','Lime','Apricot','Olive','Navy','Violet','Tan','Beige','Brown','Chocolate'];
-function fieldColorKey(edit,index=0){
- const size=edit.shot_size || 'unknown',normalize=value=>String(value).normalize('NFKC').trim().toLocaleUpperCase('it');
- const subjects=[...new Set((edit.visible_subjects || []).filter(Boolean).map(normalize))].sort();
- if(!subjects.length && size!=='wide'){const person=edit.character || edit.dialogue_character;if(person)subjects.push(normalize(person));}
- const field=edit.framing_group_id || edit.media_id;
- const identity=size==='wide'?'context':subjects.length?subjects.join('|'):'unverified:'+(edit.decision_id || edit.beat_id || [edit.start_frame,edit.end_frame,index].join(':'));
- return JSON.stringify([size,field,identity]);
+function fieldColorKey(edit){
+ // A speaker turn does not change the camera field. Only confirmed field groups can join different sources.
+ return JSON.stringify([edit.shot_size || 'unknown',edit.framing_group_id || edit.media_id]);
 }
 function assignFieldColors(edits){
  const keys=edits.map((e,i)=>e.field_color_key || fieldColorKey(e,i));
@@ -171,8 +167,7 @@ async function createTimeline(sdk, name, edits, expected = {}) {
     return rows;
   });
   const raw=reviewed.flatMap((value,index)=>{
-    const shot=expected.analysis?.shots?.find(s=>s.media_id===value.media_id && s.start_frame<value.end_frame && s.end_frame>value.start_frame && s.visible_subjects?.length);
-    const edit={...value,visible_subjects:value.visible_subjects?.length?value.visible_subjects:shot?.visible_subjects};
+    const edit={...value};
     edit.field_color_key=fieldColorKey(edit,index);
     if(!byId.has(edit.media_id))throw Error('Sorgente del raccordo non disponibile');
     const ranges=edit.source_ranges ?? [{start_frame:edit.start_frame,end_frame:edit.end_frame}];
