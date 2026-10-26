@@ -35,3 +35,35 @@ def load_pcm16(source):
     finally:
         if os.path.exists(temporary):os.unlink(temporary)
     return data,{'cache_hit':False,'sample_rate':16000}
+
+
+def render_scene_debug_titles(payload):
+    """Persistent alpha movies: Resolve ignores requested durations on still imports."""
+    import cv2
+    from cache import cache_key
+    fps=payload.get('fps');scenes=payload.get('scenes');width=payload.get('width',1920);height=payload.get('height',1080)
+    integer=lambda v:isinstance(v,int) and not isinstance(v,bool)
+    if not isinstance(fps,(int,float)) or isinstance(fps,bool) or not 1<=fps<=120 or not isinstance(scenes,list) or not 0<len(scenes)<=100 or not integer(width) or not integer(height) or not 64<=width<=8192 or not 64<=height<=8192:raise ValueError('Titoli debug non validi')
+    if any(not isinstance(s,dict) or not integer(s.get('number')) or not 1<=s['number']<=10000 or not integer(s.get('frames')) or not 0<s['frames']<=round(3600*fps) for s in scenes) or len({s['number'] for s in scenes})!=len(scenes):raise ValueError('Durata o numero scena non validi')
+    # Keep referenced assets outside the disposable analysis cache.
+    root=Path(os.environ.get('PREMONTATO_CACHE_DIR','.premontato-cache/shots')).resolve().parent.parent/'assets'/'scene-debug';root.mkdir(parents=True,exist_ok=True)
+    scale=min(960/width,960/height,1);w=max(64,round(width*scale));h=max(64,round(height*scale))
+    assets={};hits=0
+    for scene in scenes:
+        label=f"SCENA {scene['number']:02d}";key=cache_key('scene-debug-alpha-v1',label,scene['frames'],fps,w,h);target=root/(key+'.mov')
+        if target.is_file() and target.stat().st_size>0:hits+=1
+        else:
+            image=np.zeros((h,w,4),dtype=np.uint8);font=cv2.FONT_HERSHEY_SIMPLEX;font_scale=max(.5,w/960*1.2);thick=max(1,round(w/480));margin=max(12,round(w*.025));size,_=cv2.getTextSize(label,font,font_scale,thick);origin=(margin,margin+size[1])
+            cv2.putText(image,label,origin,font,font_scale,(0,0,0,255),thick+4,cv2.LINE_AA);cv2.putText(image,label,origin,font,font_scale,(255,255,255,255),thick,cv2.LINE_AA)
+            fd,png=tempfile.mkstemp(prefix='.scene-',suffix='.png',dir=root);os.close(fd);fd,movie=tempfile.mkstemp(prefix='.scene-',suffix='.mov',dir=root);os.close(fd)
+            try:
+                if not cv2.imwrite(png,image):raise RuntimeError('Immagine etichetta non generata')
+                command=[ffmpeg_path(),'-nostdin','-hide_banner','-loglevel','error','-y','-loop','1','-framerate',str(fps),'-i',png,'-frames:v',str(scene['frames']),'-an','-c:v','qtrle','-pix_fmt','argb','-threads','2',movie]
+                run=subprocess.run(command,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,timeout=300,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+                if run.returncode or not Path(movie).stat().st_size:raise RuntimeError('Video etichetta non generato')
+                os.replace(movie,target)
+            finally:
+                for p in [png,movie]:
+                    if os.path.exists(p):os.unlink(p)
+        assets[str(scene['number'])]=str(target)
+    return {'assets':assets,'cache_hits':hits}

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.12.1 — trial: debug scene
+
+- Gap di due secondi tra scene e numero scena su V4 per tutta la durata.
+- Opzione disattivabile, salvata nel progetto; piano di montaggio invariato.
+- Titoli alpha locali con cache e verifica nativa di durata e traccia.
+
+
 ## 0.12.0 — Catalogazione giornata (prova)
 
 - Inventario ricorsivo indipendente da clip selezionate e timeline aperta.

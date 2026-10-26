@@ -167,18 +167,23 @@ async function createTimeline(sdk, name, edits, expected = {}) {
   const items=expectedIds ? await analyzedMediaItems(pool,expectedIds,expected.media || [],sourceTimeline) : await selectedClips(pool);
   const byId = new Map(await Promise.all(items.map(async item => [String(await item.GetMediaId()), item])));
   if (!edits.length || edits.some(edit => !byId.has(edit.media_id) || edit.end_frame <= edit.start_frame)) throw new Error('Piano incompleto o sorgente analizzata non disponibile; timeline non creata');
+  const debug=expected.sceneDebug?.enabled===true;
+  const gap=debug?expected.sceneDebug.gap_frames:0;
+  if(debug && (!Number.isSafeInteger(gap)||gap<0||gap>15000||edits.some(e=>!e.scene_debug?.id||!Number.isSafeInteger(e.scene_debug.number)||e.scene_debug.number<1)))throw Error('Configurazione debug scene non valida');
   const security=require('./ipc_security');
   const reviewed=edits.flatMap(edit=>{
     const rows=[];
-    if(edit.reaction_before && edit.reaction_enabled!==false){const reaction=security.validateReaction(edit.reaction_before,expected.media?.find(m=>m.media_id===edit.reaction_before.media_id));if(reaction.enabled)rows.push({...reaction,beat_id:edit.beat_id});}
+    if(edit.reaction_before && edit.reaction_enabled!==false){const reaction=security.validateReaction(edit.reaction_before,expected.media?.find(m=>m.media_id===edit.reaction_before.media_id));if(reaction.enabled)rows.push({...reaction,beat_id:edit.beat_id,scene_debug:edit.scene_debug});}
     rows.push(edit);
-    if(edit.action_after!==undefined){if(!Array.isArray(edit.action_after))throw Error('Raccordi azione non validi');for(const action of edit.action_after)rows.push(security.validateAction(action,expected.media?.find(m=>m.media_id===action.media_id)));}
+    if(edit.action_after!==undefined){if(!Array.isArray(edit.action_after))throw Error('Raccordi azione non validi');for(const action of edit.action_after)rows.push({...security.validateAction(action,expected.media?.find(m=>m.media_id===action.media_id)),scene_debug:action.scene_debug || edit.scene_debug});}
     return rows;
   });
   const timelineFps=await sourceTimeline.GetSetting('timelineFrameRate');
-  const overlays=[];let reviewOffset=0;
+  const overlays=[],sceneSpans=[];let reviewOffset=0;
   const raw=reviewed.flatMap((value,index)=>{
     const edit={...value,field_color_key:fieldColorKey(value,index)};
+    if(debug && sceneSpans.at(-1)?.id!==edit.scene_debug.id){if(sceneSpans.length)reviewOffset+=gap;sceneSpans.push({...edit.scene_debug,start:reviewOffset,end:reviewOffset});}
+    const recordOffset=reviewOffset;
     if(!byId.has(edit.media_id))throw Error('Sorgente del raccordo non disponibile');
     if(edit.kind==='reaction' && edit.end_frame-edit.start_frame<Math.ceil(1.5*(Number(timelineFps)||25)))throw Error('Reazione troppo breve: minimo 1,5 secondi');
     const ranges=edit.source_ranges ?? [{start_frame:edit.start_frame,end_frame:edit.end_frame}];
@@ -190,21 +195,21 @@ async function createTimeline(sdk, name, edits, expected = {}) {
       if(overlay.end_frame-overlay.start_frame<Math.ceil(1.5*fps))throw Error('Reazione troppo breve: minimo 1,5 secondi');
       overlays.push({...overlay,record_offset:reviewOffset+overlay.offset_frames,video_only:true,field_color_key:fieldColorKey(overlay)});
     }
-    reviewOffset+=ranges.reduce((sum,r)=>sum+r.end_frame-r.start_frame,0);
-    return ranges.map(r=>({...edit,start_frame:r.start_frame,end_frame:r.end_frame}));
+    let offset=recordOffset;const rows=ranges.map(r=>{const row={...edit,start_frame:r.start_frame,end_frame:r.end_frame,record_offset:offset};offset+=r.end_frame-r.start_frame;return row;});
+    reviewOffset=offset;if(debug)sceneSpans.at(-1).end=offset;
+    return rows;
   });
   const expanded=[];
   for(const edit of raw){
     const left=expanded.at(-1),audio=edit.audio_source || edit,priorAudio=left?.audio_source || left;
-    if(left && left.media_id===edit.media_id && left.shot_size===edit.shot_size){
+    if(left && left.media_id===edit.media_id && left.shot_size===edit.shot_size && (!debug || left.scene_debug.id===edit.scene_debug.id)){
       if(left.end_frame!==edit.start_frame)throw Error('Jump cut sulla stessa inquadratura: ricalcola il premontato per ripristinare la continuità');
       if(left.field_color_key===edit.field_color_key && priorAudio.media_id===audio.media_id && priorAudio.end_frame===audio.start_frame){left.end_frame=edit.end_frame;if(left.audio_source)left.audio_source.end_frame=audio.end_frame;continue;}
     }
     expanded.push({...edit,audio_source:edit.audio_source?{...edit.audio_source}:undefined});
   }
   // Only the new timeline is changed. Source audio mapping and Media Pool colors stay intact.
-  let baseOffset=0;
-  const insertions=[...expanded.map(edit=>{const row={...edit,record_offset:baseOffset};baseOffset+=edit.end_frame-edit.start_frame;return row;}),...overlays];
+  const insertions=[...expanded,...overlays];
   const layout = edit => edit.video_only || edit.kind==='reaction' ? 3 : 2;
   const fieldColors=assignFieldColors(insertions);
   const version=require('./package.json').version;
@@ -228,6 +233,7 @@ async function createTimeline(sdk, name, edits, expected = {}) {
     }
   }
   if(!newTimeline)throw new Error('Resolve non ha creato la nuova timeline');
+  const videoTracks=debug?4:3;
   let created = false, failure, audioSegments=0;
   try {
     const timelineMedia=await newTimeline.GetMediaPoolItem();
@@ -241,16 +247,17 @@ async function createTimeline(sdk, name, edits, expected = {}) {
     for (let i=defaultAudioTracks;i>=1;i--) {
       if ((await newTimeline.GetItemListInTrack('audio',i) || []).length || !await newTimeline.DeleteTrack('audio',i)) throw new Error('Impossibile preparare le tracce mono');
     }
-    for(let i=Number(await newTimeline.GetTrackCount('video'));i>3;i--) {
+    for(let i=Number(await newTimeline.GetTrackCount('video'));i>videoTracks;i--) {
       if ((await newTimeline.GetItemListInTrack('video',i) || []).length || !await newTimeline.DeleteTrack('video',i)) throw new Error('Impossibile preparare le tracce video');
     }
-    for(let i=Number(await newTimeline.GetTrackCount('video'));i<3;i++) if(!await newTimeline.AddTrack('video')) throw new Error('Resolve non ha creato le tracce video');
+    for(let i=Number(await newTimeline.GetTrackCount('video'));i<videoTracks;i++) if(!await newTimeline.AddTrack('video')) throw new Error('Resolve non ha creato le tracce video');
     const names=['Riserva','Base parlato','Reazioni video'];
     for(let i=1;i<=3;i++) {
       if(!await newTimeline.SetTrackName('video',i,names[i-1]) || !await newTimeline.SetTrackName('audio',i,names[i-1])) throw new Error('Resolve non ha nominato le tracce');
     }
+    if(debug && !await newTimeline.SetTrackName('video',4,'DEBUG scene'))throw Error('Resolve non ha nominato la traccia debug');
     const checkLayout=async()=>{
-      if(Number(await newTimeline.GetTrackCount('video'))!==3 || Number(await newTimeline.GetTrackCount('audio'))!==3) throw new Error('Resolve ha modificato il numero delle tracce; timeline di prova annullata');
+      if(Number(await newTimeline.GetTrackCount('video'))!==videoTracks || Number(await newTimeline.GetTrackCount('audio'))!==3) throw new Error('Resolve ha modificato il numero delle tracce; timeline di prova annullata');
       for(let i=1;i<=3;i++)if(String(await newTimeline.GetTrackSubType('audio',i)).toLowerCase()!=='mono')throw new Error('Resolve non ha mantenuto le tracce audio mono; timeline di prova annullata');
     };
     await checkLayout();
@@ -300,9 +307,30 @@ async function createTimeline(sdk, name, edits, expected = {}) {
       }
       await checkLayout();cursor=nativeEnd;
     }
+    // Persistent alpha-video assets avoid Resolve's fixed-duration still import.
+    if(debug){
+      const savedFolder=await pool.GetCurrentFolder();
+      try{
+        if(!await pool.SetCurrentFolder(targetFolder))throw Error('Cartella etichette non disponibile');
+        const numbers=[...new Set(sceneSpans.map(span=>span.number))],assets=expected.sceneDebug.assets || {},mediaByPath=new Map();
+        for(const item of await targetFolder.GetClipList() || [])if(typeof item.GetClipProperty==='function')mediaByPath.set(String(await item.GetClipProperty('File Path') || '').replaceAll('\\','/').toLowerCase(),item);
+        const key=p=>String(p).replaceAll('\\','/').toLowerCase();
+        if(numbers.some(n=>typeof assets[n]!=='string' || !assets[n]))throw Error('Asset delle etichette scena mancanti');
+        const missing=numbers.map(n=>assets[n]).filter(p=>!mediaByPath.has(key(p)));
+        if(missing.length){const imported=await pool.ImportMedia(missing) || [];if(imported.length!==missing.length)throw Error('Resolve non ha importato le etichette scena');for(let i=0;i<missing.length;i++)mediaByPath.set(key(missing[i]),imported[i]);}
+        for(const span of sceneSpans){
+          const start=timelineStart+span.start,end=timelineStart+span.end;
+          const rows=await pool.AppendToTimeline([{mediaPoolItem:mediaByPath.get(key(assets[span.number])),startFrame:0,endFrame:span.end-span.start,mediaType:1,trackIndex:4,recordFrame:start}]) || [];
+          if(rows.length!==1 || Number(await rows[0].GetStart())!==start || Number(await rows[0].GetEnd())!==end)throw Error('Durata etichetta scena non verificata');
+          const track=await rows[0].GetTrackTypeAndIndex();if(track[0]!=='video'||Number(track[1])!==4)throw Error('Traccia etichetta scena non verificata');
+          if(!await rows[0].SetClipColor('Teal') || await rows[0].GetClipColor()!=='Teal')throw Error('Colore etichetta scena non applicato');
+        }
+      }finally{if(!await pool.SetCurrentFolder(savedFolder))throw Error('Cartella Media Pool non ripristinata dopo le etichette');}
+    }
     let videos=0,audios=0;
     for(let i=1;i<=3;i++){videos+=(await newTimeline.GetItemListInTrack('video',i) || []).length;audios+=(await newTimeline.GetItemListInTrack('audio',i) || []).length;}
-    if(videos!==insertions.length || audios!==audioSegments)throw new Error('Numero di clip non coerente; timeline di prova annullata');
+    const titles=debug?(await newTimeline.GetItemListInTrack('video',4) || []).length:0;
+    if(videos!==insertions.length || titles!==sceneSpans.length || audios!==audioSegments)throw new Error('Numero di clip non coerente; timeline di prova annullata');
     for(const [id,before] of mappingBefore)if(JSON.stringify(await byId.get(id).GetAudioMapping())!==JSON.stringify(before))throw new Error('Resolve ha modificato la mappatura audio sorgente');
     if(String(await project.GetUniqueId())!==beforeProject || String(await sourceTimeline.GetUniqueId())!==beforeTimeline)throw new Error('Progetto o timeline di partenza cambiati durante la creazione');
     created=true;
@@ -315,7 +343,7 @@ async function createTimeline(sdk, name, edits, expected = {}) {
   if(expected.activateCreated===true){
     if(!await project.SetCurrentTimeline(newTimeline) || String(await (await project.GetCurrentTimeline()).GetUniqueId())!==String(await newTimeline.GetUniqueId()))throw new Error('Timeline creata, ma Resolve non l’ha aperta. Cercala in '+folderPath.join(' / '));
   }
-  return {opened:expected.activateCreated===true,timelineId:String(await newTimeline.GetUniqueId()),timelineName:String(await newTimeline.GetName()),sourceTimelineId:beforeTimeline,included:edits.length,segments:insertions.length,audioSegments,videoTracks:3,audioTracks:3,audioFormat:'mono',version,folderPath:folderPath.join(' / ')};
+  return {opened:expected.activateCreated===true,timelineId:String(await newTimeline.GetUniqueId()),timelineName:String(await newTimeline.GetName()),sourceTimelineId:beforeTimeline,included:edits.length,segments:insertions.length,audioSegments,sceneLabels:sceneSpans.length,sceneGaps:Math.max(0,sceneSpans.length-1),videoTracks,audioTracks:3,audioFormat:'mono',version,folderPath:folderPath.join(' / ')};
 }
 
 async function saveCurrentProject(sdk, expectedProjectId) {

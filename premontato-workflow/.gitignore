@@ -22,3 +22,5 @@ __pycache__/
 
 /.premontato-installer-*/
 /dist-catalog-test/
+
+/dist-catalog-test2/

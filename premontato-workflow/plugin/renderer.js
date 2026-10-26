@@ -83,7 +83,7 @@ $('analyze').addEventListener('click', async () => { $('analyze').disabled = tru
 $('cancel').addEventListener('click', async () => { await window.premontato.cancelAnalysis(); $('cancel').hidden = true; message('Analisi annullata.'); });
 $('make-timeline').addEventListener('click', async () => {
  const status=$('timeline-result');$('make-timeline').disabled=true;status.textContent='Creazione timeline in corso…';message(status.textContent);
- try { const result=await window.premontato.createReviewTimeline({confirmed:true});const omitted=result.omitted?'; '+result.omitted+' dialoghi non abbinati omessi':'';status.textContent='Creata '+result.timelineName+' con '+result.included+' battute abbinate'+omitted+'. Verifica i tagli e l’audio in Resolve.';message(status.textContent); }
+ try { const result=await window.premontato.createReviewTimeline({confirmed:true,sceneDebug:$('scene-debug').checked});const omitted=result.omitted?'; '+result.omitted+' dialoghi non abbinati omessi':'';status.textContent='Creata '+result.timelineName+' con '+result.included+' battute abbinate'+omitted+'. Verifica i tagli e l’audio in Resolve.';message(status.textContent); }
  catch(error){status.textContent=error.message || String(error);showError(error);}
  finally{updateTimelineButton();}
 });
@@ -271,7 +271,7 @@ function updateTimelineButton(state=window.__lastReviewState || {}){
 }
 let draftTimer=null,restoringDraft=false;
 function capturePremontatoDraft(){
- return {directions:captureDirections(),visual:{dirty:visualDirty,person_names:{...visualNames},intervals:[...$('visual-intervals').querySelectorAll('[data-visual-segment]')].map(card=>({segment_id:card.dataset.visualSegment,shot_size:card.querySelector('[data-visual-scale]').value,visible_subjects:[...card.querySelectorAll('[data-subject]:checked')].map(input=>input.value)}))},
+ return {sceneDebug:$('scene-debug').checked,directions:captureDirections(),visual:{dirty:visualDirty,person_names:{...visualNames},intervals:[...$('visual-intervals').querySelectorAll('[data-visual-segment]')].map(card=>({segment_id:card.dataset.visualSegment,shot_size:card.querySelector('[data-visual-scale]').value,visible_subjects:[...card.querySelectorAll('[data-subject]:checked')].map(input=>input.value)}))},
  takes:[...$('takes').querySelectorAll('[data-take]')].map(row=>({take_id:JSON.parse(row.dataset.take).take_id,start_frame:row.querySelector('[data-start]').value,end_frame:row.querySelector('[data-end]').value})),
  beats:[...$('beats').querySelectorAll('[data-beat-id]')].map(row=>({beat_id:row.dataset.beatId,start:row.querySelector('[data-in]').value,end:row.querySelector('[data-out]').value,scale:row.querySelector('[data-scale]').value})),
  pacing:{enabled:$('pacing-enabled').checked,gap:$('pacing-gap').value,minimum:$('pacing-minimum').value,script:$('pacing-script').checked}};
@@ -288,6 +288,7 @@ function hydrateProject(state){
  $('media-list').innerHTML=(state.media || []).map(item=>'<div>'+escapeHtml(item.name)+' <span class="pill">'+item.duration_frames+' frame</span></div>').join('') || 'Nessuna clip selezionata';
  visualNames={};visualOverrides.clear();visualDirty=false;
  window.__lastReviewState=null;render(state);$('review').hidden=!state.analysis;updateButton();showProjectStatus(state.projectStatus);
+ $('scene-debug').checked=state.uiDraft?.sceneDebug ?? true;
  const draft=state.uiDraft;if(!draft)return;
  restoringDraft=true;
  try{

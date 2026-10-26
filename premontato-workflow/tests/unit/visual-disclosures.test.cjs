@@ -15,5 +15,5 @@ test('visual review toggles open and closed without repeated analysis, labels fo
 });
 test('timeline creation is an explicit click without a final checkbox',()=>{
  const html=fs.readFileSync(path.join(__dirname,'../../plugin/index.html'),'utf8'),js=fs.readFileSync(path.join(__dirname,'../../plugin/renderer.js'),'utf8');
- assert.doesNotMatch(html,/id="reviewed"/);assert.equal(js.includes("$('reviewed')"),false);assert.equal(js.includes('createReviewTimeline({confirmed:true})'),true);
+ assert.doesNotMatch(html,/id="reviewed"/);assert.equal(js.includes("$('reviewed')"),false);assert.match(js,/createReviewTimeline\(\{confirmed:true,sceneDebug:/);assert.match(html,/id="scene-debug"[^>]*checked/);
 });

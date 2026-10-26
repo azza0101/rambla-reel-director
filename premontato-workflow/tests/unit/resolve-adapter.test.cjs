@@ -127,7 +127,7 @@ function timelineSdk({ appendResultCount = 3, sourceBase = 0 } = {}) {
  const output=[];
  for(const clip of clips){const type=clip.mediaType===2?'audio':'video',list=type==='video'?reviewTimeline.items:reviewTimeline.audio;if(list.length>=appendResultCount)continue;
  const record=clip.recordFrame ?? (list.length?await list[list.length-1].GetEnd():90000);
- const item={clip,color:'',GetMediaPoolItem:async()=>clip.mediaPoolItem,GetSourceStartFrame:async()=>clip.startFrame%2?clip.startFrame-1:clip.startFrame,GetSourceEndFrame:async()=>clip.endFrame,GetSourceStartTime:async()=>sourceBase+clip.startFrame/25,GetSourceEndTime:async()=>sourceBase+clip.endFrame/25,GetStart:async()=>record,GetEnd:async()=>record+clip.endFrame-clip.startFrame,GetDuration:async()=>clip.endFrame-clip.startFrame,GetTrackTypeAndIndex:async()=>[type,clip.trackIndex || 1],SetClipColor:async color=>{item.color=color;return true;},GetClipColor:async()=>item.color,GetLinkedItems:async()=>item.linked || []};list.push(item);output.push(item);
+ const item={clip,color:'',GetMediaPoolItem:async()=>clip.mediaPoolItem,GetSourceStartFrame:async()=>clip.startFrame%2?clip.startFrame-1:clip.startFrame,GetSourceEndFrame:async()=>clip.endFrame,GetSourceStartTime:async()=>sourceBase+clip.startFrame/25,GetSourceEndTime:async()=>sourceBase+clip.endFrame/25,GetStart:async()=>record,GetEnd:async()=>record+clip.endFrame-clip.startFrame,GetDuration:async()=>clip.endFrame-clip.startFrame,GetTrackTypeAndIndex:async()=>[type,clip.trackIndex || 1],SetClipColor:async color=>{if(!['Blue','Green','Orange','Purple','Yellow','Teal','Pink','Lime','Apricot','Olive','Navy','Violet','Tan','Beige','Brown','Chocolate'].includes(color))return false;item.color=color;return true;},GetClipColor:async()=>item.color,GetLinkedItems:async()=>item.linked || []};list.push(item);output.push(item);
  }return output;
  },DeleteTimelines:async timelines=>{assert.deepEqual(timelines,[reviewTimeline]);reviewTimeline.deleted=true;return true;}};
  const sdk={GetResolvePromise:async()=>({GetProjectManager:async()=>({GetCurrentProject:async()=>project})})};
@@ -295,3 +295,26 @@ test('refuses a listening overlay shorter than 1.5 seconds before creating a tim
 test('saved standalone reactions also respect the hard 1.5-second floor',async()=>{const c=timelineSdk();const reaction={kind:'reaction',media_id:'m1',take_id:'t',start_frame:150,end_frame:180,shot_size:'close',character:'L',enabled:true,basis:'verified_silent_preroll',speaker_coverage:'visible'};await assert.rejects(createTimeline(c.sdk,'SHORT OLD',[{media_id:'m1',start_frame:200,end_frame:250,reaction_before:reaction}],{media:[{media_id:'m1',duration_frames:500}]}),/1[,.]5|breve/);assert.equal(c.reviewTimeline.requestedName,undefined);});
 
 test('an internal V3 reaction returns to intact V2 picture before dialogue ends',async()=>{const c=timelineSdk({appendResultCount:10});const other={...c.media,GetMediaId:async()=>'m2'};c.sourceFolder.clips.push(other);const o={kind:'reaction',basis:'verified_listener',media_id:'m2',take_id:'t',start_frame:200,end_frame:240,offset_frames:35,shot_size:'close',speaker_coverage:'visible',enabled:true,evidence:{verified:true}};await createTimeline(c.sdk,'RETURN',[{media_id:'m1',start_frame:0,end_frame:120,shot_size:'close',reaction_overlay:o}],{media:[{media_id:'m1',duration_frames:500},{media_id:'m2',duration_frames:500}]});assert.deepEqual(c.reviewTimeline.items.map(i=>[i.clip.trackIndex,i.clip.recordFrame,i.clip.endFrame-i.clip.startFrame]),[[2,90000,120],[3,90035,40]]);assert.equal(c.reviewTimeline.audio.length,1);assert.equal(c.reviewTimeline.audio[0].clip.endFrame,120);});
+
+
+test('debug scene gaps shift dialogue, mono audio and V3 overlays together; V4 labels span each full scene',async()=>{
+ const c=timelineSdk({appendResultCount:20});let imports=0;const other={...c.media,GetMediaId:async()=>'m2'};c.sourceFolder.clips.push(other);
+ c.pool.ImportMedia=async paths=>{imports++;return paths.map(p=>({GetMediaId:async()=>p,GetClipProperty:async()=>p}));};
+ const s1={id:'s1',number:1,heading:'CASA'},s2={id:'s2',number:2,heading:'STRADA'};
+ const edits=[{media_id:'m1',beat_id:'a',start_frame:0,end_frame:100,shot_size:'wide',scene_debug:s1},{media_id:'m1',beat_id:'b',start_frame:200,end_frame:300,shot_size:'wide',scene_debug:s2,reaction_overlay:{kind:'reaction',basis:'verified_listener',media_id:'m2',take_id:'t',start_frame:350,end_frame:390,offset_frames:20,shot_size:'close',speaker_coverage:'visible',enabled:true,evidence:{verified:true}}}];
+ const result=await createTimeline(c.sdk,'DEBUG',edits,{media:[{media_id:'m1',fps:25,duration_frames:500},{media_id:'m2',fps:25,duration_frames:500}],sceneDebug:{enabled:true,gap_frames:50,assets:{1:'C:/debug/scene-01.png',2:'C:/debug/scene-02.png'}}});
+ assert.deepEqual(c.reviewTimeline.items.filter(x=>x.clip.trackIndex===2).map(x=>x.clip.recordFrame),[90000,90150]);assert.deepEqual(c.reviewTimeline.audio.map(x=>x.clip.recordFrame),[90000,90150]);
+ const overlay=c.reviewTimeline.items.find(x=>x.clip.trackIndex===3);assert.equal(overlay.clip.recordFrame,90170);
+ const labels=c.reviewTimeline.items.filter(x=>x.clip.trackIndex===4);assert.deepEqual(labels.map(x=>[x.clip.recordFrame,x.clip.endFrame-x.clip.startFrame]),[[90000,100],[90150,100]]);assert.equal(await c.reviewTimeline.GetTrackName('video',4),'DEBUG scene');assert.equal(result.sceneGaps,1);assert.equal(result.sceneLabels,2);assert.equal(result.videoTracks,4);assert.equal(imports,1);
+});
+
+test('scene debug keeps identical framing on either side of a scene boundary separate',async()=>{
+ const c=timelineSdk({appendResultCount:20});c.pool.ImportMedia=async paths=>paths.map(p=>({GetMediaId:async()=>p,GetClipProperty:async()=>p}));
+ const edits=[{media_id:'m1',start_frame:0,end_frame:50,shot_size:'wide',scene_debug:{id:'a',number:1}},{media_id:'m1',start_frame:50,end_frame:100,shot_size:'wide',scene_debug:{id:'b',number:2}}];
+ await createTimeline(c.sdk,'DEBUG',edits,{sceneDebug:{enabled:true,gap_frames:50,assets:{1:'C:/one.png',2:'C:/two.png'}}});assert.equal(c.reviewTimeline.items.filter(x=>x.clip.trackIndex===2).length,2);
+});
+
+test('unverified debug title insertion removes only the generated timeline and restores source',async()=>{
+ const c=timelineSdk();c.pool.ImportMedia=async()=>[];
+ await assert.rejects(createTimeline(c.sdk,'DEBUG',[{media_id:'m1',start_frame:0,end_frame:50,scene_debug:{id:'s',number:1}}],{sceneDebug:{enabled:true,gap_frames:50,assets:{1:'C:/one.png'}}}),/etichett|titol/i);assert.equal(c.reviewTimeline.deleted,true);assert.equal(c.project.active,c.sourceTimeline);
+});
