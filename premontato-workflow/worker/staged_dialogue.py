@@ -95,7 +95,7 @@ def recover_cross_camera(units,labels,similarities,fps,threshold=.68,excluded=()
    result[u['id']]=label;recovered.append({'unit':u['id'],'label':label,'evidence':'cross_camera_semantic_consensus','score':score})
  return result,recovered
 def build_staged(payload,report=lambda e:None):
- from transcript_align import LocalSemanticEncoder
+ from transcript_align import get_semantic_encoder
  from automatic_editor import narrative_roles
  from active_speaker import analyze_candidate
  from listening_reaction import listening_overlay
@@ -111,7 +111,7 @@ def build_staged(payload,report=lambda e:None):
  names=prepared['cast']
  def info(u):
   n,role=labels[u['id']].split('/');return 'B'+n,names[role]
- encoder=LocalSemanticEncoder();unit_vectors=encoder.encode([u['text'] for u in units]);labels,recovered=recover_cross_camera(units,labels,unit_vectors@unit_vectors.T,fps,excluded={x['clip']+x['unit'] for x in cleanup})
+ encoder=get_semantic_encoder();unit_vectors=encoder.encode([u['text'] for u in units]);labels,recovered=recover_cross_camera(units,labels,unit_vectors@unit_vectors.T,fps,excluded={x['clip']+x['unit'] for x in cleanup})
  kept=[u for u in units if labels[u['id']]!='X']
  def block(us):return {'clip_id':us[0]['clip'],'units':[u['id'] for u in us],'start':us[0]['start'],'end':us[-1]['end'],'text':' '.join(clean_text(u['text']) for u in us),'beat':info(us[0])[0],'role':info(us[0])[1]}
  shots=payload.get('shots',[]);data={'clips':[{'clip_id':cid,'shot_size':_size(s,shots)} for cid,s in sources.items()],'style':payload.get('directions',{})}

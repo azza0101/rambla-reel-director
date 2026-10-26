@@ -435,6 +435,13 @@ class LocalSemanticEncoder:
 _SEMANTIC_ENCODER=None
 
 
+def get_semantic_encoder():
+    """Reuse the validated model and text embeddings for this worker's lifetime."""
+    global _SEMANTIC_ENCODER
+    if _SEMANTIC_ENCODER is None:_SEMANTIC_ENCODER=LocalSemanticEncoder()
+    return _SEMANTIC_ENCODER
+
+
 def fragment_supports_line(text, beat):
     target=[t for t in normalize(beat.get('text','')).split() if len(t)>=3 and t not in _STOPWORDS]
     observed=normalize(text).split()
@@ -471,13 +478,11 @@ def extend_utterance_end(hit, words, limit, fps):
     return {**hit,'end_frame':sentence_end,'text':' '.join(w['text'].strip() for w in words if w['start_frame']>=hit['start_frame'] and w['end_frame']<=sentence_end)}
 
 def semantic_scene_hits(beats, sources, fps):
-    global _SEMANTIC_ENCODER
-    if _SEMANTIC_ENCODER is None:_SEMANTIC_ENCODER=LocalSemanticEncoder()
+    encoder=get_semantic_encoder()
     dialogue=[b for b in beats if b.get('kind')=='dialogue']
     windows=[(s,semantic_windows(s,fps)) for s in sources]
     flat=[w for s,rows in windows for w in rows]
     if not flat or not dialogue:return {}
-    encoder=_SEMANTIC_ENCODER
     queries=encoder.encode([b['text'] for b in dialogue]);vectors=encoder.encode([w['text'] for w in flat])
     similarities=queries@vectors.T
     clause_vectors=[encoder.encode(beat_phrases(beat)) for beat in dialogue]
