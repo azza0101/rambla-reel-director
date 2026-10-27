@@ -111,4 +111,21 @@ def rank_visual_neighbors(image_vectors,references):
  best=ranked[0];margin=best['score']-(ranked[1]['score'] if len(ranked)>1 else 0)
  values=by_scene[best['scene_id']];support=sum(v>=.7 for v in values)/len(values)
  accepted=best['score']>=.7 and margin>=.035 and support>=.6
- return {'scene_id':best['scene_id'] if accepted else None,'score':best['score'],'margin':margin,'support':support,'candidates':ranked,'anchors':[{k:r[k] for k in ('media_id','scene_id','side','basis') if k in r} for r in references if r['scene_id']==best['scene_id']]}
+ return {'scene_id':best['scene_id'] if accepted else None,'score':best['score'],'margin':margin,'support':support,'evidence':[{'sample':i,'score':round(value,4)} for i,value in enumerate(values)],'candidates':ranked,'anchors':[{k:r[k] for k in ('media_id','scene_id','side','basis','distance') if k in r} for r in references if r['scene_id']==best['scene_id']]}
+
+def rank_narrative_context(visual,role,image_vectors,references):
+ """Weak image evidence can support a close-up only with independent local context.
+ Never use this as a new anchor, or when only object/detail frames are present.
+ """
+ empty={'scene_id':None,'anchors':[],'candidates':[]}
+ if not any(r in ('action','dialogue') for r in role.get('roles',[])):return empty
+ nearby=[r for r in references if isinstance(r.get('distance'),(int,float)) and 0<r['distance']<=3]
+ result=rank_visual_neighbors(image_vectors,nearby)
+ if not result.get('candidates'):return empty
+ sid=result['candidates'][0]['scene_id'];text=visual.get('candidates',[])
+ plausible=next((r for r in text if r['scene_id']==sid),None)
+ support=sum(e['score']>=.45 for e in result.get('evidence',[]))/max(1,len(image_vectors))
+ if (not plausible or plausible['score']<.3 or max(r['score'] for r in text)-plausible['score']>.02 or
+     result['score']<.45 or result['margin']<.05 or support<.6 or
+     not any(a.get('basis')=='visual_action' for a in result['anchors'])):return empty
+ return {**result,'scene_id':sid,'strength':'narrative_context','support':support}

@@ -1,7 +1,7 @@
 """Optional dedicated local Qwen process. JSONL compatible with Session; no API keys."""
 import sys,json,os,time,contextlib
 from pathlib import Path
-from scene_visual import scene_queries,rank_visual_scenes,role_queries,rank_visual_role,rank_visual_neighbors,VERSION
+from scene_visual import scene_queries,rank_visual_scenes,role_queries,rank_visual_role,rank_visual_neighbors,rank_narrative_context,VERSION
 from cache import cache_key,read_cache,write_cache
 MODEL=None
 CONFIG=None
@@ -37,9 +37,12 @@ def analyze(payload,report):
  result=rank_visual_scenes(queries,texts,images,[f['frame'] for f in frames]);result['visual_role']=role;result['category']=role['category']
  if role['category']=='broll':result.update(scene_id=None,reason='VISUAL_BROLL')
  references=[]
- if role['category']!='broll':
-  for ref in payload.get('references',[]):references.append({**ref,'vectors':encode([{'image':f['path']} for f in ref['frames']])})
+ # A detail may still be a narrative action from a neighboring scene.
+ for ref in payload.get('references',[]):references.append({**ref,'vectors':encode([{'image':f['path']} for f in ref['frames']])})
  result['neighbors']=rank_visual_neighbors(images,references)
+ if not result['neighbors'].get('scene_id'):
+  contextual=rank_narrative_context(result,role,images,references)
+  if contextual.get('scene_id'):result['neighbors']=contextual
  result['model']='Qwen3-VL-Embedding-2B';result['frame_count']=len(frames);return result
 
 def main():

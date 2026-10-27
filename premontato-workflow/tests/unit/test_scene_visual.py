@@ -51,3 +51,25 @@ class VisualNeighborTest(unittest.TestCase):
  def test_neighbor_matching_abstains_on_unrelated_images(self):
   from scene_visual import rank_visual_neighbors
   self.assertIsNone(rank_visual_neighbors([[0,1]],[{'media_id':'a','scene_id':'s','vectors':[[1,0]]}])['scene_id'])
+
+class NarrativeContextTest(unittest.TestCase):
+ def test_closeup_keeps_nearby_action_scene_with_joint_evidence(self):
+  from scene_visual import rank_narrative_context
+  visual={'candidates':[{'scene_id':'other','score':.35},{'scene_id':'s','score':.349}]}
+  role={'category':'broll','roles':['broll','dialogue','broll']}
+  refs=[{'media_id':'r','scene_id':'s','distance':2,'basis':'visual_action','vectors':[[1,0]]}]
+  r=rank_narrative_context(visual,role,[[.52,.854],[.51,.86],[.48,.877]],refs)
+  self.assertEqual(r['scene_id'],'s');self.assertEqual(r['strength'],'narrative_context')
+ def test_nearness_alone_and_pure_detail_never_assign(self):
+  from scene_visual import rank_narrative_context
+  visual={'candidates':[{'scene_id':'s','score':.35}]};refs=[{'media_id':'r','scene_id':'s','distance':2,'basis':'visual_action','vectors':[[1,0]]}]
+  self.assertIsNone(rank_narrative_context(visual,{'roles':['broll','broll']},[[.52,.854]],refs)['scene_id'])
+  self.assertIsNone(rank_narrative_context(visual,{'roles':['dialogue']},[[0,1]],refs)['scene_id'])
+  refs[0]['distance']=10
+  self.assertIsNone(rank_narrative_context(visual,{'roles':['dialogue']},[[.52,.854]],refs)['scene_id'])
+ def test_conflicting_visual_scene_and_equal_neighbor_evidence_abstain(self):
+  from scene_visual import rank_narrative_context
+  role={'roles':['dialogue']};refs=[{'media_id':'r','scene_id':'s','distance':2,'basis':'visual_action','vectors':[[1,0]]}]
+  self.assertIsNone(rank_narrative_context({'candidates':[{'scene_id':'other','score':.5},{'scene_id':'s','score':.31}]},role,[[.52,.854]],refs)['scene_id'])
+  refs.append({'media_id':'b','scene_id':'other','distance':1,'basis':'strong_speech','vectors':[[1,0]]})
+  self.assertIsNone(rank_narrative_context({'candidates':[{'scene_id':'s','score':.35}]},role,[[.52,.854]],refs)['scene_id'])
