@@ -1,5 +1,6 @@
 'use strict';
 const path=require('node:path'),fs=require('node:fs');const pluginRoot=[path.resolve(__dirname,'../../plugin'),path.resolve(__dirname,'../..')].find(p=>fs.existsSync(path.join(p,'day_catalog_resolve.js')));if(!pluginRoot)throw Error('Catalog plugin root missing');const base=require(path.join(pluginRoot,'day_catalog_resolve')),store=require(path.join(pluginRoot,'day_catalog_store'));
+const CATALOG_POLICY='catalog-v3-neighbor-references';
 function chooseAssignment(c,source,visual){
  const votes=new Map(),rows=c.memberships.filter(m=>m.media_id===source.media_id&&m.status!=='rejected'&&!m.stale_due_script&&c.scenes.some(s=>s.scene_id===m.scene_id));
  for(const m of rows)votes.set(m.scene_id,(votes.get(m.scene_id)||0)+(m.source_end_frame-m.source_start_frame)*(m.confidence||.6));
@@ -7,14 +8,29 @@ function chooseAssignment(c,source,visual){
  const speech=rank.length&&support>=.65?rank[0][0]:null,strong=!!speech&&support>=.85&&rows.filter(r=>r.scene_id===speech).some(r=>r.status==='auto_ready');
  let scene_id=speech,basis=speech?'speech':'unassigned',reason=speech?'SPEECH_CONTEXT':'NO_RELIABLE_MATCH';
  if(visual?.scene_id&&c.scenes.some(s=>s.scene_id===visual.scene_id)){
-  if(!speech){scene_id=visual.scene_id;basis='visual';reason='VISUAL_MATCH';}
+  if(!speech){if(visual.specificity==='setting'&&rank.length&&!votes.has(visual.scene_id)){scene_id=null;reason='SETTING_NOT_SCENE';}else{scene_id=visual.scene_id;basis='visual';reason='VISUAL_MATCH';}}
   else if(speech===visual.scene_id){basis='speech_and_visual';reason='AGREEMENT';}
   else if(visual.specificity==='setting'&&rows.some(r=>r.scene_id===speech&&(r.evidence||[]).some(e=>(e.text||'').split(/\s+/).length>=5))){basis='speech';reason='SPEECH_OVER_SETTING';}
   else if(!strong){scene_id=null;basis='conflict';reason='SPEECH_VISUAL_CONFLICT';}
  }
+ const neighbor=visual?.neighbors;
+ if(!strong&&visual?.category!=='broll'&&neighbor?.scene_id&&c.scenes.some(s=>s.scene_id===neighbor.scene_id)){
+  const informative=rows.some(r=>r.scene_id===neighbor.scene_id&&(r.evidence||[]).some(e=>(e.text||'').split(/\s+/).length>=5));
+  const speechAgrees=rank[0]?.[0]===neighbor.scene_id&&support>=.55&&informative;
+  const brackets=!rank.length&&neighbor.anchors?.some(a=>a.side==='before')&&neighbor.anchors?.some(a=>a.side==='after');
+  if(speechAgrees||brackets){scene_id=neighbor.scene_id;basis=speechAgrees?'speech_and_neighbors':'visual_neighbors';reason='TRUSTED_NEIGHBOR_VISUAL_MATCH';}
+ }
  if(!speech&&visual?.category==='broll'){scene_id=null;basis='visual_broll';reason='VISUAL_BROLL';}
  return {media_id:source.media_id,scene_id,category:!speech&&visual?.category==='broll'?'broll':null,basis,reason,needs_visual:!strong,speech_support:support,candidate_scenes:rank.map(r=>r[0]),visual:visual||null};
 }
+// Capture sequence comes from the file name, never its current (possibly wrong) bin.
+function sequence(source){const m=(source.name||'').match(/^(.*?)(\d+)\.[^.]+$/);return m?{camera:m[1].toLowerCase(),index:Number(m[2])}:null;}
+function neighborReferences(c,source){const target=sequence(source);if(!target)return [];const plausible=chooseAssignment(c,source).candidate_scenes;const candidates=[];
+ for(const other of c.sources){if(other.media_id===source.media_id)continue;const q=sequence(other);if(!q||q.camera!==target.camera||Math.abs(q.index-target.index)>20)continue;const manual=(c.clip_assignments||[]).find(a=>a.media_id===other.media_id&&a.manual&&!a.stale&&a.scene_id&&c.scenes.some(s=>s.scene_id===a.scene_id));const speech=chooseAssignment(c,other);const scene_id=manual?.scene_id||(!speech.needs_visual?speech.scene_id:null);if(!scene_id||plausible.length&&!plausible.includes(scene_id))continue;candidates.push({source:other,scene_id,side:q.index<target.index?'before':'after',distance:Math.abs(q.index-target.index),basis:manual?'manual':'strong_speech'});}
+ return candidates.sort((a,b)=>a.distance-b.distance||a.source.media_id.localeCompare(b.source.media_id)).slice(0,4);
+}
+function assignmentKey(c,source,references=neighborReferences(c,source)){return store.hash([CATALOG_POLICY,source.media_id,source.path,source.file_size,source.mtime_ns,source.duration_frames,source.fps,c.script_fingerprint,c.scenes.map(s=>[s.scene_id,s.heading,s.beats]),c.memberships.filter(m=>m.media_id===source.media_id),references.map(r=>[r.source.media_id,r.scene_id,r.source.path,r.source.file_size,r.source.mtime_ns])]);}
+function needsRefresh(c){return c.catalog_policy!==CATALOG_POLICY||c.sources.some(s=>{const a=(c.clip_assignments||[]).find(a=>a.media_id===s.media_id);return !a||!a.manual&&s.visual_catalog_key!==assignmentKey(c,s);});}
 async function verify(sdk,c,a){
  if(!a.scanDayMedia)return a.verifiedSources(sdk,c);
  const scan=await a.scanDayMedia(sdk,{rootFolderId:c.source_root_folder_id});if(scan.projectId!==c.project_id)throw Error('Progetto Resolve cambiato');
@@ -38,4 +54,4 @@ async function applyClipMoves(sdk,c,preview,{confirmed,persist}={},a=base){
  if(!await pm.SaveProject())throw Error('Salvataggio Resolve fallito');
  }finally{if(originalFolder)await pool.SetCurrentFolder(originalFolder);}return result;
 }
-module.exports={chooseAssignment,previewClipMoves,applyClipMoves};
+module.exports={chooseAssignment,neighborReferences,assignmentKey,needsRefresh,CATALOG_POLICY,previewClipMoves,applyClipMoves};

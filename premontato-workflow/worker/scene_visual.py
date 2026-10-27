@@ -41,7 +41,7 @@ def extract_catalog_frames(payload):
  import cv2
  source=payload['source'];p=Path(source['path']);stat=p.stat();fingerprint=[str(p.resolve()),stat.st_size,stat.st_mtime_ns]
  root=Path(os.environ.get('PREMONTATO_CACHE_DIR','.premontato-cache'))/'catalog-frames'
- options={'fps':source['fps'],'length':source['duration_frames'],'seconds':5,'max_frames':2 if payload.get('preview') else 24,'width':640}
+ options={'fps':source['fps'],'length':source['duration_frames'],'seconds':5,'max_frames':5 if payload.get('reference') else 2 if payload.get('preview') else 24,'width':640}
  cached=get_cache(root,fingerprint,VERSION,options)
  if cached and all(Path(f['path']).is_file() for f in cached['frames']):return {**cached,'cache_hit':True}
  key=cache_key(fingerprint,VERSION,options);dest=root/key;dest.mkdir(parents=True,exist_ok=True)
@@ -95,3 +95,20 @@ def rank_visual_role(queries,text_vectors,image_vectors):
   ranked=sorted(((r,v[i]) for r,v in scores.items()),key=lambda r:-r[1]);winners.append(ranked[0][0] if ranked[0][1]>=.25 and (len(ranked)==1 or ranked[0][1]-ranked[1][1]>=.025) else None)
  support=winners.count('broll')/len(iv)
  return {'category':'broll' if support>=.8 or support>=.5 and all(w in (None,'broll') for w in winners) else None,'support':support,'roles':winners,'scores':{r:sum(v)/len(iv) for r,v in scores.items()}}
+
+
+def rank_visual_neighbors(image_vectors,references):
+ def norm(v):
+  mag=math.sqrt(sum(x*x for x in v));return [x/max(mag,1e-12) for x in v]
+ images=[norm(v) for v in image_vectors];by_scene={}
+ for ref in references:
+  vectors=[norm(v) for v in ref.get('vectors',[])]
+  if not vectors:continue
+  values=[max(sum(a*b for a,b in zip(image,v)) for v in vectors) for image in images]
+  sid=ref['scene_id'];by_scene[sid]=[max(a,b) for a,b in zip(by_scene[sid],values)] if sid in by_scene else values
+ ranked=sorted([{'scene_id':sid,'score':sum(v)/len(v)} for sid,v in by_scene.items() if v],key=lambda r:(-r['score'],r['scene_id']))
+ if not ranked:return {'scene_id':None,'anchors':[],'candidates':[]}
+ best=ranked[0];margin=best['score']-(ranked[1]['score'] if len(ranked)>1 else 0)
+ values=by_scene[best['scene_id']];support=sum(v>=.7 for v in values)/len(values)
+ accepted=best['score']>=.7 and margin>=.035 and support>=.6
+ return {'scene_id':best['scene_id'] if accepted else None,'score':best['score'],'margin':margin,'support':support,'candidates':ranked,'anchors':[{k:r[k] for k in ('media_id','scene_id','side','basis') if k in r} for r in references if r['scene_id']==best['scene_id']]}

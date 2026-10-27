@@ -41,3 +41,13 @@ class VisualUninformativeTest(unittest.TestCase):
   from scene_visual import rank_visual_role
   q=[{'role':'broll'},{'role':'action'},{'role':'dialogue'}]
   self.assertEqual(rank_visual_role(q,[[1,0,0],[0,1,0],[0,0,1]],[[1,0,0],[0,0,0]])['category'],'broll')
+
+class VisualNeighborTest(unittest.TestCase):
+ def test_neighbor_matching_needs_images_not_only_file_proximity(self):
+  from scene_visual import rank_visual_neighbors
+  refs=[{'media_id':'a','scene_id':'scene-a','side':'after','vectors':[[1,0]]},{'media_id':'b','scene_id':'scene-b','side':'before','vectors':[[0,1]]}]
+  self.assertEqual(rank_visual_neighbors([[1,0],[.99,.01]],refs)['scene_id'],'scene-a')
+  self.assertIsNone(rank_visual_neighbors([[1,1]],refs)['scene_id'])
+ def test_neighbor_matching_abstains_on_unrelated_images(self):
+  from scene_visual import rank_visual_neighbors
+  self.assertIsNone(rank_visual_neighbors([[0,1]],[{'media_id':'a','scene_id':'s','vectors':[[1,0]]}])['scene_id'])
