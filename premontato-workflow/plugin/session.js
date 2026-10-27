@@ -73,6 +73,7 @@ function workerEnvironment(source = process.env, cachePath) {
 
 function prepareReviewTimeline(plan, confirmed) {
   if (confirmed !== true) throw new Error('Conferma gli abbinamenti prima di creare la timeline');
+  if(plan?.ready_for_timeline===false)throw new Error('Montaggio incompleto: risolvere le scene fallite o le battute mancanti prima di creare la timeline');
   if (plan?.visual_review_required) throw new Error('Conferma le inquadrature e i personaggi nella revisione visiva');
   if (!plan?.decisions?.length) throw new Error('Nessuna battuta abbinata: timeline non creata');
   return { decisions: plan.decisions, omitted: plan.unmatched_beats?.length || 0 };
@@ -294,7 +295,7 @@ class Session {
         }catch(error){if(/annullat|cancel|abort/i.test(error.message))throw error;jobs.push({scene_id:scene.scene_id,heading:scene.heading,status:'failed',error:error.message,missing:scene.beats.filter(b=>b.kind==='dialogue').map(b=>b.beat_id)});}
       }
       const decisions=plans.flatMap(p=>p.decisions);let cursor=0;for(const d of decisions){d.timeline_start_frame=cursor;cursor+=d.end_frame-d.start_frame+ (d.action_after||[]).reduce((n,a)=>n+a.end_frame-a.start_frame,0);}
-      plan={engine:'scene_jobs_v1',plan_id:'scene-jobs',fps:payload.fps,scene_id:payload.scene_id,decisions,base_decisions:JSON.parse(JSON.stringify(decisions)),review_beats:plans.flatMap(p=>p.review_beats||[]),unmatched_beats:jobs.flatMap(j=>j.missing||[]),warnings:plans.flatMap(p=>p.warnings||[]),scene_jobs:jobs,planning_summary:{scene_jobs:jobs,unassigned_units:routed.unassigned.length},visual_review_required:false};
+      plan={engine:'scene_jobs_v1',plan_id:'scene-jobs',fps:payload.fps,scene_id:payload.scene_id,decisions,base_decisions:JSON.parse(JSON.stringify(decisions)),review_beats:plans.flatMap(p=>p.review_beats||[]),unmatched_beats:jobs.flatMap(j=>j.missing||[]),warnings:plans.flatMap(p=>p.warnings||[]),scene_jobs:jobs,ready_for_timeline:!jobs.some(j=>j.status==='failed'||j.missing?.length),planning_summary:{scene_jobs:jobs,unassigned_units:routed.unassigned.length},visual_review_required:false};
     }else plan=await this.buildPlanCore(payload,timeoutMs,onProgress);const pool=payload.catalog_coverage||this.state.analysis?.coverageSources;if(pool?.length){const ids=new Set((payload.beats||[]).map(b=>b.scene_id).filter(Boolean));if(payload.scene_id)ids.add(payload.scene_id);plan.catalog_coverage=pool.filter(s=>!ids.size||!s.catalog_context?.scene||ids.has(s.catalog_context.scene.scene_id)).map(s=>({media_id:s.media_id,name:s.name,fps:s.fps,duration_frames:s.duration_frames,catalog_context:s.catalog_context}));}return plan;}
   async buildPlanCore(payload, timeoutMs=300000, onProgress) {
     if(this.useGroq()){

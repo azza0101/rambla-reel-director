@@ -268,6 +268,7 @@ function timelineBlockers({matched,visualPending,dirty,pending}){
 function updateTimelineButton(state=window.__lastReviewState || {}){
  const plan=state.analysis?.plan,blockers=timelineBlockers({matched:plan?.decisions?.length,visualPending:Boolean(plan?.visual_review_required),dirty:visualDirty,pending:hasPendingFormEdits(state)});
  $('beat-review-title').textContent='Debug e modifiche · battute e alternative'+(plan?' · '+(plan.decisions?.length || 0)+' abbinate · '+(plan.unmatched_beats?.length || 0)+' da verificare':'');
+ if(plan?.ready_for_timeline===false)blockers.unshift({message:'Montaggio incompleto: scene fallite o battute mancanti. Non creo una sequenza parziale come risultato finale.',target:'beat-review'});
  $('make-timeline').disabled=blockers.length>0;
  const box=$('timeline-readiness');box.replaceChildren();
  if(!blockers.length){box.textContent='Pronto: puoi creare la nuova timeline di revisione.';if(plan?.scene_jobs){for(const job of plan.scene_jobs){const row=document.createElement('div');row.textContent=job.heading+' · '+(job.status==='ready'?'pronta':job.status==='no_coverage'?'nessuna copertura parlata':job.status==='failed'?'analisi non riuscita':(job.missing?.length||0)+' battute mancanti');box.append(row);}}return;}
