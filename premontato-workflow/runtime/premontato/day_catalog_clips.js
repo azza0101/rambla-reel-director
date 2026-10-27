@@ -1,6 +1,6 @@
 'use strict';
 const path=require('node:path'),fs=require('node:fs');const pluginRoot=[path.resolve(__dirname,'../../plugin'),path.resolve(__dirname,'../..')].find(p=>fs.existsSync(path.join(p,'day_catalog_resolve.js')));if(!pluginRoot)throw Error('Catalog plugin root missing');const base=require(path.join(pluginRoot,'day_catalog_resolve')),store=require(path.join(pluginRoot,'day_catalog_store'));
-const CATALOG_POLICY='catalog-v4-contextual-neighbors';
+const CATALOG_POLICY='catalog-v5-narrative-detail-guard';
 function chooseAssignment(c,source,visual){
  const votes=new Map(),rows=c.memberships.filter(m=>m.media_id===source.media_id&&m.status!=='rejected'&&!m.stale_due_script&&c.scenes.some(s=>s.scene_id===m.scene_id));
  for(const m of rows)votes.set(m.scene_id,(votes.get(m.scene_id)||0)+(m.source_end_frame-m.source_start_frame)*(m.confidence||.6));
@@ -14,7 +14,8 @@ function chooseAssignment(c,source,visual){
   else if(!strong){scene_id=null;basis='conflict';reason='SPEECH_VISUAL_CONFLICT';}
  }
  const neighbor=visual?.neighbors;
- if(!strong&&neighbor?.scene_id&&c.scenes.some(s=>s.scene_id===neighbor.scene_id)){
+ const narrativeDetail=rank.length>0||visual?.category!=='broll'||visual?.visual_role?.roles?.some(role=>role==='dialogue'||role==='action');
+ if(!strong&&narrativeDetail&&neighbor?.scene_id&&c.scenes.some(s=>s.scene_id===neighbor.scene_id)){
   const informative=rows.some(r=>r.scene_id===neighbor.scene_id&&(r.evidence||[]).some(e=>(e.text||'').split(/\s+/).length>=5));
   const speechAgrees=rank[0]?.[0]===neighbor.scene_id&&support>=.55&&informative;
   const brackets=!rank.length&&neighbor.anchors?.some(a=>a.side==='before')&&neighbor.anchors?.some(a=>a.side==='after');

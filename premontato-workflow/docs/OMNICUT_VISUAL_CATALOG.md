@@ -83,3 +83,10 @@ Collaudo su Resolve **21.1.0.17**, copia del catalogo reale da 51 clip / 8 scene
 Test nativo separato: una clip reale spostata in un bin temporaneo precedente, quindi migrata nel bin numerato; verifica tramite API, rimozione del solo bin temporaneo vuoto e seconda applicazione senza duplicare. Al termine ripristinata la clip nel suo bin originale e rimosse le cartelle temporanee. Tutte le 51 posizioni sorgenti, impostazioni, timeline attiva e conteggio timeline preservati. La riorganizzazione completa del catalogo live resta legata al clic dell’utente su Applica. Chiusura/riapertura del pannello installato con UAC rimane un controllo utente.
 
 Suite finale 0.2.5: **199 test JavaScript e 205 Python superati**. Pannello reale HTML/CSS verificato in browser headless a due larghezze: comando unico, avanzamento visibile durante applicazione, pulsante bloccato durante il lavoro e risultato finale.
+
+
+## Omni-Cut test 0.2.6 — protezione dei dettagli puri
+
+Il controllo completo delle differenze ha rilevato un effetto collaterale nella 0.2.5: un inserto di soli oggetti poteva seguire i bin dei dialoghi vicini pur senza persona o azione visibile. Ora un dettaglio generico non può essere riassegnato dai vicini senza indizi di dialogo/azione nei frame o evidenza del parlato. Il primo piano narrativo continua invece a usare il contesto. La regola versionata aggiorna anche gli eventuali checkpoint 0.2.5 riusando le cache.
+
+Suite finale: **200 JS / 205 Python**, tutte superate. Ripetuto il test Resolve su copia delle 51 fonti: 7692 → scena 4, 7717 → scena 3, 7704 → scena 7; il dettaglio puro di regressione resta in B-roll. Dieci proposte B-roll. Migrazione misurata 36.4 s con cache; riapertura 0.15 s senza ulteriori analisi. Zero ASR, chiamate esterne o scritture Media Pool; progetto preservato. Invariate e già collaudate nativamente applicazione con barra, bin numerati e pulizia sicura.
