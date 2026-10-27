@@ -95,7 +95,7 @@ function parsePeopleMetadata(value) {
   return [...new Set(raw.map(item => String(item).trim()).filter(Boolean))];
 }
 
-async function getSelectedTranscriptions(sdk,{media,transcribeMissing=false,onProgress}={}) {
+async function getSelectedTranscriptions(sdk,{media,transcribeMissing=false,onProgress,skipTranscribeIds=[]}={}) {
   let snapshotData;
   if(media){const {pool,timeline}=await getResolve(sdk);const items=await analyzedMediaItems(pool,media.map(source=>source.media_id),media,timeline);snapshotData={selected:media.map((source,index)=>({...source,item:items[index]}))};}
   else snapshotData=await snapshot(sdk);
@@ -103,7 +103,7 @@ async function getSelectedTranscriptions(sdk,{media,transcribeMissing=false,onPr
   for(const source of snapshotData.selected){
     onProgress?.({current:results.length,total:snapshotData.selected.length,name:source.name});
     let transcription = await source.item.GetTranscription(true);
-    if(transcribeMissing && !transcription?.segments?.some(segment=>/[\p{L}\p{N}]/u.test(segment.text || ''))){
+    if(transcribeMissing && !skipTranscribeIds.includes(source.media_id) && !transcription?.segments?.some(segment=>/[\p{L}\p{N}]/u.test(segment.text || ''))){
       await source.item.TranscribeAudio(true);transcription=await source.item.GetTranscription(true);
     }
     const clipFrame=value=>Math.max(0,Math.min(source.duration_frames,timecodeToFrames(value,source.fps)-timecodeToFrames(source.start_tc,source.fps)));
