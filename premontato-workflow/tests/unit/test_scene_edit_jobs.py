@@ -15,3 +15,27 @@ class SceneRoutingTests(unittest.TestCase):
   self.assertEqual([s['start_frame'] for s in out['jobs'][0]['sources'][0]['segments']],[0,20])
   self.assertEqual([s['start_frame'] for s in out['jobs'][1]['sources'][0]['segments']],[40,60])
   self.assertEqual(source['segments'][0]['words'],words)
+
+ def test_short_generic_reply_does_not_override_existing_scene_context(self):
+  import numpy as np
+  from scene_edit_jobs import route_scenes
+  class Encoder:
+   def encode(self,texts):return np.array([[1.,0.] if 'pomodoro' in t.lower() else [0.,1.] for t in texts])
+  scenes=[{'scene_id':'a','beats':[{'beat_id':'ba','scene_id':'a','kind':'dialogue','text':'Pomodoro maturo.'}]},{'scene_id':'b','beats':[{'beat_id':'bb','scene_id':'b','kind':'dialogue','text':'Vieni qua.'}]}]
+  words=[{'text':t,'start_frame':i*10,'end_frame':i*10+9} for i,t in enumerate(['Vieni','qua.','Vieni','qua.'])]
+  source={'media_id':'m','take_id':'t','duration_frames':100,'catalog_context':{'media_id':'m','scene':{'scene_id':'a'}},'segments':[{'text':'Vieni qua.','start_frame':0,'end_frame':40,'words':words}]}
+  out=route_scenes({'scenes':scenes,'sources':[source],'fps':25},Encoder())
+  self.assertEqual(out['jobs'][1]['sources'],[])
+
+ def test_missing_line_recovery_preserves_real_word_times_and_catalog_scope(self):
+  import numpy as np
+  from scene_edit_jobs import expand_missing
+  class Encoder:
+   def encode(self,texts):return np.ones((len(texts),1))
+  words=[{'text':'Prima','start_frame':0,'end_frame':9},{'text':'frase.','start_frame':10,'end_frame':19},{'text':'Ultima','start_frame':100,'end_frame':109},{'text':'frase.','start_frame':110,'end_frame':119}]
+  source={'media_id':'m','take_id':'t','duration_frames':200,'catalog_context':{'media_id':'m','scene':{'scene_id':'a'}},'segments':[{'text':'Prima frase.','start_frame':0,'end_frame':20,'words':words[:2]},{'text':'Ultima frase.','start_frame':100,'end_frame':120,'words':words[2:]}]}
+  foreign={**source,'media_id':'foreign','take_id':'foreign','catalog_context':{'media_id':'foreign','scene':{'scene_id':'b'}}}
+  scene={'scene_id':'a','beats':[{'beat_id':'one','kind':'dialogue','text':'Prima frase.'},{'beat_id':'last','kind':'dialogue','text':'Ultima frase.'}]}
+  out=expand_missing({'scene':scene,'missing':['last'],'sources':[source,foreign],'selected_sources':[{**source,'segments':[source['segments'][0]]}],'fps':25},Encoder())
+  self.assertEqual(out['expanded_media'],1);self.assertEqual([s['media_id'] for s in out['sources']],['m'])
+  self.assertEqual({(w['start_frame'],w['end_frame']) for s in out['sources'] for seg in s['segments'] for w in seg['words']},{(w['start_frame'],w['end_frame']) for w in words})

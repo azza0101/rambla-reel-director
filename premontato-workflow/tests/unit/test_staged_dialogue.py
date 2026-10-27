@@ -52,3 +52,24 @@ class RestartPreferenceTests(unittest.TestCase):
   units[1]["text"]="Porta pacco fragile domani mattina tardi."
   labels,_=clean_restarts(units,{u["id"]:"1/P1" for u in units})
   self.assertEqual(labels["a"],"1/P1")
+
+class LastPerformanceTests(unittest.TestCase):
+ def test_latest_complete_run_wins_over_earlier_repeated_performance(self):
+  from staged_dialogue import latest_complete_run
+  rows=[{'id':'a','start':0,'end':20,'text':'La chiave verde resta sotto il vaso.'},{'id':'other','start':30,'end':40,'text':'Risposta.'},{'id':'b','start':50,'end':70,'text':'La chiave verde resta sotto il vaso.'}]
+  labels={'a':'1/P1','other':'2/P2','b':'1/P1'}
+  chosen=latest_complete_run([rows[0],rows[2]],rows,labels,{'text':'La chiave verde resta sotto il vaso.'},25)
+  self.assertEqual([u['id'] for u in chosen],['b'])
+ def test_last_aborted_short_run_does_not_replace_complete_speech(self):
+  from staged_dialogue import latest_complete_run
+  rows=[{'id':'a','start':0,'end':20,'text':'La chiave verde resta sotto il vaso.'},{'id':'other','start':30,'end':40,'text':'Risposta.'},{'id':'b','start':50,'end':70,'text':'La chiave...'}]
+  labels={'a':'1/P1','other':'2/P2','b':'1/P1'}
+  chosen=latest_complete_run([rows[0],rows[2]],rows,labels,{'text':'La chiave verde resta sotto il vaso.'},25)
+  self.assertEqual([u['id'] for u in chosen],['a'])
+
+class ShortRestartTests(unittest.TestCase):
+ def test_restarted_question_with_one_content_word_keeps_last_delivery(self):
+  from staged_dialogue import clean_restarts
+  rows=[{'id':'a','text':'E che volevano?','start':10,'end':30},{'id':'b','text':'Che volevano?','start':35,'end':55}]
+  labels,_=clean_restarts(rows,{'a':'1/P1','b':'1/P1'})
+  self.assertEqual(labels,{'a':'X','b':'1/P1'})

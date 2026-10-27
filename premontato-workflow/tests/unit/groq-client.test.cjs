@@ -17,3 +17,7 @@ test('truncated/refused output never becomes a cached classification',async()=>{
  const c=new GroqClient(root,{keyProvider:()=> 'test-key',fetchImpl:async()=>({ok:true,status:200,json:async()=>({choices:[{finish_reason:'length',message:{content:'{}'}}]})})});
  try{await assert.rejects(c.classify(scene),/incompleta/i);}finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('a malformed role is retried and only the validated replacement is cached',async()=>{const root=await fs.mkdtemp(path.join(os.tmpdir(),'premontato-groq-'));let calls=0;const c=new GroqClient(root,{keyProvider:()=> 'test-key',fetchImpl:async()=>({ok:true,status:200,json:async()=>({choices:[{finish_reason:'stop',message:{content:JSON.stringify({S0:++calls===1?'1/P9':'1/P1'})}}]})})});try{const result=await c.classify(scene);assert.equal(calls,2);assert.equal(result.labels.m.S0,'1/P1');await c.classify(scene);assert.equal(calls,2);}finally{await fs.rm(root,{recursive:true,force:true});}});
+
+test('numeric beat labels resolve to existing screenplay roles locally',async()=>{const root=await fs.mkdtemp(path.join(os.tmpdir(),'premontato-groq-'));const c=new GroqClient(root,{keyProvider:()=> 'test-key',fetchImpl:async()=>({ok:true,status:200,json:async()=>({choices:[{finish_reason:'stop',message:{content:'{"S0":1}'}}]})})});try{const result=await c.classify(scene);assert.equal(result.labels.m.S0,'1/P1');}finally{await fs.rm(root,{recursive:true,force:true});}});

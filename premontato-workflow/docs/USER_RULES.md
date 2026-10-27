@@ -59,3 +59,8 @@ Questo documento è memoria persistente nel repository. Non crea da solo un appr
 
 ## Montaggio multi-scena (27 ottobre 2026)
 - Mai scegliere una sola scena dominante per tutta una giornata di girato. Separare il parlato per scena, pianificare ciascuna indipendentemente e comporre nell’ordine del copione, con gap e titoli quando attivi. Mostrare copertura e battute mancanti per scena; non sostituire lacune con parlato vagamente simile di un’altra scena. Le clip possono contenere più scene e i tempi sorgente devono restare invariati.
+
+## Correzioni automatiche, non piani manuali (27 ottobre 2026)
+- Ogni errore osservato sul girato deve diventare una regola generica e un test: separazione dialoghi/azioni nel copione, turni ripetuti dello stesso personaggio, confini fra scene, ultima esecuzione completa, interiezioni significative, rifiuto di abbinamenti generici e limiti del servizio. Non inserire nomi file, timecode o piani editoriali specifici scritti dall’agente come soluzione.
+- La presenza di almeno un taglio per battuta non dimostra qualità: verificare anche duplicazioni di take, copertura del testo e continuità. Non eliminare le interiezioni uniche per deduplicare. Mettere in evidenza i momenti non verificabili, senza sostituirli con altro parlato.
+- Rispettare il budget Groq comunicato dalle intestazioni; distinguere retry per quota e retry per output non valido. Cache solo dopo validazione degli identificatori e dei ruoli.
