@@ -48,7 +48,7 @@ class RestartPreferenceTests(unittest.TestCase):
   from staged_dialogue import clean_restarts
   units=[{"id":"a","text":"Porta pacco fragile domani mattina presto.","start":0,"end":20},{"id":"b","text":"Porta pacco fragile domani mattina presto.","start":30,"end":50},{"id":"c","text":"Porta il pacco...","start":60,"end":70}]
   labels,changes=clean_restarts(units,{u["id"]:"1/P1" for u in units})
-  self.assertEqual(labels["a"],"X");self.assertEqual(labels["b"],"1/P1");self.assertNotEqual(labels["b"],"X")
+  self.assertEqual(labels["a"],"X");self.assertEqual(labels["b"],"1/P1");self.assertNotEqual(labels["b"],"X");self.assertEqual(labels["c"],"X")
   units[1]["text"]="Porta pacco fragile domani mattina tardi."
   labels,_=clean_restarts(units,{u["id"]:"1/P1" for u in units})
   self.assertEqual(labels["a"],"1/P1")
