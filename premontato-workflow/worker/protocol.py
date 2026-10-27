@@ -119,7 +119,7 @@ def dispatch(request):
         segments, cache_hit = get_or_compute(os.environ.get("PREMONTATO_CACHE_DIR", ".premontato-cache"),
                                               fingerprint, ANALYZER_VERSION, options,
                                               lambda: analyze_video(media, options["sample_fps"], on_progress=report))
-        result = {"segments": segments, "cache_hit": cache_hit}
+        result = {"segments": segments, "cache_hit": cache_hit, "decode_backend": next((s.get("decode_backend") for s in segments if s.get("decode_backend")), None)}
     else:
         from transcript_align import similarity, phrase_candidates, beat_phrases, normalize, complete_beat_candidates, safe_dialogue_handles
         beats, sources, fps = payload["beats"], payload["sources"], float(payload["fps"])

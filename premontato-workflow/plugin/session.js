@@ -208,12 +208,13 @@ class Session {
       const beats = selectedScene ? selectedScene.beats : [];
       const shots = [];
       let shotCacheHits = 0;
+      const decodeBackends=new Set();
       const shotSources = sources.filter(source => source.path);
       progress('shots', 2, 24, shotSources.length ? `Analisi inquadrature: 0/${shotSources.length} clip` : 'Nessun file video da analizzare');
       for (let i = 0; i < shotSources.length; i++) {
         const source = shotSources[i];
         progress('shots', 2, 24 + (i / shotSources.length) * 38, `Analizzo le inquadrature di ${source.name}`, i, shotSources.length);
-        try { const result = await this.request('analyze_shots', { media: source, sample_fps: 2 }, 20 * 60 * 1000, event => progress('shots', 2, 24 + ((i + event.frame / Math.max(1, event.total)) / shotSources.length) * 38, `YuNet · ${source.name} · ${Math.round(event.frame / Math.max(1, event.total) * 100)}%`, i + event.frame / Math.max(1,event.total), shotSources.length)); shots.push(...result.segments); if (result.cache_hit) shotCacheHits += 1; }
+        try { const result = await this.request('analyze_shots', { media: source, sample_fps: 2 }, 20 * 60 * 1000, event => progress('shots', 2, 24 + ((i + event.frame / Math.max(1, event.total)) / shotSources.length) * 38, `YuNet · ${source.name} · ${Math.round(event.frame / Math.max(1, event.total) * 100)}%`, i + event.frame / Math.max(1,event.total), shotSources.length)); shots.push(...result.segments); if (result.cache_hit) shotCacheHits += 1; else if(result.decode_backend)decodeBackends.add(result.decode_backend); }
         catch (error) { this.state.error = `Analisi inquadrature non disponibile per ${source.name}: ${error.message}`; }
         progress('shots', 2, 24 + ((i + 1) / shotSources.length) * 38, `Inquadrature: ${i + 1}/${shotSources.length} clip`, i + 1, shotSources.length);
       }
@@ -258,6 +259,7 @@ class Session {
         ? [...(plan?.warnings || ['Conferma i confini delle take suggerite prima di calcolare il premontato.'])]
         : ['Non ho trovato una corrispondenza sufficientemente chiara tra dialoghi e copione; controlla trascrizione e clip selezionate.'];
       warnings.push(...contextWarnings);
+      if(decodeBackends.size)warnings.push('Lettura video: '+[...decodeBackends].map(name=>name==='CPU'?'CPU':'GPU / '+name).join(', ')+'. YuNet resta sulla CPU.');
       if (shotCacheHits) warnings.push(`Analisi visiva riusata dalla cache locale per ${shotCacheHits} clip.`);
       if (this.state.error) warnings.push(this.state.error);
       if(plan)plan.performance={...(plan.performance || {}),session:{total_seconds:(Date.now()-startedAt)/1000,phase_seconds:{...phaseSeconds,[lastPhase]:(phaseSeconds[lastPhase] || 0)+(Date.now()-phaseStartedAt)/1000}}};
