@@ -52,3 +52,7 @@ Questo documento è memoria persistente nel repository. Non crea da solo un appr
 
 ## Prestazioni YuNet (27 ottobre 2026)
 - Provare campionamenti ridotti su girato reale prima di imporli: un frame ogni 2 s può perdere volti nelle clip brevi. Nella 0.2.8 mantenere circa 2 frame/s e preferire lettura hardware Windows con fallback CPU verificabile. Non confondere decodifica GPU e inferenza YuNet CPU. Non invalidare cache valide solo per questa ottimizzazione. Non promettere accelerazioni universali da misure su pochi estratti.
+
+## Flusso automatico e ripartenze (27 ottobre 2026)
+- Analizza e prepara montaggio deve preparare automaticamente il piano, senza conferme intermedie obbligatorie su take, regia, alternative o volti. Il click finale Crea timeline resta esplicito. Debug e correzioni sono in tendine chiuse. Una nuova analisi elimina le vecchie bozze di correzione.
+- Preferire l’ultima take riuscita; nella stessa take preferire l’ultima frase completa buona dopo una ripartenza. Non sostituire una frase completa con un’ultima falsa partenza e non scartare informazioni uniche solo per somiglianza del testo. Le evidenze di parlante e completezza restano necessarie.

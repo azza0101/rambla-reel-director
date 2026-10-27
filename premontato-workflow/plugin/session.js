@@ -5,6 +5,7 @@ const { spawn } = require('node:child_process');
 const connectorPath=[path.join(__dirname,'runtime','premontato','groq_client.js'),path.join(__dirname,'..','runtime','premontato','groq_client.js')].find(p=>require('node:fs').existsSync(p));
 const {GroqClient}=require(connectorPath);
 const catalogEdit=require(path.join(path.dirname(connectorPath),'catalog_edit_context'));
+const automaticEditing=require(path.join(path.dirname(connectorPath),'automatic_editing'));
 
 
 const DEFAULT_DIRECTIONS={profile:'VIDEO COLICHE',notes:'Aprire con la master per il contesto. Preferire i piani di chi parla; tornare alla master soprattutto negli scambi lunghi, su un cambio di parlante, o al rilascio della tensione. Evitare alternanze a conteggio fisso. Durante tensione e crescendo mantenere le strette fino al sollievo o alla risoluzione. Aprire sulla larga per distendere. Esempio: dopo l’invito a dormire nel suo letto, primo piano di lui prima dello sbotto, larga quando rifiuta. La reazione richiede copertura verificata: non viene inventata.',markers:{}};
@@ -185,6 +186,7 @@ class Session {
     const missing=this.state.media.filter(media=>!(this.state.transcripts || []).some(source=>source.media_id===media.media_id && source.segments?.some(segment=>segment.end_frame>segment.start_frame && /[\p{L}\p{N}]/u.test(segment.text || ''))));
     if(missing.some(m=>!entries.has(m.media_id)))throw new Error('Trascrizioni mancanti o vuote: '+missing.map(media=>media.name || media.media_id).join(', ')+'. Trascrivi le clip e riprova.');
     this.state.mediaFingerprints=await this.captureMediaFingerprints();
+    this.state.uiDraft=null;
     this.state.stage = 'analyzing';
     this.state.error = null;
     let lastPhaseIndex = 0;
@@ -201,10 +203,13 @@ class Session {
       const sources = (this.state.transcripts || []).filter(catalogEdit.validSpeech);
       if(!sources.length){this.state.analysis={script:parsed,selectedScene:null,sceneSelection:{scene:null,candidates:[]},warnings:[...contextWarnings,'Nessun dialogo trascritto: consulta le coperture del catalogo. Il montaggio automatico di scene solo visive non viene inventato.'],takes:[],shots:[],audio:{},planningSources:[],plan:null,coverageSources,parsedBeats:[]};this.state.stage='review';progress('awaiting-scene',1,12,'Solo materiali visivi: nessun dialogo trascritto da montare');return this.getReviewState();}
       progress('scene', 1, 12, 'Individuo la scena che corrisponde al parlato');
-      const sceneSelection = await this.request('select_scene', {
+      const detectedScene = await this.request('select_scene', {
         scenes: parsed.scenes, transcript: sources.flatMap(source => source.segments)
       });
+      const sceneSelection=automaticEditing.automaticScope(parsed.scenes,detectedScene,[...entries.values()],sources.map(s=>s.media_id));
       const selectedScene = sceneSelection.scene;
+      if(!selectedScene?.beats?.length)throw new Error('Nessuna scena leggibile nel copione: verifica il PDF.');
+      if(sceneSelection.scope_basis==='script_search')contextWarnings.push('Nessuna scena unica: il motore cerca automaticamente le battute nel copione completo. Solo gli intervalli abbinati entrano nel piano.');
       const beats = selectedScene ? selectedScene.beats : [];
       const shots = [];
       let shotCacheHits = 0;
@@ -225,8 +230,9 @@ class Session {
       for (let i = 0; i < sources.length; i++) {
         const source = sources[i];
         const proposals = this.useGroq() ? [{take_id:source.take_id || source.media_id+':take:1',media_id:source.media_id,start_frame:0,end_frame:source.duration_frames,take_index:1,camera_id:source.camera_id || 'camera_1',boundary_source:'whole_clip',confirmed:true}] : await this.request('propose_take_segments', { media: source, transcript: source.segments, fps: source.fps || this.state.fps || 25, beats });
-        takes.push({ media_id: source.media_id, media_name: source.name, duration_frames: source.duration_frames,
-          confirmed: proposals.length === 1 && proposals[0].boundary_source === 'whole_clip', segments: proposals });
+        const accepted=automaticEditing.automaticTakes({...this.state.media.find(m=>m.media_id===source.media_id),...source},proposals);
+        if(accepted.fallback)contextWarnings.push('Confini take non affidabili per '+(source.name||source.media_id)+': il motore lavora sulla clip intera per conservare il parlato.');
+        takes.push({media_id:source.media_id,media_name:source.name,duration_frames:source.duration_frames,confirmed:true,selection_mode:'automatic',segments:accepted.segments});
         progress('takes', 4, 68 + ((i + 1) / Math.max(1, sources.length)) * 12, `Confini take: ${i + 1}/${sources.length} clip`, i + 1, sources.length);
       }
       const planningSources = takes.flatMap(group => group.confirmed ? group.segments.map(take => ({ ...sources.find(source => source.media_id === group.media_id), ...take,
@@ -248,7 +254,7 @@ class Session {
         catch(error) { audio[source.media_id] = {status:'unavailable',reason:error.message}; }
         progress('audio',5,81+((i+1)/audioSources.length)*7,'Audio · '+source.name+' · '+(audio[source.media_id].status==='ok' ? (audio[source.media_id].cache_hit?'cache verificata':'misurato') : 'non disponibile: pause conservate'),i+1,audioSources.length);
       }
-      progress('plan', 6, 89, 'Verifico significato e attacco delle battute nelle take confermate');
+      progress('plan', 6, 89, 'Scelgo automaticamente battute, take e inquadrature');
       let plan = selectedScene && takes.every(group => group.confirmed)
         ? await this.buildPlan( { beats, sources: planningSources, shots, catalog_coverage:coverageSources,scene_id:selectedScene.scene_id, directions:this.state.directions, semantic: true, fps: this.state.fps || 25 },300000) : null;
       progress('pacing',7,95,'Verifico pause e reazioni prima della risoluzione');
@@ -265,7 +271,7 @@ class Session {
       if(plan)plan.performance={...(plan.performance || {}),session:{total_seconds:(Date.now()-startedAt)/1000,phase_seconds:{...phaseSeconds,[lastPhase]:(phaseSeconds[lastPhase] || 0)+(Date.now()-phaseStartedAt)/1000}}};
       this.state.analysis = { script: parsed, sceneSelection, selectedScene, warnings, takes, shots, audio, planningSources, plan, visualReview, coverageSources, parsedBeats: beats };
       this.state.stage = selectedScene?'review':'awaiting_scene';
-      if(selectedScene)progress('complete',8,100,'Analisi completata');
+      if(selectedScene)progress('complete',8,100,plan?.decisions?.length?'Montaggio preparato · puoi creare la timeline':'Analisi completata · nessun taglio utilizzabile');
       else progress('awaiting-scene',1,12,'Scena ambigua: scegli una o più scene del copione per proseguire');
       return this.getReviewState();
     } catch (error) { this.state.error = error.message; this.state.stage = 'error'; progress('error', lastPhaseIndex, 0, `Analisi interrotta: ${error.message}`); throw error; }
