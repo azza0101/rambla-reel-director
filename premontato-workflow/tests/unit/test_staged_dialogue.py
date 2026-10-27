@@ -73,3 +73,34 @@ class ShortRestartTests(unittest.TestCase):
   rows=[{'id':'a','text':'E che volevano?','start':10,'end':30},{'id':'b','text':'Che volevano?','start':35,'end':55}]
   labels,_=clean_restarts(rows,{'a':'1/P1','b':'1/P1'})
   self.assertEqual(labels,{'a':'X','b':'1/P1'})
+
+class SemanticPerformanceTests(unittest.TestCase):
+ def test_paraphrased_question_restarts_keep_only_latest_delivery(self):
+  from staged_dialogue import latest_complete_run
+  import numpy as np
+  rows=[{'id':'a','start':0,'end':45,'text':'Come vuoi chiamare questa trasmissione?'},{'id':'b','start':100,'end':155,'text':'Quale titolo daresti al nostro programma?'}]
+  def encode(texts):return np.array([[1.,0.] for t in texts])
+  chosen=latest_complete_run(rows,rows,{'a':'1/P1','b':'1/P1'},{'text':'Come vorresti intitolarlo questo tuo programma?'},25,encode)
+  self.assertEqual([u['id'] for u in chosen],['b'])
+ def test_semantic_duplicate_runs_do_not_become_additional_story_moments(self):
+  from staged_dialogue import latest_complete_run
+  import numpy as np
+  rows=[{'id':'a','start':0,'end':40,'text':'Quale nome daremo alla trasmissione?'},{'id':'crew','start':50,'end':60,'text':'Stop.'},{'id':'b','start':300,'end':350,'text':'Come si chiama il nostro programma?'}]
+  def encode(texts):return np.array([[1.,0.] for t in texts])
+  chosen=latest_complete_run([rows[0],rows[2]],rows,{'a':'1/P1','crew':'X','b':'1/P1'},{'text':'Come vorresti intitolarlo questo tuo programma?'},25,encode)
+  self.assertEqual([u['id'] for u in chosen],['b'])
+ def test_semantically_distinct_continuation_survives(self):
+  from staged_dialogue import latest_complete_run
+  import numpy as np
+  rows=[{'id':'a','start':0,'end':40,'text':'Lascia la chiave nel vaso.'},{'id':'other','start':50,'end':60,'text':'Si.'},{'id':'b','start':70,'end':110,'text':'Poi raggiungimi alla stazione.'}]
+  def encode(texts):return np.array([[1.,0.] if 'chiave' in t else [0.,1.] for t in texts])
+  chosen=latest_complete_run([rows[0],rows[2]],rows,{'a':'1/P1','other':'2/P2','b':'1/P1'},{'text':'Lascia la chiave nel vaso e raggiungimi alla stazione.'},25,encode)
+  self.assertEqual([u['id'] for u in chosen],['a','b'])
+
+ def test_short_semantic_match_cannot_empty_the_complete_delivery_pool(self):
+  from staged_dialogue import latest_complete_run
+  import numpy as np
+  rows=[{'id':'a','start':0,'end':60,'text':'Il pacco fragile resta nascosto dentro il cassetto chiuso.'},{'id':'crew','start':70,'end':80,'text':'Stop.'},{'id':'b','start':300,'end':310,'text':'Cassetto.'}]
+  def encode(texts):return np.array([[.85,.5267827] if 'pacco' in t else [1.,0.] for t in texts])
+  chosen=latest_complete_run([rows[0],rows[2]],rows,{'a':'1/P1','crew':'X','b':'1/P1'},{'text':'Cassetto.'},25,encode)
+  self.assertEqual([u['id'] for u in chosen],['a'])

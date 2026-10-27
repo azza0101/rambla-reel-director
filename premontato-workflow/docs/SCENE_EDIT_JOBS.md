@@ -1,29 +1,31 @@
-# Montaggio per scene
+# Montaggio per scene — stato verificato al 27 ottobre 2026
 
-Il motore separa le unità temporizzate del parlato per scena tramite l’encoder locale esistente, usando ancore distintive e contesto vicino. Ogni scena viene pianificata separatamente con i propri materiali, controlli di parlante e ritmo. I risultati vengono uniti nell’ordine del copione; identificatori e tempi dei job restano distinti. Le unità non assegnate non diventano dialoghi inventati.
+## Cause accertate e correzioni integrate
 
-Il pannello elenca le scene pronte, incomplete, senza copertura o fallite. I piani delle singole scene sono salvati in cache, con chiave sui dati del job, impostazioni e motore, e riutilizzati se invariati. Il controllo ASD locale si limita a tre candidati per battuta e si ferma al primo parlante visibile verificato. Non modifica dati di altri prodotti.
+Il vecchio percorso sceglieva una scena dominante e cercava le sue battute in tutti i materiali. Ora separa le unità temporizzate con l’encoder locale, pianifica ogni scena indipendentemente e assembla nell’ordine del copione. Una clip può contenere porzioni di più scene. Frasi generiche non bastano per superare il contesto di catalogo; servono ancore specifiche.
 
-Omni-Cut può leggere la chiave protetta del Premontato già configurato sullo stesso utente, senza copiarla; il pannello continua a indicare se Groq è attivo. Nessuna chiave distribuita nel pacchetto. Per questo collaudo l’invio dei testi reali a Groq è soggetto all’autorizzazione specifica richiesta dopo il blocco della revisione automatica.
+Il parser separa turni distinti dello stesso personaggio. Con Groq configurato un passaggio in cache distingue dialoghi e azioni usando gli ID delle righe originali; non riscrive il testo. I titoli e i personaggi del copione restano disponibili nel piano. Le attribuzioni del modello sono stime, non una certificazione del PDF.
 
-Limiti: la copertura non equivale a verifica artistica; scene solo visive e battute mancanti restano dichiarate. Le intenzioni e la qualità degli stacchi richiedono collaudo sul risultato reale. Non promettere copertura completa in assenza di prove.
+La deduplicazione conserva l’ultima esecuzione completa e le continuazioni uniche. Il confronto semantico locale riconosce anche ripartenze formulate con parole diverse: prima potevano essere scambiate per nuovi momenti. Gli intervalli provengono sempre dalle parole originali, mai da timestamp generati dal modello o scelti dall’agente.
 
-## Esito collaudo reale del 27 ottobre 2026
+Le scene con battute mancanti hanno un solo recupero aggiuntivo: ricerca nelle trascrizioni originali, contesto vicino e riclassificazione mirata di ID originali, senza forzare un abbinamento. Il nuovo piano è accettato solo se riduce le lacune senza perdere battute già coperte. Errori temporanei del recupero sono riprovabili alla successiva esecuzione, non diventano checkpoint definitivi. Le scene complete riusano la cache.
 
-Eseguito sulle trascrizioni delle 51 clip già caricate, senza nuove trascrizioni o invii Groq: il piano locale per scene ha richiesto circa 211 s dopo il riuso parziale delle misure ASD. Scene 2 e 4 coperte secondo il matcher; 5 e 6 incomplete; 7 e 8 fallite al controllo di continuità. Scene 1 e 3 senza copertura parlata utilizzabile. Questi risultati NON certificano la corrispondenza artistica o verbale completa. Nessuna nuova timeline nativa applicata: non consegnare il piano parziale come montaggio finito. La build intermedia è stata verificata in installazione isolata ma NON pubblicata. Il codice finale blocca l’applicazione se restano scene fallite o battute mancanti.
+Groq restituisce numeri di battuta; il ruolo si ricava dai personaggi del copione. Gli ID sconosciuti sono rifiutati. I blocchi sono di 20 unità, con avanzamento e retry separati per quota e JSON non valido. Viene rispettato il reset dei token comunicato dal servizio (nel test: 8.000 token/minuto). Omni può leggere la chiave protetta del Premontato dello stesso utente senza copiarla. Nessuna credenziale è inclusa nei pacchetti.
 
-Regressioni finali: 221 test JavaScript e 211 Python passati. Il test Groq sul payload reale è stato bloccato dalla revisione automatica per autorizzazione specifica mancante; richiesta all’utente in attesa di risposta.
+## Test automatici
 
-## Copione strutturato e regressioni
+227 test JavaScript e 221 Python passati nell’ultima esecuzione. Sono coperti isolamento delle scene, sorgenti multi-scena, ripartenze, parafrasi duplicate, continuazioni uniche, intervalli originali, ripresa dopo errore e rifiuto dei piani incompleti come montaggi finiti. Non equivalgono a verifica artistica del girato reale.
 
-Con Groq configurato, un passaggio in cache etichetta le righe originali del copione come dialogo o azione usando solo personaggi già presenti. Il testo non è generato: la ricostruzione riusa le righe sorgente e valida la presenza di ogni ID. Il parser conserva turni distinti dello stesso personaggio. I titoli scena e le parole originali restano disponibili nel piano (`script_scenes`). Le attribuzioni del modello sono stime: il passaggio non certifica la correttezza editoriale del PDF.
+## Collaudo reale e nativo
 
-Il motore sceglie l’ultima esecuzione completa della battuta, mantenendo continuazioni e interiezioni uniche. Il percorso a camera singola mantiene l’ordine delle interiezioni. I momenti senza candidati verificabili vengono esclusi con motivazione e restano visibili nell’audit, senza far fallire automaticamente tutte le altre battute della scena.
+Dati reali: 51 clip già caricate nel progetto test-mcp, copione di otto scene. Nessuna nuova trascrizione eseguita. Un primo piano Groq ha richiesto circa 343 s; il successivo recupero circa 248 s. Il test locale aggiornato, con classificazioni e misure già in cache e rete disabilitata, ha richiesto 12,6 s. Sono tempi osservati sul materiale e sullo stato di cache specifici, non stime universali per minuto di video.
 
-Il catalogo vincola i cambi di scena per le frasi generiche; porzioni realmente multi-scena possono essere recuperate con prove specifiche e contesto adiacente. Le quote Groq e le risposte JSON non valide hanno retry separati; il tempo di reset dei token viene rispettato. Nel collaudo il servizio ha comunicato 8.000 token/minuto: il tempo dipende anche dalla quota disponibile.
+Nel risultato locale aggiornato le scene 2, 4, 5 e 8 risultano coperte secondo il motore. La 6 conserva una lacuna; la 7 quattro. La 3 non ha dialogo utilizzabile nelle trascrizioni correnti; la 1 non ha copertura parlata. Alcune frasi del PDF non compaiono letteralmente nelle trascrizioni: l’assenza letterale non dimostra che non siano state recitate o parafrasate. Il recupero mirato esterno aggiornato resta da verificare: un nuovo invio è stato bloccato dalla revisione automatica per autorizzazione non verificabile nel contesto attuale, ed è stata richiesta conferma specifica. Nessun aggiramento del blocco.
 
-## Recupero delle lacune
+Resolve Studio 21.1.0.17: applicazione SDK nativa realmente riuscita delle scene complete 2, 4, 5 e 8, in una nuova timeline di prova denominata PARZIALE, con quattro titoli scena e tre gap di due secondi. ID f97f95ce-4cbc-4202-9bea-b3303a3be392. Verificati rilettura sorgenti e intervalli, tre tracce audio mono, conservazione delle 46 timeline precedenti e delle impostazioni del progetto. Collocazione: Omni-Cut test / v0.2.11 / Test. Nessun controllo del mouse. Una precedente timeline diagnostica con ripetizioni è stata rinominata SCARTATA; non è il risultato finale.
 
-Per una scena ancora incompleta il motore esegue un solo passaggio aggiuntivo sulle trascrizioni originali: recupera campioni pertinenti con contesto vicino e riprova la pianificazione. Sostituisce il primo piano solo se riduce le battute mancanti senza perderne alcuna già coperta. Non aggiunge intervalli scelti dall’agente. I campioni restano vincolati alla scena di catalogo o alle riprese già pertinenti. Il limite di un passaggio evita cicli indefiniti e costi incontrollati.
+Il test nativo prova l’assemblaggio e la conservazione del progetto, non il completamento delle scene ancora incomplete. Il piano dell’intero copione resta bloccato per la creazione finché mancano battute o scene falliscono; non viene presentato come film finito. Restano da validare qualità editoriale globale, scene solo visive e casi con trascrizione insufficiente.
 
-L’output Groq è ora un numero di battuta per segmento; il ruolo si ricava localmente dai personaggi già presenti nel copione. I riferimenti sconosciuti restano rifiutati. I blocchi di testo sono più piccoli e il pannello ne mostra l’avanzamento interno alla clip.
+## Consegna e distribuzione
+
+Branch fix/omnicut-scene-isolated-edit-20261027, PR #32, senza merge su main. La build isolata 0.2.11 dal commit 6658d09 ha superato smoke installer, controllo integrità e compatibilità del vecchio updater; NON include le successive correzioni di recupero mirato/deduplicazione semantica. Non è stata pubblicata una nuova release o aggiornata l’installazione attiva. Non distribuire una build precedente dichiarandola equivalente al codice corrente.

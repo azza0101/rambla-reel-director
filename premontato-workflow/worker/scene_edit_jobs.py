@@ -66,7 +66,7 @@ def expand_missing(payload,encoder=None):
   encoder=get_semantic_encoder()
  scene=payload['scene'];missing=set(payload['missing']);originals=payload['sources'];existing=payload['selected_sources'];allowed={s['media_id'] for s in existing}
  sources=[s for s in originals if s['media_id'] in allowed or ((s.get('catalog_context') or {}).get('scene') or {}).get('scene_id')==scene['scene_id']]
- if not sources:return {'sources':existing,'expanded_media':0}
+ if not sources:return {'sources':existing,'expanded_media':0,'focus_ranges':[]}
  prepared=prepare_dialogue({'beats':scene['beats'],'sources':sources,'fps':payload['fps']});flat=[(c,u) for c in prepared['clips'] for u in c['units']]
  queries=[]
  for i,b in enumerate(scene['beats']):
@@ -97,4 +97,4 @@ def expand_missing(payload,encoder=None):
   for bounds,u in rows.items():segments.setdefault(bounds,{'text':u['text'],'start_frame':u['start'],'end_frame':u['end'],'words':[w for w in words if w['start_frame']>=u['start'] and w['end_frame']<=u['end']]})
   if len(segments)>before:expanded+=1
   result.append({**source,'segments':sorted(segments.values(),key=lambda s:s['start_frame'])})
- return {'sources':result,'expanded_media':expanded}
+ return {'sources':result,'expanded_media':expanded,'focus_ranges':[{'take_id':key,'start_frame':u['start'],'end_frame':u['end']} for key,rows in selected.items() for u in rows.values()]}

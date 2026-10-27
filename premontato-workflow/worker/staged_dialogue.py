@@ -76,12 +76,24 @@ def clean_restarts(units,values):
   if prior:
    good=max(prior,key=lambda v:v['end']);labels[u['id']]='X';changes.append({'unit':u['id'],'superseded_by':good['id']})
  return labels,changes
-def latest_complete_run(rows,all_rows,labels,beat,fps):
+def latest_complete_run(rows,all_rows,labels,beat,fps,encode=None):
  if not rows:return []
+ if len(rows)==1:return rows
  groups=[];group=[];target=set(core(beat['text']))
+ # Lexically different restarts can express the same line. Reuse the local
+ # encoder to separate repeated starts and collapse equivalent performances.
+ row_sims=None
+ if encode is not None:
+  vectors=encode([u['text'] for u in rows]);row_sims=vectors@vectors.T
+ indices={u['id']:i for i,u in enumerate(rows)}
  for u in rows:
   previous=group[-1] if group else None
-  if previous and (u['start']-previous['end']>6*fps or any(previous['end']<=v['start']<u['start'] and labels.get(v['id'])!=labels.get(u['id']) for v in all_rows)):
+  repeated=False
+  if previous and row_sims is not None:
+   head=group[0]
+   ratio=len(normalize(u['text']).split())/max(1,len(normalize(head['text']).split()))
+   repeated=(not head['text'].strip().endswith(('...','…')) and .5<=ratio<=2 and float(row_sims[indices[head['id']],indices[u['id']]])>=.82)
+  if previous and (repeated or u['start']-previous['end']>6*fps or any(previous['end']<=v['start']<u['start'] and labels.get(v['id'])!=labels.get(u['id']) for v in all_rows)):
    groups.append(group);group=[]
   group.append(u)
  if group:groups.append(group)
@@ -89,6 +101,25 @@ def latest_complete_run(rows,all_rows,labels,beat,fps):
   observed=set(core(' '.join(u['text'] for u in g)))
   return len(target&observed)/max(1,len(target)),len(observed)
  complete=[g for g in groups if not g[-1]['text'].strip().endswith(('...','…'))]
+ if encode is not None and len(complete)>1:
+  texts=[' '.join(u['text'] for u in g) for g in complete]
+  vectors=encode(texts+[beat['text']]);sims=vectors[:-1]@vectors[:-1].T;relevance=vectors[:-1]@vectors[-1]
+  # Only equivalent deliveries compete. Complementary continuations/asides
+  # remain distinct; an interrupted final attempt never replaces a good one.
+  components=[]
+  for i,g in enumerate(complete):
+   matches=[c for c in components if any(float(sims[i,j])>=.78 for j in c)]
+   if matches:
+    merged=[i]+[j for c in matches for j in c];components=[c for c in components if c not in matches]+[merged]
+   else:components.append([i])
+  chosen=[]
+  for component in components:
+   length=max(rank(complete[i])[1] for i in component)
+   complete_pool=[i for i in component if rank(complete[i])[1]>=length*.6]
+   best=max(float(relevance[i]) for i in complete_pool)
+   eligible=[i for i in complete_pool if float(relevance[i])>=best-.10]
+   at=max(eligible,key=lambda i:complete[i][-1]['end']);chosen.extend(complete[at])
+  return sorted(chosen,key=lambda u:u['start'])
  def distinct(a,b):
   x=set(core(' '.join(u['text'] for u in a)));y=set(core(' '.join(u['text'] for u in b)))
   return len(x&y)/max(1,len(x|y))<.65
@@ -216,7 +247,7 @@ def build_staged(payload,report=lambda e:None):
   for u in kept:
    if info(u)[0]==bid:choices.setdefault(u['clip'],[]).append(u)
   if not choices:continue
-  choices={cid:latest_complete_run(rows,[u for u in units if u['clip']==cid],labels,beat,fps) for cid,rows in choices.items()}
+  choices={cid:latest_complete_run(rows,[u for u in units if u['clip']==cid],labels,beat,fps,encoder.encode) for cid,rows in choices.items()}
   if master in choices:reference=master
   else:
    target=set(core(beat['text']))
