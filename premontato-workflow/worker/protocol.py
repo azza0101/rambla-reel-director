@@ -8,7 +8,7 @@ from pdf_script import extract_pdf_text
 from transcript_align import select_scene
 
 PROTOCOL = 1
-ACTIONS = {"render_scene_debug_titles", "catalog_scenes", "ping", "parse_script", "extract_pdf_script", "select_scene", "align", "propose_take_segments", "choose_take", "build_plan", "analyze_shots", "analyze_audio", "pace_plan", "visual_review", "prepare_dialogue", "build_staged"}
+ACTIONS = {"catalog_preview_frames", "catalog_frames", "render_scene_debug_titles", "catalog_scenes", "ping", "parse_script", "extract_pdf_script", "select_scene", "align", "propose_take_segments", "choose_take", "build_plan", "analyze_shots", "analyze_audio", "pace_plan", "visual_review", "prepare_dialogue", "build_staged"}
 
 
 def dispatch(request):
@@ -22,6 +22,12 @@ def dispatch(request):
     elif action == "render_scene_debug_titles":
         from local_audio import render_scene_debug_titles
         result=render_scene_debug_titles(payload)
+    elif action == "catalog_preview_frames":
+        from scene_visual import preview_catalog_frames
+        result=preview_catalog_frames(payload)
+    elif action == "catalog_frames":
+        from scene_visual import extract_catalog_frames
+        result=extract_catalog_frames(payload)
     elif action == "catalog_scenes":
         from scene_catalog import catalog_scenes
         result=catalog_scenes(payload)

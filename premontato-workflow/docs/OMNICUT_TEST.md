@@ -1,5 +1,7 @@
 # Omni-Cut test — installazione parallela
 
+Versione 0.2.0: catalogazione per clip originali intere, spostate nei bin scena dopo Applica al Media Pool; visione locale opzionale e schede verde/giallo con preview. Sostituisce il flusso SELECTS della 0.1.x. Dettagli e requisiti: [OMNICUT_VISUAL_CATALOG.md](OMNICUT_VISUAL_CATALOG.md).
+
 Omni-Cut test è la variante sperimentale derivata dal codice Premontato, inclusa Catalogazione giornata e debug scene. Non è incorporata in Auto-Cut. Il motore condiviso resta in premontato-workflow, evitando un fork duplicato da mantenere a mano.
 
 Identità installazione: com.rambla.omnicut.test. Nome nel menu Resolve: RAMBLA Omni-Cut test. Prima versione: 0.1.0. Premontato resta com.rambla.premontato, con versione propria.
