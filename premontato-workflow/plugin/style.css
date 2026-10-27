@@ -39,3 +39,5 @@
 #day-catalog select{box-sizing:border-box;background:#0e2028;color:#edf5f7;border:1px solid #4b686e;border-radius:8px;padding:10px 12px;font:inherit;min-height:42px}#catalog-root{max-width:100%;margin:8px 0 12px}#day-catalog .actions{flex-wrap:wrap}.catalog-card select:focus{outline:2px solid #8edbc3;outline-offset:2px}.catalog-unmatched select{border-color:#987e46}
 
 .catalog-final-actions{margin-top:20px;padding-top:14px;border-top:1px solid #40545d}.catalog-final-actions h3{margin:0 0 8px}.catalog-final-actions .actions{gap:8px}.catalog-final-actions p{margin:6px 0 12px}
+
+.catalog-apply-progress{padding:10px 12px;margin:10px 0;border:1px solid #426b63;border-radius:7px;background:#142d29}.catalog-apply-progress progress{display:block;width:100%;height:10px}.catalog-apply-progress p{font-size:13px;overflow-wrap:anywhere}.catalog-apply-progress[hidden]{display:none}
