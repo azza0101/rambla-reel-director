@@ -63,6 +63,29 @@ def sampled_frames(cap, count, step, on_progress=None):
         yield index, frame
 
 
+def open_video_capture(cv2, filename):
+    """Prefer the bundled Windows hardware decoder, with a portable CPU fallback.
+
+    This accelerates video reading only; YuNet inference still uses the CPU.
+    Report the mode actually selected, since ANY may itself fall back to CPU.
+    """
+    if sys.platform == 'win32':
+        capture = None
+        try:
+            capture = cv2.VideoCapture(str(filename), cv2.CAP_FFMPEG,
+                [cv2.CAP_PROP_HW_ACCELERATION, cv2.VIDEO_ACCELERATION_ANY])
+            if capture.isOpened():
+                mode = int(capture.get(cv2.CAP_PROP_HW_ACCELERATION))
+                backend = ('CPU' if mode == cv2.VIDEO_ACCELERATION_NONE else
+                    'D3D11' if mode == cv2.VIDEO_ACCELERATION_D3D11 else 'Hardware')
+                return capture, backend
+        except Exception:
+            pass
+        if capture is not None:
+            capture.release()
+    return cv2.VideoCapture(str(filename)), 'CPU'
+
+
 def analyze_video(media, sample_fps=1.0, face_cascade_path=None, on_progress=None):
     try:
         import cv2
@@ -71,7 +94,7 @@ def analyze_video(media, sample_fps=1.0, face_cascade_path=None, on_progress=Non
     path = Path(media["path"])
     if not path.is_file():
         raise ValueError("File media non disponibile")
-    cap = cv2.VideoCapture(str(path))
+    cap, decode_backend = open_video_capture(cv2, path)
     if not cap.isOpened():
         raise ValueError("OpenCV non riesce a leggere il media")
     try:
@@ -108,7 +131,7 @@ def analyze_video(media, sample_fps=1.0, face_cascade_path=None, on_progress=Non
         output.append({"segment_id": f"{media['media_id']}:{start}", "media_id": media["media_id"],
                        "start_frame": start, "end_frame": end, "shot_size": middle["shot_size"],
                        "visible_subjects": [], "face_boxes": middle["face_boxes"], "confidence": middle["confidence"],
-                       "source": "automatic", "analyzer": ANALYZER_VERSION, "sample_count": len(choices)})
+                       "source": "automatic", "analyzer": ANALYZER_VERSION, "decode_backend": decode_backend, "sample_count": len(choices)})
     return output
 
 

@@ -49,3 +49,7 @@ Collaudo 26 ottobre 2026: 169 test JavaScript e 189 Python superati. Sul catalog
 ## 0.2.7 — Catalogo e montaggio
 
 Vedere [contesto, metadati e collaudo](OMNICUT_CATALOG_EDIT_CONTEXT.md). Le indicazioni storiche su SELECTS della 0.1.1 sono superate: la catalogazione attuale sposta solo clip intere.
+
+## 0.2.8 — Lettura video GPU
+
+Vedere [misure, alternative e limiti](OMNICUT_VIDEO_READ_PERFORMANCE.md). D3D11 su Windows quando disponibile, fallback CPU e campionamento attuale mantenuto.

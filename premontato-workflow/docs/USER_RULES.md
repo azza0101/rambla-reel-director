@@ -49,3 +49,6 @@ Questo documento è memoria persistente nel repository. Non crea da solo un appr
 - Trascrizione vuota/fallita non significa clip muta. Nessun retry ASR automatico del materiale già catalogato senza testo; il comando Trascrivi esplicito resta disponibile. Riutilizzare il parlato valido e mostrare le altre clip come materiali visivi in una tendina chiusa, con frame su richiesta.
 - Campi personalizzati OmniCut in Resolve, journal prima della scrittura e readback. Non sovrascrivere note umane. Indicizzare scena/ruolo tramite metadati ricercabili; non fingere di popolare l’indice visivo o facciale IntelliSearch.
 - La disponibilità di una copertura non autorizza un inserto arbitrario: intervallo, azione e pertinenza devono essere verificati. La v0.2.7 conserva il pool nel piano ma non inventa montaggi di scene solo visive.
+
+## Prestazioni YuNet (27 ottobre 2026)
+- Provare campionamenti ridotti su girato reale prima di imporli: un frame ogni 2 s può perdere volti nelle clip brevi. Nella 0.2.8 mantenere circa 2 frame/s e preferire lettura hardware Windows con fallback CPU verificabile. Non confondere decodifica GPU e inferenza YuNet CPU. Non invalidare cache valide solo per questa ottimizzazione. Non promettere accelerazioni universali da misure su pochi estratti.
