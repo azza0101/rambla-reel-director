@@ -43,3 +43,9 @@ Fonte: istruzioni esplicite dell’autore nella chat di sviluppo, fino al 27 ott
 
 ## Limiti della memoria
 Questo documento è memoria persistente nel repository. Non crea da solo un apprendimento del modello né applica preferenze editoriali alla catalogazione. Le istruzioni di stile eseguibili e le relative cache restano nei moduli dedicati. Ogni futura modifica deve conservare le regole pertinenti e documentare ciò che è implementato, collaudato o ancora richiesto.
+
+## Catalogo → montaggio e ricerca Resolve (27 ottobre 2026)
+- Applicando il catalogo salvare contesto versionato per media ID: scena, ruolo, stato trascrizione, motivazione e prove visive. Identità di progetto, copione e sorgente verificata prima del riuso.
+- Trascrizione vuota/fallita non significa clip muta. Nessun retry ASR automatico del materiale già catalogato senza testo; il comando Trascrivi esplicito resta disponibile. Riutilizzare il parlato valido e mostrare le altre clip come materiali visivi in una tendina chiusa, con frame su richiesta.
+- Campi personalizzati OmniCut in Resolve, journal prima della scrittura e readback. Non sovrascrivere note umane. Indicizzare scena/ruolo tramite metadati ricercabili; non fingere di popolare l’indice visivo o facciale IntelliSearch.
+- La disponibilità di una copertura non autorizza un inserto arbitrario: intervallo, azione e pertinenza devono essere verificati. La v0.2.7 conserva il pool nel piano ma non inventa montaggi di scene solo visive.

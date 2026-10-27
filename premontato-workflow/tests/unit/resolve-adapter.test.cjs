@@ -318,3 +318,7 @@ test('unverified debug title insertion removes only the generated timeline and r
  const c=timelineSdk();c.pool.ImportMedia=async()=>[];
  await assert.rejects(createTimeline(c.sdk,'DEBUG',[{media_id:'m1',start_frame:0,end_frame:50,scene_debug:{id:'s',number:1}}],{sceneDebug:{enabled:true,gap_frames:50,assets:{1:'C:/one.png'}}}),/etichett|titol/i);assert.equal(c.reviewTimeline.deleted,true);assert.equal(c.project.active,c.sourceTimeline);
 });
+
+test('cataloged coverage can read an empty transcription without starting another GPU job',async()=>{
+ let transcribes=0;const media={media_id:'known-cover',name:'cover',fps:25,start_tc:'00:00:00:00',duration_frames:100};const item={GetMediaId:async()=>media.media_id,GetTranscription:async()=>({}),TranscribeAudio:async()=>{transcribes++;return true;}};const pool={GetRootFolder:async()=>({GetClipList:async()=>[item],GetSubFolderList:async()=>[]})};const sdk={GetResolvePromise:async()=>({GetProjectManager:async()=>({GetCurrentProject:async()=>({GetCurrentTimeline:async()=>({}),GetMediaPool:async()=>pool})})})};const rows=await getSelectedTranscriptions(sdk,{media:[media],transcribeMissing:true,skipTranscribeIds:[media.media_id]});assert.equal(rows[0].segments.length,0);assert.equal(transcribes,0);
+});

@@ -45,3 +45,7 @@ Le proposte vengono incluse nel riepilogo senza conferme individuali. Applica al
 Correzioni: intestazioni Scena 1. / Scena 2: e cue con parentesi minuscole; layout PDF deciso per singolo cue, senza contaminazione da titoli centrati. Le modifiche alla struttura letta invalidano soltanto gli abbinamenti e riusano le trascrizioni. Segmenti Resolve a durata zero vengono conservati come testo senza intervallo utilizzabile; gli altri segmenti della clip non vengono scartati. Gli errori delle clip sono visibili nei dettagli locali.
 
 Collaudo 26 ottobre 2026: 169 test JavaScript e 189 Python superati. Sul catalogo reale, in una copia del checkpoint e senza scritture Media Pool: 4 scene lette, 51 sorgenti, 43 con trascrizioni riusabili, 8 senza parlato utilizzabile, 11,5 secondi, nessuna chiamata ASR o LLM. Due scene hanno proposte utilizzabili; i conteggi degli intervalli non rappresentano una misura di accuratezza. Test nativo Resolve 21.1.0.17 separato nello stesso progetto con una sorgente sintetica: due scene proposte, SELECTS create e rilette a frame 10–60 e 80–140 con audio, seconda applicazione saltata senza duplicati, timeline e impostazioni preesistenti preservate. Nessun nuovo progetto creato.
+
+## 0.2.7 — Catalogo e montaggio
+
+Vedere [contesto, metadati e collaudo](OMNICUT_CATALOG_EDIT_CONTEXT.md). Le indicazioni storiche su SELECTS della 0.1.1 sono superate: la catalogazione attuale sposta solo clip intere.

@@ -4,6 +4,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const connectorPath=[path.join(__dirname,'runtime','premontato','groq_client.js'),path.join(__dirname,'..','runtime','premontato','groq_client.js')].find(p=>require('node:fs').existsSync(p));
 const {GroqClient}=require(connectorPath);
+const catalogEdit=require(path.join(path.dirname(connectorPath),'catalog_edit_context'));
 
 
 const DEFAULT_DIRECTIONS={profile:'VIDEO COLICHE',notes:'Aprire con la master per il contesto. Preferire i piani di chi parla; tornare alla master soprattutto negli scambi lunghi, su un cambio di parlante, o al rilascio della tensione. Evitare alternanze a conteggio fisso. Durante tensione e crescendo mantenere le strette fino al sollievo o alla risoluzione. Aprire sulla larga per distendere. Esempio: dopo l’invito a dormire nel suo letto, primo piano di lui prima dello sbotto, larga quando rifiuta. La reazione richiede copertura verificata: non viene inventata.',markers:{}};
@@ -173,11 +174,16 @@ class Session {
       throw new Error('La selezione media è cambiata: seleziona le clip caricate prima di trascrivere');
     }
   }
-  async analyze() {
+  async analyze({catalogContext}={}) {
     if (!this.state.script || !this.state.media.length) throw new Error('Prima scegli un copione e media dal Media Pool');
     if (this.state.stage === 'analyzing') throw new Error('Analisi già in corso');
+    const contextValid=catalogContext?.schema_version===1&&catalogContext.project_id===this.state.projectId&&catalogContext.analysis_script_fingerprint===catalogEdit.hash(this.state.script.text);
+    const entries=new Map((contextValid?catalogContext.entries:[]).filter(c=>c.schema_version===1&&c.project_id===this.state.projectId).map(c=>[c.media_id,c]));
+    const coverageSources=this.state.media.filter(m=>entries.has(m.media_id)&&!(this.state.transcripts||[]).some(s=>s.media_id===m.media_id&&catalogEdit.validSpeech(s))).map(m=>({...m,segments:[],catalog_context:entries.get(m.media_id)}));
+    const contextWarnings=coverageSources.length?[coverageSources.length+' clip catalogate senza trascrizione: disponibili come materiali visivi, non usate per ricostruire le battute.']:[];
+    if(contextValid)contextWarnings.push(...(catalogContext.warnings||[]));
     const missing=this.state.media.filter(media=>!(this.state.transcripts || []).some(source=>source.media_id===media.media_id && source.segments?.some(segment=>segment.end_frame>segment.start_frame && /[\p{L}\p{N}]/u.test(segment.text || ''))));
-    if(missing.length)throw new Error('Trascrizioni mancanti o vuote: '+missing.map(media=>media.name || media.media_id).join(', ')+'. Trascrivi le clip e riprova.');
+    if(missing.some(m=>!entries.has(m.media_id)))throw new Error('Trascrizioni mancanti o vuote: '+missing.map(media=>media.name || media.media_id).join(', ')+'. Trascrivi le clip e riprova.');
     this.state.mediaFingerprints=await this.captureMediaFingerprints();
     this.state.stage = 'analyzing';
     this.state.error = null;
@@ -192,7 +198,8 @@ class Session {
     try {
       progress('script', 0, 0, 'Leggo e separo le scene del copione');
       const parsed = await this.request('parse_script', { text: this.state.script.text });
-      const sources = this.state.transcripts || [];
+      const sources = (this.state.transcripts || []).filter(catalogEdit.validSpeech);
+      if(!sources.length){this.state.analysis={script:parsed,selectedScene:null,sceneSelection:{scene:null,candidates:[]},warnings:[...contextWarnings,'Nessun dialogo trascritto: consulta le coperture del catalogo. Il montaggio automatico di scene solo visive non viene inventato.'],takes:[],shots:[],audio:{},planningSources:[],plan:null,coverageSources,parsedBeats:[]};this.state.stage='review';progress('awaiting-scene',1,12,'Solo materiali visivi: nessun dialogo trascritto da montare');return this.getReviewState();}
       progress('scene', 1, 12, 'Individuo la scena che corrisponde al parlato');
       const sceneSelection = await this.request('select_scene', {
         scenes: parsed.scenes, transcript: sources.flatMap(source => source.segments)
@@ -242,7 +249,7 @@ class Session {
       }
       progress('plan', 6, 89, 'Verifico significato e attacco delle battute nelle take confermate');
       let plan = selectedScene && takes.every(group => group.confirmed)
-        ? await this.buildPlan( { beats, sources: planningSources, shots, directions:this.state.directions, semantic: true, fps: this.state.fps || 25 },300000) : null;
+        ? await this.buildPlan( { beats, sources: planningSources, shots, catalog_coverage:coverageSources,scene_id:selectedScene.scene_id, directions:this.state.directions, semantic: true, fps: this.state.fps || 25 },300000) : null;
       progress('pacing',7,95,'Verifico pause e reazioni prima della risoluzione');
       if(plan)plan=this.keepReactionChoices(plan);
       if (plan) plan=await this.pacePlan({plan,sources:planningSources,audio,beats,shots,fps:this.state.fps || 25,settings:this.state.pacingSettings});
@@ -250,10 +257,11 @@ class Session {
       const warnings = selectedScene
         ? [...(plan?.warnings || ['Conferma i confini delle take suggerite prima di calcolare il premontato.'])]
         : ['Non ho trovato una corrispondenza sufficientemente chiara tra dialoghi e copione; controlla trascrizione e clip selezionate.'];
+      warnings.push(...contextWarnings);
       if (shotCacheHits) warnings.push(`Analisi visiva riusata dalla cache locale per ${shotCacheHits} clip.`);
       if (this.state.error) warnings.push(this.state.error);
       if(plan)plan.performance={...(plan.performance || {}),session:{total_seconds:(Date.now()-startedAt)/1000,phase_seconds:{...phaseSeconds,[lastPhase]:(phaseSeconds[lastPhase] || 0)+(Date.now()-phaseStartedAt)/1000}}};
-      this.state.analysis = { script: parsed, sceneSelection, selectedScene, warnings, takes, shots, audio, planningSources, plan, visualReview, parsedBeats: beats };
+      this.state.analysis = { script: parsed, sceneSelection, selectedScene, warnings, takes, shots, audio, planningSources, plan, visualReview, coverageSources, parsedBeats: beats };
       this.state.stage = selectedScene?'review':'awaiting_scene';
       if(selectedScene)progress('complete',8,100,'Analisi completata');
       else progress('awaiting-scene',1,12,'Scena ambigua: scegli una o più scene del copione per proseguire');
@@ -261,7 +269,8 @@ class Session {
     } catch (error) { this.state.error = error.message; this.state.stage = 'error'; progress('error', lastPhaseIndex, 0, `Analisi interrotta: ${error.message}`); throw error; }
   }
   useGroq(){const s=this.groq?.status();return Boolean(s?.configured && s.enabled);}
-  async buildPlan(payload, timeoutMs=300000, onProgress) {
+  async buildPlan(payload,timeoutMs=300000,onProgress){const plan=await this.buildPlanCore(payload,timeoutMs,onProgress);const pool=payload.catalog_coverage||this.state.analysis?.coverageSources;if(pool?.length){const ids=new Set((payload.beats||[]).map(b=>b.scene_id).filter(Boolean));if(payload.scene_id)ids.add(payload.scene_id);plan.catalog_coverage=pool.filter(s=>!ids.size||!s.catalog_context?.scene||ids.has(s.catalog_context.scene.scene_id)).map(s=>({media_id:s.media_id,name:s.name,fps:s.fps,duration_frames:s.duration_frames,catalog_context:s.catalog_context}));}return plan;}
+  async buildPlanCore(payload, timeoutMs=300000, onProgress) {
     if(this.useGroq()){
       const prepared=await this.request('prepare_dialogue',payload,timeoutMs);
       const classificationStarted=performance.now();
