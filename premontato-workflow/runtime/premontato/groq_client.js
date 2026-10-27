@@ -12,7 +12,7 @@ function makeRequest(scene,clip){
  return {model:MODEL,reasoning_effort:'none',temperature:.7,top_p:.8,presence_penalty:1.5,max_completion_tokens:900,messages:[{role:'user',content:prompt}]};
 }
 class GroqClient{
- constructor(root,{vault,keyProvider,fetchImpl=globalThis.fetch,sleep=ms=>new Promise(r=>setTimeout(r,ms))}={}){this.root=root;this.vault=vault;this.keyProvider=keyProvider;this.fetchImpl=fetchImpl;this.sleep=sleep;this.controller=null;this.file=path.join(root,'credentials','groq-key.bin');this.configFile=path.join(root,'groq-settings.json');}
+ constructor(root,{vault,keyProvider,fetchImpl=globalThis.fetch,sleep=ms=>new Promise(r=>setTimeout(r,ms))}={}){this.root=root;this.vault=vault;this.keyProvider=keyProvider;this.fetchImpl=fetchImpl;this.sleep=sleep;this.controller=null;this.file=path.join(root,'credentials','groq-key.bin');this.configFile=path.join(root,'groq-settings.json');if(path.basename(root)==='Omni-Cut test'&&!sync.existsSync(this.file)){const shared=path.join(root,'..','Premontato','credentials','groq-key.bin');if(sync.existsSync(shared))this.file=shared;}}
  status(){let enabled=true;try{enabled=JSON.parse(sync.readFileSync(this.configFile,'utf8')).enabled!==false;}catch{}return {configured:!!this.keyProvider || !!process.env.PREMONTATO_GROQ_API_KEY || !!process.env.GROQ_API_KEY || sync.existsSync(this.file),enabled,model:MODEL};}
  async configure({key,enabled}={}){
   if(key!==undefined && (typeof key!=='string' || !/^[A-Za-z0-9_-]{20,300}$/.test(key.trim())))throw Error('Chiave Groq non valida');

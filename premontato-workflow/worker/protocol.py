@@ -8,7 +8,7 @@ from pdf_script import extract_pdf_text
 from transcript_align import select_scene
 
 PROTOCOL = 1
-ACTIONS = {"catalog_preview_frames", "catalog_frames", "render_scene_debug_titles", "catalog_scenes", "ping", "parse_script", "extract_pdf_script", "select_scene", "align", "propose_take_segments", "choose_take", "build_plan", "analyze_shots", "analyze_audio", "pace_plan", "visual_review", "prepare_dialogue", "build_staged"}
+ACTIONS = {"route_scene_edits", "catalog_preview_frames", "catalog_frames", "render_scene_debug_titles", "catalog_scenes", "ping", "parse_script", "extract_pdf_script", "select_scene", "align", "propose_take_segments", "choose_take", "build_plan", "analyze_shots", "analyze_audio", "pace_plan", "visual_review", "prepare_dialogue", "build_staged"}
 
 
 def dispatch(request):
@@ -17,7 +17,10 @@ def dispatch(request):
     action, payload = request.get("action"), request.get("payload", {})
     if action not in ACTIONS:
         raise ValueError("Azione sconosciuta")
-    if action == "ping":
+    if action == "route_scene_edits":
+        from scene_edit_jobs import route_scenes
+        result=route_scenes(payload)
+    elif action == "ping":
         result = {"ready": True}
     elif action == "render_scene_debug_titles":
         from local_audio import render_scene_debug_titles

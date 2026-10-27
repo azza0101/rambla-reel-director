@@ -43,6 +43,7 @@ def evaluate_candidates(candidates,shots,beat,opening,role,stats,report,context_
     for row in useful:
         key=row[2]['media_id']
         if key in seen:continue
+        if len(seen)>=3:break
         seen.add(key)
         if stats.get('disabled'):break
         report(row,False)
@@ -53,6 +54,7 @@ def evaluate_candidates(candidates,shots,beat,opening,role,stats,report,context_
         except Exception as error:
             stats['warnings'].append('Controllo parlante non disponibile: '+str(error));stats['disabled']=True
         report(row,True)
+        if statuses[id(row)]=='visible':break
     return statuses,evidence
 
 def choose_automatic_pool(credible,statuses,role,opening,recent,fps=25,character=None):

@@ -56,3 +56,6 @@ Questo documento è memoria persistente nel repository. Non crea da solo un appr
 ## Flusso automatico e ripartenze (27 ottobre 2026)
 - Analizza e prepara montaggio deve preparare automaticamente il piano, senza conferme intermedie obbligatorie su take, regia, alternative o volti. Il click finale Crea timeline resta esplicito. Debug e correzioni sono in tendine chiuse. Una nuova analisi elimina le vecchie bozze di correzione.
 - Preferire l’ultima take riuscita; nella stessa take preferire l’ultima frase completa buona dopo una ripartenza. Non sostituire una frase completa con un’ultima falsa partenza e non scartare informazioni uniche solo per somiglianza del testo. Le evidenze di parlante e completezza restano necessarie.
+
+## Montaggio multi-scena (27 ottobre 2026)
+- Mai scegliere una sola scena dominante per tutta una giornata di girato. Separare il parlato per scena, pianificare ciascuna indipendentemente e comporre nell’ordine del copione, con gap e titoli quando attivi. Mostrare copertura e battute mancanti per scena; non sostituire lacune con parlato vagamente simile di un’altra scena. Le clip possono contenere più scene e i tempi sorgente devono restare invariati.

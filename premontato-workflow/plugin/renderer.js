@@ -270,7 +270,7 @@ function updateTimelineButton(state=window.__lastReviewState || {}){
  $('beat-review-title').textContent='Debug e modifiche · battute e alternative'+(plan?' · '+(plan.decisions?.length || 0)+' abbinate · '+(plan.unmatched_beats?.length || 0)+' da verificare':'');
  $('make-timeline').disabled=blockers.length>0;
  const box=$('timeline-readiness');box.replaceChildren();
- if(!blockers.length){box.textContent='Pronto: puoi creare la nuova timeline di revisione.';return;}
+ if(!blockers.length){box.textContent='Pronto: puoi creare la nuova timeline di revisione.';if(plan?.scene_jobs){for(const job of plan.scene_jobs){const row=document.createElement('div');row.textContent=job.heading+' · '+(job.status==='ready'?'pronta':job.status==='no_coverage'?'nessuna copertura parlata':job.status==='failed'?'analisi non riuscita':(job.missing?.length||0)+' battute mancanti');box.append(row);}}return;}
  const heading=document.createElement('strong');heading.textContent='Prima di creare la timeline:';box.append(heading);
  for(const item of blockers){const row=document.createElement('div'),button=document.createElement('button');button.type='button';button.className='quiet';button.textContent=item.message;button.addEventListener('click',()=>{const target=$(item.target);if(item.target==='visual-review'){visualReviewOpen=true;syncVisualVisibility(state);$('visual-controls').open=true;}if(item.target==='beats')$('beat-review').open=true;if(item.target==='scene-scope')$('scene-scope-options').open=true;target.scrollIntoView({behavior:'smooth',block:'center'});const focus=target.matches('input,button')?target:target.querySelector('input,select,button');focus?.focus({preventScroll:true});});row.append(button);box.append(row);}
 }
