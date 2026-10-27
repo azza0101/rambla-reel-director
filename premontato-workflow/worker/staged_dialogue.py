@@ -66,7 +66,7 @@ def clean_restarts(units,values):
    if v['start']<=u['end'] or labels[v['id']]!=label or v['text'].strip().endswith(('...','…')):continue
    b=core(v['text']);match=SequenceMatcher(None,a,b,autojunk=False).find_longest_match()
    repeated=len(a)>=2 and ((len(b)>=len(a) and b[:2]==a[:2] and match.size>=min(3,len(a))) or (u['text'].strip().endswith(('...','…')) and len(set(a)&set(b))>=2))
-   if repeated and (u['text'].strip().endswith(('...','…')) or match.size/len(a)>=.8):
+   if repeated and (u['text'].strip().endswith(('...','…')) or match.size==len(a)):
     labels[u['id']]='X';changes.append({'unit':u['id'],'superseded_by':v['id']});break
  return labels,changes
 def _size(source,shots,at=None):

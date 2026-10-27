@@ -42,3 +42,13 @@ class CrossCameraTests(unittest.TestCase):
   self.assertEqual(len(recovered),1)
   out,_=recover_cross_camera(units,labels,sims,25,excluded={'b'})
   self.assertEqual(out['b'],'X')
+
+class RestartPreferenceTests(unittest.TestCase):
+ def test_latest_complete_delivery_supersedes_repeats_but_not_unique_information(self):
+  from staged_dialogue import clean_restarts
+  units=[{"id":"a","text":"Porta pacco fragile domani mattina presto.","start":0,"end":20},{"id":"b","text":"Porta pacco fragile domani mattina presto.","start":30,"end":50},{"id":"c","text":"Porta il pacco...","start":60,"end":70}]
+  labels,changes=clean_restarts(units,{u["id"]:"1/P1" for u in units})
+  self.assertEqual(labels["a"],"X");self.assertEqual(labels["b"],"1/P1");self.assertNotEqual(labels["b"],"X")
+  units[1]["text"]="Porta pacco fragile domani mattina tardi."
+  labels,_=clean_restarts(units,{u["id"]:"1/P1" for u in units})
+  self.assertEqual(labels["a"],"1/P1")
