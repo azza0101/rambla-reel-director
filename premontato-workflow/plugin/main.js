@@ -2,7 +2,7 @@
 const { app, BrowserWindow, ipcMain, dialog, safeStorage, net } = require('electron');
 const path = require('node:path');
 // Also evict stale transitive modules when an older updater loads this entry point.
-require('./module_cache').invalidatePluginModules(require.cache,__dirname);
+require('./ipc_security').invalidatePluginModules(require.cache,__dirname);
 const { pathToFileURL } = require('node:url');
 const { assertTrusted, validateMediaRecords } = require('./ipc_security');
 const { Session, prepareReviewTimeline } = require('./session');
@@ -205,7 +205,7 @@ async function reloadInHost() {
   handlerNames.clear();
   session?.groq.shutdown?.();
   win?.destroy();win=null;session=null;sdk=null;
-  require('./module_cache').invalidatePluginModules(require.cache,__dirname);
+  require('./ipc_security').invalidatePluginModules(require.cache,__dirname);
   try { await require(__filename).launch({initializedSdk:connectedSdk}); }
   catch(error){await dialog.showMessageBox({type:'error',title:'RAMBLA Premontato',message:'Ricaricamento non riuscito. Riapri il pannello dal menu Workspace > Workflow Integrations di Resolve.',detail:error.message});app.quit();throw error;}
   finally{app.removeListener('window-all-closed',holdProcessOpen);}

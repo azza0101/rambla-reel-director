@@ -31,4 +31,12 @@ function validateOverlay(value,parent,media){
  if(!value || value.kind!=='reaction' || value.basis!=='verified_listener' || value.media_id===parent.media_id || !['close','medium'].includes(value.shot_size) || value.speaker_coverage!=='visible' || !value.evidence || value.evidence.verified!==true || value.enabled!==true || !media || value.media_id!==media.media_id || typeof value.take_id!=='string' || !Number.isSafeInteger(value.start_frame) || !Number.isSafeInteger(value.end_frame) || !Number.isSafeInteger(value.offset_frames) || value.offset_frames<0 || value.start_frame<0 || value.end_frame<=value.start_frame || value.end_frame>media.duration_frames || value.offset_frames+value.end_frame-value.start_frame>duration || value.source_ranges!==undefined || value.reaction_before!==undefined || value.reaction_overlay!==undefined)throw Error('Reazione in ascolto non valida');
  return value;
 }
-module.exports = { assertTrusted, validateMediaRecords, validateReaction, validateAction, validateOverlay };
+function invalidatePluginModules(cache,root){
+ const path=require('node:path');root=path.resolve(root);
+ for(const file of Object.keys(cache)){
+  const relative=path.relative(root,file);
+  if(relative&&!path.isAbsolute(relative)&&relative!=='..'&&!relative.startsWith('..'+path.sep)&&/\.(?:js|cjs|json)$/i.test(file))delete cache[file];
+ }
+}
+
+module.exports = { invalidatePluginModules, assertTrusted, validateMediaRecords, validateReaction, validateAction, validateOverlay };
