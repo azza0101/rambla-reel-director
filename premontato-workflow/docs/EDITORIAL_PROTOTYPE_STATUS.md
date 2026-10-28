@@ -12,7 +12,7 @@ Findings:
 - A silent catalogued scene was omitted because the former path required speech. The new visual-scene path includes its actual source extent and reports missing dialogue separately; it does not claim action-level timing intelligence.
 - A short generic fragment was sometimes accepted as complete coverage of a distinctive screenplay line. Stronger filters expose this upstream classification problem, rather than solving scene construction.
 
-Current automated verification: 260 Python tests pass. The JavaScript suite has 262 tests; rerun it before publication. These numbers do not establish editorial quality. Real-source tests used actual saved transcripts/script and current source media, with the configured local model; no handcrafted cut plan or hardcoded production ranges were used.
+Current automated verification: 260 Python tests pass. The JavaScript suite also passes all 262 tests. These numbers do not establish editorial quality. Real-source tests used actual saved transcripts/script and current source media, with the configured local model; no handcrafted cut plan or hardcoded production ranges were used.
 
 Resolve 21.1.0.17 was inspected read-only. No new native timeline was created and no installed plugin was changed by this prototype. Native application of the full revision was deliberately not attempted after scene-plan verification failed. No new release/installer was published.
 
