@@ -12,7 +12,9 @@ const phaseState=[]; let progressStarted=0,lastProgressEvent=null;
  row.innerHTML='<strong>'+phaseNames[index]+'</strong><small data-phase-detail>In attesa</small><progress max="100" value="0" aria-label="'+phaseNames[index]+'"></progress>';
 });
 function phaseClock(seconds){return Math.floor(seconds/60)+'m '+String(seconds%60).padStart(2,'0')+'s';}
+let sceneRetryProgress=null;
 function showProgress(event){
+ if(sceneRetryProgress)sceneRetryProgress.update(event);
  if((event.phase==='preflight' || event.phase==='script' || event.phase==='transcript') && event.percent===0){phaseState.length=0;progressStarted=Date.now();}
  lastProgressEvent={...event,receivedAt:Date.now()};
  $('analysis-progress').hidden=false;$('progress-label').textContent=event.label;
@@ -271,8 +273,44 @@ function updateTimelineButton(state=window.__lastReviewState || {}){
  $('make-timeline').textContent=plan?.ready_for_timeline===false?'Crea bozza incompleta':'Crea timeline';
  $('make-timeline').disabled=blockers.length>0;
  const box=$('timeline-readiness');box.replaceChildren();
- if(!blockers.length){box.textContent=plan?.ready_for_timeline===false?'Puoi creare una BOZZA INCOMPLETA con i tagli disponibili. Le parti mancanti non saranno inventate.':'Pronto: puoi creare la nuova timeline di revisione.';
-  for(const job of plan?.scene_jobs||[]){const row=document.createElement('div');if(job.status==='ready'){row.textContent=job.heading+' · pronta';box.append(row);continue;}const button=document.createElement('button');button.type='button';button.className='quiet';button.textContent=job.heading+' · '+(job.status==='failed'?'analisi non riuscita: '+(job.error||''):job.status==='no_coverage'?'nessuna copertura trovata':(job.missing?.length||0)+' battute mancanti')+' · Mostra dettagli';const details=document.createElement('details'),summary=document.createElement('summary');summary.textContent='Battute da controllare';details.append(summary);const beats=state.analysis?.parsedBeats||state.analysis?.selectedScene?.beats||[];for(const id of job.missing||[]){const b=beats.find(b=>b.beat_id===id),text=document.createElement('div');text.textContent=b?.text||id;details.append(text);}button.addEventListener('click',()=>{details.open=!details.open;if(details.open)details.scrollIntoView({behavior:'smooth',block:'center'});});for(const [engine,label] of [['local','Riprova questa scena'],['online','Secondo parere online']]){const retry=document.createElement('button');retry.type='button';retry.className='secondary';retry.textContent=label;retry.addEventListener('click',async()=>{if(hasPendingFormEdits(state)){showError(new Error('Applica prima le correzioni in bozza'));return;}if(engine==='online'&&!window.confirm('Inviare il testo di questa scena e delle sue trascrizioni ai fornitori online configurati (Groq e possibile fallback OpenRouter)? Video e audio restano locali.'))return;retry.disabled=true;try{$('analysis-progress').hidden=false;showProgress({phase:'plan',phaseIndex:6,percent:0,label:'Ricontrollo: '+job.heading});const next=await window.premontato.retryScene({scene_id:job.scene_id,engine});hydrateProject(next);message('Ricontrollo completato. Le altre scene sono conservate.');}catch(error){showError(error);}finally{retry.disabled=false;}});row.append(retry);}row.append(button,details);box.append(row);}return;}
+ if(!blockers.length || plan?.scene_jobs?.length){box.textContent=blockers.length?blockers.map(b=>b.message).join(' '):plan?.ready_for_timeline===false?'Puoi creare una BOZZA INCOMPLETA con i tagli disponibili. Le parti mancanti non saranno inventate.':'Pronto: puoi creare la nuova timeline di revisione.';
+  const beats=state.analysis?.parsedBeats||state.analysis?.script?.scenes?.flatMap(s=>s.beats)||state.analysis?.selectedScene?.beats||[];
+  const ignored=new Set(plan?.ignored_beats||[]);
+  for(const job of plan?.scene_jobs||[]){
+   if(job.status==='ready')continue;
+   const ids=job.missing||[],active=ids.filter(id=>!ignored.has(id)),allIgnored=Boolean(ids.length&&!active.length||(plan.ignored_scenes||[]).includes(job.scene_id));
+   const row=document.createElement('div');row.style.cssText='margin-top:12px;padding-top:10px;border-top:1px solid #53626a';
+   let reason;
+   if(allIgnored)reason='✓ Ignorata per questo montaggio';
+   else if(job.status==='failed'){
+    const error=job.error||'';
+    reason=/battuta o personaggio sconosciuto/i.test(error)?'Risposta del modello non valida: contiene riferimenti a battute o personaggi inesistenti. Non significa che le battute siano assenti dai video.':/quota|429/i.test(error)?'Quota del fornitore esaurita: analisi non completata.':/abort|timeout|timed out/i.test(error)?'Analisi interrotta o tempo di attesa superato.':'Analisi non completata: '+error;
+   }else reason=job.status==='no_coverage'?'Corrispondenze con clip non trovate per questa scena.':active.length+' battute senza corrispondenza nelle clip analizzate.';
+   const button=document.createElement('button');button.type='button';button.className='quiet';button.textContent=job.heading+' · '+reason+' · Mostra dettagli';if(allIgnored)button.style.color='#81d8bd';
+   const details=document.createElement('details'),summary=document.createElement('summary');summary.textContent=job.status==='failed'?'Testo da ricontrollare (non ancora verificato nei video)':'Elementi segnalati';details.append(summary);
+   async function ignore(beat_ids,value){if(sceneRetryProgress)return;if(hasPendingFormEdits(state)){showError(Error('Applica prima le correzioni in bozza'));return;}try{hydrateProject(await window.premontato.setIgnoredBeats(beat_ids.length?{beat_ids,ignored:value}:{scene_id:job.scene_id,ignored:value}));}catch(e){showError(e);}}
+   for(const id of ids){const b=beats.find(b=>b.beat_id===id),line=document.createElement('label'),check=document.createElement('input');check.type='checkbox';check.checked=ignored.has(id);check.addEventListener('change',()=>ignore([id],check.checked));line.style.display='block';if(check.checked)line.style.color='#81d8bd';line.append(check,document.createTextNode(' '+(check.checked?'✓ Ignorata · ':'Ignora · ')+(b?.text||id)));details.append(line);}
+   button.addEventListener('click',()=>{details.open=!details.open;button.textContent=job.heading+' · '+reason+(details.open?' · Chiudi dettagli':' · Mostra dettagli');});row.append(button);
+   {const label=document.createElement('label'),check=document.createElement('input');check.type='checkbox';check.checked=Boolean(allIgnored);check.addEventListener('change',()=>ignore(ids,check.checked));label.style.display='block';label.append(check,document.createTextNode(allIgnored?' ✓ Ignorata per questo montaggio':' Ignora tutti gli elementi segnalati della scena (da aggiungere in post)'));if(allIgnored)label.style.color='#81d8bd';row.append(label);}
+   const progress=document.createElement('div');progress.hidden=true;progress.setAttribute('aria-live','polite');const detail=document.createElement('div'),bar=document.createElement('progress');bar.max=100;bar.style.cssText='display:block;width:100%;margin:8px 0';progress.append(detail,bar);
+   for(const [engine,label] of [['local','Riprova questa scena'],['online','Secondo parere online']]){
+    const retry=document.createElement('button');retry.type='button';retry.className='secondary';retry.dataset.sceneRetry='true';retry.textContent=label;
+    retry.addEventListener('click',async()=>{
+     if(sceneRetryProgress)return;
+     if(hasPendingFormEdits(state)){showError(new Error('Applica prima le correzioni in bozza'));return;}
+     if(engine==='online'&&!window.confirm('Inviare il testo di questa scena e delle sue trascrizioni ai fornitori online configurati (Groq e possibile fallback OpenRouter)? Video e audio restano locali.'))return;
+     const started=Date.now();let lastEvent=Date.now(),labelText='Avvio ricontrollo '+(engine==='local'?'locale':'online')+'…';
+     progress.hidden=false;bar.removeAttribute('value');
+     const paint=()=>{detail.textContent=labelText+' · '+phaseClock(Math.round((Date.now()-started)/1000))+(Date.now()-lastEvent>15000?' · Elaborazione in corso, in attesa del prossimo avanzamento':'');};
+     sceneRetryProgress={update:e=>{lastEvent=Date.now();labelText=e.label||'Elaborazione in corso';if(e.total>0&&Number.isFinite(e.current)){bar.value=Math.min(100,100*e.current/e.total);}else if(e.phase==='complete'){bar.value=100;}else bar.removeAttribute('value');paint();}};
+     const timer=setInterval(paint,1000);paint();document.querySelectorAll('[data-scene-retry]').forEach(b=>b.disabled=true);$('make-timeline').disabled=true;
+     try{const next=await window.premontato.retryScene({scene_id:job.scene_id,engine});sceneRetryProgress=null;hydrateProject(next);message('Ricontrollo completato. Le altre scene sono conservate.');}
+     catch(error){labelText='Ricontrollo non riuscito: '+(error.message||error);bar.value=0;paint();showError(error);}
+     finally{clearInterval(timer);sceneRetryProgress=null;document.querySelectorAll('[data-scene-retry]').forEach(b=>b.disabled=false);updateButton();$('make-timeline').disabled=timelineBlockers({matched:window.__lastReviewState?.analysis?.plan?.decisions?.length,visualPending:Boolean(window.__lastReviewState?.analysis?.plan?.visual_review_required),dirty:visualDirty,pending:hasPendingFormEdits(window.__lastReviewState||{})}).length>0;}
+    });row.append(retry);
+   }
+   row.append(progress,details);box.append(row);
+  }return;}
  const heading=document.createElement('strong');heading.textContent='Prima di creare la timeline:';box.append(heading);
  for(const item of blockers){const row=document.createElement('div'),button=document.createElement('button');button.type='button';button.className='quiet';button.textContent=item.message;button.addEventListener('click',()=>{const target=$(item.target);if(item.target==='visual-review'){visualReviewOpen=true;syncVisualVisibility(state);$('visual-controls').open=true;}if(item.target==='beats')$('beat-review').open=true;if(item.target==='scene-scope')$('scene-scope-options').open=true;target.scrollIntoView({behavior:'smooth',block:'center'});const focus=target.matches('input,button')?target:target.querySelector('input,select,button');focus?.focus({preventScroll:true});});row.append(button);box.append(row);}
 }
