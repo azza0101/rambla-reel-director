@@ -214,6 +214,12 @@ class Session {
   assertProject(identity) {
     if (!identity.projectId || identity.projectId !== this.state.projectId) throw new Error('Progetto Resolve cambiato: riapri il progetto delle clip caricate oppure carica una nuova selezione');
   }
+  timelineCreationContext(identity) {
+    this.assertProject(identity);
+    if(!identity.timelineId)throw Error('Apri una timeline Resolve prima di crearne una nuova');
+    if(!Number.isFinite(identity.fps)||!Number.isFinite(this.state.fps)||Math.abs(identity.fps-this.state.fps)>.001)throw Error('Il frame rate della timeline aperta è diverso da quello del piano: apri una timeline con '+this.state.fps+' fps');
+    return {...this.state,timelineId:identity.timelineId};
+  }
   assertContext(identity) {
     this.assertProject(identity);
     const ids = new Set((identity.selected || []).map(item => item.media_id));
