@@ -32,3 +32,22 @@ class ReaderFrameTests(unittest.TestCase):
    def get_batch_frames_by_index(self,indices):self.indices=indices;return [Frame(i-1) for i in indices]
   r=Reader.__new__(Reader);r.decoder=Decoder();r.count=200;r.bias=1;r.fps=25;r.tb=1/25000;r.origin=0;r.timestamp_checks=0
   images=r.frames([0,50,100]);self.assertEqual(r.decoder.indices,[1,51,101]);self.assertEqual(r.timestamp_checks,3);self.assertEqual(images[0].tolist(),[[[3,2,1]]])
+class ReaderWindowBoundsTests(unittest.TestCase):
+ def test_preroll_cannot_seek_window_past_native_eof(self):
+  from video_reader import Reader
+  from unittest.mock import Mock
+  r=Reader.__new__(Reader);r.count=100;r.native_count=100;r.bias=1;r.decoder=Mock()
+  with self.assertRaises(ValueError):r.window(50,50)
+  r.decoder.seek_to_index.assert_not_called()
+ def test_negative_native_index_rejected_before_seek(self):
+  from video_reader import Reader
+  from unittest.mock import Mock
+  r=Reader.__new__(Reader);r.count=100;r.native_count=100;r.bias=-1;r.decoder=Mock()
+  with self.assertRaises(ValueError):r.window(0,10)
+  r.decoder.seek_to_index.assert_not_called()
+ def test_resolve_count_cannot_override_shorter_native_stream(self):
+  from video_reader import Reader
+  from unittest.mock import Mock
+  r=Reader.__new__(Reader);r.count=120;r.native_count=100;r.bias=0;r.decoder=Mock()
+  with self.assertRaises(ValueError):r.frames([110])
+  r.decoder.get_batch_frames_by_index.assert_not_called()

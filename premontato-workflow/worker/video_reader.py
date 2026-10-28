@@ -28,6 +28,8 @@ class Reader:
   rates=[float(Fraction(info[k])) for k in ('avg_frame_rate','r_frame_rate')]
   if any(abs(rate-self.fps)>.001 for rate in rates):raise ValueError('Video GPU: frame rate variabile/non compatibile')
   self.decoder=nvc.SimpleDecoder(self.path,use_device_memory=False,output_color_type=nvc.OutputColorType.RGB)
+  self.native_count=len(self.decoder)
+  if self.native_count<=0:raise ValueError('Video GPU: conteggio nativo non valido')
   self.decoder.seek_to_index(0);first=self.decoder.get_batch_frames(1)
   if not first:raise ValueError('Video GPU vuoto')
   self.bias=index_bias(first[0].timestamp,self.tb,self.origin,self.fps)
@@ -45,11 +47,12 @@ class Reader:
   return rgb[:,:,::-1].copy()
  def frames(self,indices):
   if not indices:return []
-  if any(i<0 or i>=self.count-max(0,self.bias) for i in indices):raise ValueError('Video GPU: indice fuori sorgente')
+  if any(type(i) is not int or i<0 or i>=self.count or i+self.bias<0 or i+self.bias>=getattr(self,'native_count',self.count) for i in indices):raise ValueError('Video GPU: indice fuori sorgente')
   frames=self.decoder.get_batch_frames_by_index([i+self.bias for i in indices])
   if len(frames)!=len(indices):raise ValueError('Video GPU: fotogrammi mancanti')
   return [self.convert(f,i) for i,f in zip(indices,frames)]
  def window(self,start,count):
+  if type(start) is not int or type(count) is not int or count<=0 or start<0 or start+count>self.count or start+self.bias<0 or start+count+self.bias>getattr(self,'native_count',self.count):raise ValueError('Video GPU: campione oltre il limite nativo')
   self.decoder.seek_to_index(start+self.bias);result=[]
   while len(result)<count:
    frames=self.decoder.get_batch_frames(min(5,count-len(result)))
