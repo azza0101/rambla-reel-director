@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const connectorPath=[path.join(__dirname,'runtime','premontato','groq_client.js'),path.join(__dirname,'..','runtime','premontato','groq_client.js')].find(p=>require('node:fs').existsSync(p));
-const {GroqClient}=require(connectorPath);
+const {GroqClient}=require(path.join(path.dirname(connectorPath),'local_gemma')); 
 const catalogEdit=require(path.join(path.dirname(connectorPath),'catalog_edit_context'));
 const automaticEditing=require(path.join(path.dirname(connectorPath),'automatic_editing'));
 
@@ -72,12 +72,12 @@ function workerEnvironment(source = process.env, cachePath) {
   return result;
 }
 
-function prepareReviewTimeline(plan, confirmed) {
+function prepareReviewTimeline(plan, confirmed, allowIncomplete=false) {
   if (confirmed !== true) throw new Error('Conferma gli abbinamenti prima di creare la timeline');
-  if(plan?.ready_for_timeline===false)throw new Error('Montaggio incompleto: risolvere le scene fallite o le battute mancanti prima di creare la timeline');
+  if(plan?.ready_for_timeline===false&&allowIncomplete!==true)throw new Error('Montaggio incompleto: scegli esplicitamente la creazione di una bozza');
   if (plan?.visual_review_required) throw new Error('Conferma le inquadrature e i personaggi nella revisione visiva');
   if (!plan?.decisions?.length) throw new Error('Nessuna battuta abbinata: timeline non creata');
-  return { decisions: plan.decisions, omitted: plan.unmatched_beats?.length || 0 };
+  return { decisions: plan.decisions, omitted: plan.unmatched_beats?.length || 0, ...(plan.ready_for_timeline===false?{partial:true}:{}) };
 }
 
 
@@ -134,6 +134,50 @@ class Session {
     const rendered=await this.request('render_scene_debug_titles',{...settings,scenes:[...frames].map(([number,frames])=>({number,frames}))},600000);
     return {decisions:annotated,sceneDebug:{enabled:true,gap_frames:Math.round(2*settings.fps),assets:rendered.assets}};
   }
+  setIgnoredBeats(request) {
+    if(this.retryingScene)throw Error('Attendi il ricontrollo in corso');
+    const p=this.state.analysis?.plan,ids=request?.beat_ids;
+    if(request?.scene_id){const job=p?.scene_jobs?.find(j=>j.scene_id===request.scene_id);if(!job||job.status==='ready'||job.missing?.length||typeof request.ignored!=='boolean')throw Error('Scena visiva non valida');const scenes=new Set(p.ignored_scenes||[]);request.ignored?scenes.add(job.scene_id):scenes.delete(job.scene_id);p.ignored_scenes=[...scenes];this.refreshIgnoredBeats(p);return this.getReviewState();}
+    const missing=new Set(p?.scene_jobs?.flatMap(j=>j.missing||[])||[]);
+    if(!p||typeof request?.ignored!=='boolean'||!Array.isArray(ids)||!ids.length||ids.length>10000||ids.some(id=>!missing.has(id)))throw Error('Puoi ignorare soltanto battute mancanti segnalate');
+    const ignored=new Set(p.ignored_beats||[]);for(const id of ids)request.ignored?ignored.add(id):ignored.delete(id);
+    p.ignored_beats=[...ignored];this.refreshIgnoredBeats(p);return this.getReviewState();
+  }
+  refreshIgnoredBeats(p) {
+    const ignored=new Set(p.ignored_beats||[]);
+    p.unmatched_beats=p.scene_jobs.flatMap(j=>j.missing||[]).filter(id=>!ignored.has(id));
+    p.ready_for_timeline=!p.unmatched_beats.length&&!p.scene_jobs.some(j=>j.status==='failed'&&!(p.ignored_scenes||[]).includes(j.scene_id)&&!(j.missing?.length&&j.missing.every(id=>ignored.has(id))));
+  }
+  async retryScene(request) {
+    const a=this.state.analysis,old=a?.plan,scenes=a?.script?.scenes||[];
+    const scene=scenes.find(s=>s.scene_id===request?.scene_id);
+    if(!scene||old?.engine!=='scene_jobs_v1'||!old.scene_jobs?.some(j=>j.scene_id===scene.scene_id))throw Error('Scena non disponibile per il ricontrollo');
+    if(!['local','online'].includes(request.engine))throw Error('Motore di ricontrollo non valido');
+    if(this.retryingScene)throw Error('Un ricontrollo scena è già in corso');
+    this.retryingScene=true;const original=this.groq,nonce=original.retryNonce;
+    try{
+      if(request.engine==='online'){
+        this.groq=new (require(connectorPath).GroqClient)(this.root,{vault:original.vault,fetchImpl:original.fetchImpl,diagnostic:original.diagnostic,keyProvider:original.keyProvider});
+        const status=this.groq.status();if(!status.configured)throw Error('Fornitore online non configurato');this.groq.status=()=>({...status,enabled:true});
+      }else if(this.groq.status().provider!=='local')throw Error('Gemma locale non attivo: selezionalo nelle impostazioni');
+      this.groq.retryNonce=require('node:crypto').randomUUID();
+      this.onProgress?.({phase:'plan',phaseIndex:6,percent:0,label:'Ricontrollo solo '+scene.heading});
+      const routed=await this.request('route_scene_edits',{scenes,sources:a.planningSources,fps:this.state.fps||25},300000);
+      const job=routed.jobs.find(j=>j.scene.scene_id===scene.scene_id);
+      if(!job?.sources.length)throw Error('Nessun parlato attribuito a questa scena: le altre scene sono conservate');
+      const part=await this.buildPlanCore({scene_id:scene.scene_id,beats:scene.beats,sources:job.sources,shots:a.shots||[],directions:this.state.directions,semantic:true,fps:this.state.fps||25},300000);
+      const ids=new Set(scene.beats.map(b=>b.beat_id));
+      const byBeat=new Map(scenes.flatMap(s=>s.beats.map(b=>[b.beat_id,s.scene_id])));
+      const order=new Map(scenes.map((s,i)=>[s.scene_id,i]));
+      const decisions=[...old.decisions.filter(d=>!ids.has(d.beat_id)),...part.decisions].map(d=>structuredClone(d)).sort((x,y)=>(order.get(byBeat.get(x.beat_id))??999)-(order.get(byBeat.get(y.beat_id))??999));
+      let cursor=0;for(const d of decisions){d.timeline_start_frame=cursor;cursor+=d.end_frame-d.start_frame+(d.action_after||[]).reduce((n,x)=>n+x.end_frame-x.start_frame,0);}
+      const jobs=old.scene_jobs.map(j=>j.scene_id===scene.scene_id?{scene_id:j.scene_id,heading:j.heading,status:part.unmatched_beats?.length?'incomplete':'ready',missing:part.unmatched_beats||[],decisions:part.decisions.length}:j);
+      const plan={...old,decisions,base_decisions:structuredClone(decisions),review_beats:[...(old.review_beats||[]).filter(b=>!ids.has(b.beat_id)),...(part.review_beats||[])],unmatched_beats:jobs.flatMap(j=>j.missing||[]),scene_jobs:jobs,ready_for_timeline:!jobs.some(j=>j.status==='failed'||j.missing?.length),planning_summary:{...old.planning_summary,scene_jobs:jobs},warnings:[...(old.warnings||[]),...(part.warnings||[])]};
+      this.refreshIgnoredBeats(plan);this.state.analysis={...a,plan};this.state.stage='review';this.state.uiDraft=null;
+      this.onProgress?.({phase:'complete',phaseIndex:8,percent:100,label:'Ricontrollo completato: '+scene.heading});
+      return this.getReviewState();
+    }finally{original.retryNonce=nonce;this.groq=original;this.retryingScene=false;}
+  }
   async selectScenes(request) {
     const analysis=this.state.analysis,scenes=analysis?.script?.scenes || [],ids=request?.scene_ids;
     if(!Array.isArray(ids) || !ids.length || ids.length>100 || new Set(ids).size!==ids.length || ids.some(id=>typeof id!=='string' || !scenes.some(scene=>scene.scene_id===id)))throw new Error('Selezione scene non valida');
@@ -169,6 +213,12 @@ class Session {
   setMedia(records, identity) { this.state.media = records; this.state.transcripts = []; this.state.mediaFingerprints=null; this.state.uiDraft=null; this.state.analysis = null; this.state.projectId = identity.projectId; this.state.timelineId = identity.timelineId; return records.map(({ media_id, name, duration_frames, people = [] }) => ({ media_id, name, duration_frames, people })); }
   assertProject(identity) {
     if (!identity.projectId || identity.projectId !== this.state.projectId) throw new Error('Progetto Resolve cambiato: riapri il progetto delle clip caricate oppure carica una nuova selezione');
+  }
+  timelineCreationContext(identity) {
+    this.assertProject(identity);
+    if(!identity.timelineId)throw Error('Apri una timeline Resolve prima di crearne una nuova');
+    if(!Number.isFinite(identity.fps)||!Number.isFinite(this.state.fps)||Math.abs(identity.fps-this.state.fps)>.001)throw Error('Il frame rate della timeline aperta è diverso da quello del piano: apri una timeline con '+this.state.fps+' fps');
+    return {...this.state,timelineId:identity.timelineId};
   }
   assertContext(identity) {
     this.assertProject(identity);
@@ -289,7 +339,7 @@ class Session {
         const scene=job.scene;this.onProgress?.({phase:'plan',phaseIndex:6,percent:89+Math.round(6*index/Math.max(1,routed.jobs.length)),label:'Scena '+(index+1)+'/'+routed.jobs.length+' · '+scene.heading});
         if(!job.sources.length){jobs.push({scene_id:scene.scene_id,heading:scene.heading,status:'no_coverage',missing:scene.beats.filter(b=>b.kind==='dialogue').map(b=>b.beat_id)});continue;}
         try{const scenePayload={...payload,scenes:undefined,scene_id:scene.scene_id,beats:scene.beats,sources:job.sources};
-          const checkpoint=path.isAbsolute(this.root)&&job.sources.every(s=>s.path)?path.join(this.root,'cache','scene-edits',require('node:crypto').createHash('sha256').update(JSON.stringify({version:'scene-jobs-10',groq:this.useGroq(),payload:scenePayload,settings:this.state.pacingSettings})).digest('hex')+'.json'):null;
+          const checkpoint=path.isAbsolute(this.root)&&job.sources.every(s=>s.path)?path.join(this.root,'cache','scene-edits',require('node:crypto').createHash('sha256').update(JSON.stringify({version:'scene-jobs-11',provider:this.groq?.cacheIdentity||this.groq?.status?.().model||'local',groq:this.useGroq(),payload:scenePayload,settings:this.state.pacingSettings})).digest('hex')+'.json'):null;
           let part;if(checkpoint)try{part=JSON.parse(await fs.readFile(checkpoint,'utf8'));if(part.recovery?.retryable)part=null;}catch{}
           if(!part){part=await this.buildPlanCore(scenePayload,timeoutMs,onProgress);if(this.useGroq()&&part.unmatched_beats?.length){this.onProgress?.({phase:'plan',phaseIndex:6,percent:93,label:scene.heading+' · ricontrollo '+part.unmatched_beats.length+' battute nelle trascrizioni originali'});const recovery=await this.request('expand_scene_edits',{scene,scenes:payload.scenes,missing:part.unmatched_beats,sources:payload.sources,selected_sources:job.sources,fps:payload.fps},timeoutMs);let recoveryFailed=false;if(recovery.expanded_media||recovery.focus_ranges?.length){try{const retry=await this.buildPlanCore({...scenePayload,sources:recovery.sources,recovery_focus:recovery.focus_ranges,missing_focus:part.unmatched_beats},timeoutMs,onProgress);if((retry.unmatched_beats?.length||0)<part.unmatched_beats.length&&(retry.unmatched_beats||[]).every(id=>part.unmatched_beats.includes(id)))part=retry;}catch(error){if(error.code==='GROQ_DAILY_QUOTA'||/annullat|cancel|abort/i.test(error.message))throw error;recoveryFailed=true;part.warnings=(part.warnings||[]).concat('Recupero aggiuntivo non completato: '+error.message);}}part.recovery={attempted:true,expanded_media:recovery.expanded_media,retryable:recoveryFailed};}if(part.engine!=='groq_staged_v1')part=await this.pacePlan({plan:part,sources:job.sources,beats:scene.beats,shots:payload.shots,audio:{},fps:payload.fps,settings:this.state.pacingSettings});if(checkpoint){await fs.mkdir(path.dirname(checkpoint),{recursive:true});await fs.writeFile(checkpoint+'.tmp',JSON.stringify(part));await fs.rename(checkpoint+'.tmp',checkpoint);}}
           for(const b of part.review_beats||[])b.beat_id=scene.scene_id+':'+b.beat_id;

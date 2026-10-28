@@ -1,6 +1,8 @@
 'use strict';
 const { app, BrowserWindow, ipcMain, dialog, safeStorage, net } = require('electron');
 const path = require('node:path');
+// Also evict stale transitive modules when an older updater loads this entry point.
+require('./ipc_security').invalidatePluginModules(require.cache,__dirname);
 const { pathToFileURL } = require('node:url');
 const { assertTrusted, validateMediaRecords } = require('./ipc_security');
 const { Session, prepareReviewTimeline } = require('./session');
@@ -33,8 +35,8 @@ function handle(name, fn) {
     if (!['cancelAnalysis','cancelCatalog'].includes(name)) busy = true;
     try {
       let result=await fn(...args);
-      if(['analyze','updateDecision','confirmVisualReview','setPacing','setDirections','selectScenes','setScriptPages','confirmTakes','selectMedia','selectScript','transcribeSelected'].includes(name)){const pending=session.state.uiDraft?.directions;session.state.uiDraft=['updateDecision','confirmVisualReview','setPacing','confirmTakes'].includes(name) && pending ? {directions:pending} : null;}
-      if(['selectScript','selectMedia','transcribeSelected','analyze','updateDecision','confirmVisualReview','setPacing','setDirections','selectScenes','setScriptPages','confirmTakes','createReviewTimeline','loadVisualReview','saveDraft'].includes(name)){
+      if(['analyze','updateDecision','confirmVisualReview','setPacing','setDirections','selectScenes','setIgnoredBeats','retryScene','setScriptPages','confirmTakes','selectMedia','selectScript','transcribeSelected'].includes(name)){const pending=session.state.uiDraft?.directions;session.state.uiDraft=['updateDecision','confirmVisualReview','setPacing','confirmTakes'].includes(name) && pending ? {directions:pending} : null;}
+      if(['selectScript','selectMedia','transcribeSelected','analyze','updateDecision','confirmVisualReview','setPacing','setDirections','selectScenes','setIgnoredBeats','retryScene','setScriptPages','confirmTakes','createReviewTimeline','loadVisualReview','saveDraft'].includes(name)){
         try{await session.saveAutosave();}catch(error){session.saveError='Salvataggio automatico non riuscito: '+error.message;}
         publishProjectStatus();if(result?.stage)result=session.getReviewState();
       }
@@ -95,6 +97,17 @@ async function start() {
   handle('analyze', async () => { const current = await adapter.snapshot(await getSdk(),{includeSelection:false}); session.assertProject(current); session.state.timelineId=current.timelineId; session.state.timeline=current.timeline; await saveResolve(session.state.projectId).catch(()=>{}); if(typeof catalogEditingEnabled!=='undefined' && catalogEditingEnabled){const {sources,context}=await catalog.prepareEditing(await getSdk(),(media,options)=>adapter.getSelectedTranscriptions(sdk,{media,transcribeMissing:true,...options,onProgress:({name})=>session.onProgress?.({phase:'transcript',phaseIndex:-1,percent:0,label:'Leggo il parlato disponibile: '+name})}));session.setTranscripts(sources,current.fps,{...current,selected:session.state.media});return session.analyze({catalogContext:context});} if(session.state.media?.some(media=>!(session.state.transcripts || []).some(source=>source.media_id===media.media_id && source.segments?.length))){const sources=await adapter.getSelectedTranscriptions(await getSdk(),{media:session.state.media,transcribeMissing:true,onProgress:({current,total,name})=>session.onProgress?.({phase:'transcript',phaseIndex:-1,percent:Math.round(current/total*100),current,total,label:'Recupero trascrizioni Resolve: '+name+' · '+current+'/'+total})});session.setTranscripts(sources,current.fps,{...current,selected:session.state.media});} return session.analyze(); });
   handle('cancelAnalysis', async () => session.cancelAnalysis());
   handle('configureGroq',async options=>{await session.groq.configure(options);session.state.analysis=null;session.state.uiDraft=null;session.state.stage='idle';await session.saveAutosave();return session.getReviewState();});
+  const localEngine=session.groq;app.once('will-quit',()=>localEngine.shutdown?.());
+  handle('localGemmaStatus',async()=>session.groq.localStatus());
+  handle('configureLocalGemma',async enabled=>{
+    if(typeof enabled!=='boolean')throw Error('Stato locale non valido');
+    if(!enabled)return session.groq.configureLocal({enabled:false});
+    const engine=await dialog.showOpenDialog(win,{title:'Seleziona llama-server.exe',properties:['openFile'],filters:[{name:'Motore llama.cpp',extensions:['exe']}]});
+    if(engine.canceled)return session.groq.localStatus();
+    const model=await dialog.showOpenDialog(win,{title:'Seleziona Gemma 4 GGUF',properties:['openFile'],filters:[{name:'Modello locale',extensions:['gguf']}]});
+    if(model.canceled)return session.groq.localStatus();
+    return session.groq.configureLocal({enabled:true,executable:engine.filePaths[0],model:model.filePaths[0]});
+  });
   handle('openRouterStatus',async()=>session.groq.openRouterStatus());
   handle('configureOpenRouter',async key=>session.groq.configureOpenRouter(key));
   handle('getReviewState', async () => session.getReviewState());
@@ -118,6 +131,8 @@ async function start() {
   handle('confirmVisualReview', async request => session.confirmVisualReview(request));
   handle('setDirections', async options => session.setDirections(options));
   handle('setPacing', async options => session.setPacing(options));
+  handle('setIgnoredBeats',request=>session.setIgnoredBeats(request));
+  handle('retryScene',async request=>{const current=await adapter.snapshot(await getSdk(),{includeSelection:false});session.assertProject(current);return session.retryScene(request);});
   handle('selectScenes',async request=>{const current=await adapter.snapshot(await getSdk(),{includeSelection:false});session.assertProject(current);return session.selectScenes(request);});
   handle('setScriptPages',async request=>session.setScriptPages(request));
   handle('confirmTakes', async segments => session.confirmTakes(segments));
@@ -125,10 +140,10 @@ async function start() {
     await session.validateMediaUnchanged();
     await saveResolve(session.state.projectId);
     const plan = session.state.analysis?.plan;
-    const review = prepareReviewTimeline(plan, request?.confirmed);
-    const sdk=await getSdk(),context=await adapter.getResolve(sdk);
+    const review = prepareReviewTimeline(plan, request?.confirmed, request?.allowIncomplete === true);
+    const sdk=await getSdk(),current=await adapter.snapshot(sdk,{includeSelection:false}),expected=session.timelineCreationContext(current),context=await adapter.getResolve(sdk);
     const debug=await session.prepareTimelineDebug(review.decisions,request?.sceneDebug ?? session.state.uiDraft?.sceneDebug ?? true,{fps:Number(await context.timeline.GetSetting('timelineFrameRate')),width:Number(await context.timeline.GetSetting('timelineResolutionWidth')) || 1920,height:Number(await context.timeline.GetSetting('timelineResolutionHeight')) || 1080});
-    const created = await adapter.createTimeline(sdk, `PREMONTATO v${require('./package.json').version} - ${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}`, debug.decisions, {...session.state,sceneDebug:debug.sceneDebug,activateCreated:true});
+    const created = await adapter.createTimeline(sdk, `${review.partial ? "BOZZA INCOMPLETA - " : ""}PREMONTATO v${require('./package.json').version} - ${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}`, debug.decisions, {...expected,sceneDebug:debug.sceneDebug,activateCreated:true});
     if(created.opened){session.state.timelineId=created.timelineId;session.state.timeline=created.timelineName;}
     try{await saveResolve(session.state.projectId);}catch{}
     return { ...created, included: review.decisions.length, omitted: review.omitted };
@@ -190,9 +205,9 @@ async function reloadInHost() {
   app.removeListener('window-all-closed',onAllWindowsClosed);
   for(const name of handlerNames)ipcMain.removeHandler(name);
   handlerNames.clear();
+  session?.groq.shutdown?.();
   win?.destroy();win=null;session=null;sdk=null;
-  const modules=['main.js','session.js','runtime/premontato/groq_client.js','runtime/premontato/editorial_client.js','runtime/premontato/video_coliche.json','updater.js','resolve_adapter.js','ipc_security.js','day_catalog_resolve.js','day_catalog_store.js','day_catalog_session.js','day_catalog_ipc.js','runtime/premontato/day_catalog_clips.js','runtime/premontato/day_catalog_vision.js','package.json'];
-  for(const name of modules)delete require.cache[require.resolve(path.join(__dirname,name))];
+  require('./ipc_security').invalidatePluginModules(require.cache,__dirname);
   try { await require(__filename).launch({initializedSdk:connectedSdk}); }
   catch(error){await dialog.showMessageBox({type:'error',title:'RAMBLA Premontato',message:'Ricaricamento non riuscito. Riapri il pannello dal menu Workspace > Workflow Integrations di Resolve.',detail:error.message});app.quit();throw error;}
   finally{app.removeListener('window-all-closed',holdProcessOpen);}

@@ -69,3 +69,7 @@ Questo documento è memoria persistente nel repository. Non crea da solo un appr
 - La scelta di che cosa viene detto deve precedere la scelta dell’inquadratura. Un volto riconosciuto o una master disponibile non autorizzano a sostituire una battuta con contenuto diverso. La lunghezza di una variante non prova da sola completezza.
 - Inviti e risposte generiche seguono le battute vicine della stessa ripresa; non sono ancore autonome per cambiare scena. Le riprese di scene adiacenti possono essere ricontrollate per contenuti distintivi, senza propagare frasi generiche da un episodio all’altro.
 - Un respiro interno alla frase non deve distruggerne il contesto per il classificatore. Conservare tempi e indici originali delle parole; i limiti temporali di analisi si esprimono nel frame rate della sorgente.
+
+## Bozze incomplete e avvisi (28 ottobre 2026)
+- Preferenza esplicita: scene fallite o battute mancanti devono essere segnalate chiaramente senza impedire una bozza con i tagli disponibili. Il click finale deve indicare che la bozza e incompleta e il nome della timeline deve conservarlo. Non inventare contenuti per colmare lacune.
+- Gli avvisi devono mostrare rapidamente scena e battute coinvolte. Ricontrollare i casi problematici con il motore selezionato; nessun passaggio implicito a fornitori online.

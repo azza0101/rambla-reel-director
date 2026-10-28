@@ -155,8 +155,8 @@ function fieldColorKey(edit){
 function assignFieldColors(edits){
  const keys=edits.map((e,i)=>e.field_color_key || fieldColorKey(e,i));
  const ordered=[...new Set(keys)].sort((a,b)=>(JSON.parse(a)[0]==='wide'?0:1)-(JSON.parse(b)[0]==='wide'?0:1) || a.localeCompare(b));
- if(ordered.length>FIELD_COLORS.length)throw Error('Troppi campi distinti per i '+FIELD_COLORS.length+' colori disponibili in Resolve: i colori non vengono riutilizzati su campi diversi');
- const colors=new Map(ordered.map((key,i)=>[key,FIELD_COLORS[i]]));return keys.map(key=>colors.get(key));
+ // Resolve has a finite palette. Preserve unique assigned colors; overflow is neutral.
+ const colors=new Map(ordered.map((key,i)=>[key,FIELD_COLORS[i] || '']));return keys.map(key=>colors.get(key));
 }
 
 async function createTimeline(sdk, name, edits, expected = {}) {
@@ -212,6 +212,8 @@ async function createTimeline(sdk, name, edits, expected = {}) {
   const insertions=[...expanded,...overlays];
   const layout = edit => edit.video_only || edit.kind==='reaction' ? 3 : 2;
   const fieldColors=assignFieldColors(insertions);
+  const neutralFields=new Set(insertions.filter((e,i)=>!fieldColors[i]).map(fieldColorKey)).size;
+  const colorWarnings=neutralFields?['Limite di '+FIELD_COLORS.length+' colori Resolve: '+neutralFields+' campi aggiuntivi lasciati neutri. I tagli sono stati mantenuti.']:[];
   const version=require('./package.json').version;
   const originalFolder=await pool.GetCurrentFolder();
   let targetFolder=await pool.GetRootFolder();
@@ -286,7 +288,7 @@ async function createTimeline(sdk, name, edits, expected = {}) {
       if(mediaId!==String(edit.media_id))throw new Error('Sorgente del taglio non corretta');
       const videoTrack=await item.GetTrackTypeAndIndex();if(videoTrack[0]!=='video' || Number(videoTrack[1])!==track)throw new Error('Resolve ha inserito il video sulla traccia errata');
       await verifySource(item);
-      const setColor=async target=>{if(!await target.SetClipColor(color) || await target.GetClipColor()!==color)throw new Error('Resolve non ha applicato il colore del campo');};
+      const setColor=async target=>{if(color){if(!await target.SetClipColor(color) || await target.GetClipColor()!==color)throw new Error('Resolve non ha applicato il colore del campo');}else if(await target.GetClipColor()){if(!await target.ClearClipColor() || await target.GetClipColor())throw Error('Resolve non ha rimosso il colore ereditato dal campo neutro');}};
       await setColor(item);
       // A video-only source may legitimately have no audio mapping.
       const audioSource=edit.audio_source || edit,audioMedia=byId.get(audioSource.media_id);
@@ -343,7 +345,7 @@ async function createTimeline(sdk, name, edits, expected = {}) {
   if(expected.activateCreated===true){
     if(!await project.SetCurrentTimeline(newTimeline) || String(await (await project.GetCurrentTimeline()).GetUniqueId())!==String(await newTimeline.GetUniqueId()))throw new Error('Timeline creata, ma Resolve non l’ha aperta. Cercala in '+folderPath.join(' / '));
   }
-  return {opened:expected.activateCreated===true,timelineId:String(await newTimeline.GetUniqueId()),timelineName:String(await newTimeline.GetName()),sourceTimelineId:beforeTimeline,included:edits.length,segments:insertions.length,audioSegments,sceneLabels:sceneSpans.length,sceneGaps:Math.max(0,sceneSpans.length-1),videoTracks,audioTracks:3,audioFormat:'mono',version,folderPath:folderPath.join(' / ')};
+  return {opened:expected.activateCreated===true,timelineId:String(await newTimeline.GetUniqueId()),timelineName:String(await newTimeline.GetName()),sourceTimelineId:beforeTimeline,included:edits.length,segments:insertions.length,audioSegments,sceneLabels:sceneSpans.length,sceneGaps:Math.max(0,sceneSpans.length-1),videoTracks,audioTracks:3,audioFormat:'mono',version,folderPath:folderPath.join(' / '),neutralFields,warnings:colorWarnings};
 }
 
 async function saveCurrentProject(sdk, expectedProjectId) {
