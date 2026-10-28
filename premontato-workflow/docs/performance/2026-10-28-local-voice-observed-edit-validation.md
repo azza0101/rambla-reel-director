@@ -25,7 +25,7 @@ A separate Gemma local-only performance-selection test returned in 9.57 seconds.
 
 ## Automatic and native verification
 
-- Python: tools/run_python_tests.py, 318 passed, including plain packaging contracts.
+- Python: tools/run_python_tests.py, 321 passed, including plain packaging contracts.
 - JavaScript: bundled Node, node --test --test-isolation=none tests/unit/*.test.cjs, 262 passed, no skips.
 - Resolve API readback: Studio 21.1.0.17, project test-mcp, 25 fps; current timeline and count of 50 timelines unchanged. No synthetic project or new timeline was created: the editorial gate failed before native materialization. This is explicitly NOT a passed native edit test.
 - Private footage, transcripts, audio, embeddings, rendered MP4s and API credentials are excluded from Git. Models/dependencies were isolated on Z. No global dependency or other product was changed.
@@ -45,3 +45,5 @@ Before this can replace the installed editor: robust scene/performance boundarie
 Final cross-scene replay of the latest code: scene 5 and scene 7 were rerun without manual cuts. Scene 5: 20 events / 1 cuts / 3.59 s; 20 unresolved speaker turns; 0 verified reactions; short shots []. Scene 7: 38 events / 11 cuts / 37.59 s; 15 unresolved speaker turns; 0 verified reactions; short shots [5, 7]. Neither result passes the editorial gate.
 
 Warm replay after the single-profile gate: scene 5 2.48 s, 20 unresolved turns. scene 7 10.92 s, 15 unresolved turns. This does not change the failed editorial release gate.
+
+Additional multi-face regression: active identity selection now uses the strongest independently tracked ASD face with a margin, rather than the first face surviving an IoU tie. Ambiguous active faces and arbitrary listener selection from a two-shot are rejected. Three RED-to-GREEN tests pass. The real excerpt rerun after face-cache invalidation took 41.33 s and still retained the same 34 events with 15 unresolved coverage turns and zero verified overlays; this fix alone does not establish an editorial improvement. Final Python count: 321.

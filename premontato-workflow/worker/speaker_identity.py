@@ -16,6 +16,14 @@ def match_role(vector,gallery):
  if not ranked or ranked[0][0]<.38 or len(ranked)>1 and ranked[0][0]-ranked[1][0]<.10:return None
  return ranked[0][1]
 
+def identity_boxes(evidence,active_only=True):
+ valid=[f for f in evidence.get('faces',[]) if len(f.get('box',[]))==4 and f.get('tracking',0)>=.6]
+ if not active_only:return [valid[0]['box']] if len(valid)==1 else []
+ active=[f for f in valid if f.get('mean',0)>=.5 and f.get('positive',0)>=.5]
+ active.sort(key=lambda f:f['mean']*f['positive'],reverse=True)
+ if not active or len(active)>1 and active[0]['mean']*active[0]['positive']-active[1]['mean']*active[1]['positive']<.35:return []
+ return [active[0]['box']]
+
 _RECOGNIZER=None;_DETECTOR=None
 
 def face_vector(source,start,end,evidence,active_only=True):
@@ -25,9 +33,7 @@ def face_vector(source,start,end,evidence,active_only=True):
  if _RECOGNIZER is None:_RECOGNIZER=cv2.FaceRecognizerSF.create(str(recognition_model_path()),'')
  if _DETECTOR is None:_DETECTOR=cv2.FaceDetectorYN.create(str(model_path()),'',(640,360),.7,.3,5000)
  path=Path(source['path']);stat=path.stat();fps=float(source['fps']);frame=min(source['duration_frames']-1,max(0,(start+end)//2))
- boxes=[f['box'] for f in evidence.get('faces',[]) if len(f.get('box',[]))==4 and ((f.get('mean',0)>=.5 and f.get('positive',0)>=.5) if active_only else f.get('tracking',0)>=.6)]
- # A listener cannot be selected arbitrarily from multiple visible faces.
- if not active_only and len(boxes)!=1:return None
+ boxes=identity_boxes(evidence,active_only)
  if not boxes:return None
  def compute():
   try:
@@ -44,7 +50,7 @@ def face_vector(source,start,end,evidence,active_only=True):
   face=face.copy();face[:14]*=1.5
   return _RECOGNIZER.feature(_RECOGNIZER.alignCrop(image,face)).flatten().tolist()
  root=Path(os.environ.get('PREMONTATO_CACHE_DIR','.premontato-cache'))/'speaker-faces'
- result,_=get_or_compute(root,[str(path.resolve()),stat.st_size,stat.st_mtime_ns],'sface-role-v1',{'frame':frame,'boxes':boxes},compute)
+ result,_=get_or_compute(root,[str(path.resolve()),stat.st_size,stat.st_mtime_ns],'sface-role-v2-active-winner',{'frame':frame,'boxes':boxes},compute)
  return result
 
 

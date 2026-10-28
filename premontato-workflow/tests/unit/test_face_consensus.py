@@ -21,3 +21,16 @@ class FaceConsensusTests(unittest.TestCase):
   from speaker_identity import consensus_gallery
   rows=[{'role':'a','media_id':'m','vector':[1,0],'quality':1.}]*100+[{'role':'b','media_id':'n'+str(i),'vector':[1,0],'quality':1.} for i in range(3)]
   self.assertEqual({r['role'] for r in consensus_gallery(rows)},{'b'})
+class ActiveIdentitySelectionTests(unittest.TestCase):
+ def test_stronger_active_face_wins_over_first_face_in_detection_order(self):
+  from speaker_identity import identity_boxes
+  weak={'box':[0,0,50,50],'tracking':1.,'mean':.6,'positive':.7};strong={'box':[100,0,50,50],'tracking':1.,'mean':3.,'positive':.9}
+  self.assertEqual(identity_boxes({'faces':[weak,strong]},True),[strong['box']])
+ def test_competing_active_faces_are_not_arbitrarily_assigned(self):
+  from speaker_identity import identity_boxes
+  rows=[{'box':[x,0,50,50],'tracking':1.,'mean':2.,'positive':.9} for x in [0,100]]
+  self.assertEqual(identity_boxes({'faces':rows},True),[])
+ def test_listener_does_not_choose_a_random_face_in_two_shot(self):
+  from speaker_identity import identity_boxes
+  rows=[{'box':[x,0,50,50],'tracking':1.,'mean':-2.,'positive':0.} for x in [0,100]]
+  self.assertEqual(identity_boxes({'faces':rows},False),[])
