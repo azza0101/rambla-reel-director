@@ -25,7 +25,7 @@ function makeEditorialRequest(scene,labels,directions){
  return {model:MODEL,reasoning_effort:'none',temperature:.2,max_completion_tokens:2500,messages:[{role:'user',content:prompt}]};
 }
 async function planEditorial(client,scene,labels,directions,onProgress=()=>{}){
- const request=makeEditorialRequest(scene,labels,directions),key=crypto.createHash('sha256').update(JSON.stringify({version:VERSION,request})).digest('hex'),file=path.join(client.root,'cache','editorial',key+'.json');
+ const request=makeEditorialRequest(scene,labels,directions),key=crypto.createHash('sha256').update(JSON.stringify({version:VERSION,provider:client.cacheIdentity||'cloud',request})).digest('hex'),file=path.join(client.root,'cache','editorial',key+'.json');
  try{const cached=validateEditorial(scene,labels,JSON.parse(await fs.readFile(file,'utf8')));onProgress({phase:'editorial',cache_hit:true});return {...cached,summary:{status:'ready',version:VERSION,model:MODEL,calls:0,cache_hit:true}};}catch{}
  const token=await client.key();client.controller=new AbortController();const signal=client.controller.signal;let calls=0;
  try{

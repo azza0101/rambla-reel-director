@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const connectorPath=[path.join(__dirname,'runtime','premontato','groq_client.js'),path.join(__dirname,'..','runtime','premontato','groq_client.js')].find(p=>require('node:fs').existsSync(p));
-const {GroqClient}=require(connectorPath);
+const {GroqClient}=require(path.join(path.dirname(connectorPath),'local_gemma')); 
 const catalogEdit=require(path.join(path.dirname(connectorPath),'catalog_edit_context'));
 const automaticEditing=require(path.join(path.dirname(connectorPath),'automatic_editing'));
 

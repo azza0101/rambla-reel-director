@@ -95,6 +95,17 @@ async function start() {
   handle('analyze', async () => { const current = await adapter.snapshot(await getSdk(),{includeSelection:false}); session.assertProject(current); session.state.timelineId=current.timelineId; session.state.timeline=current.timeline; await saveResolve(session.state.projectId).catch(()=>{}); if(typeof catalogEditingEnabled!=='undefined' && catalogEditingEnabled){const {sources,context}=await catalog.prepareEditing(await getSdk(),(media,options)=>adapter.getSelectedTranscriptions(sdk,{media,transcribeMissing:true,...options,onProgress:({name})=>session.onProgress?.({phase:'transcript',phaseIndex:-1,percent:0,label:'Leggo il parlato disponibile: '+name})}));session.setTranscripts(sources,current.fps,{...current,selected:session.state.media});return session.analyze({catalogContext:context});} if(session.state.media?.some(media=>!(session.state.transcripts || []).some(source=>source.media_id===media.media_id && source.segments?.length))){const sources=await adapter.getSelectedTranscriptions(await getSdk(),{media:session.state.media,transcribeMissing:true,onProgress:({current,total,name})=>session.onProgress?.({phase:'transcript',phaseIndex:-1,percent:Math.round(current/total*100),current,total,label:'Recupero trascrizioni Resolve: '+name+' · '+current+'/'+total})});session.setTranscripts(sources,current.fps,{...current,selected:session.state.media});} return session.analyze(); });
   handle('cancelAnalysis', async () => session.cancelAnalysis());
   handle('configureGroq',async options=>{await session.groq.configure(options);session.state.analysis=null;session.state.uiDraft=null;session.state.stage='idle';await session.saveAutosave();return session.getReviewState();});
+  app.once('will-quit',()=>session.groq.shutdown?.());
+  handle('localGemmaStatus',async()=>session.groq.localStatus());
+  handle('configureLocalGemma',async enabled=>{
+    if(typeof enabled!=='boolean')throw Error('Stato locale non valido');
+    if(!enabled)return session.groq.configureLocal({enabled:false});
+    const engine=await dialog.showOpenDialog(win,{title:'Seleziona llama-server.exe',properties:['openFile'],filters:[{name:'Motore llama.cpp',extensions:['exe']}]});
+    if(engine.canceled)return session.groq.localStatus();
+    const model=await dialog.showOpenDialog(win,{title:'Seleziona Gemma 4 GGUF',properties:['openFile'],filters:[{name:'Modello locale',extensions:['gguf']}]});
+    if(model.canceled)return session.groq.localStatus();
+    return session.groq.configureLocal({enabled:true,executable:engine.filePaths[0],model:model.filePaths[0]});
+  });
   handle('openRouterStatus',async()=>session.groq.openRouterStatus());
   handle('configureOpenRouter',async key=>session.groq.configureOpenRouter(key));
   handle('getReviewState', async () => session.getReviewState());

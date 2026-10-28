@@ -361,7 +361,8 @@ $('host').addEventListener('click',async()=>{try{await refreshConnection();messa
  try{await refreshConnection();}catch(error){showError(error);}
 })();
 
-$('settings-open').addEventListener('click',async()=>{try{const state=await window.premontato.openRouterStatus();$('openrouter-status').textContent=state.configured?'Chiave OpenRouter salvata.':'Nessuna chiave OpenRouter salvata.';$('settings-dialog').showModal();}catch(error){showError(error);}});
+for(const [id,enabled] of [['local-gemma-enable',true],['local-gemma-disable',false]])$(id).addEventListener('click',async()=>{try{const s=await window.premontato.configureLocalGemma(enabled);$('local-gemma-status').textContent=s.enabled?'Gemma locale attivo':'Fornitori online selezionati';}catch(error){$('local-gemma-status').textContent=error.message;}});
+$('settings-open').addEventListener('click',async()=>{try{const state=await window.premontato.openRouterStatus();$('openrouter-status').textContent=state.configured?'Chiave OpenRouter salvata.':'Nessuna chiave OpenRouter salvata.';const local=await window.premontato.localGemmaStatus();$('local-gemma-status').textContent=local.enabled?'Gemma locale attivo':'Gemma locale disattivato';$('settings-dialog').showModal();}catch(error){showError(error);}});
 $('settings-close').addEventListener('click',()=>{$('groq-key').value='';$('openrouter-key').value='';$('settings-dialog').close();});
 $('settings-dialog').addEventListener('close',()=>{$('groq-key').value='';$('openrouter-key').value='';});
 $('openrouter-save').addEventListener('click',async()=>{const field=$('openrouter-key'),button=$('openrouter-save');button.disabled=true;try{await window.premontato.configureOpenRouter(field.value.trim());$('openrouter-status').textContent='Chiave OpenRouter salvata e protetta.';}catch(error){$('openrouter-status').textContent=error.message || String(error);}finally{field.value='';button.disabled=false;}});
