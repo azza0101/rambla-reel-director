@@ -1,3 +1,12 @@
+function planVisualScene(scene,pool,fps){
+ const sources=(pool||[]).filter(s=>s.catalog_context?.media_id===s.media_id&&s.catalog_context?.scene?.scene_id===scene.scene_id&&s.catalog_context.coverage_eligible===true&&s.catalog_context.role==='visual_coverage'&&s.duration_frames>0&&Math.abs((s.fps||fps)-fps)<.001);
+ if(!sources.length||!scene.beats.some(b=>b.kind==='action'))return null;
+ const source=sources.toSorted((a,b)=>(b.take_index||0)-(a.take_index||0)||String(b.name||b.media_id).localeCompare(String(a.name||a.media_id)))[0];
+ const action=scene.beats.find(b=>b.kind==='action');const decision={kind:'action',decision_id:scene.scene_id+':visual-action',beat_id:action.beat_id,scene_id:scene.scene_id,media_id:source.media_id,take_id:source.take_id||source.media_id+':visual',start_frame:0,end_frame:source.duration_frames,shot_size:'unknown',speaker_coverage:'unknown',basis:'catalogued_scene_action',matched_text:action.text,confidence:0,coverage:1,alternatives:[],warnings:['Scena visiva dal catalogo: conservato l’intervallo sorgente completo; azioni non temporizzate automaticamente.']};
+ const missing=scene.beats.filter(b=>b.kind==='dialogue').map(b=>b.beat_id);
+ return {engine:'catalog_visual_v1',decisions:[decision],base_decisions:[decision],review_beats:[action],unmatched_beats:missing,warnings:decision.warnings,planning_summary:{visual_scene:true,unverified_action_timing:true}};
+}
+
 'use strict';
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -259,7 +268,7 @@ class Session {
       const detectedScene = await this.request('select_scene', {
         scenes: parsed.scenes, transcript: sources.flatMap(source => source.segments)
       });
-      const sceneSelection=automaticEditing.automaticScope(parsed.scenes,detectedScene,[...entries.values()],sources.map(s=>s.media_id));
+      const sceneSelection=automaticEditing.automaticScope(parsed.scenes,detectedScene,[...entries.values()].filter(e=>this.state.media.some(m=>m.media_id===e.media_id)),sources.map(s=>s.media_id));
       let selectedScene = sceneSelection.scene;
       if(!selectedScene?.beats?.length)throw new Error('Nessuna scena leggibile nel copione: verifica il PDF.');
       if(sceneSelection.scope_basis==='script_search')contextWarnings.push('Nessuna scena unica: il motore cerca automaticamente le battute nel copione completo. Solo gli intervalli abbinati entrano nel piano.');
@@ -337,14 +346,14 @@ class Session {
       const routed=await this.request('route_scene_edits',{scenes:payload.scenes,sources:payload.sources,fps:payload.fps},timeoutMs);const plans=[],jobs=[];
       for(const [index,job] of routed.jobs.entries()){
         const scene=job.scene;this.onProgress?.({phase:'plan',phaseIndex:6,percent:89+Math.round(6*index/Math.max(1,routed.jobs.length)),label:'Scena '+(index+1)+'/'+routed.jobs.length+' · '+scene.heading});
-        if(!job.sources.length){jobs.push({scene_id:scene.scene_id,heading:scene.heading,status:'no_coverage',missing:scene.beats.filter(b=>b.kind==='dialogue').map(b=>b.beat_id)});continue;}
+        if(!job.sources.length){const visual=planVisualScene(scene,payload.catalog_coverage,payload.fps);if(visual){plans.push(visual);jobs.push({scene_id:scene.scene_id,heading:scene.heading,status:visual.unmatched_beats.length?'incomplete':'ready',missing:visual.unmatched_beats,decisions:visual.decisions.length,visual_scene:true});}else jobs.push({scene_id:scene.scene_id,heading:scene.heading,status:'no_coverage',missing:scene.beats.filter(b=>b.kind==='dialogue').map(b=>b.beat_id)});continue;}
         try{const scenePayload={...payload,scenes:undefined,scene_id:scene.scene_id,beats:scene.beats,sources:job.sources};
-          const checkpoint=path.isAbsolute(this.root)&&job.sources.every(s=>s.path)?path.join(this.root,'cache','scene-edits',require('node:crypto').createHash('sha256').update(JSON.stringify({version:'scene-jobs-12-close-first',provider:this.groq?.cacheIdentity||this.groq?.status?.().model||'local',groq:this.useGroq(),payload:scenePayload,settings:this.state.pacingSettings})).digest('hex')+'.json'):null;
+          const checkpoint=path.isAbsolute(this.root)&&job.sources.every(s=>s.path)?path.join(this.root,'cache','scene-edits',require('node:crypto').createHash('sha256').update(JSON.stringify({version:'scene-jobs-20-resolve-voices',provider:this.groq?.cacheIdentity||this.groq?.status?.().model||'local',groq:this.useGroq(),payload:scenePayload,settings:this.state.pacingSettings})).digest('hex')+'.json'):null;
           let part;if(checkpoint)try{part=JSON.parse(await fs.readFile(checkpoint,'utf8'));if(part.recovery?.retryable)part=null;}catch{}
           if(!part){part=await this.buildPlanCore(scenePayload,timeoutMs,onProgress);if(this.useGroq()&&part.unmatched_beats?.length){this.onProgress?.({phase:'plan',phaseIndex:6,percent:93,label:scene.heading+' · ricontrollo '+part.unmatched_beats.length+' battute nelle trascrizioni originali'});const recovery=await this.request('expand_scene_edits',{scene,scenes:payload.scenes,missing:part.unmatched_beats,sources:payload.sources,selected_sources:job.sources,fps:payload.fps},timeoutMs);let recoveryFailed=false;if(recovery.expanded_media||recovery.focus_ranges?.length){try{const retry=await this.buildPlanCore({...scenePayload,sources:recovery.sources,recovery_focus:recovery.focus_ranges,missing_focus:part.unmatched_beats},timeoutMs,onProgress);if((retry.unmatched_beats?.length||0)<part.unmatched_beats.length&&(retry.unmatched_beats||[]).every(id=>part.unmatched_beats.includes(id)))part=retry;}catch(error){if(error.code==='GROQ_DAILY_QUOTA'||/annullat|cancel|abort/i.test(error.message))throw error;recoveryFailed=true;part.warnings=(part.warnings||[]).concat('Recupero aggiuntivo non completato: '+error.message);}}part.recovery={attempted:true,expanded_media:recovery.expanded_media,retryable:recoveryFailed};}if(part.engine!=='groq_staged_v1')part=await this.pacePlan({plan:part,sources:job.sources,beats:scene.beats,shots:payload.shots,audio:{},fps:payload.fps,settings:this.state.pacingSettings});if(checkpoint){await fs.mkdir(path.dirname(checkpoint),{recursive:true});await fs.writeFile(checkpoint+'.tmp',JSON.stringify(part));await fs.rename(checkpoint+'.tmp',checkpoint);}}
           for(const b of part.review_beats||[])b.beat_id=scene.scene_id+':'+b.beat_id;
           for(const d of part.decisions){d.scene_id=scene.scene_id;d.decision_id=scene.scene_id+':'+(d.decision_id||d.beat_id);}if(part.base_decisions)part.base_decisions=JSON.parse(JSON.stringify(part.decisions));
-          plans.push(part);jobs.push({scene_id:scene.scene_id,heading:scene.heading,status:part.unmatched_beats?.length?'incomplete':'ready',missing:part.unmatched_beats||[],decisions:part.decisions.length});
+          plans.push(part);jobs.push({scene_id:scene.scene_id,heading:scene.heading,status:part.unmatched_beats?.length?'incomplete':'ready',missing:part.unmatched_beats||[],decisions:part.decisions.length,verification:{voice_profiles:part.planning_summary?.resolve_voice_profiles||0,voice_corrections:part.planning_summary?.resolve_voice_corrections?.length||0,speaker_uncertain:part.planning_summary?.speaker_uncertain_moments||0,performances:part.planning_summary?.selected_performances||[]}});
         }catch(error){if(error.code==='GROQ_DAILY_QUOTA'||/annullat|cancel|abort/i.test(error.message))throw error;this.onProgress?.({phase:'plan',phaseIndex:6,percent:89+Math.round(6*index/Math.max(1,routed.jobs.length)),label:scene.heading+' · problema: '+error.message});jobs.push({scene_id:scene.scene_id,heading:scene.heading,status:'failed',error:error.message,missing:scene.beats.filter(b=>b.kind==='dialogue').map(b=>b.beat_id)});}
       }
       const decisions=plans.flatMap(p=>p.decisions);let cursor=0;for(const d of decisions){d.timeline_start_frame=cursor;cursor+=d.end_frame-d.start_frame+ (d.action_after||[]).reduce((n,a)=>n+a.end_frame-a.start_frame,0);}
@@ -629,3 +638,5 @@ class Session {
 }
 
 module.exports = { annotateSceneEdits, Session, GroqClient, workerEnvironment, prepareReviewTimeline };
+
+module.exports.planVisualScene=planVisualScene;

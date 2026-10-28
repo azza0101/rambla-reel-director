@@ -57,7 +57,7 @@ def route_scenes(payload,encoder=None):
    rows=[u for u in clip['units'] if routes[(key,u['id'])]==scene['scene_id']]
    if not rows:continue
    words=[w for seg in source['segments'] for w in seg.get('words',[])]
-   segments=[{'text':u['text'],'start_frame':u['start'],'end_frame':u['end'],'words':[w for w in words if w['start_frame']>=u['start'] and w['end_frame']<=u['end']]} for u in rows]
+   segments=[{'text':u['text'],'speaker_name':u.get('speaker_name'),'speaker_reliable':u.get('speaker_reliable',False),'start_frame':u['start'],'end_frame':u['end'],'words':[w for w in words if w['start_frame']>=u['start'] and w['end_frame']<=u['end']]} for u in rows]
    selected.append({**source,'segments':segments})
   jobs.append({'scene':scene,'sources':selected,'status':'ready' if selected else 'no_coverage'})
  for clip,u in units:
@@ -107,7 +107,7 @@ def expand_missing(payload,encoder=None):
   segments={(s['start_frame'],s['end_frame']):s for s in (old or {}).get('segments',[])}
   words=[w for s in source['segments'] for w in s.get('words',[])]
   before=len(segments)
-  for bounds,u in rows.items():segments.setdefault(bounds,{'text':u['text'],'start_frame':u['start'],'end_frame':u['end'],'words':[w for w in words if w['start_frame']>=u['start'] and w['end_frame']<=u['end']]})
+  for bounds,u in rows.items():segments.setdefault(bounds,{'text':u['text'],'speaker_name':u.get('speaker_name'),'speaker_reliable':u.get('speaker_reliable',False),'start_frame':u['start'],'end_frame':u['end'],'words':[w for w in words if w['start_frame']>=u['start'] and w['end_frame']<=u['end']]})
   if len(segments)>before:expanded+=1
   result.append({**source,'segments':sorted(segments.values(),key=lambda s:s['start_frame'])})
  return {'sources':result,'expanded_media':expanded,'focus_ranges':[{'take_id':key,'start_frame':u['start'],'end_frame':u['end']} for key,rows in selected.items() for u in rows.values()]}

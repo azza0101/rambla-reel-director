@@ -79,3 +79,9 @@ Questo documento è memoria persistente nel repository. Non crea da solo un appr
 - Un campo sconosciuto non deve ricevere il premio di un primo piano. La posizione avanzata dentro un file e un criterio di spareggio limitato, non un vantaggio capace di battere campo e parlante corretti.
 - La stima camera/personaggio e solo un indizio per selezionare candidati. Verificare i candidati finali sul loro intervallo effettivo, con fallback conservativo e cache; una risposta incerta non va pubblicata come parlante visibile.
 - Limite esplicito: questi controlli non certificano il completamento di gesti o lo stato degli oggetti. Le scene mute del catalogo richiedono un percorso di montaggio delle azioni; non considerarle automaticamente coperte dal solo catalogo.
+## Selezione per esecuzione coerente (28 ottobre 2026)
+- Priorita esplicita: ultima take buona per ciascun campo e per scena, prima della scelta dei singoli stacchi. Una maggiore somiglianza letterale non autorizza a recuperare una frase vecchia frammentando un'esecuzione valida.
+- Recuperare take precedenti soltanto per contenuto realmente mancante o inutilizzabile; evitare jump cut fra take diverse dello stesso campo/persona.
+- Prima della creazione Resolve servono controlli interni per scena su testo, ripetizioni, ordine e continuita. Un'anteprima ridotta non certifica da sola correttezza narrativa, gesti e visibilita del parlante.
+- Scena muta presente nel catalogo e nel copione: includerla come azione, senza dipendere dall'esistenza di parole trascritte. La battuta mancante resta segnalata separatamente.
+- Preferenze richieste; lo stato di implementazione e i limiti verificati vanno dichiarati nella consegna tecnica.
