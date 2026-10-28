@@ -129,6 +129,19 @@ def latest_complete_run(rows,all_rows,labels,beat,fps,encode=None):
  eligible=[g for g in groups if not g[-1]['text'].strip().endswith(('...','…')) and rank(g)[0]>=best[0]-.08 and rank(g)[1]>=best[1]*.6]
  return max(eligible,key=lambda g:g[-1]['end']) if eligible else max(groups,key=rank)
 
+def select_dialogue_reference(choices,beat,coverage,sources,encode,master=None):
+ """Choose what was said before choosing which camera should show it."""
+ keys=list(choices);texts=[' '.join(u['text'] for u in choices[cid]) for cid in keys]
+ vectors=encode(texts+[beat['text']]);similarities=vectors[:-1]@vectors[-1];target=set(core(beat['text']));scores={}
+ for i,cid in enumerate(keys):
+  observed=set(core(texts[i]));overlap=len(target&observed)
+  precision=overlap/max(1,len(observed));recall=overlap/max(1,len(target))
+  f1=2*precision*recall/max(precision+recall,1e-9)
+  scores[cid]=.65*float(similarities[i])+.35*f1
+ best=max(scores.values());eligible=[cid for cid in keys if scores[cid]>=best-.025]
+ if master in eligible:return master
+ return max(eligible,key=lambda cid:(sources[cid].get('take_index',0),sources[cid].get('name',''),max(u['end'] for u in choices[cid]),coverage.get((cid,beat.get('character')))=='visible',cid))
+
 def _size(source,shots,at=None):
  rows=[s for s in shots if s['media_id']==source['media_id'] and s.get('confidence',0)>=.5 and s.get('shot_size') in {'wide','medium','close','detail'}]
  if at is not None:
@@ -248,14 +261,7 @@ def build_staged(payload,report=lambda e:None):
    if info(u)[0]==bid:choices.setdefault(u['clip'],[]).append(u)
   if not choices:continue
   choices={cid:latest_complete_run(rows,[u for u in units if u['clip']==cid],labels,beat,fps,encoder.encode) for cid,rows in choices.items()}
-  if master in choices:reference=master
-  else:
-   target=set(core(beat['text']))
-   def reference_score(cid):
-    rows=choices[cid];observed=set(core(' '.join(u['text'] for u in rows)))
-    status=coverage.get((cid,beat.get('character')),'unknown')
-    return (status=='visible',len(target&observed)/max(1,len(target)),len(observed),max(u['start'] for u in rows),cid)
-   reference=max(choices,key=reference_score)
+  reference=select_dialogue_reference(choices,beat,coverage,sources,encoder.encode,master)
   group=[]
   for u in choices[reference]:
    if group:

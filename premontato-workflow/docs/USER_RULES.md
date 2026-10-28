@@ -64,3 +64,8 @@ Questo documento è memoria persistente nel repository. Non crea da solo un appr
 - Ogni errore osservato sul girato deve diventare una regola generica e un test: separazione dialoghi/azioni nel copione, turni ripetuti dello stesso personaggio, confini fra scene, ultima esecuzione completa, interiezioni significative, rifiuto di abbinamenti generici e limiti del servizio. Non inserire nomi file, timecode o piani editoriali specifici scritti dall’agente come soluzione.
 - La presenza di almeno un taglio per battuta non dimostra qualità: verificare anche duplicazioni di take, copertura del testo e continuità. Non eliminare le interiezioni uniche per deduplicare. Mettere in evidenza i momenti non verificabili, senza sostituirli con altro parlato.
 - Rispettare il budget Groq comunicato dalle intestazioni; distinguere retry per quota e retry per output non valido. Cache solo dopo validazione degli identificatori e dei ruoli.
+
+## Contenuto e contesto prima delle camere (28 ottobre 2026)
+- La scelta di che cosa viene detto deve precedere la scelta dell’inquadratura. Un volto riconosciuto o una master disponibile non autorizzano a sostituire una battuta con contenuto diverso. La lunghezza di una variante non prova da sola completezza.
+- Inviti e risposte generiche seguono le battute vicine della stessa ripresa; non sono ancore autonome per cambiare scena. Le riprese di scene adiacenti possono essere ricontrollate per contenuti distintivi, senza propagare frasi generiche da un episodio all’altro.
+- Un respiro interno alla frase non deve distruggerne il contesto per il classificatore. Conservare tempi e indici originali delle parole; i limiti temporali di analisi si esprimono nel frame rate della sorgente.

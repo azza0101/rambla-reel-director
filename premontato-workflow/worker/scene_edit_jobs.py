@@ -1,15 +1,20 @@
 """Scene-local speech routing before independent edit planning."""
 import copy
 
+def meaningful(text):
+ from staged_dialogue import core
+ generic=core("vieni entra andiamo andare vai va ecco dai qui qua lì là subito aspetta vado facciamo io tu lui lei noi voi loro me te mi ti ci vi mio tuo suo nostro vostro")
+ return set(core(text))-set(generic)
+
 def route_scenes(payload,encoder=None):
  from staged_dialogue import prepare_dialogue,core
  if encoder is None:
   from transcript_align import get_semantic_encoder
   encoder=get_semantic_encoder()
  scenes=payload['scenes'];beats=[b for s in scenes for b in s['beats'] if b.get('kind')=='dialogue'];prepared=prepare_dialogue({'beats':beats,'sources':payload['sources'],'fps':payload['fps']})
- targets=[b for b in beats if len(core(b['text']))>=2]
- if not targets:return {'jobs':[],'unassigned':[]}
+ targets=[b for b in beats if len(meaningful(b['text']))>=2]
  units=[(c,u) for c in prepared['clips'] for u in c['units']]
+ if not targets:return {'jobs':[{'scene':s,'sources':[],'status':'no_coverage'} for s in scenes],'unassigned':[{'take_id':c['key'],'start_frame':u['start'],'end_frame':u['end'],'text':u['text']} for c,u in units]}
  scores=encoder.encode([u['text'] for c,u in units])@encoder.encode([b['text'] for b in targets]).T
  routes={};quality={};unassigned=[]
  for i,(clip,u) in enumerate(units):
@@ -18,7 +23,7 @@ def route_scenes(payload,encoder=None):
   ranked=sorted(per.items(),key=lambda x:x[1],reverse=True)
   sid,score=ranked[0];margin=score-(ranked[1][1] if len(ranked)>1 else 0)
   quality[(clip['key'],u['id'])]=(score,margin,len(core(u['text'])))
-  routes[(clip['key'],u['id'])]=sid if len(core(u['text']))>=2 and score>=.67 and margin>=.08 else None
+  routes[(clip['key'],u['id'])]=sid if len(meaningful(u['text']))>=2 and score>=.67 and margin>=.08 else None
  # Short replies inherit nearby anchored context within the same performance only.
  for clip in prepared['clips']:
   rows=clip['units'];anchors=[i for i,u in enumerate(rows) if routes[(clip['key'],u['id'])]]
@@ -65,21 +70,29 @@ def expand_missing(payload,encoder=None):
   from transcript_align import get_semantic_encoder
   encoder=get_semantic_encoder()
  scene=payload['scene'];missing=set(payload['missing']);originals=payload['sources'];existing=payload['selected_sources'];allowed={s['media_id'] for s in existing}
- sources=[s for s in originals if s['media_id'] in allowed or ((s.get('catalog_context') or {}).get('scene') or {}).get('scene_id')==scene['scene_id']]
+ positions={s['scene_id']:i for i,s in enumerate(payload.get('scenes',[]))}
+ long_missing=any(b['beat_id'] in missing and len(meaningful(b['text']))>=4 for b in scene['beats'])
+ def primary(s):
+  c=s.get('catalog_context') or {}
+  return (c.get('scene') or {}).get('scene_id') if c.get('media_id')==s['media_id'] else None
+ def adjacent(s):return long_missing and scene['scene_id'] in positions and primary(s) in positions and abs(positions[scene['scene_id']]-positions[primary(s)])==1
+ sources=[s for s in originals if s['media_id'] in allowed or primary(s)==scene['scene_id'] or adjacent(s)]
  if not sources:return {'sources':existing,'expanded_media':0,'focus_ranges':[]}
  prepared=prepare_dialogue({'beats':scene['beats'],'sources':sources,'fps':payload['fps']});flat=[(c,u) for c in prepared['clips'] for u in c['units']]
- queries=[]
+ queries=[];query_beats=[]
  for i,b in enumerate(scene['beats']):
   if b['beat_id'] not in missing:continue
   neighbors=' '.join(x['text'] for x in scene['beats'][max(0,i-1):i+2] if x.get('kind')=='dialogue')
-  queries.append(b['text']+' '+neighbors)
+  queries.append(b['text']+' '+neighbors);query_beats.append(b)
  if not queries or not flat:return {'sources':existing,'expanded_media':0}
- sims=encoder.encode(queries)@encoder.encode([u['text'] for c,u in flat]).T
+ vectors=encoder.encode([u['text'] for c,u in flat]);sims=encoder.encode(queries)@vectors.T;direct=encoder.encode([b['text'] for b in query_beats])@vectors.T
+ by_key={s.get('take_id',s['media_id']):s for s in sources}
  selected={}
- for scores in sims:
+ for qi,scores in enumerate(sims):
   seen=set()
   for k in sorted(range(len(flat)),key=lambda k:float(scores[k]),reverse=True):
-   clip,u=flat[k]
+   clip,u=flat[k];source=by_key[clip['key']]
+   if source['media_id'] not in allowed and primary(source)!=scene['scene_id'] and (len(meaningful(query_beats[qi]['text']))<4 or len(meaningful(query_beats[qi]['text'])&meaningful(u['text']))<2 or float(direct[qi,k])<.60):continue
    if float(scores[k])<.45:break
    if clip['key'] in seen:continue
    seen.add(clip['key']);rows=clip['units'];at=rows.index(u)

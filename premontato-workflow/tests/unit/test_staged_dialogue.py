@@ -123,3 +123,26 @@ class NaturalSpeechUnitTests(unittest.TestCase):
   source={'media_id':'m','duration_frames':100,'segments':[{'words':[{'text':'Arrivi?','start_frame':0,'end_frame':20},{'text':'Certo.','start_frame':21,'end_frame':40}]}]}
   result=prepare_dialogue({'beats':[],'sources':[source],'fps':25})
   self.assertEqual(len(result['clips'][0]['units']),2)
+
+class ReferenceContentPriorityTests(unittest.TestCase):
+ def test_visible_camera_does_not_override_the_correct_script_content(self):
+  from staged_dialogue import select_dialogue_reference
+  import numpy as np
+  choices={'camera-a':[{'text':'Sai chi realizzerà questo programma?','start':100,'end':150}], 'camera-b':[{'text':'Ho un progetto: un programma sui boschi.','start':10,'end':80}]}
+  def encode(texts):return np.array([[.6,.8] if 'realizzerà' in t else [1.,0.] for t in texts])
+  result=select_dialogue_reference(choices,{'text':'Ho un progetto: un programma sui boschi.','character':'ALICE'},{('camera-a','ALICE'):'visible',('camera-b','ALICE'):'unknown'},{'camera-a':{'take_index':2},'camera-b':{'take_index':1}},encode)
+  self.assertEqual(result,'camera-b')
+ def test_more_irrelevant_words_do_not_make_a_reference_more_complete(self):
+  from staged_dialogue import select_dialogue_reference
+  import numpy as np
+  choices={'a':[{'text':'Voglio fare una trasmissione di cucina.','start':0,'end':40}], 'b':[{'text':'Voglio fare una trasmissione di cucina. Piano ciak regia ripartiamo dalla finestra proviamo ancora.','start':80,'end':150}]}
+  def encode(texts):return np.array([[1.,0.] for t in texts])
+  result=select_dialogue_reference(choices,{'text':'Voglio fare una trasmissione di cucina.','character':'ALICE'},{},{'a':{'take_index':1},'b':{'take_index':2}},encode)
+  self.assertEqual(result,'a')
+ def test_last_equally_complete_take_is_preferred(self):
+  from staged_dialogue import select_dialogue_reference
+  import numpy as np
+  choices={c:[{'text':'Lascia aperta la porta.','start':0,'end':40}] for c in ['a','b']}
+  def encode(texts):return np.array([[1.,0.] for t in texts])
+  result=select_dialogue_reference(choices,{'text':'Lascia aperta la porta.','character':'ALICE'},{},{'a':{'take_index':1},'b':{'take_index':2}},encode)
+  self.assertEqual(result,'b')
