@@ -67,3 +67,18 @@ def jump_cover(join,total,reaction,fps):
  length=end-start
  if start<0 or length<math.ceil(1.5*fps) or not 0<=at<join<at+length<=total:return None
  return {**reaction,'kind':'reaction','basis':'verified_listener_jump_cover','audio':'base_unchanged'}
+
+
+def group_voice_turns(units,voices,fps):
+ """Group adjacent observed units without deduplication or guessing unknowns."""
+ _units(units)
+ if not isinstance(fps,(int,float)) or fps<=0:raise ValueError('FPS non validi')
+ if set(voices)!={u['id'] for u in units}:raise ValueError('Etichette voce incomplete')
+ turns=[]
+ for u in units:
+  voice=voices[u['id']]
+  if voice is not None and (not isinstance(voice,str) or not voice):raise ValueError('Voce non valida')
+  if turns and voice is not None and turns[-1]['voice']==voice and u['start']-turns[-1]['end_frame']<=2*fps:
+   turns[-1]['end_frame']=u['end'];turns[-1]['text']+=' '+u.get('text','');turns[-1]['unit_ids'].append(u['id'])
+  else:turns.append({'voice':voice,'start_frame':u['start'],'end_frame':u['end'],'text':u.get('text',''),'unit_ids':[u['id']]})
+ return turns
