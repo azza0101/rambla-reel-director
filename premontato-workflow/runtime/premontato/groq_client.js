@@ -1,6 +1,11 @@
 'use strict';
 const fs=require('node:fs/promises'),sync=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const MODEL='qwen/qwen3.8-27b',VERSION='grounded-labels-v1';
+function dailyQuotaError(body){
+ const message=String(body?.error?.message||'');if(!/tokens per day|requests per day|\bTPD\b|\bRPD\b|daily/i.test(message))return null;
+ const duration=/try again in ([0-9.hms ]+)/i.exec(message)?.[1]||'';const seconds=Math.ceil([...duration.matchAll(/([0-9.]+)(ms|s|m|h)/g)].reduce((sum,m)=>sum+Number(m[1])*({ms:.001,s:1,m:60,h:3600}[m[2]]),0));
+ const error=new Error('Quota giornaliera Groq esaurita. '+(seconds?'Riprendi tra circa '+Math.ceil(seconds/60)+' minuti. ':'Riprendi dopo il ripristino della quota. ')+'Le scene già completate restano salvate.');error.code='GROQ_DAILY_QUOTA';error.retryAfterSeconds=seconds;return error;
+}
 function validateLabels(scene,clip,value){
  if(!value || typeof value!=='object' || Array.isArray(value))throw Error('Classificazione Groq non valida');
  const ids=clip.units.map(u=>u.id);if(Object.keys(value).length!==ids.length || ids.some(id=>!Object.hasOwn(value,id)))throw Error('Classificazione Groq incompleta: segmenti mancanti o inventati');
@@ -37,6 +42,7 @@ class GroqClient{
      const timeout=setTimeout(()=>this.controller?.abort(),90000);let response;
      try{response=await this.fetchImpl('https://api.groq.com/openai/v1/chat/completions',{method:'POST',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify(request),signal});}catch{throw Error(signal.aborted?'Richiesta Groq annullata o scaduta':'Connessione Groq non riuscita');}finally{clearTimeout(timeout);}
      calls++;body=await response.json().catch(()=>({}));
+     if(response.status===429){const quota=dailyQuotaError(body);if(quota)throw quota;}
      if(response.status===429 && quotaRetries++<6){const retry=Number(response.headers?.get?.('retry-after'));const match=/try again in ([\d.]+)s/i.exec(body.error?.message||'');const reset=String(response.headers?.get?.('x-ratelimit-reset-tokens')||'');const resetParts=[...reset.matchAll(/([\d.]+)(ms|s|m|h)/g)];const resetSeconds=resetParts.reduce((n,m)=>n+Number(m[1])*({ms:.001,s:1,m:60,h:3600}[m[2]]),0);const seconds=Math.min(60,Math.max(2,retry||Number(match?.[1])||20,resetSeconds));onProgress({phase:'quota',current:i,total:scene.clips.length,seconds});await this.sleep(seconds*1000);abort();continue;}
      if(!response.ok)throw Error(response.status===429?'Quota Groq esaurita: riprova più tardi':'Groq non ha completato la classificazione (HTTP '+response.status+')');
      try{const choice=body?.choices?.[0];if(choice?.finish_reason!=='stop')throw Error('Risposta Groq incompleta');validateLabels(scene,batch,normalizeBeatNumbers(scene,JSON.parse(String(choice.message?.content||''))));}catch(error){if(formatRetries++<2){onProgress({phase:'classify',current:i,total:scene.clips.length,retry:true});request.max_completion_tokens=1800;continue;}throw error;}break;
@@ -52,4 +58,4 @@ class GroqClient{
 }
 GroqClient.prototype.planEditorial=function(scene,labels,directions,onProgress){return require('./editorial_client').planEditorial(this,scene,labels,directions,onProgress);};
 GroqClient.prototype.prepareScript=function(text,onProgress){return require('./screenplay_structure').prepareScript(this,text,onProgress);};
-module.exports={GroqClient,validateLabels,makeRequest};
+module.exports={GroqClient,validateLabels,makeRequest,dailyQuotaError};

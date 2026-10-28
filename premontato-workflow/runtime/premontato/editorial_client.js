@@ -33,7 +33,7 @@ async function planEditorial(client,scene,labels,directions,onProgress=()=>{}){
   for(let attempt=0;attempt<3;attempt++){
    if(signal.aborted)throw Error('Piano editoriale annullato');onProgress({phase:'editorial',cache_hit:false});const timeout=setTimeout(()=>client.controller?.abort(),60000);let response;
    try{response=await client.fetchImpl('https://api.groq.com/openai/v1/chat/completions',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(request),signal});}catch{throw Error(signal.aborted?'Piano editoriale annullato o scaduto':'Connessione editoriale Groq non riuscita');}finally{clearTimeout(timeout);}
-   calls++;body=await response.json().catch(()=>({}));if(response.status===429&&attempt<2){const seconds=Math.min(60,Math.max(2,Number(response.headers?.get?.('retry-after'))||20));onProgress({phase:'quota',seconds});await client.sleep(seconds*1000);continue;}
+   calls++;body=await response.json().catch(()=>({}));if(response.status===429){const quota=require('./groq_client').dailyQuotaError(body);if(quota)throw quota;}if(response.status===429&&attempt<2){const seconds=Math.min(60,Math.max(2,Number(response.headers?.get?.('retry-after'))||20));onProgress({phase:'quota',seconds});await client.sleep(seconds*1000);continue;}
    if(!response.ok)throw Error('Piano editoriale Groq non disponibile (HTTP '+response.status+')');break;
   }
   const choice=body?.choices?.[0];if(choice?.finish_reason!=='stop')throw Error('Risposta editoriale incompleta');let parsed;try{parsed=JSON.parse(choice.message?.content||'');}catch{throw Error('Risposta editoriale JSON non valida');}const result=validateEditorial(scene,labels,parsed);
