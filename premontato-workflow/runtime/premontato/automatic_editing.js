@@ -8,7 +8,7 @@ function combineScenes(scenes){
 }
 function automaticScope(scenes,selection={},entries=[],spokenIds=[]){
  const validIds=new Set(scenes.map(s=>s.scene_id)),byMedia=new Map(entries.filter(e=>validIds.has(e.scene?.scene_id)).map(e=>[e.media_id,e.scene.scene_id]));
- if(spokenIds.length&&spokenIds.every(id=>byMedia.has(id))){const ids=new Set(spokenIds.map(id=>byMedia.get(id)));return {...selection,scene:combineScenes(scenes.filter(s=>ids.has(s.scene_id))),automatic:true,scope_basis:'catalog'};}
+ if(spokenIds.length&&spokenIds.every(id=>byMedia.has(id))){const ids=new Set([...spokenIds.map(id=>byMedia.get(id)),...entries.filter(e=>e.coverage_eligible&&e.role==='visual_coverage').map(e=>e.scene?.scene_id).filter(id=>validIds.has(id))]);return {...selection,scene:combineScenes(scenes.filter(s=>ids.has(s.scene_id))),automatic:true,scope_basis:'catalog'};}
  if(selection.scene)return {...selection,automatic:true,scope_basis:'speech'};
  // This is a search scope, not evidence that every scene was filmed. The existing
  // planner must still ground every selected interval in the source transcript.

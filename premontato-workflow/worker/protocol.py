@@ -8,7 +8,7 @@ from pdf_script import extract_pdf_text
 from transcript_align import select_scene
 
 PROTOCOL = 1
-ACTIONS = {"expand_scene_edits", "route_scene_edits", "catalog_preview_frames", "catalog_frames", "render_scene_debug_titles", "catalog_scenes", "ping", "parse_script", "extract_pdf_script", "select_scene", "align", "propose_take_segments", "choose_take", "build_plan", "analyze_shots", "analyze_audio", "pace_plan", "visual_review", "prepare_dialogue", "build_staged"}
+ACTIONS = {"audit_observed_edit", "build_observed_excerpt", "expand_scene_edits", "route_scene_edits", "catalog_preview_frames", "catalog_frames", "render_scene_debug_titles", "catalog_scenes", "ping", "parse_script", "extract_pdf_script", "select_scene", "align", "propose_take_segments", "choose_take", "build_plan", "analyze_shots", "analyze_audio", "pace_plan", "visual_review", "prepare_dialogue", "build_staged"}
 
 
 def dispatch(request):
@@ -17,7 +17,15 @@ def dispatch(request):
     action, payload = request.get("action"), request.get("payload", {})
     if action not in ACTIONS:
         raise ValueError("Azione sconosciuta")
-    if action == "expand_scene_edits":
+    if action == "audit_observed_edit":
+        from observed_camera import audit_edit
+        result=audit_edit(payload['decisions'],payload.get('covers',[]),payload['event_ids'],payload['fps'])
+    elif action == "build_observed_excerpt":
+        from observed_editor import build_observed_excerpt
+        def report(event):
+            sys.stdout.write(json.dumps({'protocol':1,'request_id':request['request_id'],'status':'progress','result':event})+'\n');sys.stdout.flush()
+        result=build_observed_excerpt(payload,report)
+    elif action == "expand_scene_edits":
         from scene_edit_jobs import expand_missing
         result=expand_missing(payload)
     elif action == "route_scene_edits":

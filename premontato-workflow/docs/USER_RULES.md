@@ -79,3 +79,22 @@ Questo documento è memoria persistente nel repository. Non crea da solo un appr
 - Un campo sconosciuto non deve ricevere il premio di un primo piano. La posizione avanzata dentro un file e un criterio di spareggio limitato, non un vantaggio capace di battere campo e parlante corretti.
 - La stima camera/personaggio e solo un indizio per selezionare candidati. Verificare i candidati finali sul loro intervallo effettivo, con fallback conservativo e cache; una risposta incerta non va pubblicata come parlante visibile.
 - Limite esplicito: questi controlli non certificano il completamento di gesti o lo stato degli oggetti. Le scene mute del catalogo richiedono un percorso di montaggio delle azioni; non considerarle automaticamente coperte dal solo catalogo.
+## Selezione per esecuzione coerente (28 ottobre 2026)
+- Priorita esplicita: ultima take buona per ciascun campo e per scena, prima della scelta dei singoli stacchi. Una maggiore somiglianza letterale non autorizza a recuperare una frase vecchia frammentando un'esecuzione valida.
+- Recuperare take precedenti soltanto per contenuto realmente mancante o inutilizzabile; evitare jump cut fra take diverse dello stesso campo/persona.
+- Prima della creazione Resolve servono controlli interni per scena su testo, ripetizioni, ordine e continuita. Un'anteprima ridotta non certifica da sola correttezza narrativa, gesti e visibilita del parlante.
+- Scena muta presente nel catalogo e nel copione: includerla come azione, senza dipendere dall'esistenza di parole trascritte. La battuta mancante resta segnalata separatamente.
+- Preferenze richieste; lo stato di implementazione e i limiti verificati vanno dichiarati nella consegna tecnica.
+
+## Campi indipendenti e multicam (29 ottobre 2026)
+- Il metodo principale deve funzionare con campi registrati in momenti diversi e take indipendenti. Non presumere sincronismo da vicinanza dei file o timecode.
+- Un multicam realmente verificato puo accelerare il lavoro soltanto come percorso opzionale; non deve essere necessario alla qualita del montaggio.
+
+## Improvvisazione e gag recitate (feedback scena 6)
+- Il parlato effettivo e la recitazione costituiscono la base narrativa. Il copione individua scena, intenzione e riferimenti; non e un elenco chiuso di battute consentite.
+- Non scartare o accorciare una battuta solo perche non compare nel PDF o ha etichetta X nel classificatore del copione. Distinguere adlib narrativo, regia e ripartenza.
+- Una stessa risposta ripetuta a domande o azioni differenti puo essere la struttura della gag e va conservata. La sola similarita delle parole non dimostra una ripartenza dello stesso attore.
+- Conservare domanda, oggetto mostrato, risposta, correzione e passaggio all'oggetto seguente. Il riconoscimento degli oggetti e dei gesti richiede prove video: non dichiararlo dalla sola trascrizione.
+- Varianti improvvisate di take differenti non vanno fuse solo per riempire il copione. Prima scegliere la versione recitata coerente, poi le coperture compatibili.
+
+- Ripartenza obbligata nello stesso campo: coprire il taglio con una reazione pertinente dell'altro personaggio sopra l'audio base continuo. Minimo operativo conservato di 1,5 secondi. La copertura deve attraversare il punto del taglio; se manca materiale verificabile, il jump resta un difetto irrisolto, non una sequenza approvata.

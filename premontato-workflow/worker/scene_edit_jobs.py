@@ -6,6 +6,34 @@ def meaningful(text):
  generic=core("vieni entra andiamo andare vai va ecco dai qui qua lì là subito aspetta vado facciamo io tu lui lei noi voi loro me te mi ti ci vi mio tuo suo nostro vostro")
  return set(core(text))-set(generic)
 
+
+def fill_scene_context(key,rows,routes,fps):
+ """Restore unassigned interior speech only between agreeing accepted anchors.
+ Snapshot anchors prevent propagation; competing scenes and long gaps stay unresolved.
+ """
+ anchors=[i for i,u in enumerate(rows) if routes[(key,u['id'])]]
+ for left,right in zip(anchors,anchors[1:]):
+  a,b=rows[left],rows[right];sid=routes[(key,a['id'])]
+  if routes[(key,b['id'])]!=sid or b['start']-a['end']>20*fps:continue
+  for u in rows[left+1:right]:
+   if routes[(key,u['id'])] is None:routes[(key,u['id'])]=sid
+
+def scene_ranges(key,units,routes,scene_id,fps):
+ """Context ranges, not a speech whitelist; split at competing scene anchors."""
+ groups=[];group=[];previous=None
+ for i,u in enumerate(units):
+  route=routes[(key,u['id'])]
+  if route is not None and route!=scene_id:
+   if group:groups.append(group);group=[]
+   previous=None;continue
+  if route!=scene_id:continue
+  if previous is not None and u['start']-previous['end']>20*fps:
+   if group:groups.append(group)
+   group=[]
+  group.append(u);previous=u
+ if group:groups.append(group)
+ return [{'start_frame':g[0]['start'],'end_frame':g[-1]['end']} for g in groups]
+
 def route_scenes(payload,encoder=None):
  from staged_dialogue import prepare_dialogue,core
  if encoder is None:
@@ -49,6 +77,8 @@ def route_scenes(payload,encoder=None):
   for u in clip['units']:
    key=(clip['key'],u['id']);sid=routes[key]
    if sid and sid!=primary and len(anchors.get(sid,set()))<2 and sid not in specific:routes[key]=None
+ # Context must run after catalog vetoes, which can invalidate a nearest route.
+ for clip in prepared['clips']:fill_scene_context(clip['key'],clip['units'],routes,payload['fps'])
  jobs=[]
  for scene in scenes:
   selected=[]
@@ -57,8 +87,8 @@ def route_scenes(payload,encoder=None):
    rows=[u for u in clip['units'] if routes[(key,u['id'])]==scene['scene_id']]
    if not rows:continue
    words=[w for seg in source['segments'] for w in seg.get('words',[])]
-   segments=[{'text':u['text'],'start_frame':u['start'],'end_frame':u['end'],'words':[w for w in words if w['start_frame']>=u['start'] and w['end_frame']<=u['end']]} for u in rows]
-   selected.append({**source,'segments':segments})
+   segments=[{'text':u['text'],'speaker_name':u.get('speaker_name'),'speaker_reliable':u.get('speaker_reliable',False),'start_frame':u['start'],'end_frame':u['end'],'words':[w for w in words if w['start_frame']>=u['start'] and w['end_frame']<=u['end']]} for u in rows]
+   selected.append({**source,'segments':segments,'scene_ranges':scene_ranges(key,clip['units'],routes,scene['scene_id'],payload['fps'])})
   jobs.append({'scene':scene,'sources':selected,'status':'ready' if selected else 'no_coverage'})
  for clip,u in units:
   if not routes[(clip['key'],u['id'])]:unassigned.append({'take_id':clip['key'],'start_frame':u['start'],'end_frame':u['end'],'text':u['text']})
@@ -107,7 +137,7 @@ def expand_missing(payload,encoder=None):
   segments={(s['start_frame'],s['end_frame']):s for s in (old or {}).get('segments',[])}
   words=[w for s in source['segments'] for w in s.get('words',[])]
   before=len(segments)
-  for bounds,u in rows.items():segments.setdefault(bounds,{'text':u['text'],'start_frame':u['start'],'end_frame':u['end'],'words':[w for w in words if w['start_frame']>=u['start'] and w['end_frame']<=u['end']]})
+  for bounds,u in rows.items():segments.setdefault(bounds,{'text':u['text'],'speaker_name':u.get('speaker_name'),'speaker_reliable':u.get('speaker_reliable',False),'start_frame':u['start'],'end_frame':u['end'],'words':[w for w in words if w['start_frame']>=u['start'] and w['end_frame']<=u['end']]})
   if len(segments)>before:expanded+=1
   result.append({**source,'segments':sorted(segments.values(),key=lambda s:s['start_frame'])})
  return {'sources':result,'expanded_media':expanded,'focus_ranges':[{'take_id':key,'start_frame':u['start'],'end_frame':u['end']} for key,rows in selected.items() for u in rows.values()]}

@@ -105,7 +105,21 @@ def analyze_video(media, sample_fps=1.0, face_cascade_path=None, on_progress=Non
     fps, count = cap.get(cv2.CAP_PROP_FPS), int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     step = max(1, round(fps / max(0.1, sample_fps)))
     samples, previous = [], None
-    for frame_number, frame in sampled_frames(cap, count, step, on_progress):
+    def frames():
+        nonlocal decode_backend
+        from video_reader import sampled_gpu_frames
+        completed=-1
+        try:
+            for index,frame in sampled_gpu_frames(media,step):
+                decode_backend='NVDEC'
+                if on_progress:on_progress(index,count)
+                completed=index
+                yield index,frame
+        except Exception:
+            # Timestamp/codec failures resume with the original reader, without duplicates.
+            for index,frame in sampled_frames(cap,count,step,on_progress):
+                if index>completed:yield index,frame
+    for frame_number, frame in frames():
         small = cv2.resize(frame, (160, 90))
         hist = cv2.calcHist([small], [0, 1, 2], None, [8, 8, 8], [0, 256] * 3)
         cv2.normalize(hist, hist)
