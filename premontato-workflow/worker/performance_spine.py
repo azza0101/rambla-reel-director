@@ -56,3 +56,14 @@ def observed_story(units,start,end,exclusions=None):
   if u['start']<start or u['end']>end:raise ValueError('Confine scena dentro una battuta')
   events.append({'source_unit_id':u['id'],'start_frame':u['start'],'end_frame':u['end'],'text':u.get('text',''),'speaker':u.get('speaker_name'),'speaker_verified':bool(u.get('speaker_reliable',False))})
  return {'basis':'observed_transcript','events':events,'script_filters_applied':False,'duplicate_text_removed':False,'cleanup_pending':True,'visual_actions_verified':False}
+
+
+def jump_cover(join,total,reaction,fps):
+ """Accept only verified listening video spanning a source discontinuity."""
+ import math
+ if not reaction or not reaction.get('verified_listener') or not reaction.get('different_person'):return None
+ start=reaction.get('start_frame',-1);end=reaction.get('end_frame',-1);at=reaction.get('record_frame',-1)
+ if any(type(x) is not int for x in (join,total,start,end,at)) or not isinstance(fps,(int,float)) or fps<=0:return None
+ length=end-start
+ if start<0 or length<math.ceil(1.5*fps) or not 0<=at<join<at+length<=total:return None
+ return {**reaction,'kind':'reaction','basis':'verified_listener_jump_cover','audio':'base_unchanged'}

@@ -96,3 +96,5 @@ Questo documento è memoria persistente nel repository. Non crea da solo un appr
 - Una stessa risposta ripetuta a domande o azioni differenti puo essere la struttura della gag e va conservata. La sola similarita delle parole non dimostra una ripartenza dello stesso attore.
 - Conservare domanda, oggetto mostrato, risposta, correzione e passaggio all'oggetto seguente. Il riconoscimento degli oggetti e dei gesti richiede prove video: non dichiararlo dalla sola trascrizione.
 - Varianti improvvisate di take differenti non vanno fuse solo per riempire il copione. Prima scegliere la versione recitata coerente, poi le coperture compatibili.
+
+- Ripartenza obbligata nello stesso campo: coprire il taglio con una reazione pertinente dell'altro personaggio sopra l'audio base continuo. Minimo operativo conservato di 1,5 secondi. La copertura deve attraversare il punto del taglio; se manca materiale verificabile, il jump resta un difetto irrisolto, non una sequenza approvata.
