@@ -1,11 +1,13 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),{spawn}=require('node:child_process');
 const {GroqClient:CloudClient}=require('./groq_client');
+const ownerKey=Symbol.for('rambla.local-gemma.owners');
+const owners=globalThis[ownerKey] ||= new Map();
 function localRequest(value){const b={...value,model:'local',max_tokens:value.max_completion_tokens||2500,response_format:{type:'json_object'},chat_template_kwargs:{enable_thinking:false}};delete b.max_completion_tokens;delete b.reasoning_effort;delete b.reasoning;return b;}
 function norm(s){return String(s).normalize('NFD').replace(/\p{M}/gu,'').toLowerCase();}
 function weakNameOnly(text,names){const words=norm(text).match(/\p{L}+/gu)||[];return words.length>0&&new Set(words).size===1&&names.some(n=>norm(n)===words[0]);}
 class GroqClient extends CloudClient{
- constructor(root,options={}){super(root,options);this.localFile=path.join(root,'local-gemma.json');this.child=null;this.starting=null;}
+ constructor(root,options={}){super(root,options);this.localFile=path.join(root,'local-gemma.json');this.child=null;this.starting=null;const id=path.resolve(root);owners.get(id)?.shutdown();owners.set(id,this);}
  localStatus(){let c={enabled:false};try{c=JSON.parse(fs.readFileSync(this.localFile,'utf8'));}catch{}return {...c,configured:!!(c.executable&&c.model&&fs.existsSync(c.executable)&&fs.existsSync(c.model))};}
  status(){const s=this.localStatus();return s.enabled?{configured:s.configured,enabled:true,model:'Gemma 4 locale',provider:'local'}:super.status();}
  get cacheIdentity(){const s=this.localStatus();if(!s.enabled)return 'cloud';let stat;try{stat=fs.statSync(s.model);}catch{}return 'gemma4-local-v1:'+s.model+':'+stat?.size+':'+stat?.mtimeMs;}
@@ -14,10 +16,10 @@ class GroqClient extends CloudClient{
   this.shutdown();await fs.promises.mkdir(this.root,{recursive:true});await fs.promises.writeFile(this.localFile,JSON.stringify(s));return this.localStatus();}
  async key(){if(this.localStatus().enabled)return 'local';return super.key();}
  shutdown(){this.child?.kill();this.child=null;this.endpoint=null;}
- async ensureLocal(){if(this.endpoint&&this.child&&this.child.exitCode===null)return this.endpoint;if(this.starting)return this.starting;
+ async ensureLocal(){if(this.endpoint&&this.child&&this.child.exitCode===null&&this.child.signalCode===null)return this.endpoint;if(this.starting)return this.starting;
   this.starting=(async()=>{const c=this.localStatus();if(!c.configured)throw Error('Gemma locale non configurato: seleziona motore e modello nelle impostazioni');
    const port=24000+crypto.randomInt(10000);this.localToken=crypto.randomUUID();const child=spawn(c.executable,['-m',c.model,'--host','127.0.0.1','--port',String(port),'-ngl','99','-c','8192','-np','1','--api-key',this.localToken],{windowsHide:true,stdio:'ignore'});this.child=child;let failure;child.on('error',e=>{failure=e;});const base='http://127.0.0.1:'+port;
-   for(let i=0;i<120;i++){if(failure||child.exitCode!==null)throw Error('Avvio Gemma non riuscito: controlla runtime e memoria GPU');if(this.child!==child)throw Error('Avvio Gemma annullato');try{const r=await this.fetchImpl(base+'/health',{headers:{Authorization:'Bearer '+this.localToken},signal:AbortSignal.timeout(1000)});if(r.ok){this.endpoint=base;return base;}}catch{}await this.sleep(500);}
+   for(let i=0;i<120;i++){if(failure||child.exitCode!==null||child.signalCode!==null)throw Error('Avvio Gemma non riuscito: controlla runtime e memoria GPU');if(this.child!==child)throw Error('Avvio Gemma annullato');try{const r=await this.fetchImpl(base+'/health',{headers:{Authorization:'Bearer '+this.localToken},signal:AbortSignal.timeout(1000)});if(r.ok){this.endpoint=base;return base;}}catch{}await this.sleep(500);}
    this.shutdown();throw Error('Avvio Gemma scaduto');
   })().finally(()=>{this.starting=null;});return this.starting;}
  async request(url,options,phase){if(!this.localStatus().enabled)return super.request(url,options,phase);const base=await this.ensureLocal();const body=localRequest(JSON.parse(options.body));if(phase==='editorial'){body.temperature=0;body.messages=[...body.messages];body.messages[0]={...body.messages[0],content:body.messages[0].content+'\nSTRICT CHECK: anchor_text must be copied character-for-character from the spoken variants for the SAME beat_id. No screenplay-only anchors. If there is no clear meaningful event with a verified spoken anchor, return {"events":[]}.'};}this.lastProvider='Gemma 4 · locale';const response=await this.fetchImpl(base+'/v1/chat/completions',{...options,headers:{'Content-Type':'application/json',Authorization:'Bearer '+this.localToken},body:JSON.stringify(body)});this.providers.set(response,'Gemma locale');return response;}
