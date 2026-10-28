@@ -91,3 +91,16 @@ class CameraAvailabilityTests(unittest.TestCase):
   result=self.run_plan(p);self.assertEqual(result['unmatched_beats'],['b3'])
   self.assertTrue(any(b['beat_id']=='b3' for b in result['review_beats']))
 if __name__=='__main__':unittest.main()
+
+class CloseFirstIntegrationTests(unittest.TestCase):
+ def test_master_opens_then_verified_singles_take_over(self):
+  texts=['Prima frase completa adesso.','Seconda risposta completa qui.']
+  p=payload([source('master',texts),source('alice',texts),source('bob',texts)],['wide','close','close'])
+  def evidence(s,start,end):
+   role='ALICE' if start<100 else 'BOB'
+   return {'status':'visible' if s['media_id']==role.lower() else 'absent'}
+  with patch('transcript_align._SEMANTIC_ENCODER',Encoder()),patch('active_speaker.analyze_candidate',side_effect=evidence),patch('listening_reaction.listening_overlay',return_value=None):
+   result=build_staged(p)
+  self.assertEqual(result['decisions'][0]['shot_size'],'wide')
+  self.assertEqual(result['decisions'][1]['media_id'],'bob')
+  self.assertEqual(result['decisions'][1]['speaker_coverage_source'],'audio_visual_interval')

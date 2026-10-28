@@ -142,6 +142,34 @@ def select_dialogue_reference(choices,beat,coverage,sources,encode,master=None):
  if master in eligible:return master
  return max(eligible,key=lambda cid:(sources[cid].get('take_index',0),sources[cid].get('name',''),max(u['end'] for u in choices[cid]),coverage.get((cid,beat.get('character')))=='visible',cid))
 
+def camera_style_score(size,status,semantic,start,fps,opening=False,release=False):
+ # Source position is a bounded tie-break, never a reason to choose a worse field.
+ if status=='visible':base={'close':12,'medium':9,'wide':5,'detail':3,'unknown':3}.get(size,3)
+ elif status=='absent':base=-8
+ else:base={'wide':4,'medium':2,'close':2,'detail':0,'unknown':1}.get(size,1)
+ if size=='wide' and opening:base+=14
+ elif size=='wide' and release:base+=10
+ return base+max(0,min(1,float(semantic)))+min(.12,max(0,start)/max(1,fps*360000))
+
+def verify_camera_candidates(rows,sources,analyze,fps,opening=False,release=False,limit=3):
+ # The camera/role profile is a shortlist hint, not proof for a particular line.
+ ordered=sorted(rows,key=lambda r:((0 if r['shot_size']=='wide' else 1) if opening or release else {'close':0,'medium':1,'wide':2,'unknown':3,'detail':4}.get(r['shot_size'],3),-r['score']))
+ checked={};seen=set()
+ for row in ordered:
+  cid=row['clip_id']
+  if cid in seen:continue
+  seen.add(cid)
+  try:evidence=analyze(sources[cid],row['matched_start_frame'],row['matched_end_frame'])
+  except Exception as error:evidence={'status':'unknown','reason':str(error)}
+  checked[id(row)]=evidence
+  if evidence.get('status')=='visible' or len(seen)>=limit:break
+ for row in rows:
+  evidence=checked.get(id(row));row['speaker_coverage']=evidence.get('status','unknown') if evidence else 'unknown'
+  row['speaker_coverage_source']='audio_visual_interval' if evidence else 'unverified_candidate'
+  if evidence:row['active_speaker']=evidence
+  row['score']=camera_style_score(row['shot_size'],row['speaker_coverage'],row['semantic'],row['matched_start_frame'],fps,opening,release)
+ return rows
+
 def _size(source,shots,at=None):
  rows=[s for s in shots if s['media_id']==source['media_id'] and s.get('confidence',0)>=.5 and s.get('shot_size') in {'wide','medium','close','detail'}]
  if at is not None:
@@ -308,12 +336,12 @@ def build_staged(payload,report=lambda e:None):
    if w['text'].strip().endswith(('...','…')) and not beats[int(c['beat'][1:])-1]['text'].strip().endswith(('...','…')):continue
    size=_size(sources[w['clip_id']],shots,(w['start']+w['end'])//2);status=coverage[(w['clip_id'],c['role'])];start,end=safe_dialogue_handles({'start_frame':w['start'],'end_frame':w['end']},sources[w['clip_id']],fps)
    row={**w,'start_frame':start,'end_frame':end,'matched_start_frame':w['start'],'matched_end_frame':w['end'],'shot_size':size,'speaker_coverage':status,'semantic':cosine,'media_id':sources[w['clip_id']]['media_id'],'take_id':sources[w['clip_id']]['take_id'],'dialogue_character':c['role'],'narrative_role':narrative,'beat_id':actual,'moment_id':c['moment_id'],'decision_id':c['moment_id'],'matched_text':w['text'],'warnings':[],'confidence':min(1,max(0,cosine)),'coverage':1,'shot_confidence':.75,'speaker_coverage_source':'audio_visual','match_method':'groq_context','pacing':{'duration_frames':end-start}}
-   score=(5 if size!='wide' and status=='visible' else 3 if size=='wide' else 2 if status=='unknown' else -1)+cosine+.0001*w['start']-.2*abs(__import__('math').log(ratio))
+   score=camera_style_score(size,status,cosine,w['start'],fps,opening=ci==0 and bool(masters),release=narrative=='resolution')-.2*abs(__import__('math').log(ratio))
    if ci==0 and masters:
     if size!='wide':continue
-    score+=3
-   if narrative=='resolution':score+=5 if size=='wide' else 0
    row['score']=score;rows.append(row)
+  report({'phase':'speaker-final','current':ci,'total':len(canonical)})
+  if rows:rows=verify_camera_candidates(rows,sources,analyze_candidate,fps,opening=ci==0 and bool(masters),release=narrative=='resolution')
   if not rows:
    discarded_moments.append({'beat_id':actual,'text':c['text'],'reason':'NO_COMPLETE_GROUNDED_CANDIDATE'});continue
   grounded_canonical.append(c);grounded_indices.append(ci);candidates.append(rows);listening_candidates.append(listener_rows)
@@ -343,7 +371,15 @@ def build_staged(payload,report=lambda e:None):
     if prior and not same and run<minimum_shot and not short_reply(prior):continue
     length=run+row['end_frame']-prior['end_frame'] if same else row['end_frame']-row['start_frame']
     penalty=max(0,length-15*fps)/fps*.1 if same and row['narrative_role']=='free' else 0
-    new.append((score+row['score']-penalty,path+[copy.deepcopy(row)],{**last,cid:row['matched_end_frame']},length))
+    context_bonus=0
+    if row['shot_size']=='wide' and prior and prior['beat_id']!=row['beat_id'] and row['narrative_role']!='tension':
+     since_wide=0
+     for previous in reversed(path):
+      if previous['shot_size']=='wide':break
+      since_wide+=previous['end_frame']-previous['start_frame']
+     if since_wide>=25*fps:context_bonus=10
+    if prior and prior['shot_size']=='wide' and row['shot_size']=='wide' and ci>0 and row['narrative_role']!='resolution':context_bonus-=6
+    new.append((score+row['score']+context_bonus-penalty,path+[copy.deepcopy(row)],{**last,cid:row['matched_end_frame']},length))
   if not new:raise RuntimeError('No continuous montage path at '+canonical[ci]['moment_id'])
   states=[]
   for camera in sources:states+=sorted([s for s in new if s[1][-1]['clip_id']==camera],key=lambda s:s[0],reverse=True)[:100]
@@ -407,7 +443,7 @@ def build_staged(payload,report=lambda e:None):
  cursor=0
  for d in decisions:
   d['timeline_start_frame']=cursor;cursor+=d['end_frame']-d['start_frame']+sum(a['end_frame']-a['start_frame'] for a in d.get('action_after',[]))
- verification={'model_classification_only':not directed,'human_cut_plan_used':False,'hardcoded_source_ranges':False,'classified_segments':len(labels),'dialogue_moments':len(canonical),'master_available':bool(masters),'reference_mode':'single_camera_continuous' if len(sources)==1 else 'master_with_coverage_recovery' if masters else 'per_beat','dialogue_beats':len(covered),'missing_dialogue':missing,'actions':len(actions),'reactions':len(reactions),'cleanup':cleanup,'discarded_unverified_moments':discarded_moments,'recovered_speech':recovered,'policy':'semantic alternatives + speaker evidence + constrained continuity search'}
+ verification={'model_classification_only':not directed,'human_cut_plan_used':False,'hardcoded_source_ranges':False,'classified_segments':len(labels),'dialogue_moments':len(canonical),'master_available':bool(masters),'reference_mode':'single_camera_continuous' if len(sources)==1 else 'master_with_coverage_recovery' if masters else 'per_beat','dialogue_beats':len(covered),'missing_dialogue':missing,'actions':len(actions),'reactions':len(reactions),'cleanup':cleanup,'discarded_unverified_moments':discarded_moments,'recovered_speech':recovered,'policy':'close-first-v1 + final interval speaker evidence + constrained continuity search'}
 
  result={'engine':ENGINE,'plan_id':'groq-local','scene_id':payload.get('scene_id','scene'),'fps':fps,'decisions':decisions,'unmatched_beats':missing,'warnings':['Groq classifica il parlato; scelta camere e raccordi locali. Visibilità stimata, non identificazione personale.'],'planning_summary':{**verification,'classification':payload.get('classification_summary',{})},'visual_review_required':False}
  if not masters:result['warnings'].append('Nessuna master disponibile: montaggio dai campi presenti, senza larghe inventate o alternanze obbligatorie.')

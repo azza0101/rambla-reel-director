@@ -73,3 +73,9 @@ Questo documento è memoria persistente nel repository. Non crea da solo un appr
 ## Bozze incomplete e avvisi (28 ottobre 2026)
 - Preferenza esplicita: scene fallite o battute mancanti devono essere segnalate chiaramente senza impedire una bozza con i tagli disponibili. Il click finale deve indicare che la bozza e incompleta e il nome della timeline deve conservarlo. Non inventare contenuti per colmare lacune.
 - Gli avvisi devono mostrare rapidamente scena e battute coinvolte. Ricontrollare i casi problematici con il motore selezionato; nessun passaggio implicito a fornitori online.
+
+## Primi piani e costanza della regia (28 ottobre 2026)
+- Preferenza esplicita: primo piano verificato di chi parla come scelta principale. Master soprattutto all'apertura per la geometria, per movimenti macro, al rilascio della tensione e occasionalmente negli scambi lunghi; mai alternanze a conteggio fisso.
+- Un campo sconosciuto non deve ricevere il premio di un primo piano. La posizione avanzata dentro un file e un criterio di spareggio limitato, non un vantaggio capace di battere campo e parlante corretti.
+- La stima camera/personaggio e solo un indizio per selezionare candidati. Verificare i candidati finali sul loro intervallo effettivo, con fallback conservativo e cache; una risposta incerta non va pubblicata come parlante visibile.
+- Limite esplicito: questi controlli non certificano il completamento di gesti o lo stato degli oggetti. Le scene mute del catalogo richiedono un percorso di montaggio delle azioni; non considerarle automaticamente coperte dal solo catalogo.
