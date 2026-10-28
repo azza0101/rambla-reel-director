@@ -277,7 +277,7 @@ function updateTimelineButton(state=window.__lastReviewState || {}){
 }
 let draftTimer=null,restoringDraft=false;
 function capturePremontatoDraft(){
- return {sceneDebug:$('scene-debug').checked,directions:captureDirections(),visual:{dirty:visualDirty,person_names:{...visualNames},intervals:[...$('visual-intervals').querySelectorAll('[data-visual-segment]')].map(card=>({segment_id:card.dataset.visualSegment,shot_size:card.querySelector('[data-visual-scale]').value,visible_subjects:[...card.querySelectorAll('[data-subject]:checked')].map(input=>input.value)}))},
+ return {interfaceMode:$('day-catalog').hidden?'scene':'catalog',sceneDebug:$('scene-debug').checked,directions:captureDirections(),visual:{dirty:visualDirty,person_names:{...visualNames},intervals:[...$('visual-intervals').querySelectorAll('[data-visual-segment]')].map(card=>({segment_id:card.dataset.visualSegment,shot_size:card.querySelector('[data-visual-scale]').value,visible_subjects:[...card.querySelectorAll('[data-subject]:checked')].map(input=>input.value)}))},
  takes:[...$('takes').querySelectorAll('[data-take]')].map(row=>({take_id:JSON.parse(row.dataset.take).take_id,start_frame:row.querySelector('[data-start]').value,end_frame:row.querySelector('[data-end]').value})),
  beats:[...$('beats').querySelectorAll('[data-beat-id]')].map(row=>({beat_id:row.dataset.beatId,start:row.querySelector('[data-in]').value,end:row.querySelector('[data-out]').value,scale:row.querySelector('[data-scale]').value})),
  pacing:{enabled:$('pacing-enabled').checked,gap:$('pacing-gap').value,minimum:$('pacing-minimum').value,script:$('pacing-script').checked}};
