@@ -1,10 +1,10 @@
 'use strict';
 const fs=require('node:fs/promises'),sync=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const MODEL='qwen/qwen3.8-27b',VERSION='grounded-labels-v1';
-function dailyQuotaError(body){
+function dailyQuotaError(body,provider='Groq'){
  const message=String(body?.error?.message||'');if(!/tokens per day|requests per day|\bTPD\b|\bRPD\b|daily/i.test(message))return null;
  const duration=/try again in ([0-9.hms ]+)/i.exec(message)?.[1]||'';const seconds=Math.ceil([...duration.matchAll(/([0-9.]+)(ms|s|m|h)/g)].reduce((sum,m)=>sum+Number(m[1])*({ms:.001,s:1,m:60,h:3600}[m[2]]),0));
- const error=new Error('Quota giornaliera Groq esaurita. '+(seconds?'Riprendi tra circa '+Math.ceil(seconds/60)+' minuti. ':'Riprendi dopo il ripristino della quota. ')+'Le scene già completate restano salvate.');error.code='GROQ_DAILY_QUOTA';error.retryAfterSeconds=seconds;return error;
+ const error=new Error('Quota giornaliera '+provider+' esaurita. '+(seconds?'Riprendi tra circa '+Math.ceil(seconds/60)+' minuti. ':'Riprendi dopo il ripristino della quota. ')+'Le scene già completate restano salvate.');error.code='GROQ_DAILY_QUOTA';error.retryAfterSeconds=seconds;return error;
 }
 function validateLabels(scene,clip,value){
  if(!value || typeof value!=='object' || Array.isArray(value))throw Error('Classificazione Groq non valida');
@@ -19,15 +19,18 @@ function makeRequest(scene,clip){
  return {model:MODEL,reasoning_effort:'none',temperature:0,top_p:1,presence_penalty:0,response_format:{type:'json_object'},max_completion_tokens:900,messages:[{role:'user',content:prompt}]};
 }
 class GroqClient{
- async request(url,options){
-  const response=await this.fetchImpl(url,options);
+ responseProvider(response){return this.providers.get(response)||'Groq';}
+ async quotaError(body,response,phase){const provider=this.responseProvider(response),error=dailyQuotaError(body,provider);if(error){try{await this.diagnostic?.('provider_quota',{provider,model:provider==='Groq'?MODEL:'nvidia/nemotron-3-ultra-550b-a55b:free',phase,status:429,quota:'daily',retryAfterSeconds:error.retryAfterSeconds||0});}catch{}}return error;}
+ async request(url,options,phase='unknown'){
+  const send=async(provider,model,target,requestOptions)=>{let response;try{response=await this.fetchImpl(target,requestOptions);}catch(error){try{await this.diagnostic?.('provider_request',{provider,model,phase,status:0});}catch{}throw error;}this.providers.set(response,provider);try{await this.diagnostic?.('provider_request',{provider,model,phase,status:response.status});}catch{}return response;};
+  const response=await send('Groq',MODEL,url,options);
   if(response.status!==429 || url!=='https://api.groq.com/openai/v1/chat/completions' || !this.openRouterStatus().configured)return response;
   if(!this.vault?.isEncryptionAvailable())throw Error('Protezione credenziali Windows non disponibile');
   let credential;try{credential=this.vault.decryptString(await fs.readFile(path.join(this.root,'credentials','openrouter-key.bin')));}catch{throw Error('Impossibile leggere la chiave OpenRouter protetta');}
   const request=JSON.parse(options.body);request.model='nvidia/nemotron-3-ultra-550b-a55b:free';delete request.reasoning_effort;request.reasoning={enabled:false};
   const headers={...options.headers,Authorization:'Bearer '+credential};
   this.lastProvider='OpenRouter · Nemotron 3 Ultra gratuito';
-  return this.fetchImpl('https://openrouter.ai/api/v1/chat/completions',{...options,headers,body:JSON.stringify(request)});
+  return send('OpenRouter','nvidia/nemotron-3-ultra-550b-a55b:free','https://openrouter.ai/api/v1/chat/completions',{...options,headers,body:JSON.stringify(request)});
  }
  openRouterStatus(){return {configured:sync.existsSync(path.join(this.root,'credentials','openrouter-key.bin'))};}
  async configureOpenRouter(key){
@@ -35,7 +38,7 @@ class GroqClient{
   if(!this.vault?.isEncryptionAvailable())throw Error('Protezione credenziali Windows non disponibile');
   const file=path.join(this.root,'credentials','openrouter-key.bin');await fs.mkdir(path.dirname(file),{recursive:true});await fs.writeFile(file,this.vault.encryptString(key.trim()));return this.openRouterStatus();
  }
- constructor(root,{vault,keyProvider,fetchImpl=globalThis.fetch,sleep=ms=>new Promise(r=>setTimeout(r,ms))}={}){this.root=root;this.vault=vault;this.keyProvider=keyProvider;this.fetchImpl=fetchImpl;this.sleep=sleep;this.controller=null;this.file=path.join(root,'credentials','groq-key.bin');this.configFile=path.join(root,'groq-settings.json');if(path.basename(root)==='Omni-Cut test'&&!sync.existsSync(this.file)){const shared=path.join(root,'..','Premontato','credentials','groq-key.bin');if(sync.existsSync(shared))this.file=shared;}}
+ constructor(root,{vault,keyProvider,fetchImpl=globalThis.fetch,sleep=ms=>new Promise(r=>setTimeout(r,ms)),diagnostic}={}){this.providers=new WeakMap();this.diagnostic=diagnostic;this.root=root;this.vault=vault;this.keyProvider=keyProvider;this.fetchImpl=fetchImpl;this.sleep=sleep;this.controller=null;this.file=path.join(root,'credentials','groq-key.bin');this.configFile=path.join(root,'groq-settings.json');if(path.basename(root)==='Omni-Cut test'&&!sync.existsSync(this.file)){const shared=path.join(root,'..','Premontato','credentials','groq-key.bin');if(sync.existsSync(shared))this.file=shared;}}
  status(){let enabled=true;try{enabled=JSON.parse(sync.readFileSync(this.configFile,'utf8')).enabled!==false;}catch{}return {configured:!!this.keyProvider || !!process.env.PREMONTATO_GROQ_API_KEY || !!process.env.GROQ_API_KEY || sync.existsSync(this.file),enabled,model:MODEL};}
  async configure({key,enabled}={}){
   if(key!==undefined && (typeof key!=='string' || !/^[A-Za-z0-9_-]{20,300}$/.test(key.trim())))throw Error('Chiave Groq non valida');
@@ -56,9 +59,9 @@ class GroqClient{
     for(let attempt=0;attempt<9;attempt++){
      onProgress({phase:'classify',current:i,total:scene.clips.length,batch:offset,units:clip.units.length});
      const timeout=setTimeout(()=>this.controller?.abort(),90000);let response;
-     try{response=await this.request('https://api.groq.com/openai/v1/chat/completions',{method:'POST',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify(request),signal});}catch{throw Error(signal.aborted?'Richiesta AI annullata o scaduta':'Connessione Groq o OpenRouter non riuscita');}finally{clearTimeout(timeout);}
+     try{response=await this.request('https://api.groq.com/openai/v1/chat/completions',{method:'POST',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify(request),signal},'classify');}catch{throw Error(signal.aborted?'Richiesta AI annullata o scaduta':'Connessione Groq o OpenRouter non riuscita');}finally{clearTimeout(timeout);}
      calls++;body=await response.json().catch(()=>({}));
-     if(response.status===429){const quota=dailyQuotaError(body);if(quota)throw quota;}
+     if(response.status===429){const quota=await this.quotaError(body,response,'classify');if(quota)throw quota;}
      if(response.status===429 && quotaRetries++<6){const retry=Number(response.headers?.get?.('retry-after'));const match=/try again in ([\d.]+)s/i.exec(body.error?.message||'');const reset=String(response.headers?.get?.('x-ratelimit-reset-tokens')||'');const resetParts=[...reset.matchAll(/([\d.]+)(ms|s|m|h)/g)];const resetSeconds=resetParts.reduce((n,m)=>n+Number(m[1])*({ms:.001,s:1,m:60,h:3600}[m[2]]),0);const seconds=Math.min(60,Math.max(2,retry||Number(match?.[1])||20,resetSeconds));onProgress({phase:'quota',current:i,total:scene.clips.length,seconds});await this.sleep(seconds*1000);abort();continue;}
      if(!response.ok)throw Error(response.status===429?'Quota Groq esaurita: riprova più tardi':'Groq non ha completato la classificazione (HTTP '+response.status+')');
      try{const choice=body?.choices?.[0];if(choice?.finish_reason!=='stop')throw Error('Risposta Groq incompleta');validateLabels(scene,batch,normalizeBeatNumbers(scene,JSON.parse(String(choice.message?.content||''))));}catch(error){if(formatRetries++<2){onProgress({phase:'classify',current:i,total:scene.clips.length,retry:true});request.max_completion_tokens=1800;continue;}throw error;}break;

@@ -68,7 +68,7 @@ async function start() {
   const catalogEditingEnabled=require('./package.json').product==='Omni-Cut test';
   catalog.onProgress=value=>win?.webContents.send('premontato:catalogProgress',value);
   require('./day_catalog_ipc').registerCatalogHandlers({handle,catalog,getSdk});
-  session.groq=new (require('./session').GroqClient)(root,{vault:safeStorage,fetchImpl:net?.fetch ? net.fetch.bind(net) : globalThis.fetch});
+  session.groq=new (require('./session').GroqClient)(root,{vault:safeStorage,fetchImpl:net?.fetch ? net.fetch.bind(net) : globalThis.fetch,diagnostic:(event,details)=>diagnostics.record(event,details)});
   try{await session.restoreAutosave();}catch(error){session.saveError='Recupero automatico non riuscito: '+error.message;}
   win = new BrowserWindow({ width: 1080, height: 820, minWidth: 680, minHeight: 560, title: 'RAMBLA Premontato v'+require('./package.json').version,
     backgroundColor: '#111820', webPreferences: { additionalArguments:['--premontato-version='+require('./package.json').version], preload: path.join(__dirname, 'preload.js'), sandbox: true, contextIsolation: true, nodeIntegration: false } });

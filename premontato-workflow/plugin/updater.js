@@ -11,7 +11,7 @@ const RELEASES_URL = `https://api.github.com/repos/${REPOSITORY}/releases?per_pa
 const MAX_ARCHIVE_BYTES = 350 * 1024 * 1024;
 const MAX_DIAGNOSTIC_EVENTS = 200;
 const MAX_DIAGNOSTIC_BYTES = 64 * 1024;
-const ALLOWED_DIAGNOSTIC_EVENTS = new Set(['application_started', 'operation_failed']);
+const ALLOWED_DIAGNOSTIC_EVENTS = new Set(['application_started', 'operation_failed', 'provider_request', 'provider_quota']);
 const ALLOWED_OPERATIONS = new Set(['configureGroq', 'resolveSnapshot', 'selectScript', 'selectMedia', 'transcribeSelected', 'analyzeIntellisearch', 'analyze', 'cancelAnalysis', 'getReviewState', 'saveDraft', 'saveProject', 'openProject', 'updateDecision', 'setPacing', 'setDirections', 'confirmVisualReview', 'confirmTakes', 'createReviewTimeline', 'update', 'prepareSupportReport', 'submitSupportReport']);
 
 function parseVersion(value) {
@@ -65,6 +65,7 @@ function createDiagnostics({ logPath, appVersion, platform = process.platform, r
         row.error = info.name;
         row.frames = info.frames;
       }
+      if(event==='provider_request'||event==='provider_quota'){if(!['Groq','OpenRouter'].includes(details.provider)||!['classify','script','editorial','unknown'].includes(details.phase)||!Number.isInteger(details.status)||details.status<0||details.status>599||!['qwen/qwen3.8-27b','nvidia/nemotron-3-ultra-550b-a55b:free'].includes(details.model))return false;Object.assign(row,{provider:details.provider,phase:details.phase,model:details.model,status:details.status});if(event==='provider_quota'){if(details.quota!=='daily'||!Number.isSafeInteger(details.retryAfterSeconds)||details.retryAfterSeconds<0||details.retryAfterSeconds>86400*31)return false;row.quota='daily';row.retryAfterSeconds=details.retryAfterSeconds;}}
       const events = await readEvents(); events.push(row); await writeEvents(events); return true;
     },
     async preview() {
@@ -72,7 +73,8 @@ function createDiagnostics({ logPath, appVersion, platform = process.platform, r
       const lines = ['# Segnalazione diagnostica Premontato', `Versione: ${version}`, `Sistema: ${osInfo || 'sconosciuto'}`, `Data report: ${new Date().toISOString()}`, '', 'Eventi tecnici recenti (nessun copione o media allegato):'];
       for (const item of events) {
         const operation = item.operation ? ` · ${item.operation}` : '';
-        lines.push(`- ${safeDiagnosticText(item.at, 30)} · ${item.event}${operation}${item.error ? ` · ${safeDiagnosticText(item.error, 40)}` : ''}`);
+        const provider = ['provider_request','provider_quota'].includes(item.event) ? ` · ${item.provider} · ${item.phase} · ${item.model} · HTTP ${item.status||'rete'}${item.quota==='daily'?' · quota giornaliera':''}${item.retryAfterSeconds?' · riprova tra '+item.retryAfterSeconds+' s':''}` : '';
+        lines.push(`- ${safeDiagnosticText(item.at, 30)} · ${item.event}${operation}${provider}${item.error ? ` · ${safeDiagnosticText(item.error, 40)}` : ''}`);
         for (const frame of item.frames || []) lines.push(`  ${safeDiagnosticText(frame, 220)}`);
       }
       let body = lines.join('\n');
