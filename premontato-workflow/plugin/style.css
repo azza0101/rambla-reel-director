@@ -41,3 +41,5 @@
 .catalog-final-actions{margin-top:20px;padding-top:14px;border-top:1px solid #40545d}.catalog-final-actions h3{margin:0 0 8px}.catalog-final-actions .actions{gap:8px}.catalog-final-actions p{margin:6px 0 12px}
 
 .catalog-apply-progress{padding:10px 12px;margin:10px 0;border:1px solid #426b63;border-radius:7px;background:#142d29}.catalog-apply-progress progress{display:block;width:100%;height:10px}.catalog-apply-progress p{font-size:13px;overflow-wrap:anywhere}.catalog-apply-progress[hidden]{display:none}
+
+dialog#settings-dialog{width:min(620px,calc(100vw - 32px));max-height:85vh;overflow:auto;background:#19232d;color:var(--text);border:1px solid var(--line);border-radius:13px;padding:20px;box-shadow:0 24px 80px #000b}dialog#settings-dialog::backdrop{background:#071018cc}#settings-dialog label{display:block;margin:12px 0}#settings-dialog input[type=password]{display:block;width:100%;margin-top:7px}#settings-dialog hr{border:0;border-top:1px solid var(--line);margin:20px 0}
