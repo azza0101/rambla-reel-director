@@ -39,3 +39,20 @@ def compile_spine(units,decision,duration,fps):
   blocks.append({'start_frame':lo,'end_frame':hi,'record_frame':clock,'unit_ids':[u['id'] for u in group],'text':' '.join(u.get('text','') for u in group)})
   clock+=hi-lo
  return {'blocks':blocks,'kept_ids':[u['id'] for u in units if u['id'] not in omit],'duration_frames':clock,'missing':decision.get('missing',[]),'verification':'source_intervals_only'}
+
+
+def observed_story(units,start,end,exclusions=None):
+ """Lossless observed-performance inventory, before cleanup or camera choices.
+ Screenplay labels are deliberately ignored. Identical replies to different
+ questions remain separate source events. This is not a certified clean edit:
+ direction and false starts require a subsequent context-aware decision.
+ """
+ _units(units)
+ if type(start) is not int or type(end) is not int or not 0<=start<end:raise ValueError('Confine scena non valido')
+ if exclusions:raise ValueError('Questa fase non elimina parlato: pulizia separata con prove contestuali')
+ events=[]
+ for u in units:
+  if u['end']<=start or u['start']>=end:continue
+  if u['start']<start or u['end']>end:raise ValueError('Confine scena dentro una battuta')
+  events.append({'source_unit_id':u['id'],'start_frame':u['start'],'end_frame':u['end'],'text':u.get('text',''),'speaker':u.get('speaker_name'),'speaker_verified':bool(u.get('speaker_reliable',False))})
+ return {'basis':'observed_transcript','events':events,'script_filters_applied':False,'duplicate_text_removed':False,'cleanup_pending':True,'visual_actions_verified':False}

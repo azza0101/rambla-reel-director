@@ -89,3 +89,10 @@ Questo documento è memoria persistente nel repository. Non crea da solo un appr
 ## Campi indipendenti e multicam (29 ottobre 2026)
 - Il metodo principale deve funzionare con campi registrati in momenti diversi e take indipendenti. Non presumere sincronismo da vicinanza dei file o timecode.
 - Un multicam realmente verificato puo accelerare il lavoro soltanto come percorso opzionale; non deve essere necessario alla qualita del montaggio.
+
+## Improvvisazione e gag recitate (feedback scena 6)
+- Il parlato effettivo e la recitazione costituiscono la base narrativa. Il copione individua scena, intenzione e riferimenti; non e un elenco chiuso di battute consentite.
+- Non scartare o accorciare una battuta solo perche non compare nel PDF o ha etichetta X nel classificatore del copione. Distinguere adlib narrativo, regia e ripartenza.
+- Una stessa risposta ripetuta a domande o azioni differenti puo essere la struttura della gag e va conservata. La sola similarita delle parole non dimostra una ripartenza dello stesso attore.
+- Conservare domanda, oggetto mostrato, risposta, correzione e passaggio all'oggetto seguente. Il riconoscimento degli oggetti e dei gesti richiede prove video: non dichiararlo dalla sola trascrizione.
+- Varianti improvvisate di take differenti non vanno fuse solo per riempire il copione. Prima scegliere la versione recitata coerente, poi le coperture compatibili.
