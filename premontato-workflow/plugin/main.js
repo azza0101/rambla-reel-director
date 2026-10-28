@@ -1,6 +1,8 @@
 'use strict';
 const { app, BrowserWindow, ipcMain, dialog, safeStorage, net } = require('electron');
 const path = require('node:path');
+// Also evict stale transitive modules when an older updater loads this entry point.
+require('./module_cache').invalidatePluginModules(require.cache,__dirname);
 const { pathToFileURL } = require('node:url');
 const { assertTrusted, validateMediaRecords } = require('./ipc_security');
 const { Session, prepareReviewTimeline } = require('./session');
@@ -95,7 +97,7 @@ async function start() {
   handle('analyze', async () => { const current = await adapter.snapshot(await getSdk(),{includeSelection:false}); session.assertProject(current); session.state.timelineId=current.timelineId; session.state.timeline=current.timeline; await saveResolve(session.state.projectId).catch(()=>{}); if(typeof catalogEditingEnabled!=='undefined' && catalogEditingEnabled){const {sources,context}=await catalog.prepareEditing(await getSdk(),(media,options)=>adapter.getSelectedTranscriptions(sdk,{media,transcribeMissing:true,...options,onProgress:({name})=>session.onProgress?.({phase:'transcript',phaseIndex:-1,percent:0,label:'Leggo il parlato disponibile: '+name})}));session.setTranscripts(sources,current.fps,{...current,selected:session.state.media});return session.analyze({catalogContext:context});} if(session.state.media?.some(media=>!(session.state.transcripts || []).some(source=>source.media_id===media.media_id && source.segments?.length))){const sources=await adapter.getSelectedTranscriptions(await getSdk(),{media:session.state.media,transcribeMissing:true,onProgress:({current,total,name})=>session.onProgress?.({phase:'transcript',phaseIndex:-1,percent:Math.round(current/total*100),current,total,label:'Recupero trascrizioni Resolve: '+name+' · '+current+'/'+total})});session.setTranscripts(sources,current.fps,{...current,selected:session.state.media});} return session.analyze(); });
   handle('cancelAnalysis', async () => session.cancelAnalysis());
   handle('configureGroq',async options=>{await session.groq.configure(options);session.state.analysis=null;session.state.uiDraft=null;session.state.stage='idle';await session.saveAutosave();return session.getReviewState();});
-  app.once('will-quit',()=>session.groq.shutdown?.());
+  const localEngine=session.groq;app.once('will-quit',()=>localEngine.shutdown?.());
   handle('localGemmaStatus',async()=>session.groq.localStatus());
   handle('configureLocalGemma',async enabled=>{
     if(typeof enabled!=='boolean')throw Error('Stato locale non valido');
@@ -201,9 +203,9 @@ async function reloadInHost() {
   app.removeListener('window-all-closed',onAllWindowsClosed);
   for(const name of handlerNames)ipcMain.removeHandler(name);
   handlerNames.clear();
+  session?.groq.shutdown?.();
   win?.destroy();win=null;session=null;sdk=null;
-  const modules=['main.js','session.js','runtime/premontato/groq_client.js','runtime/premontato/editorial_client.js','runtime/premontato/video_coliche.json','updater.js','resolve_adapter.js','ipc_security.js','day_catalog_resolve.js','day_catalog_store.js','day_catalog_session.js','day_catalog_ipc.js','runtime/premontato/day_catalog_clips.js','runtime/premontato/day_catalog_vision.js','package.json'];
-  for(const name of modules)delete require.cache[require.resolve(path.join(__dirname,name))];
+  require('./module_cache').invalidatePluginModules(require.cache,__dirname);
   try { await require(__filename).launch({initializedSdk:connectedSdk}); }
   catch(error){await dialog.showMessageBox({type:'error',title:'RAMBLA Premontato',message:'Ricaricamento non riuscito. Riapri il pannello dal menu Workspace > Workflow Integrations di Resolve.',detail:error.message});app.quit();throw error;}
   finally{app.removeListener('window-all-closed',holdProcessOpen);}
