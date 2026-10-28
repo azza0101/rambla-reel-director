@@ -24,6 +24,7 @@ def parse_script(text, format="auto"):
     scenes, heading, rows, speaker = [], "SCENA 1", [], None
     speaker_indent = 0
     in_script = not has_scene_headings
+    new_turn = False
 
     def flush():
         nonlocal rows, speaker, speaker_indent
@@ -60,15 +61,17 @@ def parse_script(text, format="auto"):
                 indent >= 24 or re.sub(r"\s*\([^)]*\)$", "", line).strip().isupper()):
             speaker = re.sub(r"\s*\([^)]*\)$", "", line).strip()
             speaker_indent = indent
+            new_turn = True
         else:
             if speaker_indent >= 24 and indent == 0:
                 speaker = None
             kind = "dialogue" if speaker else "action"
             body = line
-            if rows and rows[-1][0] == kind and rows[-1][1] == speaker and kind in {"dialogue", "action"}:
+            if not new_turn and rows and rows[-1][0] == kind and rows[-1][1] == speaker and kind in {"dialogue", "action"}:
                 previous = rows[-1]
                 rows[-1] = (kind, speaker, previous[2] + " " + body)
             else:
                 rows.append((kind, speaker, body))
+            new_turn = False
     flush()
     return {"scenes": scenes, "warnings": []}

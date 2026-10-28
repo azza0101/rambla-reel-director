@@ -23,6 +23,8 @@ class DayCatalog{
   const result={...inventory,rootFolderId:null,scriptName:null,catalog:null};
   if(!saved||saved.version!==1||saved.project_id!==inventory.projectId)return result;
   if(!inventory.folders.some(f=>f.id===saved.rootFolderId))return {...result,warning:'La cartella salvata non è più disponibile: sceglila nuovamente.'};
+  const activeScript=this.session.state.script;
+  if(activeScript && (activeScript.path!==saved.script?.path || activeScript.text!==saved.script?.text))return {...result,warning:'Catalogo precedente non ripristinato: il copione della sessione corrente è diverso.'};
   result.rootFolderId=saved.rootFolderId;
   try{if(typeof saved.script?.path!=='string'||typeof saved.script.text!=='string')throw Error();const stat=await fsp.stat(saved.script.path);if(stat.size!==saved.script_file?.size||stat.mtimeMs!==saved.script_file?.mtimeMs)throw Error();}catch{this.session.state.script=null;return {...result,warning:'Il copione salvato è cambiato o non è disponibile: selezionalo nuovamente.'};}
   this.session.state.script=saved.script;result.scriptName=path.basename(saved.script.path);

@@ -48,6 +48,7 @@ test('analysis scopes planning to the single automatically matched screenplay sc
       { scene_id: 'scene-a', heading: 'SCENA 01', beats: [{ beat_id: 'a1', kind: 'dialogue', text: 'line' }] },
       { scene_id: 'scene-b', heading: 'SCENA 02', beats: [{ beat_id: 'b1', kind: 'dialogue', text: 'other' }] }
     ] };
+    if(action==='route_scene_edits')return {jobs:[{scene:payload.scenes[0],sources:payload.sources},{scene:payload.scenes[1],sources:[]}],unassigned:[]};
     if (action === 'select_scene') return { scene: { scene_id: 'scene-a', heading: 'SCENA 01', beats: [{ beat_id: 'a1', kind: 'dialogue', text: 'line' }] }, confidence: 0.91, candidates: [] };
     if (action === 'propose_take_segments') return [{ take_id: 'm:take:1', media_id: 'm', start_frame: 0, end_frame: 100, take_index: 1, boundary_source: 'whole_clip' }];
     if (action === 'pace_plan') return {...payload.plan, pacing_settings:payload.settings};
@@ -57,7 +58,7 @@ test('analysis scopes planning to the single automatically matched screenplay sc
   await session.analyze();
   const planCall = calls.find(call => call.action === 'build_plan');
   assert.deepEqual(planCall.payload.beats.map(beat => beat.beat_id), ['a1']);
-  assert.equal(session.state.analysis.selectedScene.heading, 'SCENA 01');
+  assert.equal(session.state.analysis.plan.scene_jobs.length,2);assert.equal(session.state.analysis.plan.scene_jobs[1].status,'no_coverage');
   assert.deepEqual([...new Set(progress.map(event => event.phase))], ['script', 'scene', 'shots', 'takes', 'audio', 'plan', 'pacing', 'complete']);
   assert.equal(progress.at(-1).percent, 100);
   assert.equal(progress.every((event,index)=>!index || event.phaseIndex>=progress[index-1].phaseIndex),true);

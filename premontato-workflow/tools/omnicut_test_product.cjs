@@ -16,6 +16,12 @@ function transformFile(file,text,version='0.1.0'){
  if(file==='plugin/day_catalog_resolve.js')s=s.replaceAll('Premontato - Catalogo Giornata','Omni-Cut test - Catalogo Giornata');
  if(file==='plugin/main.js'||file==='plugin/resolve_adapter.js')s=s.replaceAll('PREMONTATO','OMNI-CUT TEST');
  if(file==='plugin/updater.js')s=s.replaceAll('[Premontato debug]','[Omni-Cut test debug]').replaceAll('diagnostica Premontato','diagnostica Omni-Cut test').replaceAll('canale Premontato','canale Omni-Cut test');
+ if(file==='plugin/update.ps1'){
+  s=s.replace(/\r\n/g,'\n');
+  const anchor="\n} catch {\n    Send-UpdateProgress 'rollback' 0 1";
+  if(!s.includes(anchor))throw Error('Updater success/rollback boundary missing');
+  s=s.replace(anchor,"\n    # OMNICUT_CLEANUP_SUCCESS: keep rollback until all replacements succeed.\n    try { if(Test-Path -LiteralPath $backup) { Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction Stop } } catch { Write-Warning 'Backup temporaneo non rimosso; cancellalo manualmente.' }"+anchor);
+ }
  return s;
 }
 async function createProductTree(source,destination,version){

@@ -268,15 +268,16 @@ function timelineBlockers({matched,visualPending,dirty,pending}){
 function updateTimelineButton(state=window.__lastReviewState || {}){
  const plan=state.analysis?.plan,blockers=timelineBlockers({matched:plan?.decisions?.length,visualPending:Boolean(plan?.visual_review_required),dirty:visualDirty,pending:hasPendingFormEdits(state)});
  $('beat-review-title').textContent='Debug e modifiche · battute e alternative'+(plan?' · '+(plan.decisions?.length || 0)+' abbinate · '+(plan.unmatched_beats?.length || 0)+' da verificare':'');
+ if(plan?.ready_for_timeline===false)blockers.unshift({message:'Montaggio incompleto: scene fallite o battute mancanti. Non creo una sequenza parziale come risultato finale.',target:'beat-review'});
  $('make-timeline').disabled=blockers.length>0;
  const box=$('timeline-readiness');box.replaceChildren();
- if(!blockers.length){box.textContent='Pronto: puoi creare la nuova timeline di revisione.';return;}
+ if(!blockers.length){box.textContent='Pronto: puoi creare la nuova timeline di revisione.';if(plan?.scene_jobs){for(const job of plan.scene_jobs){const row=document.createElement('div');row.textContent=job.heading+' · '+(job.status==='ready'?'pronta':job.status==='no_coverage'?'nessuna copertura parlata':job.status==='failed'?'analisi non riuscita':(job.missing?.length||0)+' battute mancanti');box.append(row);}}return;}
  const heading=document.createElement('strong');heading.textContent='Prima di creare la timeline:';box.append(heading);
  for(const item of blockers){const row=document.createElement('div'),button=document.createElement('button');button.type='button';button.className='quiet';button.textContent=item.message;button.addEventListener('click',()=>{const target=$(item.target);if(item.target==='visual-review'){visualReviewOpen=true;syncVisualVisibility(state);$('visual-controls').open=true;}if(item.target==='beats')$('beat-review').open=true;if(item.target==='scene-scope')$('scene-scope-options').open=true;target.scrollIntoView({behavior:'smooth',block:'center'});const focus=target.matches('input,button')?target:target.querySelector('input,select,button');focus?.focus({preventScroll:true});});row.append(button);box.append(row);}
 }
 let draftTimer=null,restoringDraft=false;
 function capturePremontatoDraft(){
- return {sceneDebug:$('scene-debug').checked,directions:captureDirections(),visual:{dirty:visualDirty,person_names:{...visualNames},intervals:[...$('visual-intervals').querySelectorAll('[data-visual-segment]')].map(card=>({segment_id:card.dataset.visualSegment,shot_size:card.querySelector('[data-visual-scale]').value,visible_subjects:[...card.querySelectorAll('[data-subject]:checked')].map(input=>input.value)}))},
+ return {interfaceMode:$('day-catalog').hidden?'scene':'catalog',sceneDebug:$('scene-debug').checked,directions:captureDirections(),visual:{dirty:visualDirty,person_names:{...visualNames},intervals:[...$('visual-intervals').querySelectorAll('[data-visual-segment]')].map(card=>({segment_id:card.dataset.visualSegment,shot_size:card.querySelector('[data-visual-scale]').value,visible_subjects:[...card.querySelectorAll('[data-subject]:checked')].map(input=>input.value)}))},
  takes:[...$('takes').querySelectorAll('[data-take]')].map(row=>({take_id:JSON.parse(row.dataset.take).take_id,start_frame:row.querySelector('[data-start]').value,end_frame:row.querySelector('[data-end]').value})),
  beats:[...$('beats').querySelectorAll('[data-beat-id]')].map(row=>({beat_id:row.dataset.beatId,start:row.querySelector('[data-in]').value,end:row.querySelector('[data-out]').value,scale:row.querySelector('[data-scale]').value})),
  pacing:{enabled:$('pacing-enabled').checked,gap:$('pacing-gap').value,minimum:$('pacing-minimum').value,script:$('pacing-script').checked}};
@@ -359,6 +360,11 @@ $('host').addEventListener('click',async()=>{try{await refreshConnection();messa
  catch(error){showError(error);}
  try{await refreshConnection();}catch(error){showError(error);}
 })();
+
+$('settings-open').addEventListener('click',async()=>{try{const state=await window.premontato.openRouterStatus();$('openrouter-status').textContent=state.configured?'Chiave OpenRouter salvata.':'Nessuna chiave OpenRouter salvata.';$('settings-dialog').showModal();}catch(error){showError(error);}});
+$('settings-close').addEventListener('click',()=>{$('groq-key').value='';$('openrouter-key').value='';$('settings-dialog').close();});
+$('settings-dialog').addEventListener('close',()=>{$('groq-key').value='';$('openrouter-key').value='';});
+$('openrouter-save').addEventListener('click',async()=>{const field=$('openrouter-key'),button=$('openrouter-save');button.disabled=true;try{await window.premontato.configureOpenRouter(field.value.trim());$('openrouter-status').textContent='Chiave OpenRouter salvata e protetta.';}catch(error){$('openrouter-status').textContent=error.message || String(error);}finally{field.value='';button.disabled=false;}});
 
 function renderGroq(status=window.__lastReviewState?.groq){
  if(!status)return;const summary=window.__lastReviewState?.analysis?.plan?.planning_summary?.classification;

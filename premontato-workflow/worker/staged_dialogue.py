@@ -26,7 +26,7 @@ def prepare_dialogue(payload):
     if group:us.append({'id':'S'+str(len(us)),'start':group[0]['start_frame'],'end':group[-1]['end_frame'],'text':' '.join(clean_text(w['text'].strip()) for w in group),'word_indices':[w['_word_index'] for w in group]})
    for wi,word in enumerate(segment.get('words',[])):
     if word['end_frame']<=word['start_frame'] or word['start_frame']<lo or word['end_frame']>hi or not re.search(r'\w',word.get('text','')):continue
-    if group and (word['start_frame']-group[-1]['end_frame']>10 or word['end_frame']-group[0]['start_frame']>8*float(payload['fps'])):flush();group=[]
+    if group and (word['start_frame']-group[-1]['end_frame']>float(payload['fps']) or word['end_frame']-group[0]['start_frame']>8*float(payload['fps'])):flush();group=[]
     group.append({**word,'_word_index':str(source['segments'].index(segment))+':'+str(wi)})
     if re.search(r'[.!?]$',word['text'].strip()):flush();group=[]
    flush()
@@ -65,7 +65,7 @@ def clean_restarts(units,values):
   for v in units:
    if v['start']<=u['end'] or labels[v['id']]!=label or v['text'].strip().endswith(('...','…')):continue
    b=core(v['text']);match=SequenceMatcher(None,a,b,autojunk=False).find_longest_match()
-   repeated=len(a)>=2 and ((len(b)>=len(a) and b[:2]==a[:2] and match.size>=min(3,len(a))) or (u['text'].strip().endswith(('...','…')) and len(set(a)&set(b))>=2))
+   repeated=(len(a)>=2 or len(a)==1 and len(a[0])>=5 and len(normalize(u['text']).split())>=2) and ((len(b)>=len(a) and b[:2]==a[:2] and match.size>=min(3,len(a))) or (u['text'].strip().endswith(('...','…')) and len(set(a)&set(b))>=2))
    if repeated and (u['text'].strip().endswith(('...','…')) or match.size==len(a)):
     labels[u['id']]='X';changes.append({'unit':u['id'],'superseded_by':v['id']});break
  # A trailing aborted repeat must not replace an earlier complete delivery.
@@ -76,6 +76,72 @@ def clean_restarts(units,values):
   if prior:
    good=max(prior,key=lambda v:v['end']);labels[u['id']]='X';changes.append({'unit':u['id'],'superseded_by':good['id']})
  return labels,changes
+def latest_complete_run(rows,all_rows,labels,beat,fps,encode=None):
+ if not rows:return []
+ if len(rows)==1:return rows
+ groups=[];group=[];target=set(core(beat['text']))
+ # Lexically different restarts can express the same line. Reuse the local
+ # encoder to separate repeated starts and collapse equivalent performances.
+ row_sims=None
+ if encode is not None:
+  vectors=encode([u['text'] for u in rows]);row_sims=vectors@vectors.T
+ indices={u['id']:i for i,u in enumerate(rows)}
+ for u in rows:
+  previous=group[-1] if group else None
+  repeated=False
+  if previous and row_sims is not None:
+   head=group[0]
+   ratio=len(normalize(u['text']).split())/max(1,len(normalize(head['text']).split()))
+   repeated=(not head['text'].strip().endswith(('...','…')) and .5<=ratio<=2 and float(row_sims[indices[head['id']],indices[u['id']]])>=.82)
+  if previous and (repeated or u['start']-previous['end']>6*fps or any(previous['end']<=v['start']<u['start'] and labels.get(v['id'])!=labels.get(u['id']) for v in all_rows)):
+   groups.append(group);group=[]
+  group.append(u)
+ if group:groups.append(group)
+ def rank(g):
+  observed=set(core(' '.join(u['text'] for u in g)))
+  return len(target&observed)/max(1,len(target)),len(observed)
+ complete=[g for g in groups if not g[-1]['text'].strip().endswith(('...','…'))]
+ if encode is not None and len(complete)>1:
+  texts=[' '.join(u['text'] for u in g) for g in complete]
+  vectors=encode(texts+[beat['text']]);sims=vectors[:-1]@vectors[:-1].T;relevance=vectors[:-1]@vectors[-1]
+  # Only equivalent deliveries compete. Complementary continuations/asides
+  # remain distinct; an interrupted final attempt never replaces a good one.
+  components=[]
+  for i,g in enumerate(complete):
+   matches=[c for c in components if any(float(sims[i,j])>=.78 for j in c)]
+   if matches:
+    merged=[i]+[j for c in matches for j in c];components=[c for c in components if c not in matches]+[merged]
+   else:components.append([i])
+  chosen=[]
+  for component in components:
+   length=max(rank(complete[i])[1] for i in component)
+   complete_pool=[i for i in component if rank(complete[i])[1]>=length*.6]
+   best=max(float(relevance[i]) for i in complete_pool)
+   eligible=[i for i in complete_pool if float(relevance[i])>=best-.10]
+   at=max(eligible,key=lambda i:complete[i][-1]['end']);chosen.extend(complete[at])
+  return sorted(chosen,key=lambda u:u['start'])
+ def distinct(a,b):
+  x=set(core(' '.join(u['text'] for u in a)));y=set(core(' '.join(u['text'] for u in b)))
+  return len(x&y)/max(1,len(x|y))<.65
+ if len(complete)>1 and all(distinct(a,b) for i,a in enumerate(complete) for b in complete[i+1:]):return [u for g in complete for u in g]
+ best=max((rank(g) for g in groups))
+ if rank(rows)[0]>best[0]+.15:return rows
+ eligible=[g for g in groups if not g[-1]['text'].strip().endswith(('...','…')) and rank(g)[0]>=best[0]-.08 and rank(g)[1]>=best[1]*.6]
+ return max(eligible,key=lambda g:g[-1]['end']) if eligible else max(groups,key=rank)
+
+def select_dialogue_reference(choices,beat,coverage,sources,encode,master=None):
+ """Choose what was said before choosing which camera should show it."""
+ keys=list(choices);texts=[' '.join(u['text'] for u in choices[cid]) for cid in keys]
+ vectors=encode(texts+[beat['text']]);similarities=vectors[:-1]@vectors[-1];target=set(core(beat['text']));scores={}
+ for i,cid in enumerate(keys):
+  observed=set(core(texts[i]));overlap=len(target&observed)
+  precision=overlap/max(1,len(observed));recall=overlap/max(1,len(target))
+  f1=2*precision*recall/max(precision+recall,1e-9)
+  scores[cid]=.65*float(similarities[i])+.35*f1
+ best=max(scores.values());eligible=[cid for cid in keys if scores[cid]>=best-.025]
+ if master in eligible:return master
+ return max(eligible,key=lambda cid:(sources[cid].get('take_index',0),sources[cid].get('name',''),max(u['end'] for u in choices[cid]),coverage.get((cid,beat.get('character')))=='visible',cid))
+
 def _size(source,shots,at=None):
  rows=[s for s in shots if s['media_id']==source['media_id'] and s.get('confidence',0)>=.5 and s.get('shot_size') in {'wide','medium','close','detail'}]
  if at is not None:
@@ -170,12 +236,16 @@ def build_staged(payload,report=lambda e:None):
    continue
   for role in names.values():
    group=[u for u in kept if u['clip']==cid and info(u)[1]==role and u['end']-u['start']>=.3*fps]
-   indices=sorted(set([0,len(group)//2,len(group)-1])) if group else []
+   indices=list(dict.fromkeys([len(group)//2,0,len(group)-1])) if group else []
    tasks.extend(group[j] for j in indices)
+ checked_roles=set()
  for i,u in enumerate(tasks):
+  role_key=(u['clip'],info(u)[1])
+  if role_key in checked_roles:continue
   report({'phase':'speaker','current':i,'total':len(tasks)})
   try:u['ASD']=analyze_candidate(sources[u['clip']],u['start'],u['end']).get('status','unknown')
   except Exception:u['ASD']='unknown'
+  if u['ASD'] in {'visible','absent'}:checked_roles.add(role_key)
  report({'phase':'speaker','current':len(tasks),'total':len(tasks)})
 
  coverage={}
@@ -190,14 +260,8 @@ def build_staged(payload,report=lambda e:None):
   for u in kept:
    if info(u)[0]==bid:choices.setdefault(u['clip'],[]).append(u)
   if not choices:continue
-  if master in choices:reference=master
-  else:
-   target=set(core(beat['text']))
-   def reference_score(cid):
-    rows=choices[cid];observed=set(core(' '.join(u['text'] for u in rows)))
-    status=coverage.get((cid,beat.get('character')),'unknown')
-    return (status=='visible',len(target&observed)/max(1,len(target)),len(observed),max(u['start'] for u in rows),cid)
-   reference=max(choices,key=reference_score)
+  choices={cid:latest_complete_run(rows,[u for u in units if u['clip']==cid],labels,beat,fps,encoder.encode) for cid,rows in choices.items()}
+  reference=select_dialogue_reference(choices,beat,coverage,sources,encoder.encode,master)
   group=[]
   for u in choices[reference]:
    if group:
@@ -207,9 +271,9 @@ def build_staged(payload,report=lambda e:None):
    group.append(u)
   if group:canonical.append(block(group))
  if len(sources)==1:
-  canonical=[];group=[]
+  selected_ids={uid for c in canonical for uid in c['units']};canonical=[];group=[]
   for u in kept:
-   if beats[int(info(u)[0][1:])-1]['kind']!='dialogue':continue
+   if u['id'] not in selected_ids:continue
    if group and (info(group[-1])[0]!=info(u)[0] or u['start']-group[-1]['end']>1.5*fps or group[-1]['end']-group[0]['start']>=3*fps):
     canonical.append(block(group));group=[]
    group.append(u)
@@ -230,7 +294,7 @@ def build_staged(payload,report=lambda e:None):
  effective_style=copy.deepcopy(data['style'])
  for event in editorial_events:
   if event.get('kind')=='release' and not effective_style.get('markers',{}).get(event['beat_id']):effective_style.setdefault('markers',{})[event['beat_id']]='resolution'
- roles=narrative_roles(beats,effective_style);candidates=[];listening_candidates=[]
+ roles=narrative_roles(beats,effective_style);candidates=[];listening_candidates=[];grounded_canonical=[];grounded_indices=[];discarded_moments=[];original_canonical_count=len(canonical)
  for ci,c in enumerate(canonical):
   rows=[];listener_rows=[];actual=beatmap[c['beat']];narrative=roles.get(actual,{}).get('role','free')
   for wi,w in enumerate(windows):
@@ -250,8 +314,11 @@ def build_staged(payload,report=lambda e:None):
     score+=3
    if narrative=='resolution':score+=5 if size=='wide' else 0
    row['score']=score;rows.append(row)
-  if not rows:raise RuntimeError('No complete candidate: '+c['text'])
-  candidates.append(rows);listening_candidates.append(listener_rows)
+  if not rows:
+   discarded_moments.append({'beat_id':actual,'text':c['text'],'reason':'NO_COMPLETE_GROUNDED_CANDIDATE'});continue
+  grounded_canonical.append(c);grounded_indices.append(ci);candidates.append(rows);listening_candidates.append(listener_rows)
+ canonical=grounded_canonical
+ if not candidates:raise RuntimeError('Nessuna battuta completa verificabile nella scena')
 
  words={cid:[w for seg in s['segments'] for w in seg.get('words',[]) if w['end_frame']>w['start_frame']] for cid,s in sources.items()}
  positions={b['beat_id']:i for i,b in enumerate(beats)}
@@ -324,7 +391,7 @@ def build_staged(payload,report=lambda e:None):
  from listening_reaction import add_dialogue_listening,add_scripted_breaths
  for cid,source in sources.items():source['_editorial_shot_size']=_size(source,shots)
  if directed:
-  context_similarities=vectors[:len(canonical)]@unit_vectors.T
+  context_similarities=(vectors[:original_canonical_count]@unit_vectors.T)[grounded_indices]
   for i,d in enumerate(decisions):
    event=resolve_event(d,editorial_events)
    listening_candidates[i].extend(offcamera_candidates(d,units,labels,sources,profiles,context_similarities,i,beats,event))
@@ -340,7 +407,7 @@ def build_staged(payload,report=lambda e:None):
  cursor=0
  for d in decisions:
   d['timeline_start_frame']=cursor;cursor+=d['end_frame']-d['start_frame']+sum(a['end_frame']-a['start_frame'] for a in d.get('action_after',[]))
- verification={'model_classification_only':not directed,'human_cut_plan_used':False,'hardcoded_source_ranges':False,'classified_segments':len(labels),'dialogue_moments':len(canonical),'master_available':bool(masters),'reference_mode':'single_camera_continuous' if len(sources)==1 else 'master_with_coverage_recovery' if masters else 'per_beat','dialogue_beats':len(covered),'missing_dialogue':missing,'actions':len(actions),'reactions':len(reactions),'cleanup':cleanup,'recovered_speech':recovered,'policy':'semantic alternatives + speaker evidence + constrained continuity search'}
+ verification={'model_classification_only':not directed,'human_cut_plan_used':False,'hardcoded_source_ranges':False,'classified_segments':len(labels),'dialogue_moments':len(canonical),'master_available':bool(masters),'reference_mode':'single_camera_continuous' if len(sources)==1 else 'master_with_coverage_recovery' if masters else 'per_beat','dialogue_beats':len(covered),'missing_dialogue':missing,'actions':len(actions),'reactions':len(reactions),'cleanup':cleanup,'discarded_unverified_moments':discarded_moments,'recovered_speech':recovered,'policy':'semantic alternatives + speaker evidence + constrained continuity search'}
 
  result={'engine':ENGINE,'plan_id':'groq-local','scene_id':payload.get('scene_id','scene'),'fps':fps,'decisions':decisions,'unmatched_beats':missing,'warnings':['Groq classifica il parlato; scelta camere e raccordi locali. Visibilità stimata, non identificazione personale.'],'planning_summary':{**verification,'classification':payload.get('classification_summary',{})},'visual_review_required':False}
  if not masters:result['warnings'].append('Nessuna master disponibile: montaggio dai campi presenti, senza larghe inventate o alternanze obbligatorie.')

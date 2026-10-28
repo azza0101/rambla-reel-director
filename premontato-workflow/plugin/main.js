@@ -68,7 +68,7 @@ async function start() {
   const catalogEditingEnabled=require('./package.json').product==='Omni-Cut test';
   catalog.onProgress=value=>win?.webContents.send('premontato:catalogProgress',value);
   require('./day_catalog_ipc').registerCatalogHandlers({handle,catalog,getSdk});
-  session.groq=new (require('./session').GroqClient)(root,{vault:safeStorage,fetchImpl:net?.fetch ? net.fetch.bind(net) : globalThis.fetch});
+  session.groq=new (require('./session').GroqClient)(root,{vault:safeStorage,fetchImpl:net?.fetch ? net.fetch.bind(net) : globalThis.fetch,diagnostic:(event,details)=>diagnostics.record(event,details)});
   try{await session.restoreAutosave();}catch(error){session.saveError='Recupero automatico non riuscito: '+error.message;}
   win = new BrowserWindow({ width: 1080, height: 820, minWidth: 680, minHeight: 560, title: 'RAMBLA Premontato v'+require('./package.json').version,
     backgroundColor: '#111820', webPreferences: { additionalArguments:['--premontato-version='+require('./package.json').version], preload: path.join(__dirname, 'preload.js'), sandbox: true, contextIsolation: true, nodeIntegration: false } });
@@ -95,6 +95,8 @@ async function start() {
   handle('analyze', async () => { const current = await adapter.snapshot(await getSdk(),{includeSelection:false}); session.assertProject(current); session.state.timelineId=current.timelineId; session.state.timeline=current.timeline; await saveResolve(session.state.projectId).catch(()=>{}); if(typeof catalogEditingEnabled!=='undefined' && catalogEditingEnabled){const {sources,context}=await catalog.prepareEditing(await getSdk(),(media,options)=>adapter.getSelectedTranscriptions(sdk,{media,transcribeMissing:true,...options,onProgress:({name})=>session.onProgress?.({phase:'transcript',phaseIndex:-1,percent:0,label:'Leggo il parlato disponibile: '+name})}));session.setTranscripts(sources,current.fps,{...current,selected:session.state.media});return session.analyze({catalogContext:context});} if(session.state.media?.some(media=>!(session.state.transcripts || []).some(source=>source.media_id===media.media_id && source.segments?.length))){const sources=await adapter.getSelectedTranscriptions(await getSdk(),{media:session.state.media,transcribeMissing:true,onProgress:({current,total,name})=>session.onProgress?.({phase:'transcript',phaseIndex:-1,percent:Math.round(current/total*100),current,total,label:'Recupero trascrizioni Resolve: '+name+' · '+current+'/'+total})});session.setTranscripts(sources,current.fps,{...current,selected:session.state.media});} return session.analyze(); });
   handle('cancelAnalysis', async () => session.cancelAnalysis());
   handle('configureGroq',async options=>{await session.groq.configure(options);session.state.analysis=null;session.state.uiDraft=null;session.state.stage='idle';await session.saveAutosave();return session.getReviewState();});
+  handle('openRouterStatus',async()=>session.groq.openRouterStatus());
+  handle('configureOpenRouter',async key=>session.groq.configureOpenRouter(key));
   handle('getReviewState', async () => session.getReviewState());
   handle('saveDraft',async draft=>{session.setDraft(draft);return {saved:true};});
   handle('saveProject',async request=>{

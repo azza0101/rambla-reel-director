@@ -52,3 +52,97 @@ class RestartPreferenceTests(unittest.TestCase):
   units[1]["text"]="Porta pacco fragile domani mattina tardi."
   labels,_=clean_restarts(units,{u["id"]:"1/P1" for u in units})
   self.assertEqual(labels["a"],"1/P1")
+
+class LastPerformanceTests(unittest.TestCase):
+ def test_latest_complete_run_wins_over_earlier_repeated_performance(self):
+  from staged_dialogue import latest_complete_run
+  rows=[{'id':'a','start':0,'end':20,'text':'La chiave verde resta sotto il vaso.'},{'id':'other','start':30,'end':40,'text':'Risposta.'},{'id':'b','start':50,'end':70,'text':'La chiave verde resta sotto il vaso.'}]
+  labels={'a':'1/P1','other':'2/P2','b':'1/P1'}
+  chosen=latest_complete_run([rows[0],rows[2]],rows,labels,{'text':'La chiave verde resta sotto il vaso.'},25)
+  self.assertEqual([u['id'] for u in chosen],['b'])
+ def test_last_aborted_short_run_does_not_replace_complete_speech(self):
+  from staged_dialogue import latest_complete_run
+  rows=[{'id':'a','start':0,'end':20,'text':'La chiave verde resta sotto il vaso.'},{'id':'other','start':30,'end':40,'text':'Risposta.'},{'id':'b','start':50,'end':70,'text':'La chiave...'}]
+  labels={'a':'1/P1','other':'2/P2','b':'1/P1'}
+  chosen=latest_complete_run([rows[0],rows[2]],rows,labels,{'text':'La chiave verde resta sotto il vaso.'},25)
+  self.assertEqual([u['id'] for u in chosen],['a'])
+
+class ShortRestartTests(unittest.TestCase):
+ def test_restarted_question_with_one_content_word_keeps_last_delivery(self):
+  from staged_dialogue import clean_restarts
+  rows=[{'id':'a','text':'E che volevano?','start':10,'end':30},{'id':'b','text':'Che volevano?','start':35,'end':55}]
+  labels,_=clean_restarts(rows,{'a':'1/P1','b':'1/P1'})
+  self.assertEqual(labels,{'a':'X','b':'1/P1'})
+
+class SemanticPerformanceTests(unittest.TestCase):
+ def test_paraphrased_question_restarts_keep_only_latest_delivery(self):
+  from staged_dialogue import latest_complete_run
+  import numpy as np
+  rows=[{'id':'a','start':0,'end':45,'text':'Come vuoi chiamare questa trasmissione?'},{'id':'b','start':100,'end':155,'text':'Quale titolo daresti al nostro programma?'}]
+  def encode(texts):return np.array([[1.,0.] for t in texts])
+  chosen=latest_complete_run(rows,rows,{'a':'1/P1','b':'1/P1'},{'text':'Come vorresti intitolarlo questo tuo programma?'},25,encode)
+  self.assertEqual([u['id'] for u in chosen],['b'])
+ def test_semantic_duplicate_runs_do_not_become_additional_story_moments(self):
+  from staged_dialogue import latest_complete_run
+  import numpy as np
+  rows=[{'id':'a','start':0,'end':40,'text':'Quale nome daremo alla trasmissione?'},{'id':'crew','start':50,'end':60,'text':'Stop.'},{'id':'b','start':300,'end':350,'text':'Come si chiama il nostro programma?'}]
+  def encode(texts):return np.array([[1.,0.] for t in texts])
+  chosen=latest_complete_run([rows[0],rows[2]],rows,{'a':'1/P1','crew':'X','b':'1/P1'},{'text':'Come vorresti intitolarlo questo tuo programma?'},25,encode)
+  self.assertEqual([u['id'] for u in chosen],['b'])
+ def test_semantically_distinct_continuation_survives(self):
+  from staged_dialogue import latest_complete_run
+  import numpy as np
+  rows=[{'id':'a','start':0,'end':40,'text':'Lascia la chiave nel vaso.'},{'id':'other','start':50,'end':60,'text':'Si.'},{'id':'b','start':70,'end':110,'text':'Poi raggiungimi alla stazione.'}]
+  def encode(texts):return np.array([[1.,0.] if 'chiave' in t else [0.,1.] for t in texts])
+  chosen=latest_complete_run([rows[0],rows[2]],rows,{'a':'1/P1','other':'2/P2','b':'1/P1'},{'text':'Lascia la chiave nel vaso e raggiungimi alla stazione.'},25,encode)
+  self.assertEqual([u['id'] for u in chosen],['a','b'])
+
+ def test_short_semantic_match_cannot_empty_the_complete_delivery_pool(self):
+  from staged_dialogue import latest_complete_run
+  import numpy as np
+  rows=[{'id':'a','start':0,'end':60,'text':'Il pacco fragile resta nascosto dentro il cassetto chiuso.'},{'id':'crew','start':70,'end':80,'text':'Stop.'},{'id':'b','start':300,'end':310,'text':'Cassetto.'}]
+  def encode(texts):return np.array([[.85,.5267827] if 'pacco' in t else [1.,0.] for t in texts])
+  chosen=latest_complete_run([rows[0],rows[2]],rows,{'a':'1/P1','crew':'X','b':'1/P1'},{'text':'Cassetto.'},25,encode)
+  self.assertEqual([u['id'] for u in chosen],['a'])
+
+class NaturalSpeechUnitTests(unittest.TestCase):
+ def test_breath_inside_unfinished_sentence_does_not_fragment_its_meaning(self):
+  from staged_dialogue import prepare_dialogue
+  source={'media_id':'m','duration_frames':300,'segments':[{'words':[{'text':'Quale','start_frame':10,'end_frame':20},{'text':'titolo','start_frame':34,'end_frame':45},{'text':'vuoi?','start_frame':46,'end_frame':60}]}]}
+  result=prepare_dialogue({'beats':[],'sources':[source],'fps':25})
+  self.assertEqual([u['text'] for u in result['clips'][0]['units']],['Quale titolo vuoi?'])
+  self.assertEqual((result['clips'][0]['units'][0]['start'],result['clips'][0]['units'][0]['end']),(10,60))
+ def test_long_pause_still_separates_runs_at_different_frame_rates(self):
+  from staged_dialogue import prepare_dialogue
+  for fps in [25,50]:
+   source={'media_id':'m','duration_frames':500,'segments':[{'words':[{'text':'Prima','start_frame':0,'end_frame':fps},{'text':'seconda','start_frame':fps*3,'end_frame':fps*4}]}]}
+   result=prepare_dialogue({'beats':[],'sources':[source],'fps':fps})
+   self.assertEqual(len(result['clips'][0]['units']),2)
+ def test_punctuation_keeps_separate_turns_despite_short_gap(self):
+  from staged_dialogue import prepare_dialogue
+  source={'media_id':'m','duration_frames':100,'segments':[{'words':[{'text':'Arrivi?','start_frame':0,'end_frame':20},{'text':'Certo.','start_frame':21,'end_frame':40}]}]}
+  result=prepare_dialogue({'beats':[],'sources':[source],'fps':25})
+  self.assertEqual(len(result['clips'][0]['units']),2)
+
+class ReferenceContentPriorityTests(unittest.TestCase):
+ def test_visible_camera_does_not_override_the_correct_script_content(self):
+  from staged_dialogue import select_dialogue_reference
+  import numpy as np
+  choices={'camera-a':[{'text':'Sai chi realizzerà questo programma?','start':100,'end':150}], 'camera-b':[{'text':'Ho un progetto: un programma sui boschi.','start':10,'end':80}]}
+  def encode(texts):return np.array([[.6,.8] if 'realizzerà' in t else [1.,0.] for t in texts])
+  result=select_dialogue_reference(choices,{'text':'Ho un progetto: un programma sui boschi.','character':'ALICE'},{('camera-a','ALICE'):'visible',('camera-b','ALICE'):'unknown'},{'camera-a':{'take_index':2},'camera-b':{'take_index':1}},encode)
+  self.assertEqual(result,'camera-b')
+ def test_more_irrelevant_words_do_not_make_a_reference_more_complete(self):
+  from staged_dialogue import select_dialogue_reference
+  import numpy as np
+  choices={'a':[{'text':'Voglio fare una trasmissione di cucina.','start':0,'end':40}], 'b':[{'text':'Voglio fare una trasmissione di cucina. Piano ciak regia ripartiamo dalla finestra proviamo ancora.','start':80,'end':150}]}
+  def encode(texts):return np.array([[1.,0.] for t in texts])
+  result=select_dialogue_reference(choices,{'text':'Voglio fare una trasmissione di cucina.','character':'ALICE'},{},{'a':{'take_index':1},'b':{'take_index':2}},encode)
+  self.assertEqual(result,'a')
+ def test_last_equally_complete_take_is_preferred(self):
+  from staged_dialogue import select_dialogue_reference
+  import numpy as np
+  choices={c:[{'text':'Lascia aperta la porta.','start':0,'end':40}] for c in ['a','b']}
+  def encode(texts):return np.array([[1.,0.] for t in texts])
+  result=select_dialogue_reference(choices,{'text':'Lascia aperta la porta.','character':'ALICE'},{},{'a':{'take_index':1},'b':{'take_index':2}},encode)
+  self.assertEqual(result,'b')

@@ -17,3 +17,13 @@ test('Omni-Cut update discovery ignores newer other-product releases and uses it
 test('build profile refuses malformed versions and transforms only audited text files',()=>{assert.throws(()=>transformFile('plugin/package.json',read('plugin/package.json'),'../bad'),/version/i);assert.equal(transformFile('worker/staged_dialogue.py','Premontato'),'Premontato');assert.equal(PROFILE.id,'com.rambla.omnicut.test');});
 
 test('parallel panel shows its own version before the bridge connects',()=>{const html=render('plugin/index.html');assert.match(html,/<title>RAMBLA Omni-Cut test v0\.1\.0<\/title>/);assert.match(html,/id="version"[^>]*>v0\.1\.0/);assert.doesNotMatch(html,/v0\.12\.1/);});
+
+test('Omni-Cut removes only its current rollback backup after installation succeeds',()=>{
+ const source=read('plugin/update.ps1'), built=render('plugin/update.ps1');
+ assert.doesNotMatch(source,/OMNICUT_CLEANUP_SUCCESS/);
+ const cleanup=built.indexOf('# OMNICUT_CLEANUP_SUCCESS');
+ const complete=built.indexOf("Write-Output ('Premontato aggiornato a '");
+ const rollback=built.indexOf("Send-UpdateProgress 'rollback'");
+ assert.ok(cleanup > complete && cleanup < rollback);
+ assert.match(built.slice(cleanup,rollback),/Remove-Item -LiteralPath \$backup -Recurse -Force/);
+});

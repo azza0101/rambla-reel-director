@@ -18,6 +18,7 @@ function validateDraft(value){
  const obj=v=>v && typeof v==='object' && !Array.isArray(v),str=v=>typeof v==='string',list=(v,check)=>Array.isArray(v) && v.length<=10000 && v.every(check),scalar=v=>str(v)||Number.isFinite(v),sizes=['wide','medium','close','detail','unknown'];
  if(!obj(value) || Buffer.byteLength(JSON.stringify(value))>512*1024 || value.takes!==undefined && !list(value.takes,v=>obj(v)&&str(v.take_id)&&scalar(v.start_frame)&&scalar(v.end_frame)) || value.beats!==undefined && !list(value.beats,v=>obj(v)&&str(v.beat_id)&&scalar(v.start)&&scalar(v.end)&&sizes.includes(v.scale)))throw new Error('Bozza progetto non valida');
  if(value.visual!==undefined && (!obj(value.visual) || value.visual.dirty!==undefined && typeof value.visual.dirty!=='boolean' || value.visual.person_names!==undefined && (!obj(value.visual.person_names)||!Object.values(value.visual.person_names).every(str)) || value.visual.intervals!==undefined && !list(value.visual.intervals,v=>obj(v)&&str(v.segment_id)&&sizes.includes(v.shot_size)&&list(v.visible_subjects,str))))throw new Error('Bozza visiva del progetto non valida');
+ if(value.interfaceMode!==undefined && !['scene','catalog'].includes(value.interfaceMode))throw Error('Modalità progetto non valida');
  if(value.sceneDebug!==undefined && typeof value.sceneDebug!=='boolean')throw Error('Opzione debug scene non valida');
  if(value.directions!==undefined)validateDirections(value.directions);
  if(value.pacing!==undefined && (!obj(value.pacing)||typeof value.pacing.enabled!=='boolean'||typeof value.pacing.script!=='boolean'||!scalar(value.pacing.gap)||!scalar(value.pacing.minimum)))throw new Error('Bozza ritmo non valida');
@@ -73,6 +74,7 @@ function workerEnvironment(source = process.env, cachePath) {
 
 function prepareReviewTimeline(plan, confirmed) {
   if (confirmed !== true) throw new Error('Conferma gli abbinamenti prima di creare la timeline');
+  if(plan?.ready_for_timeline===false)throw new Error('Montaggio incompleto: risolvere le scene fallite o le battute mancanti prima di creare la timeline');
   if (plan?.visual_review_required) throw new Error('Conferma le inquadrature e i personaggi nella revisione visiva');
   if (!plan?.decisions?.length) throw new Error('Nessuna battuta abbinata: timeline non creata');
   return { decisions: plan.decisions, omitted: plan.unmatched_beats?.length || 0 };
@@ -199,7 +201,8 @@ class Session {
     };
     try {
       progress('script', 0, 0, 'Leggo e separo le scene del copione');
-      const parsed = await this.request('parse_script', { text: this.state.script.text });
+      const scriptStructure=this.useGroq()&&this.groq.prepareScript?await this.groq.prepareScript(this.state.script.text,event=>progress('script',0,4,event.phase==='quota'?'Attendo quota Groq per il copione':'Distinguo dialoghi e azioni nel copione')):{text:this.state.script.text,normalized:false};
+      const parsed = await this.request('parse_script', { text: scriptStructure.text });parsed.normalized=scriptStructure.normalized;
       const sources = (this.state.transcripts || []).filter(catalogEdit.validSpeech);
       if(!sources.length){this.state.analysis={script:parsed,selectedScene:null,sceneSelection:{scene:null,candidates:[]},warnings:[...contextWarnings,'Nessun dialogo trascritto: consulta le coperture del catalogo. Il montaggio automatico di scene solo visive non viene inventato.'],takes:[],shots:[],audio:{},planningSources:[],plan:null,coverageSources,parsedBeats:[]};this.state.stage='review';progress('awaiting-scene',1,12,'Solo materiali visivi: nessun dialogo trascritto da montare');return this.getReviewState();}
       progress('scene', 1, 12, 'Individuo la scena che corrisponde al parlato');
@@ -207,7 +210,7 @@ class Session {
         scenes: parsed.scenes, transcript: sources.flatMap(source => source.segments)
       });
       const sceneSelection=automaticEditing.automaticScope(parsed.scenes,detectedScene,[...entries.values()],sources.map(s=>s.media_id));
-      const selectedScene = sceneSelection.scene;
+      let selectedScene = sceneSelection.scene;
       if(!selectedScene?.beats?.length)throw new Error('Nessuna scena leggibile nel copione: verifica il PDF.');
       if(sceneSelection.scope_basis==='script_search')contextWarnings.push('Nessuna scena unica: il motore cerca automaticamente le battute nel copione completo. Solo gli intervalli abbinati entrano nel piano.');
       const beats = selectedScene ? selectedScene.beats : [];
@@ -236,7 +239,7 @@ class Session {
         progress('takes', 4, 68 + ((i + 1) / Math.max(1, sources.length)) * 12, `Confini take: ${i + 1}/${sources.length} clip`, i + 1, sources.length);
       }
       const planningSources = takes.flatMap(group => group.confirmed ? group.segments.map(take => ({ ...sources.find(source => source.media_id === group.media_id), ...take,
-        segments: sources.find(source => source.media_id === group.media_id).segments.filter(segment => segment.start_frame >= take.start_frame && segment.start_frame < take.end_frame) })) : []);
+        catalog_context: entries.get(group.media_id), segments: sources.find(source => source.media_id === group.media_id).segments.filter(segment => segment.start_frame >= take.start_frame && segment.start_frame < take.end_frame) })) : []);
       const audio = {};
       // groq_staged_v1 preserves timing; targeted listener/breath checks load shared RMS only when needed.
       // Active-speaker checks still load their own PCM samples when needed.
@@ -256,7 +259,7 @@ class Session {
       }
       progress('plan', 6, 89, 'Scelgo automaticamente battute, take e inquadrature');
       let plan = selectedScene && takes.every(group => group.confirmed)
-        ? await this.buildPlan( { beats, sources: planningSources, shots, catalog_coverage:coverageSources,scene_id:selectedScene.scene_id, directions:this.state.directions, semantic: true, fps: this.state.fps || 25 },300000) : null;
+        ? await this.buildPlan( { beats, sources: planningSources, shots, catalog_coverage:coverageSources,scene_id:selectedScene.scene_id, scenes:parsed.scenes, script_structured:parsed.normalized, directions:this.state.directions, semantic: true, fps: this.state.fps || 25 },300000) : null;
       progress('pacing',7,95,'Verifico pause e reazioni prima della risoluzione');
       if(plan)plan=this.keepReactionChoices(plan);
       if (plan) plan=await this.pacePlan({plan,sources:planningSources,audio,beats,shots,fps:this.state.fps || 25,settings:this.state.pacingSettings});
@@ -269,7 +272,8 @@ class Session {
       if (shotCacheHits) warnings.push(`Analisi visiva riusata dalla cache locale per ${shotCacheHits} clip.`);
       if (this.state.error) warnings.push(this.state.error);
       if(plan)plan.performance={...(plan.performance || {}),session:{total_seconds:(Date.now()-startedAt)/1000,phase_seconds:{...phaseSeconds,[lastPhase]:(phaseSeconds[lastPhase] || 0)+(Date.now()-phaseStartedAt)/1000}}};
-      this.state.analysis = { script: parsed, sceneSelection, selectedScene, warnings, takes, shots, audio, planningSources, plan, visualReview, coverageSources, parsedBeats: beats };
+      if(plan?.engine==='scene_jobs_v1')selectedScene={scene_id:'scene_jobs',heading:'SEQUENZA · scene in ordine di copione',source_scene_ids:plan.scene_jobs.filter(j=>j.decisions).map(j=>j.scene_id),beats:parsed.scenes.flatMap(s=>s.beats)};
+      this.state.analysis = { script: parsed, sceneSelection, selectedScene, warnings, takes, shots, audio, planningSources, plan, visualReview, coverageSources, parsedBeats: selectedScene.beats };
       this.state.stage = selectedScene?'review':'awaiting_scene';
       if(selectedScene)progress('complete',8,100,plan?.decisions?.length?'Montaggio preparato · puoi creare la timeline':'Analisi completata · nessun taglio utilizzabile');
       else progress('awaiting-scene',1,12,'Scena ambigua: scegli una o più scene del copione per proseguire');
@@ -277,15 +281,37 @@ class Session {
     } catch (error) { this.state.error = error.message; this.state.stage = 'error'; progress('error', lastPhaseIndex, 0, `Analisi interrotta: ${error.message}`); throw error; }
   }
   useGroq(){const s=this.groq?.status();return Boolean(s?.configured && s.enabled);}
-  async buildPlan(payload,timeoutMs=300000,onProgress){const plan=await this.buildPlanCore(payload,timeoutMs,onProgress);const pool=payload.catalog_coverage||this.state.analysis?.coverageSources;if(pool?.length){const ids=new Set((payload.beats||[]).map(b=>b.scene_id).filter(Boolean));if(payload.scene_id)ids.add(payload.scene_id);plan.catalog_coverage=pool.filter(s=>!ids.size||!s.catalog_context?.scene||ids.has(s.catalog_context.scene.scene_id)).map(s=>({media_id:s.media_id,name:s.name,fps:s.fps,duration_frames:s.duration_frames,catalog_context:s.catalog_context}));}return plan;}
+  async buildPlan(payload,timeoutMs=300000,onProgress){let plan;
+    if(payload.scenes?.length>1){
+      if(!payload.script_structured&&this.useGroq()&&this.groq.prepareScript&&this.state.script?.text){const structured=await this.groq.prepareScript(this.state.script.text);if(structured.normalized){const parsed=await this.request('parse_script',{text:structured.text},timeoutMs);const scope=new Set(payload.scenes.map(s=>s.scene_id));payload={...payload,script_structured:true,scenes:parsed.scenes.filter(s=>scope.has(s.scene_id)),beats:parsed.scenes.filter(s=>scope.has(s.scene_id)).flatMap(s=>s.beats)};}}
+      const routed=await this.request('route_scene_edits',{scenes:payload.scenes,sources:payload.sources,fps:payload.fps},timeoutMs);const plans=[],jobs=[];
+      for(const [index,job] of routed.jobs.entries()){
+        const scene=job.scene;this.onProgress?.({phase:'plan',phaseIndex:6,percent:89+Math.round(6*index/Math.max(1,routed.jobs.length)),label:'Scena '+(index+1)+'/'+routed.jobs.length+' · '+scene.heading});
+        if(!job.sources.length){jobs.push({scene_id:scene.scene_id,heading:scene.heading,status:'no_coverage',missing:scene.beats.filter(b=>b.kind==='dialogue').map(b=>b.beat_id)});continue;}
+        try{const scenePayload={...payload,scenes:undefined,scene_id:scene.scene_id,beats:scene.beats,sources:job.sources};
+          const checkpoint=path.isAbsolute(this.root)&&job.sources.every(s=>s.path)?path.join(this.root,'cache','scene-edits',require('node:crypto').createHash('sha256').update(JSON.stringify({version:'scene-jobs-10',groq:this.useGroq(),payload:scenePayload,settings:this.state.pacingSettings})).digest('hex')+'.json'):null;
+          let part;if(checkpoint)try{part=JSON.parse(await fs.readFile(checkpoint,'utf8'));if(part.recovery?.retryable)part=null;}catch{}
+          if(!part){part=await this.buildPlanCore(scenePayload,timeoutMs,onProgress);if(this.useGroq()&&part.unmatched_beats?.length){this.onProgress?.({phase:'plan',phaseIndex:6,percent:93,label:scene.heading+' · ricontrollo '+part.unmatched_beats.length+' battute nelle trascrizioni originali'});const recovery=await this.request('expand_scene_edits',{scene,scenes:payload.scenes,missing:part.unmatched_beats,sources:payload.sources,selected_sources:job.sources,fps:payload.fps},timeoutMs);let recoveryFailed=false;if(recovery.expanded_media||recovery.focus_ranges?.length){try{const retry=await this.buildPlanCore({...scenePayload,sources:recovery.sources,recovery_focus:recovery.focus_ranges,missing_focus:part.unmatched_beats},timeoutMs,onProgress);if((retry.unmatched_beats?.length||0)<part.unmatched_beats.length&&(retry.unmatched_beats||[]).every(id=>part.unmatched_beats.includes(id)))part=retry;}catch(error){if(error.code==='GROQ_DAILY_QUOTA'||/annullat|cancel|abort/i.test(error.message))throw error;recoveryFailed=true;part.warnings=(part.warnings||[]).concat('Recupero aggiuntivo non completato: '+error.message);}}part.recovery={attempted:true,expanded_media:recovery.expanded_media,retryable:recoveryFailed};}if(part.engine!=='groq_staged_v1')part=await this.pacePlan({plan:part,sources:job.sources,beats:scene.beats,shots:payload.shots,audio:{},fps:payload.fps,settings:this.state.pacingSettings});if(checkpoint){await fs.mkdir(path.dirname(checkpoint),{recursive:true});await fs.writeFile(checkpoint+'.tmp',JSON.stringify(part));await fs.rename(checkpoint+'.tmp',checkpoint);}}
+          for(const b of part.review_beats||[])b.beat_id=scene.scene_id+':'+b.beat_id;
+          for(const d of part.decisions){d.scene_id=scene.scene_id;d.decision_id=scene.scene_id+':'+(d.decision_id||d.beat_id);}if(part.base_decisions)part.base_decisions=JSON.parse(JSON.stringify(part.decisions));
+          plans.push(part);jobs.push({scene_id:scene.scene_id,heading:scene.heading,status:part.unmatched_beats?.length?'incomplete':'ready',missing:part.unmatched_beats||[],decisions:part.decisions.length});
+        }catch(error){if(error.code==='GROQ_DAILY_QUOTA'||/annullat|cancel|abort/i.test(error.message))throw error;this.onProgress?.({phase:'plan',phaseIndex:6,percent:89+Math.round(6*index/Math.max(1,routed.jobs.length)),label:scene.heading+' · problema: '+error.message});jobs.push({scene_id:scene.scene_id,heading:scene.heading,status:'failed',error:error.message,missing:scene.beats.filter(b=>b.kind==='dialogue').map(b=>b.beat_id)});}
+      }
+      const decisions=plans.flatMap(p=>p.decisions);let cursor=0;for(const d of decisions){d.timeline_start_frame=cursor;cursor+=d.end_frame-d.start_frame+ (d.action_after||[]).reduce((n,a)=>n+a.end_frame-a.start_frame,0);}
+      plan={engine:'scene_jobs_v1',plan_id:'scene-jobs',fps:payload.fps,scene_id:payload.scene_id,decisions,base_decisions:JSON.parse(JSON.stringify(decisions)),review_beats:plans.flatMap(p=>p.review_beats||[]),unmatched_beats:jobs.flatMap(j=>j.missing||[]),warnings:plans.flatMap(p=>p.warnings||[]),script_scenes:payload.scenes,scene_jobs:jobs,ready_for_timeline:!jobs.some(j=>j.status==='failed'||j.missing?.length),planning_summary:{scene_jobs:jobs,unassigned_units:routed.unassigned.length},visual_review_required:false};
+    }else plan=await this.buildPlanCore(payload,timeoutMs,onProgress);const pool=payload.catalog_coverage||this.state.analysis?.coverageSources;if(pool?.length){const ids=new Set((payload.beats||[]).map(b=>b.scene_id).filter(Boolean));if(payload.scene_id)ids.add(payload.scene_id);plan.catalog_coverage=pool.filter(s=>!ids.size||!s.catalog_context?.scene||ids.has(s.catalog_context.scene.scene_id)).map(s=>({media_id:s.media_id,name:s.name,fps:s.fps,duration_frames:s.duration_frames,catalog_context:s.catalog_context}));}return plan;}
   async buildPlanCore(payload, timeoutMs=300000, onProgress) {
     if(this.useGroq()){
       const prepared=await this.request('prepare_dialogue',payload,timeoutMs);
       const classificationStarted=performance.now();
       const classification=await this.groq.classify(prepared,event=>{
-        const label=event.phase==='quota'?'Quota Groq: attendo '+event.seconds+' secondi': 'Pulizia e allineamento Groq · '+event.current+'/'+event.total+(event.cache_hit?' · cache verificata':'');
+        const label=event.phase==='quota'?'Quota Groq: attendo '+event.seconds+' secondi': 'Pulizia e allineamento Groq · '+event.current+'/'+event.total+(event.cache_hit?' · cache verificata':Number.isFinite(event.batch)?' · blocco '+(Math.floor(event.batch/20)+1)+'/'+Math.ceil(event.units/20):'');
         this.onProgress?.({phase:'plan',phaseIndex:6,percent:89+Math.round(3*event.current/Math.max(1,event.total)),label,current:event.current,total:event.total});
       });
+      if(payload.recovery_focus?.length){
+        const focusClips=prepared.clips.map(clip=>({...clip,units:clip.units.filter(u=>payload.recovery_focus.some(r=>r.take_id===clip.key&&u.start<r.end_frame&&r.start_frame<u.end))})).filter(c=>c.units.length);
+        if(focusClips.length){const focus_beats=prepared.beats.filter(b=>(payload.missing_focus||[]).includes(b.beat_id)).map(b=>b.number);const checked=await this.groq.classify({...prepared,focus_beats,clips:focusClips},event=>this.onProgress?.({phase:'plan',phaseIndex:6,percent:94,label:'Ricontrollo mirato del parlato · '+event.current+'/'+event.total+(event.phase==='quota'?' · attendo quota '+event.seconds+' s':''),current:event.current,total:event.total}));for(const [key,labels] of Object.entries(checked.labels))Object.assign(classification.labels[key],labels);classification.summary={...classification.summary,recovery_calls:checked.summary.calls,recovery_cache_hits:checked.summary.cache_hits};}
+      }
       const classificationSeconds=(performance.now()-classificationStarted)/1000;
       const editorialStarted=performance.now();
       let editorial;
@@ -436,11 +462,12 @@ class Session {
     return plan;
   }
   async pacePlan(payload) {
+    if(payload.plan?.engine==='scene_jobs_v1')return payload.plan;
     const audio=payload.audio || {};
     let measuredAudio=false;
     // Saved Groq projects and analyses made with pacing off may lack RMS data.
     // Fill it only when the actual local plan needs it, including alternate cameras.
-    if(payload.plan?.engine!=='groq_staged_v1' && payload.plan?.decisions?.length && payload.settings?.enabled===true) {
+    if(!['groq_staged_v1','scene_jobs_v1'].includes(payload.plan?.engine) && payload.plan?.decisions?.length && payload.settings?.enabled===true) {
       const originals=new Map([...(this.state.media || []),...(this.state.transcripts || [])].map(source=>[source.media_id,source]));
       const missing=new Map();
       for(const source of payload.sources || []) {

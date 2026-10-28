@@ -11,3 +11,8 @@ class NumberedScriptTests(unittest.TestCase):
  def test_supported_scene_number_punctuation(self):
   for punctuation in ['.',':',' -',' –',' —',')']:
    with self.subTest(punctuation=punctuation):self.assertEqual(len(parse_script('Scena 1'+punctuation+' Casa\nLUI\nPorta il quaderno verde.\nScena 2'+punctuation+' Bosco\nLEI\nLo zaino è vicino al fiume.')['scenes']),2)
+
+class SpeakerTurnBoundaryTests(unittest.TestCase):
+ def test_same_speaker_cue_starts_a_new_turn(self):
+  beats=parse_script('SCENA 1\nADA\nUna frase.\nADA (sorridendo)\nUna seconda frase.')['scenes'][0]['beats']
+  self.assertEqual([b['text'] for b in beats],['Una frase.','Una seconda frase.'])
