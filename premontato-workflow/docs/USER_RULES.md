@@ -85,3 +85,7 @@ Questo documento è memoria persistente nel repository. Non crea da solo un appr
 - Prima della creazione Resolve servono controlli interni per scena su testo, ripetizioni, ordine e continuita. Un'anteprima ridotta non certifica da sola correttezza narrativa, gesti e visibilita del parlante.
 - Scena muta presente nel catalogo e nel copione: includerla come azione, senza dipendere dall'esistenza di parole trascritte. La battuta mancante resta segnalata separatamente.
 - Preferenze richieste; lo stato di implementazione e i limiti verificati vanno dichiarati nella consegna tecnica.
+
+## Campi indipendenti e multicam (29 ottobre 2026)
+- Il metodo principale deve funzionare con campi registrati in momenti diversi e take indipendenti. Non presumere sincronismo da vicinanza dei file o timecode.
+- Un multicam realmente verificato puo accelerare il lavoro soltanto come percorso opzionale; non deve essere necessario alla qualita del montaggio.

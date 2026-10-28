@@ -6,6 +6,18 @@ def meaningful(text):
  generic=core("vieni entra andiamo andare vai va ecco dai qui qua lì là subito aspetta vado facciamo io tu lui lei noi voi loro me te mi ti ci vi mio tuo suo nostro vostro")
  return set(core(text))-set(generic)
 
+
+def fill_scene_context(key,rows,routes,fps):
+ """Restore unassigned interior speech only between agreeing accepted anchors.
+ Snapshot anchors prevent propagation; competing scenes and long gaps stay unresolved.
+ """
+ anchors=[i for i,u in enumerate(rows) if routes[(key,u['id'])]]
+ for left,right in zip(anchors,anchors[1:]):
+  a,b=rows[left],rows[right];sid=routes[(key,a['id'])]
+  if routes[(key,b['id'])]!=sid or b['start']-a['end']>20*fps:continue
+  for u in rows[left+1:right]:
+   if routes[(key,u['id'])] is None:routes[(key,u['id'])]=sid
+
 def route_scenes(payload,encoder=None):
  from staged_dialogue import prepare_dialogue,core
  if encoder is None:
@@ -49,6 +61,8 @@ def route_scenes(payload,encoder=None):
   for u in clip['units']:
    key=(clip['key'],u['id']);sid=routes[key]
    if sid and sid!=primary and len(anchors.get(sid,set()))<2 and sid not in specific:routes[key]=None
+ # Context must run after catalog vetoes, which can invalidate a nearest route.
+ for clip in prepared['clips']:fill_scene_context(clip['key'],clip['units'],routes,payload['fps'])
  jobs=[]
  for scene in scenes:
   selected=[]
