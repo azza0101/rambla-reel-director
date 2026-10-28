@@ -106,7 +106,7 @@ test('preserves Resolve word-level timestamps as clip-relative phrase timings', 
   ]);
 });
 
-function timelineSdk({ appendResultCount = 3, sourceBase = 0 } = {}) {
+function timelineSdk({ appendResultCount = 3, sourceBase = 0, inheritedColor = '' } = {}) {
  const media={GetMediaId:async()=> 'm1',GetName:async()=> 'master.mp4',GetAudioMapping:async()=>JSON.stringify({embedded_audio_channels:2,track_mapping:{'1':{type:'Stereo',channel_idx:[1,2],mute:false}}}),SetAudioMapping:async()=>{reviewTimeline.sourceMutations++;throw Error('Source mutation forbidden');},SetClipColor:async()=>{reviewTimeline.sourceMutations++;throw Error('Source mutation forbidden');}};
  const sourceTimeline={GetUniqueId:async()=> 'source-timeline',GetName:async()=> 'SOURCE',GetSetting:async()=> '25'};
  const makeFolder=name=>{const f={name,children:[],clips:[],GetName:async()=>name,GetSubFolderList:async()=>f.children,GetClipList:async()=>f.clips};return f;};
@@ -127,7 +127,7 @@ function timelineSdk({ appendResultCount = 3, sourceBase = 0 } = {}) {
  const output=[];
  for(const clip of clips){const type=clip.mediaType===2?'audio':'video',list=type==='video'?reviewTimeline.items:reviewTimeline.audio;if(list.length>=appendResultCount)continue;
  const record=clip.recordFrame ?? (list.length?await list[list.length-1].GetEnd():90000);
- const item={clip,color:'',GetMediaPoolItem:async()=>clip.mediaPoolItem,GetSourceStartFrame:async()=>clip.startFrame%2?clip.startFrame-1:clip.startFrame,GetSourceEndFrame:async()=>clip.endFrame,GetSourceStartTime:async()=>sourceBase+clip.startFrame/25,GetSourceEndTime:async()=>sourceBase+clip.endFrame/25,GetStart:async()=>record,GetEnd:async()=>record+clip.endFrame-clip.startFrame,GetDuration:async()=>clip.endFrame-clip.startFrame,GetTrackTypeAndIndex:async()=>[type,clip.trackIndex || 1],SetClipColor:async color=>{if(!['Blue','Green','Orange','Purple','Yellow','Teal','Pink','Lime','Apricot','Olive','Navy','Violet','Tan','Beige','Brown','Chocolate'].includes(color))return false;item.color=color;return true;},GetClipColor:async()=>item.color,GetLinkedItems:async()=>item.linked || []};list.push(item);output.push(item);
+ const item={clip,color:inheritedColor,GetMediaPoolItem:async()=>clip.mediaPoolItem,GetSourceStartFrame:async()=>clip.startFrame%2?clip.startFrame-1:clip.startFrame,GetSourceEndFrame:async()=>clip.endFrame,GetSourceStartTime:async()=>sourceBase+clip.startFrame/25,GetSourceEndTime:async()=>sourceBase+clip.endFrame/25,GetStart:async()=>record,GetEnd:async()=>record+clip.endFrame-clip.startFrame,GetDuration:async()=>clip.endFrame-clip.startFrame,GetTrackTypeAndIndex:async()=>[type,clip.trackIndex || 1],SetClipColor:async color=>{if(!['Blue','Green','Orange','Purple','Yellow','Teal','Pink','Lime','Apricot','Olive','Navy','Violet','Tan','Beige','Brown','Chocolate'].includes(color))return false;item.color=color;return true;},GetClipColor:async()=>item.color,ClearClipColor:async()=>{item.color='';return true;},GetLinkedItems:async()=>item.linked || []};list.push(item);output.push(item);
  }return output;
  },DeleteTimelines:async timelines=>{assert.deepEqual(timelines,[reviewTimeline]);reviewTimeline.deleted=true;return true;}};
  const sdk={GetResolvePromise:async()=>({GetProjectManager:async()=>({GetCurrentProject:async()=>project})})};
@@ -269,9 +269,9 @@ test('changing the speaking or visible person does not recolor an unchanged sour
  {media_id:'two-shot',shot_size:'close',visible_subjects:['ALICE'],dialogue_character:'ALICE'}]);
  assert.equal(colors[0],colors[1]);assert.equal(colors[0],colors[2]);
 });
-test('color palette exhaustion is explicit instead of reusing a different field color',()=>{
+test('color palette exhaustion leaves excess fields neutral without reusing assigned colors',()=>{
  const {assignFieldColors}=require('../../plugin/resolve_adapter');
- assert.throws(()=>assignFieldColors(Array.from({length:17},(_,i)=>({media_id:'angle-'+i,shot_size:'wide'}))),/colori.*Resolve/i);
+ const edits=Array.from({length:20},(_,i)=>({media_id:'angle-'+i,shot_size:'wide'})); const colors=assignFieldColors(edits); assert.equal(colors.length,20);assert.equal(new Set(colors.filter(Boolean)).size,16);assert.equal(colors.filter(c=>!c).length,4);assert.deepEqual(assignFieldColors([...edits].reverse()).reverse(),colors);
 });
 
 test('wide field color remains stable when people enter or leave',()=>{ const {assignFieldColors}=require('../../plugin/resolve_adapter'); const colors=assignFieldColors([{media_id:'wide',shot_size:'wide',visible_subjects:['ALICE']},{media_id:'wide',shot_size:'wide',visible_subjects:['BOB']}]);assert.equal(colors[0],colors[1]); });
@@ -298,7 +298,7 @@ test('an internal V3 reaction returns to intact V2 picture before dialogue ends'
 
 
 test('debug scene gaps shift dialogue, mono audio and V3 overlays together; V4 labels span each full scene',async()=>{
- const c=timelineSdk({appendResultCount:20});let imports=0;const other={...c.media,GetMediaId:async()=>'m2'};c.sourceFolder.clips.push(other);
+ const c=timelineSdk({appendResultCount:20,inheritedColor:'Pink'});let imports=0;const other={...c.media,GetMediaId:async()=>'m2'};c.sourceFolder.clips.push(other);
  c.pool.ImportMedia=async paths=>{imports++;return paths.map(p=>({GetMediaId:async()=>p,GetClipProperty:async()=>p}));};
  const s1={id:'s1',number:1,heading:'CASA'},s2={id:'s2',number:2,heading:'STRADA'};
  const edits=[{media_id:'m1',beat_id:'a',start_frame:0,end_frame:100,shot_size:'wide',scene_debug:s1},{media_id:'m1',beat_id:'b',start_frame:200,end_frame:300,shot_size:'wide',scene_debug:s2,reaction_overlay:{kind:'reaction',basis:'verified_listener',media_id:'m2',take_id:'t',start_frame:350,end_frame:390,offset_frames:20,shot_size:'close',speaker_coverage:'visible',enabled:true,evidence:{verified:true}}}];
@@ -309,7 +309,7 @@ test('debug scene gaps shift dialogue, mono audio and V3 overlays together; V4 l
 });
 
 test('scene debug keeps identical framing on either side of a scene boundary separate',async()=>{
- const c=timelineSdk({appendResultCount:20});c.pool.ImportMedia=async paths=>paths.map(p=>({GetMediaId:async()=>p,GetClipProperty:async()=>p}));
+ const c=timelineSdk({appendResultCount:20,inheritedColor:'Pink'});c.pool.ImportMedia=async paths=>paths.map(p=>({GetMediaId:async()=>p,GetClipProperty:async()=>p}));
  const edits=[{media_id:'m1',start_frame:0,end_frame:50,shot_size:'wide',scene_debug:{id:'a',number:1}},{media_id:'m1',start_frame:50,end_frame:100,shot_size:'wide',scene_debug:{id:'b',number:2}}];
  await createTimeline(c.sdk,'DEBUG',edits,{sceneDebug:{enabled:true,gap_frames:50,assets:{1:'C:/one.png',2:'C:/two.png'}}});assert.equal(c.reviewTimeline.items.filter(x=>x.clip.trackIndex===2).length,2);
 });
@@ -321,4 +321,11 @@ test('unverified debug title insertion removes only the generated timeline and r
 
 test('cataloged coverage can read an empty transcription without starting another GPU job',async()=>{
  let transcribes=0;const media={media_id:'known-cover',name:'cover',fps:25,start_tc:'00:00:00:00',duration_frames:100};const item={GetMediaId:async()=>media.media_id,GetTranscription:async()=>({}),TranscribeAudio:async()=>{transcribes++;return true;}};const pool={GetRootFolder:async()=>({GetClipList:async()=>[item],GetSubFolderList:async()=>[]})};const sdk={GetResolvePromise:async()=>({GetProjectManager:async()=>({GetCurrentProject:async()=>({GetCurrentTimeline:async()=>({}),GetMediaPool:async()=>pool})})})};const rows=await getSelectedTranscriptions(sdk,{media:[media],transcribeMissing:true,skipTranscribeIds:[media.media_id]});assert.equal(rows[0].segments.length,0);assert.equal(transcribes,0);
+});
+
+test('timeline creation succeeds with 17 fields and reports neutral overflow without source changes',async()=>{
+ const c=timelineSdk({appendResultCount:20,inheritedColor:'Pink'});
+ const edits=Array.from({length:17},(_,i)=>({media_id:'m1',framing_group_id:'field-'+i,shot_size:'wide',start_frame:i*20,end_frame:i*20+20}));
+ const r=await createTimeline(c.sdk,'COLOR OVERFLOW',edits,{media:[{media_id:'m1',fps:25}],activateCreated:true});
+ assert.equal(r.included,17);assert.equal(r.neutralFields,1);assert.equal(c.reviewTimeline.items.filter(i=>!i.color).length,1);assert.equal(c.reviewTimeline.audio.filter(i=>!i.color).length,1);assert.equal(r.warnings.length,1);assert.equal(c.reviewTimeline.items.length,17);assert.equal(c.reviewTimeline.sourceMutations,0);assert.equal(c.reviewTimeline.deleted,false);assert.equal(c.project.active,c.reviewTimeline);
 });

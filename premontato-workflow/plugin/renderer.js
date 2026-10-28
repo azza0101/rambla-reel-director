@@ -85,7 +85,7 @@ $('analyze').addEventListener('click', async () => { $('analyze').disabled = tru
 $('cancel').addEventListener('click', async () => { await window.premontato.cancelAnalysis(); $('cancel').hidden = true; message('Analisi annullata.'); });
 $('make-timeline').addEventListener('click', async () => {
  const status=$('timeline-result');$('make-timeline').disabled=true;status.textContent='Creazione timeline in corso…';message(status.textContent);
- try { const result=await window.premontato.createReviewTimeline({confirmed:true,sceneDebug:$('scene-debug').checked,allowIncomplete:window.__lastReviewState?.analysis?.plan?.ready_for_timeline===false});const omitted=result.omitted?'; '+result.omitted+' dialoghi non abbinati omessi':'';status.textContent='Creata '+result.timelineName+' con '+result.included+' battute abbinate'+omitted+'. Verifica i tagli e l’audio in Resolve.';message(status.textContent); }
+ try { const result=await window.premontato.createReviewTimeline({confirmed:true,sceneDebug:$('scene-debug').checked,allowIncomplete:window.__lastReviewState?.analysis?.plan?.ready_for_timeline===false});const omitted=result.omitted?'; '+result.omitted+' dialoghi non abbinati omessi':'';status.textContent='Creata '+result.timelineName+' con '+result.included+' battute abbinate'+omitted+'. Verifica i tagli e l’audio in Resolve.';status.textContent+=(result.warnings?.length?' '+result.warnings.join(' '):'');message(status.textContent); }
  catch(error){status.textContent=error.message || String(error);showError(error);}
  finally{updateTimelineButton();}
 });
