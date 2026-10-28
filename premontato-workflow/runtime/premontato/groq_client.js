@@ -24,9 +24,9 @@ class GroqClient{
   if(response.status!==429 || url!=='https://api.groq.com/openai/v1/chat/completions' || !this.openRouterStatus().configured)return response;
   if(!this.vault?.isEncryptionAvailable())throw Error('Protezione credenziali Windows non disponibile');
   let credential;try{credential=this.vault.decryptString(await fs.readFile(path.join(this.root,'credentials','openrouter-key.bin')));}catch{throw Error('Impossibile leggere la chiave OpenRouter protetta');}
-  const request=JSON.parse(options.body);request.model='nvidia/nemotron-3.5-lightning:free';delete request.reasoning_effort;request.reasoning={enabled:false};
+  const request=JSON.parse(options.body);request.model='nvidia/nemotron-3-ultra-550b-a55b:free';delete request.reasoning_effort;request.reasoning={enabled:false};
   const headers={...options.headers,Authorization:'Bearer '+credential};
-  this.lastProvider='OpenRouter · Nemotron 3.5 Lightning gratuito';
+  this.lastProvider='OpenRouter · Nemotron 3 Ultra gratuito';
   return this.fetchImpl('https://openrouter.ai/api/v1/chat/completions',{...options,headers,body:JSON.stringify(request)});
  }
  openRouterStatus(){return {configured:sync.existsSync(path.join(this.root,'credentials','openrouter-key.bin'))};}
