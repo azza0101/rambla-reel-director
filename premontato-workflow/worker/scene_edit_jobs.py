@@ -18,6 +18,22 @@ def fill_scene_context(key,rows,routes,fps):
   for u in rows[left+1:right]:
    if routes[(key,u['id'])] is None:routes[(key,u['id'])]=sid
 
+def scene_ranges(key,units,routes,scene_id,fps):
+ """Context ranges, not a speech whitelist; split at competing scene anchors."""
+ groups=[];group=[];previous=None
+ for i,u in enumerate(units):
+  route=routes[(key,u['id'])]
+  if route is not None and route!=scene_id:
+   if group:groups.append(group);group=[]
+   previous=None;continue
+  if route!=scene_id:continue
+  if previous is not None and u['start']-previous['end']>20*fps:
+   if group:groups.append(group)
+   group=[]
+  group.append(u);previous=u
+ if group:groups.append(group)
+ return [{'start_frame':g[0]['start'],'end_frame':g[-1]['end']} for g in groups]
+
 def route_scenes(payload,encoder=None):
  from staged_dialogue import prepare_dialogue,core
  if encoder is None:
@@ -72,7 +88,7 @@ def route_scenes(payload,encoder=None):
    if not rows:continue
    words=[w for seg in source['segments'] for w in seg.get('words',[])]
    segments=[{'text':u['text'],'speaker_name':u.get('speaker_name'),'speaker_reliable':u.get('speaker_reliable',False),'start_frame':u['start'],'end_frame':u['end'],'words':[w for w in words if w['start_frame']>=u['start'] and w['end_frame']<=u['end']]} for u in rows]
-   selected.append({**source,'segments':segments})
+   selected.append({**source,'segments':segments,'scene_ranges':scene_ranges(key,clip['units'],routes,scene['scene_id'],payload['fps'])})
   jobs.append({'scene':scene,'sources':selected,'status':'ready' if selected else 'no_coverage'})
  for clip,u in units:
   if not routes[(clip['key'],u['id'])]:unassigned.append({'take_id':clip['key'],'start_frame':u['start'],'end_frame':u['end'],'text':u['text']})
