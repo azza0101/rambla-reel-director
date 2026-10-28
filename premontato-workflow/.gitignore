@@ -27,3 +27,6 @@ __pycache__/
 
 /.omnicut-test-build-*/
 /dist-omnicut-test/
+
+# Local versioned Omni-Cut test packages; never commit runtime/installers.
+/dist-omnicut-test-*/
