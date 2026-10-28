@@ -138,10 +138,10 @@ async function start() {
     await session.validateMediaUnchanged();
     await saveResolve(session.state.projectId);
     const plan = session.state.analysis?.plan;
-    const review = prepareReviewTimeline(plan, request?.confirmed);
+    const review = prepareReviewTimeline(plan, request?.confirmed, request?.allowIncomplete === true);
     const sdk=await getSdk(),context=await adapter.getResolve(sdk);
     const debug=await session.prepareTimelineDebug(review.decisions,request?.sceneDebug ?? session.state.uiDraft?.sceneDebug ?? true,{fps:Number(await context.timeline.GetSetting('timelineFrameRate')),width:Number(await context.timeline.GetSetting('timelineResolutionWidth')) || 1920,height:Number(await context.timeline.GetSetting('timelineResolutionHeight')) || 1080});
-    const created = await adapter.createTimeline(sdk, `PREMONTATO v${require('./package.json').version} - ${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}`, debug.decisions, {...session.state,sceneDebug:debug.sceneDebug,activateCreated:true});
+    const created = await adapter.createTimeline(sdk, `${review.partial ? "BOZZA INCOMPLETA - " : ""}PREMONTATO v${require('./package.json').version} - ${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}`, debug.decisions, {...session.state,sceneDebug:debug.sceneDebug,activateCreated:true});
     if(created.opened){session.state.timelineId=created.timelineId;session.state.timeline=created.timelineName;}
     try{await saveResolve(session.state.projectId);}catch{}
     return { ...created, included: review.decisions.length, omitted: review.omitted };

@@ -72,12 +72,12 @@ function workerEnvironment(source = process.env, cachePath) {
   return result;
 }
 
-function prepareReviewTimeline(plan, confirmed) {
+function prepareReviewTimeline(plan, confirmed, allowIncomplete=false) {
   if (confirmed !== true) throw new Error('Conferma gli abbinamenti prima di creare la timeline');
-  if(plan?.ready_for_timeline===false)throw new Error('Montaggio incompleto: risolvere le scene fallite o le battute mancanti prima di creare la timeline');
+  if(plan?.ready_for_timeline===false&&allowIncomplete!==true)throw new Error('Montaggio incompleto: scegli esplicitamente la creazione di una bozza');
   if (plan?.visual_review_required) throw new Error('Conferma le inquadrature e i personaggi nella revisione visiva');
   if (!plan?.decisions?.length) throw new Error('Nessuna battuta abbinata: timeline non creata');
-  return { decisions: plan.decisions, omitted: plan.unmatched_beats?.length || 0 };
+  return { decisions: plan.decisions, omitted: plan.unmatched_beats?.length || 0, ...(plan.ready_for_timeline===false?{partial:true}:{}) };
 }
 
 
@@ -289,7 +289,7 @@ class Session {
         const scene=job.scene;this.onProgress?.({phase:'plan',phaseIndex:6,percent:89+Math.round(6*index/Math.max(1,routed.jobs.length)),label:'Scena '+(index+1)+'/'+routed.jobs.length+' · '+scene.heading});
         if(!job.sources.length){jobs.push({scene_id:scene.scene_id,heading:scene.heading,status:'no_coverage',missing:scene.beats.filter(b=>b.kind==='dialogue').map(b=>b.beat_id)});continue;}
         try{const scenePayload={...payload,scenes:undefined,scene_id:scene.scene_id,beats:scene.beats,sources:job.sources};
-          const checkpoint=path.isAbsolute(this.root)&&job.sources.every(s=>s.path)?path.join(this.root,'cache','scene-edits',require('node:crypto').createHash('sha256').update(JSON.stringify({version:'scene-jobs-10',groq:this.useGroq(),payload:scenePayload,settings:this.state.pacingSettings})).digest('hex')+'.json'):null;
+          const checkpoint=path.isAbsolute(this.root)&&job.sources.every(s=>s.path)?path.join(this.root,'cache','scene-edits',require('node:crypto').createHash('sha256').update(JSON.stringify({version:'scene-jobs-11',provider:this.groq?.cacheIdentity||this.groq?.status?.().model||'local',groq:this.useGroq(),payload:scenePayload,settings:this.state.pacingSettings})).digest('hex')+'.json'):null;
           let part;if(checkpoint)try{part=JSON.parse(await fs.readFile(checkpoint,'utf8'));if(part.recovery?.retryable)part=null;}catch{}
           if(!part){part=await this.buildPlanCore(scenePayload,timeoutMs,onProgress);if(this.useGroq()&&part.unmatched_beats?.length){this.onProgress?.({phase:'plan',phaseIndex:6,percent:93,label:scene.heading+' · ricontrollo '+part.unmatched_beats.length+' battute nelle trascrizioni originali'});const recovery=await this.request('expand_scene_edits',{scene,scenes:payload.scenes,missing:part.unmatched_beats,sources:payload.sources,selected_sources:job.sources,fps:payload.fps},timeoutMs);let recoveryFailed=false;if(recovery.expanded_media||recovery.focus_ranges?.length){try{const retry=await this.buildPlanCore({...scenePayload,sources:recovery.sources,recovery_focus:recovery.focus_ranges,missing_focus:part.unmatched_beats},timeoutMs,onProgress);if((retry.unmatched_beats?.length||0)<part.unmatched_beats.length&&(retry.unmatched_beats||[]).every(id=>part.unmatched_beats.includes(id)))part=retry;}catch(error){if(error.code==='GROQ_DAILY_QUOTA'||/annullat|cancel|abort/i.test(error.message))throw error;recoveryFailed=true;part.warnings=(part.warnings||[]).concat('Recupero aggiuntivo non completato: '+error.message);}}part.recovery={attempted:true,expanded_media:recovery.expanded_media,retryable:recoveryFailed};}if(part.engine!=='groq_staged_v1')part=await this.pacePlan({plan:part,sources:job.sources,beats:scene.beats,shots:payload.shots,audio:{},fps:payload.fps,settings:this.state.pacingSettings});if(checkpoint){await fs.mkdir(path.dirname(checkpoint),{recursive:true});await fs.writeFile(checkpoint+'.tmp',JSON.stringify(part));await fs.rename(checkpoint+'.tmp',checkpoint);}}
           for(const b of part.review_beats||[])b.beat_id=scene.scene_id+':'+b.beat_id;
