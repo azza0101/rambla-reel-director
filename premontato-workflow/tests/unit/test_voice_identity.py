@@ -39,3 +39,13 @@ class ProfileReconciliationTests(unittest.TestCase):
   from voice_identity import reconcile_profiles
   ref=VoiceIdentityTests().gallery();local=[{'voice':'x','source_id':'other','start':0,'end':100,'vector':[1,0]}]*4
   self.assertEqual(reconcile_profiles(local,ref),{})
+class SingleVoiceProfileTests(unittest.TestCase):
+ def test_one_well_supported_profile_requires_high_absolute_similarity(self):
+  from voice_identity import identify_embedding
+  g=[{'voice':'solo','source_id':'s','start':i*100,'end':i*100+70,'vector':[1,0]} for i in range(4)]
+  self.assertEqual(identify_embedding([1,0],g)['voice'],'solo')
+  self.assertIsNone(identify_embedding([.6,.8],g)['voice'])
+ def test_missing_competitor_after_exclusion_is_not_single_person_evidence(self):
+  from voice_identity import identify_embedding
+  g=[{'voice':'a','source_id':'s','start':0,'end':300,'vector':[1,0]}]*4+[{'voice':'b','source_id':'x','start':i*100,'end':i*100+70,'vector':[0,1]} for i in range(4)]
+  self.assertIsNone(identify_embedding([0,1],g,{'source_id':'s','start':100,'end':200})['voice'])

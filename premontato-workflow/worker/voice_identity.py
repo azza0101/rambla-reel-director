@@ -22,6 +22,8 @@ def identify_embedding(vector,gallery,exclude=None,min_score=.30,min_margin=.12,
   by.setdefault(a['voice'],[]).append(float(v@e))
  scores={voice:float(np.mean(sorted(values,reverse=True)[:3])) for voice,values in by.items() if len(values)>=min_anchors}
  ranked=sorted(scores,key=scores.get,reverse=True)
+ if len(ranked)==1 and len({a['voice'] for a in gallery})==1 and scores[ranked[0]]>=.70:
+  return {'status':'identified','voice':ranked[0],'scores':scores,'margin':None,'score':scores[ranked[0]],'basis':'single_profile_high_absolute_similarity','open_set_threshold':.70}
  if len(ranked)<2:return {'status':'unknown','voice':None,'reason':'insufficient_independent_anchors','scores':scores,'margin':0.}
  best,second=ranked[:2];margin=scores[best]-scores[second]
  if scores[best]<min_score or margin<min_margin:return {'status':'unknown','voice':None,'reason':'weak_or_ambiguous_voice','scores':scores,'margin':margin}
