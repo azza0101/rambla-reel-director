@@ -19,6 +19,16 @@ function makeRequest(scene,clip){
  return {model:MODEL,reasoning_effort:'none',temperature:0,top_p:1,presence_penalty:0,response_format:{type:'json_object'},max_completion_tokens:900,messages:[{role:'user',content:prompt}]};
 }
 class GroqClient{
+ async request(url,options){
+  const response=await this.fetchImpl(url,options);
+  if(response.status!==429 || url!=='https://api.groq.com/openai/v1/chat/completions' || !this.openRouterStatus().configured)return response;
+  if(!this.vault?.isEncryptionAvailable())throw Error('Protezione credenziali Windows non disponibile');
+  let credential;try{credential=this.vault.decryptString(await fs.readFile(path.join(this.root,'credentials','openrouter-key.bin')));}catch{throw Error('Impossibile leggere la chiave OpenRouter protetta');}
+  const request=JSON.parse(options.body);request.model='nvidia/nemotron-3.5-lightning:free';delete request.reasoning_effort;request.reasoning={enabled:false};
+  const headers={...options.headers,Authorization:'Bearer '+credential};
+  this.lastProvider='OpenRouter · Nemotron 3.5 Lightning gratuito';
+  return this.fetchImpl('https://openrouter.ai/api/v1/chat/completions',{...options,headers,body:JSON.stringify(request)});
+ }
  openRouterStatus(){return {configured:sync.existsSync(path.join(this.root,'credentials','openrouter-key.bin'))};}
  async configureOpenRouter(key){
   if(typeof key!=='string'||!/^sk-or-[A-Za-z0-9_-]{20,300}$/.test(key.trim()))throw Error('Chiave OpenRouter non valida');
@@ -46,7 +56,7 @@ class GroqClient{
     for(let attempt=0;attempt<9;attempt++){
      onProgress({phase:'classify',current:i,total:scene.clips.length,batch:offset,units:clip.units.length});
      const timeout=setTimeout(()=>this.controller?.abort(),90000);let response;
-     try{response=await this.fetchImpl('https://api.groq.com/openai/v1/chat/completions',{method:'POST',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify(request),signal});}catch{throw Error(signal.aborted?'Richiesta Groq annullata o scaduta':'Connessione Groq non riuscita');}finally{clearTimeout(timeout);}
+     try{response=await this.request('https://api.groq.com/openai/v1/chat/completions',{method:'POST',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify(request),signal});}catch{throw Error(signal.aborted?'Richiesta AI annullata o scaduta':'Connessione Groq o OpenRouter non riuscita');}finally{clearTimeout(timeout);}
      calls++;body=await response.json().catch(()=>({}));
      if(response.status===429){const quota=dailyQuotaError(body);if(quota)throw quota;}
      if(response.status===429 && quotaRetries++<6){const retry=Number(response.headers?.get?.('retry-after'));const match=/try again in ([\d.]+)s/i.exec(body.error?.message||'');const reset=String(response.headers?.get?.('x-ratelimit-reset-tokens')||'');const resetParts=[...reset.matchAll(/([\d.]+)(ms|s|m|h)/g)];const resetSeconds=resetParts.reduce((n,m)=>n+Number(m[1])*({ms:.001,s:1,m:60,h:3600}[m[2]]),0);const seconds=Math.min(60,Math.max(2,retry||Number(match?.[1])||20,resetSeconds));onProgress({phase:'quota',current:i,total:scene.clips.length,seconds});await this.sleep(seconds*1000);abort();continue;}
