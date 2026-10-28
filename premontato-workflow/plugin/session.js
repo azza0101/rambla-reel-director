@@ -134,6 +134,35 @@ class Session {
     const rendered=await this.request('render_scene_debug_titles',{...settings,scenes:[...frames].map(([number,frames])=>({number,frames}))},600000);
     return {decisions:annotated,sceneDebug:{enabled:true,gap_frames:Math.round(2*settings.fps),assets:rendered.assets}};
   }
+  async retryScene(request) {
+    const a=this.state.analysis,old=a?.plan,scenes=a?.script?.scenes||[];
+    const scene=scenes.find(s=>s.scene_id===request?.scene_id);
+    if(!scene||old?.engine!=='scene_jobs_v1'||!old.scene_jobs?.some(j=>j.scene_id===scene.scene_id))throw Error('Scena non disponibile per il ricontrollo');
+    if(!['local','online'].includes(request.engine))throw Error('Motore di ricontrollo non valido');
+    const original=this.groq,nonce=original.retryNonce;
+    try{
+      if(request.engine==='online'){
+        this.groq=new (require(connectorPath).GroqClient)(this.root,{vault:original.vault,fetchImpl:original.fetchImpl,diagnostic:original.diagnostic,keyProvider:original.keyProvider});
+        const status=this.groq.status();if(!status.configured)throw Error('Fornitore online non configurato');this.groq.status=()=>({...status,enabled:true});
+      }else if(this.groq.status().provider!=='local')throw Error('Gemma locale non attivo: selezionalo nelle impostazioni');
+      this.groq.retryNonce=require('node:crypto').randomUUID();
+      this.onProgress?.({phase:'plan',phaseIndex:6,percent:0,label:'Ricontrollo solo '+scene.heading});
+      const routed=await this.request('route_scene_edits',{scenes,sources:a.planningSources,fps:this.state.fps||25},300000);
+      const job=routed.jobs.find(j=>j.scene.scene_id===scene.scene_id);
+      if(!job?.sources.length)throw Error('Nessun parlato attribuito a questa scena: le altre scene sono conservate');
+      const part=await this.buildPlanCore({scene_id:scene.scene_id,beats:scene.beats,sources:job.sources,shots:a.shots||[],directions:this.state.directions,semantic:true,fps:this.state.fps||25},300000);
+      const ids=new Set(scene.beats.map(b=>b.beat_id));
+      const byBeat=new Map(scenes.flatMap(s=>s.beats.map(b=>[b.beat_id,s.scene_id])));
+      const order=new Map(scenes.map((s,i)=>[s.scene_id,i]));
+      const decisions=[...old.decisions.filter(d=>!ids.has(d.beat_id)),...part.decisions].map(d=>structuredClone(d)).sort((x,y)=>(order.get(byBeat.get(x.beat_id))??999)-(order.get(byBeat.get(y.beat_id))??999));
+      let cursor=0;for(const d of decisions){d.timeline_start_frame=cursor;cursor+=d.end_frame-d.start_frame+(d.action_after||[]).reduce((n,x)=>n+x.end_frame-x.start_frame,0);}
+      const jobs=old.scene_jobs.map(j=>j.scene_id===scene.scene_id?{scene_id:j.scene_id,heading:j.heading,status:part.unmatched_beats?.length?'incomplete':'ready',missing:part.unmatched_beats||[],decisions:part.decisions.length}:j);
+      const plan={...old,decisions,base_decisions:structuredClone(decisions),review_beats:[...(old.review_beats||[]).filter(b=>!ids.has(b.beat_id)),...(part.review_beats||[])],unmatched_beats:jobs.flatMap(j=>j.missing||[]),scene_jobs:jobs,ready_for_timeline:!jobs.some(j=>j.status==='failed'||j.missing?.length),planning_summary:{...old.planning_summary,scene_jobs:jobs},warnings:[...(old.warnings||[]),...(part.warnings||[])]};
+      this.state.analysis={...a,plan};this.state.stage='review';this.state.uiDraft=null;
+      this.onProgress?.({phase:'complete',phaseIndex:8,percent:100,label:'Ricontrollo completato: '+scene.heading});
+      return this.getReviewState();
+    }finally{original.retryNonce=nonce;this.groq=original;}
+  }
   async selectScenes(request) {
     const analysis=this.state.analysis,scenes=analysis?.script?.scenes || [],ids=request?.scene_ids;
     if(!Array.isArray(ids) || !ids.length || ids.length>100 || new Set(ids).size!==ids.length || ids.some(id=>typeof id!=='string' || !scenes.some(scene=>scene.scene_id===id)))throw new Error('Selezione scene non valida');

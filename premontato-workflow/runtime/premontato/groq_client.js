@@ -51,7 +51,7 @@ class GroqClient{
  async classify(scene,onProgress=()=>{}){
   const key=await this.key();this.controller=new AbortController();const signal=this.controller.signal,started=Date.now();let calls=0,hits=0;const labels={};const abort=()=>{if(signal.aborted)throw Error('Analisi Groq annullata');};
   try{for(let i=0;i<scene.clips.length;i++){
-   abort();const clip=scene.clips[i],fingerprint=crypto.createHash('sha256').update(JSON.stringify({version:VERSION,provider:this.cacheIdentity||'cloud',model:MODEL,beats:scene.beats,cast:scene.cast,...(scene.focus_beats?.length?{focus:scene.focus_beats}:{}),key:clip.key,units:clip.units.map(({id,text,start,end})=>({id,text,start,end}))})).digest('hex'),file=path.join(this.root,'cache','dialogue',fingerprint+'.json');
+   abort();const clip=scene.clips[i],fingerprint=crypto.createHash('sha256').update(JSON.stringify({version:VERSION,retry:this.retryNonce||'',provider:this.cacheIdentity||'cloud',model:MODEL,beats:scene.beats,cast:scene.cast,...(scene.focus_beats?.length?{focus:scene.focus_beats}:{}),key:clip.key,units:clip.units.map(({id,text,start,end})=>({id,text,start,end}))})).digest('hex'),file=path.join(this.root,'cache','dialogue',fingerprint+'.json');
    let cached;try{cached=JSON.parse(await fs.readFile(file,'utf8'));validateLabels(scene,clip,cached);}catch{cached=null;}
    if(cached){labels[clip.key]=cached;hits++;onProgress({phase:'classify',current:i+1,total:scene.clips.length,cache_hit:true});continue;}
    const out={};for(let offset=0;offset<clip.units.length;offset+=20){

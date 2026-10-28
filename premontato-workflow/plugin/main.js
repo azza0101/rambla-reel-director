@@ -35,8 +35,8 @@ function handle(name, fn) {
     if (!['cancelAnalysis','cancelCatalog'].includes(name)) busy = true;
     try {
       let result=await fn(...args);
-      if(['analyze','updateDecision','confirmVisualReview','setPacing','setDirections','selectScenes','setScriptPages','confirmTakes','selectMedia','selectScript','transcribeSelected'].includes(name)){const pending=session.state.uiDraft?.directions;session.state.uiDraft=['updateDecision','confirmVisualReview','setPacing','confirmTakes'].includes(name) && pending ? {directions:pending} : null;}
-      if(['selectScript','selectMedia','transcribeSelected','analyze','updateDecision','confirmVisualReview','setPacing','setDirections','selectScenes','setScriptPages','confirmTakes','createReviewTimeline','loadVisualReview','saveDraft'].includes(name)){
+      if(['analyze','updateDecision','confirmVisualReview','setPacing','setDirections','selectScenes','retryScene','setScriptPages','confirmTakes','selectMedia','selectScript','transcribeSelected'].includes(name)){const pending=session.state.uiDraft?.directions;session.state.uiDraft=['updateDecision','confirmVisualReview','setPacing','confirmTakes'].includes(name) && pending ? {directions:pending} : null;}
+      if(['selectScript','selectMedia','transcribeSelected','analyze','updateDecision','confirmVisualReview','setPacing','setDirections','selectScenes','retryScene','setScriptPages','confirmTakes','createReviewTimeline','loadVisualReview','saveDraft'].includes(name)){
         try{await session.saveAutosave();}catch(error){session.saveError='Salvataggio automatico non riuscito: '+error.message;}
         publishProjectStatus();if(result?.stage)result=session.getReviewState();
       }
@@ -131,6 +131,7 @@ async function start() {
   handle('confirmVisualReview', async request => session.confirmVisualReview(request));
   handle('setDirections', async options => session.setDirections(options));
   handle('setPacing', async options => session.setPacing(options));
+  handle('retryScene',async request=>{const current=await adapter.snapshot(await getSdk(),{includeSelection:false});session.assertProject(current);return session.retryScene(request);});
   handle('selectScenes',async request=>{const current=await adapter.snapshot(await getSdk(),{includeSelection:false});session.assertProject(current);return session.selectScenes(request);});
   handle('setScriptPages',async request=>session.setScriptPages(request));
   handle('confirmTakes', async segments => session.confirmTakes(segments));
