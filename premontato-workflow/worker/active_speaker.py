@@ -114,9 +114,12 @@ class ActiveSpeaker:
         stages={};work=_empty_work();clock=time.perf_counter()
         command=[self.ffmpeg,'-nostdin','-hide_banner','-loglevel','error','-threads','2','-ss',str(offset/fps),'-i',source['path'],'-t',str(duration)]
         options={'stderr':subprocess.DEVNULL,'timeout':60,'creationflags':getattr(subprocess,'CREATE_NO_WINDOW',0)}
-        raw=subprocess.check_output(command+['-an','-filter_threads','1','-vf','scale=960:540:force_original_aspect_ratio=decrease,pad=960:540:(ow-iw)/2:(oh-ih)/2,fps=25','-f','rawvideo','-pix_fmt','bgr24','pipe:1'],**options)
-        if not raw or len(raw)%(960*540*3):raise RuntimeError('Campione video del parlante non leggibile')
-        video=np.frombuffer(raw,np.uint8).reshape(-1,540,960,3)
+        from video_reader import read_asd_video
+        video=read_asd_video(source,offset,duration)
+        if video is None:
+            raw=subprocess.check_output(command+['-an','-filter_threads','1','-vf','scale=960:540:force_original_aspect_ratio=decrease,pad=960:540:(ow-iw)/2:(oh-ih)/2,fps=25','-f','rawvideo','-pix_fmt','bgr24','pipe:1'],**options)
+            if not raw or len(raw)%(960*540*3):raise RuntimeError('Campione video del parlante non leggibile')
+            video=np.frombuffer(raw,np.uint8).reshape(-1,540,960,3)
         stages['decode']=time.perf_counter()-clock;work['decoded_samples']=1;clock=time.perf_counter()
         from local_audio import load_pcm16
         pcm,_=load_pcm16(source)
