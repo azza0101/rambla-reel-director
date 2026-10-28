@@ -29,3 +29,11 @@ Il test nativo prova l’assemblaggio e la conservazione del progetto, non il co
 ## Consegna e distribuzione
 
 Branch fix/omnicut-scene-isolated-edit-20261027, PR #32, senza merge su main. La build isolata 0.2.11 dal commit 6658d09 ha superato smoke installer, controllo integrità e compatibilità del vecchio updater; NON include le successive correzioni di recupero mirato/deduplicazione semantica. Non è stata pubblicata una nuova release o aggiornata l’installazione attiva. Non distribuire una build precedente dichiarandola equivalente al codice corrente.
+
+## Ricontrollo autorizzato del 28 ottobre 2026
+
+L’autore ha confermato esplicitamente l’invio a Groq dei soli testi del copione e delle trascrizioni, usando la chiave locale esistente; nessun media inviato. Il recupero mirato sul codice cafe945 è terminato in 124,5 s senza ridurre le sei lacune già rilevate. Questo test non certifica il montaggio completo.
+
+È stato riprodotto un ulteriore difetto nel preparatore delle frasi: il limite fisso di 10 frame separava anche parole della stessa frase dopo un normale respiro (0,4 s a 25 fps), indebolendo il contesto dato al classificatore. Il limite ora è di un secondo espresso nel frame rate della sorgente; punteggiatura, separazione dei segmenti e limite massimo dell’unità restano applicati. I tempi e gli indici delle parole originali non cambiano. Sul materiale di prova le unità scendono da 2.524 a 2.368 e quelle di al massimo due parole da 970 a 854. Non è una garanzia di corrispondenza del parlato.
+
+227 test JavaScript e 224 Python passati dopo questa correzione. Avviata una nuova classificazione reale; l’esito complessivo non è ancora certificato. La verifica nativa in sola lettura del 28 ottobre conferma i 19 elementi base della timeline PARZIALE, i quattro titoli e le tre tracce mono, con 47 timeline totali; il piano precedente delle scene complete era identico e non è stata creata un’altra copia.

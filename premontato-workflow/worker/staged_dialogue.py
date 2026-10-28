@@ -26,7 +26,7 @@ def prepare_dialogue(payload):
     if group:us.append({'id':'S'+str(len(us)),'start':group[0]['start_frame'],'end':group[-1]['end_frame'],'text':' '.join(clean_text(w['text'].strip()) for w in group),'word_indices':[w['_word_index'] for w in group]})
    for wi,word in enumerate(segment.get('words',[])):
     if word['end_frame']<=word['start_frame'] or word['start_frame']<lo or word['end_frame']>hi or not re.search(r'\w',word.get('text','')):continue
-    if group and (word['start_frame']-group[-1]['end_frame']>10 or word['end_frame']-group[0]['start_frame']>8*float(payload['fps'])):flush();group=[]
+    if group and (word['start_frame']-group[-1]['end_frame']>float(payload['fps']) or word['end_frame']-group[0]['start_frame']>8*float(payload['fps'])):flush();group=[]
     group.append({**word,'_word_index':str(source['segments'].index(segment))+':'+str(wi)})
     if re.search(r'[.!?]$',word['text'].strip()):flush();group=[]
    flush()

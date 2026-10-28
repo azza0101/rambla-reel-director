@@ -104,3 +104,22 @@ class SemanticPerformanceTests(unittest.TestCase):
   def encode(texts):return np.array([[.85,.5267827] if 'pacco' in t else [1.,0.] for t in texts])
   chosen=latest_complete_run([rows[0],rows[2]],rows,{'a':'1/P1','crew':'X','b':'1/P1'},{'text':'Cassetto.'},25,encode)
   self.assertEqual([u['id'] for u in chosen],['a'])
+
+class NaturalSpeechUnitTests(unittest.TestCase):
+ def test_breath_inside_unfinished_sentence_does_not_fragment_its_meaning(self):
+  from staged_dialogue import prepare_dialogue
+  source={'media_id':'m','duration_frames':300,'segments':[{'words':[{'text':'Quale','start_frame':10,'end_frame':20},{'text':'titolo','start_frame':34,'end_frame':45},{'text':'vuoi?','start_frame':46,'end_frame':60}]}]}
+  result=prepare_dialogue({'beats':[],'sources':[source],'fps':25})
+  self.assertEqual([u['text'] for u in result['clips'][0]['units']],['Quale titolo vuoi?'])
+  self.assertEqual((result['clips'][0]['units'][0]['start'],result['clips'][0]['units'][0]['end']),(10,60))
+ def test_long_pause_still_separates_runs_at_different_frame_rates(self):
+  from staged_dialogue import prepare_dialogue
+  for fps in [25,50]:
+   source={'media_id':'m','duration_frames':500,'segments':[{'words':[{'text':'Prima','start_frame':0,'end_frame':fps},{'text':'seconda','start_frame':fps*3,'end_frame':fps*4}]}]}
+   result=prepare_dialogue({'beats':[],'sources':[source],'fps':fps})
+   self.assertEqual(len(result['clips'][0]['units']),2)
+ def test_punctuation_keeps_separate_turns_despite_short_gap(self):
+  from staged_dialogue import prepare_dialogue
+  source={'media_id':'m','duration_frames':100,'segments':[{'words':[{'text':'Arrivi?','start_frame':0,'end_frame':20},{'text':'Certo.','start_frame':21,'end_frame':40}]}]}
+  result=prepare_dialogue({'beats':[],'sources':[source],'fps':25})
+  self.assertEqual(len(result['clips'][0]['units']),2)
