@@ -11,21 +11,23 @@ def match_role(vector,gallery):
  ranked=[]
  for role,values in scores.items():
   top=sorted(values.values(),reverse=True)[:3]
-  if len(top)>=2:ranked.append((sum(top)/3,role))
+  if len(top)>=2:ranked.append((sum(top)/len(top),role))
  ranked.sort(reverse=True)
  if not ranked or ranked[0][0]<.38 or len(ranked)>1 and ranked[0][0]-ranked[1][0]<.10:return None
  return ranked[0][1]
 
 _RECOGNIZER=None;_DETECTOR=None
 
-def face_vector(source,start,end,evidence):
+def face_vector(source,start,end,evidence,active_only=True):
  from shot_analyzer import recognition_model_path,model_path
  import cv2,subprocess,shutil
  global _RECOGNIZER,_DETECTOR
  if _RECOGNIZER is None:_RECOGNIZER=cv2.FaceRecognizerSF.create(str(recognition_model_path()),'')
  if _DETECTOR is None:_DETECTOR=cv2.FaceDetectorYN.create(str(model_path()),'',(640,360),.7,.3,5000)
  path=Path(source['path']);stat=path.stat();fps=float(source['fps']);frame=min(source['duration_frames']-1,max(0,(start+end)//2))
- boxes=[f['box'] for f in evidence.get('faces',[]) if f.get('mean',0)>=.5 and f.get('positive',0)>=.5 and len(f.get('box',[]))==4]
+ boxes=[f['box'] for f in evidence.get('faces',[]) if len(f.get('box',[]))==4 and ((f.get('mean',0)>=.5 and f.get('positive',0)>=.5) if active_only else f.get('tracking',0)>=.6)]
+ # A listener cannot be selected arbitrarily from multiple visible faces.
+ if not active_only and len(boxes)!=1:return None
  if not boxes:return None
  def compute():
   try:
@@ -43,4 +45,36 @@ def face_vector(source,start,end,evidence):
   return _RECOGNIZER.feature(_RECOGNIZER.alignCrop(image,face)).flatten().tolist()
  root=Path(os.environ.get('PREMONTATO_CACHE_DIR','.premontato-cache'))/'speaker-faces'
  result,_=get_or_compute(root,[str(path.resolve()),stat.st_size,stat.st_mtime_ns],'sface-role-v1',{'frame':frame,'boxes':boxes},compute)
+ return result
+
+
+def consensus_gallery(observations):
+ """Resolve face-to-voice enrollment by independent-source quality consensus.
+ Multiple utterances from the same clip supply at most one vote per voice.
+ Conflicting visual identities stay unresolved rather than polluting both roles.
+ """
+ clusters=[]
+ for row in observations:
+  v=np.asarray(row['vector'],dtype=float)
+  if v.ndim!=1 or not len(v) or not np.isfinite(v).all() or np.linalg.norm(v)<1e-8:raise ValueError('Volto non valido')
+  v=v/np.linalg.norm(v);quality=float(row.get('quality',1.))
+  if not np.isfinite(quality) or quality<=0:continue
+  candidates=[(float(v@c['center']),c) for c in clusters if len(c['center'])==len(v)]
+  similarity,cluster=max(candidates,key=lambda x:x[0]) if candidates else (-1,None)
+  if similarity<.45:
+   cluster={'center':v,'rows':[]};clusters.append(cluster)
+  cluster['rows'].append({**row,'quality':quality})
+  # Do not move the first prototype through a chain of weak pairwise matches.
+ result=[]
+ for cluster in clusters:
+  by={}
+  for r in cluster['rows']:
+   key=(r['role'],r['media_id']);by[key]=max(by.get(key,0),r['quality'])
+  scores={}
+  for (role,mid),q in by.items():scores[role]=scores.get(role,0)+q
+  ranked=sorted(scores,key=scores.get,reverse=True)
+  if not ranked:continue
+  winner=ranked[0];total=sum(scores.values());media={mid for role,mid in by if role==winner}
+  if len(media)<2 or scores[winner]/total<.70:continue
+  result.extend(r for r in cluster['rows'] if r['role']==winner)
  return result
