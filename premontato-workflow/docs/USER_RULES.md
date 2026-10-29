@@ -98,3 +98,9 @@ Questo documento è memoria persistente nel repository. Non crea da solo un appr
 - Varianti improvvisate di take differenti non vanno fuse solo per riempire il copione. Prima scegliere la versione recitata coerente, poi le coperture compatibili.
 
 - Ripartenza obbligata nello stesso campo: coprire il taglio con una reazione pertinente dell'altro personaggio sopra l'audio base continuo. Minimo operativo conservato di 1,5 secondi. La copertura deve attraversare il punto del taglio; se manca materiale verificabile, il jump resta un difetto irrisolto, non una sequenza approvata.
+
+
+## Secondo controllo delle voci (29 ottobre 2026)
+- Richiesta: proseguire dal test Nemotron mantenendo il funzionamento locale e automatico. Distinguere sempre una voce riconosciuta da un volto visibile e da una scelta di montaggio corretta.
+- Scelta implementativa, non nuova preferenza estetica: Nemotron Diarization come supporto prudente a WeSpeaker, con ancore indipendenti, nessuna sovrascrittura delle identita gia riconosciute e provenienza esplicita. I cluster sono locali alla singola registrazione; nessun nome di attore necessario.
+- Stato verificato: adattatore e modalita ibrida nel worker sperimentale, test reali su audio/cache e anteprima, non ancora aggiornamento stabile del pannello. Restano coperture e azioni non verificate; non presentare un audit degli intervalli come qualita umana del montaggio.

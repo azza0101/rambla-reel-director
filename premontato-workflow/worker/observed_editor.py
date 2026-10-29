@@ -9,13 +9,10 @@ from voice_identity import source_voices,identify_embedding,reconcile_profiles
 from performance_spine import group_voice_turns,jump_cover
 from observed_camera import verified_alignment,lock_performances,audit_edit,listener_evidence
 
-def build_observed_excerpt(payload,report=None,voice_data=None):
- from transcript_align import get_semantic_encoder,normalize
- from staged_dialogue import content_equivalent
- from active_speaker import analyze_candidate
- from speaker_identity import face_vector,match_role,consensus_gallery
- fps=payload['fps'];reference=payload['reference'];sources={s['media_id']:s for s in payload['sources']};main=sources[reference['media_id']];started=time.perf_counter()
- if not 0<=reference['start_frame']<reference['end_frame']<=main['duration_frames']:raise ValueError('Intervallo osservato non valido')
+def prepare_voice_data(payload,report=None,voice_data=None):
+ mode=payload.get('voice_mode','wespeaker')
+ if mode not in ('wespeaker','hybrid'):raise ValueError('Modalita vocale non valida')
+ sources={s['media_id']:s for s in payload['sources']};main=sources[payload['reference']['media_id']]
  data={}
  for i,(mid,s) in enumerate(sources.items()):
   if report:report({'phase':'voice','current':i,'total':len(sources),'label':'Profili vocali e turni osservati'})
@@ -30,6 +27,21 @@ def build_observed_excerpt(payload,report=None,voice_data=None):
    elif mapped and result.get('voice')!=mapped:result={**result,'voice':None,'status':'unknown','reason':'conflicting_profile_identity'}
    rows.append({**u,'voice':result['voice'],'voice_evidence':result})
   d={**d,'units':rows};data[mid]=d
+ if mode=='hybrid':
+  from voice_fusion import enhance_source_voices
+  data={mid:enhance_source_voices(sources[mid],d,report) for mid,d in data.items()}
+ return data
+
+
+def build_observed_excerpt(payload,report=None,voice_data=None):
+ from transcript_align import get_semantic_encoder,normalize
+ from staged_dialogue import content_equivalent
+ from active_speaker import analyze_candidate
+ from speaker_identity import face_vector,match_role,consensus_gallery
+ from voice_fusion import eligible_for_face_enrollment
+ fps=payload['fps'];reference=payload['reference'];sources={s['media_id']:s for s in payload['sources']};main=sources[reference['media_id']];started=time.perf_counter()
+ if not 0<=reference['start_frame']<reference['end_frame']<=main['duration_frames']:raise ValueError('Intervallo osservato non valido')
+ data=prepare_voice_data(payload,report,voice_data)
  observed=[u for u in data[main['media_id']]['units'] if reference['start_frame']<=u['start'] and u['end']<=reference['end_frame']]
  if not observed:raise ValueError('Nessun parlato osservato')
  turns=group_voice_turns(observed,{u['id']:u['voice'] for u in observed},fps)
@@ -39,7 +51,7 @@ def build_observed_excerpt(payload,report=None,voice_data=None):
   if report:report({'phase':'face_enrollment','current':index,'total':len(data),'label':'Associo volti e voci con prove indipendenti'})
   s=sources[mid];votes=[]
   for voice in sorted({u['voice'] for u in d['units'] if u['voice'] is not None}):
-   pool=sorted([u for u in d['units'] if u['voice']==voice and u['end']-u['start']>=fps and len(u['text'].split())>=6],key=lambda u:len(u['text'].split()),reverse=True)
+   pool=sorted([u for u in d['units'] if u['voice']==voice and (payload.get('voice_mode')!='hybrid' or eligible_for_face_enrollment(u)) and u['end']-u['start']>=fps and len(u['text'].split())>=6],key=lambda u:len(u['text'].split()),reverse=True)
    for u in pool[:2]:
     proof=analyze_candidate(s,u['start'],u['end'])
     if proof.get('status')!='visible':continue
@@ -115,4 +127,4 @@ def build_observed_excerpt(payload,report=None,voice_data=None):
   cover=jump_cover(join,clock,c,fps)
   if cover:covers.append(cover)
  audit=audit_edit(decisions,covers,[u['id'] for u in observed],fps)
- return {'engine':'observed-voice-turns-v3-experimental','fps':fps,'editorial_status':'diagnostic_only','release_ready':False,'can_create_diagnostic_timeline':audit['ready'],'excerpt':True,'human_cut_plan':False,'script_filters_applied':False,'multicam_assumed':False,'source_event_count':len(observed),'voice_turns':len(turns),'decisions':decisions,'covers':covers,'warnings':warnings,'audit':audit,'duration_frames':clock,'seconds':time.perf_counter()-started,'positive_face_anchors':len(faces),'face_observations':raw_face_count,'face_consensus_roles':sorted({r['role'] for r in faces}),'performance_locks':locks,'face_provenance':[{k:r[k] for k in ['role','media_id','unit_id','quality']} for r in faces]}
+ return {'engine':'observed-voice-turns-v4-hybrid-experimental' if payload.get('voice_mode')=='hybrid' else 'observed-voice-turns-v3-experimental','voice_mode':payload.get('voice_mode','wespeaker'),'voice_diagnostics':{mid:d.get('diarization',{'status':'not_requested'}) for mid,d in data.items()},'fps':fps,'editorial_status':'diagnostic_only','release_ready':False,'can_create_diagnostic_timeline':audit['ready'],'excerpt':True,'human_cut_plan':False,'script_filters_applied':False,'multicam_assumed':False,'source_event_count':len(observed),'voice_turns':len(turns),'decisions':decisions,'covers':covers,'warnings':warnings,'audit':audit,'duration_frames':clock,'seconds':time.perf_counter()-started,'positive_face_anchors':len(faces),'face_observations':raw_face_count,'face_consensus_roles':sorted({r['role'] for r in faces}),'performance_locks':locks,'face_provenance':[{k:r[k] for k in ['role','media_id','unit_id','quality']} for r in faces]}
