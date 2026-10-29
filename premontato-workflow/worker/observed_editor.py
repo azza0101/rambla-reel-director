@@ -40,6 +40,8 @@ def build_observed_excerpt(payload,report=None,voice_data=None):
  from speaker_identity import face_vector,match_role,consensus_gallery
  from voice_fusion import eligible_for_face_enrollment
  fps=payload['fps'];reference=payload['reference'];sources={s['media_id']:s for s in payload['sources']};main=sources[reference['media_id']];started=time.perf_counter()
+ editorial_mode=payload.get('editorial_mode','legacy')
+ if editorial_mode not in ('legacy','independent_av'):raise ValueError('Modalita editoriale non valida')
  if not 0<=reference['start_frame']<reference['end_frame']<=main['duration_frames']:raise ValueError('Intervallo osservato non valido')
  data=prepare_voice_data(payload,report,voice_data)
  observed=[u for u in data[main['media_id']]['units'] if reference['start_frame']<=u['start'] and u['end']<=reference['end_frame']]
@@ -127,4 +129,25 @@ def build_observed_excerpt(payload,report=None,voice_data=None):
   cover=jump_cover(join,clock,c,fps)
   if cover:covers.append(cover)
  audit=audit_edit(decisions,covers,[u['id'] for u in observed],fps)
- return {'engine':'observed-voice-turns-v4-hybrid-experimental' if payload.get('voice_mode')=='hybrid' else 'observed-voice-turns-v3-experimental','voice_mode':payload.get('voice_mode','wespeaker'),'voice_diagnostics':{mid:d.get('diarization',{'status':'not_requested'}) for mid,d in data.items()},'fps':fps,'editorial_status':'diagnostic_only','release_ready':False,'can_create_diagnostic_timeline':audit['ready'],'excerpt':True,'human_cut_plan':False,'script_filters_applied':False,'multicam_assumed':False,'source_event_count':len(observed),'voice_turns':len(turns),'decisions':decisions,'covers':covers,'warnings':warnings,'audit':audit,'duration_frames':clock,'seconds':time.perf_counter()-started,'positive_face_anchors':len(faces),'face_observations':raw_face_count,'face_consensus_roles':sorted({r['role'] for r in faces}),'performance_locks':locks,'face_provenance':[{k:r[k] for k in ['role','media_id','unit_id','quality']} for r in faces]}
+ result={'engine':'observed-voice-turns-v4-hybrid-experimental' if payload.get('voice_mode')=='hybrid' else 'observed-voice-turns-v3-experimental','voice_mode':payload.get('voice_mode','wespeaker'),'voice_diagnostics':{mid:d.get('diarization',{'status':'not_requested'}) for mid,d in data.items()},'fps':fps,'editorial_status':'diagnostic_only','release_ready':False,'can_create_diagnostic_timeline':audit['ready'],'excerpt':True,'human_cut_plan':False,'script_filters_applied':False,'multicam_assumed':False,'source_event_count':len(observed),'voice_turns':len(turns),'decisions':decisions,'covers':covers,'warnings':warnings,'audit':audit,'duration_frames':clock,'seconds':time.perf_counter()-started,'positive_face_anchors':len(faces),'face_observations':raw_face_count,'face_consensus_roles':sorted({r['role'] for r in faces}),'performance_locks':locks,'face_provenance':[{k:r[k] for k in ['role','media_id','unit_id','quality']} for r in faces]}
+ if editorial_mode=='independent_av':
+  from independent_av import compile_av_plan
+  proposals=[]
+  for index,d in enumerate(decisions):
+   if report:report({'phase':'listener_coverage','current':index,'total':len(decisions),'label':'Verifico ascolti sopra la performance audio'})
+   length=math.ceil(1.6*fps);margin=math.ceil(.5*fps)
+   if not d['speaker_visible'] or d['voice'] is None or d['end_frame']-d['start_frame']<length+2*margin:continue
+   lo=d['base_start']+margin;hi=lo+length
+   if hi>d['base_end']:continue
+   proof=analyze_candidate(main,lo,hi);vector=face_vector(main,lo,hi,proof,active_only=False);visible=match_role(vector,faces) if vector else None
+   voices=[u['voice'] for u in observed if max(u['start'],lo)<min(u['end'],hi)]
+   evidence=listener_evidence(visible,voices)
+   if evidence['verified_listener']:proposals.append({'media_id':main['media_id'],'path':main['path'],'start_frame':lo,'end_frame':hi,'record_frame':d['record_frame']+margin,**evidence})
+  result['av_plan']=compile_av_plan(decisions,proposals,fps)
+  # Preserve unresolved turn boundaries even where contiguous source video is merged.
+  result['av_plan']['observed_turns']=[dict(t) for t in turns]
+  result['av_plan']['turn_checks']=[{'ids':t['unit_ids'],'voice':t['voice'],'text':t['text'],'start_frame':t['start_frame'],'end_frame':t['end_frame'],'verified_alternatives':sum(k==i for mid,k in matches)} for i,t in enumerate(turns)]
+  result['av_plan']['jump_covers']=covers
+  result['editorial_mode']=editorial_mode
+  result['seconds']=time.perf_counter()-started
+ return result
