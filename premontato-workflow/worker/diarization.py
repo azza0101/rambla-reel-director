@@ -153,21 +153,25 @@ class NemotronDiarizer:
                 stream.setsampwidth(2)
                 stream.setframerate(16000)
                 stream.writeframes(pcm[:round(count / fps * 16000)].tobytes())
+            def attempt(device):
+                raw = self._invoke(wav, output, device, count / fps)
+                try:
+                    rows = normalize_segments(raw, source)
+                except ValueError:
+                    raise DiarizationError('invalid_native_output') from None
+                return raw, rows
+
             fallback = None
             used = self.device
             try:
-                raw = self._invoke(wav, output, used, count / fps)
+                raw, rows = attempt(used)
             except DiarizationError as error:
                 if not used.startswith('cuda') or not self.cpu_runtime.is_file():
                     raise
                 fallback, used = error.code, 'cpu'
                 # Never read a stale GPU output when the CPU attempt fails.
                 output.unlink(missing_ok=True)
-                raw = self._invoke(wav, output, used, count / fps)
-            try:
-                rows = normalize_segments(raw, source)
-            except ValueError:
-                raise DiarizationError('invalid_native_output') from None
+                raw, rows = attempt(used)
             write_cache(self.cache_root, key, {'segments': raw, 'device_used': used, 'fallback_reason': fallback})
         return {'status': 'ready', 'segments': rows, 'cache_hit': False,
                 'pcm_cache_hit': bool(pcm_info.get('cache_hit')),

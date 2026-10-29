@@ -89,3 +89,13 @@ class NativeDiarizationTests(unittest.TestCase):
    engine.analyze(self.source)
    cache=next((self.root/'cache').glob('*.json'));data=json.loads(cache.read_text());data['value']['fallback_reason']='PRIVATE_CORRUPT_CACHE';cache.write_text(json.dumps(data));result=engine.analyze(self.source)
   self.assertEqual(invoke.call_count,2);self.assertNotIn('PRIVATE_CORRUPT_CACHE',json.dumps(result))
+
+ def test_invalid_cuda_intervals_retry_validated_cpu_once(self):
+  engine=self.engine('cuda')
+  def invalid_gpu(command,**kwargs):
+   if command[command.index('--device')+1]=='cuda':
+    Path(command[command.index('--output')+1]).write_text(json.dumps({'segments':[{'start':0,'end':999,'speaker':1}]}));return __import__('subprocess').CompletedProcess(command,0,b'',b'')
+   return self.fake_run(command,**kwargs)
+  with patch('local_audio.load_pcm16',return_value=(np.zeros(32000,dtype='<i2'),{})),patch('diarization.subprocess.run',side_effect=invalid_gpu) as invoke:
+   result=engine.analyze(self.source);replay=engine.analyze(self.source)
+  self.assertEqual(invoke.call_count,2);self.assertEqual(result['device_used'],'cpu');self.assertEqual(result['fallback_reason'],'invalid_native_output');self.assertTrue(replay['cache_hit']);self.assertEqual(result['segments'],replay['segments'])
