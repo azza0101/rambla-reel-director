@@ -74,3 +74,20 @@ This is a testable first slice, not all requested editorial rules integrated.
 Automatic action understanding, better whole-take selection and local VLM
 second checks remain outstanding. No stable release or quality parity with the
 human reference is claimed.
+
+## Seven-second spoken-shot review rule
+
+The compiler now queues a local vision-language review when a spoken visual
+hold exceeds seven seconds. Adjacent same-source/same-field segments count as
+one hold even if their source trims differ. Exactly seven seconds does not
+trigger. The reviewer may keep the shot, suggest an existing alternative, or
+abstain; a timer never forces a cut. Requests carry source intervals, dialogue
+IDs, available verified alternatives and a stable fingerprint for future cache
+use. The worker enriches requests with turn context and candidate IDs.
+
+Actual replay of the saved scene plan queued exactly the defective hold at
+18.48 seconds, lasting 16.16 seconds. Three new tests cover the trigger,
+boundary and fragmented-hold cases; the Python suite now has 365 tests.
+The Qwen adapter has not been connected: requests remain `pending_model`,
+which is explicitly not a successful visual check. No model was run, no
+new preview cut was applied, and no normal-panel update is claimed here.

@@ -4,6 +4,32 @@ Input decisions retain the selected spoken performance. This compiler does not
 certify that a semantically similar alternate take has the same visual action.
 """
 import math
+import hashlib
+import json
+
+
+def long_shot_reviews(video,audio,fps,threshold_seconds=7):
+ """Queue local visual checks, never invent cuts or infer voices from stills.
+
+ Adjacent segments of the same field count as one hold even after source trims.
+ A model adapter must explicitly complete these requests; pending is not passed.
+ """
+ holds=[]
+ for d in video:
+  end=d['record_frame']+d['end_frame']-d['start_frame']
+  if holds and holds[-1]['end']==d['record_frame'] and holds[-1]['media_id']==d['media_id'] and holds[-1]['field']==d.get('field'):
+   holds[-1]['end']=end;holds[-1]['segments'].append(d)
+  else:holds.append({'start':d['record_frame'],'end':end,'media_id':d['media_id'],'field':d.get('field'),'segments':[d]})
+ result=[]
+ for h in holds:
+  if h['end']-h['start']<=threshold_seconds*fps:continue
+  speech=[d for d in audio if d.get('ids') and d['record_frame']<h['end'] and d['record_frame']+d['end_frame']-d['start_frame']>h['start']]
+  if not speech:continue
+  sources=[{k:d[k] for k in ('media_id','start_frame','end_frame','record_frame')} for d in h['segments']]
+  ids=[u for d in speech for u in d['ids']]
+  fingerprint=hashlib.sha256(json.dumps({'policy':'spoken-hold-7s-v1','sources':sources,'ids':ids,'fps':fps},sort_keys=True).encode()).hexdigest()
+  result.append({'kind':'long_spoken_shot','review_id':fingerprint,'status':'pending_model','requested_model_family':'local_vision_language','preferred_model':'qwen_vl','record_frame':h['start'],'duration_frames':h['end']-h['start'],'source_segments':sources,'ids':ids,'allowed_outcomes':['keep','suggest_existing_alternative','uncertain'],'questions':['Does the visible person change speaking/listening role?','Are there relevant verified reverse shots or object actions among the supplied alternatives?','Is keeping this long shot justified by continuous action?'],'constraints':['Use supplied candidate IDs and intervals only','Never identify the audible speaker from a still alone','No mandatory cut solely because the threshold was exceeded','Keep existing dialogue audio']})
+ return result
 
 
 def compile_av_plan(decisions, reactions, fps):
@@ -36,4 +62,4 @@ def compile_av_plan(decisions, reactions, fps):
    video.append(c);cursor=cut+c['end_frame']-c['start_frame']
   if cursor<stop:video.append({**d,'audio':'muted','start_frame':d['start_frame']+cursor-at,'record_frame':cursor})
  checks=[{'kind':'speaker_view_unresolved','ids':d.get('ids',[]),'record_frame':d['record_frame'],'duration_frames':d['end_frame']-d['start_frame'],'allowed_evidence':['source_transcript','voice_identity','local_visual_samples'],'automatic_accept':False} for d in audio if not d.get('speaker_visible')]
- return {'engine':'independent-av-v1-experimental','audio_spine':audio,'video_spine':video,'reactions':accepted,'duration_frames':clock,'check_requests':checks,'speaker_coverage_verified':not checks,'editorial_ready':False,'content_equivalence_verified':False,'visual_actions_verified':False}
+ return {'engine':'independent-av-v1-experimental','audio_spine':audio,'video_spine':video,'reactions':accepted,'duration_frames':clock,'check_requests':checks,'visual_review_requests':long_shot_reviews(video,audio,fps),'speaker_coverage_verified':not checks,'editorial_ready':False,'content_equivalence_verified':False,'visual_actions_verified':False}

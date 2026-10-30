@@ -147,6 +147,10 @@ def build_observed_excerpt(payload,report=None,voice_data=None):
   # Preserve unresolved turn boundaries even where contiguous source video is merged.
   result['av_plan']['observed_turns']=[dict(t) for t in turns]
   result['av_plan']['turn_checks']=[{'ids':t['unit_ids'],'voice':t['voice'],'text':t['text'],'start_frame':t['start_frame'],'end_frame':t['end_frame'],'verified_alternatives':sum(k==i for mid,k in matches)} for i,t in enumerate(turns)]
+  for request in result['av_plan']['visual_review_requests']:
+   ids=set(request['ids'])
+   request['turns']=[t for t in result['av_plan']['turn_checks'] if ids.intersection(t['ids'])]
+   request['alternatives']=[{'candidate_id':f'{mid}:{c["start_frame"]}:{c["end_frame"]}','media_id':mid,'start_frame':c['start_frame'],'end_frame':c['end_frame'],'text':c['text'],'voice':c['voice'],'field':c['field'],'similarity':c['similarity']} for (mid,i),c in matches.items() if ids.intersection(turns[i]['unit_ids'])]
   result['av_plan']['jump_covers']=covers
   result['editorial_mode']=editorial_mode
   result['seconds']=time.perf_counter()-started

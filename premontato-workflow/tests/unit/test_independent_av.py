@@ -3,6 +3,24 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'worker'))
 
 class IndependentAVTests(unittest.TestCase):
+ def test_long_spoken_shot_requests_visual_review_without_forcing_a_cut(self):
+  from independent_av import compile_av_plan
+  d=[{'media_id':'a','field':'a','voice':'a','speaker_visible':True,'start_frame':0,'end_frame':200,'record_frame':0,'ids':['u']}]
+  p=compile_av_plan(d,[],25)
+  self.assertEqual(len(p['visual_review_requests']),1)
+  self.assertEqual(p['visual_review_requests'][0]['status'],'pending_model')
+  self.assertEqual(p['visual_review_requests'][0]['allowed_outcomes'],['keep','suggest_existing_alternative','uncertain'])
+  self.assertEqual(len(p['video_spine']),1)
+ def test_seven_seconds_does_not_trigger_but_contiguous_segments_are_combined(self):
+  from independent_av import compile_av_plan
+  d=[{'media_id':'a','field':'a','voice':'a','speaker_visible':True,'start_frame':0,'end_frame':175,'record_frame':0,'ids':['u']}]
+  self.assertFalse(compile_av_plan(d,[],25)['visual_review_requests'])
+  d=[{**d[0],'end_frame':100},{**d[0],'start_frame':100,'end_frame':200,'record_frame':100,'ids':['v']}]
+  self.assertEqual(len(compile_av_plan(d,[],25)['visual_review_requests']),1)
+ def test_same_visual_hold_with_different_trim_does_not_hide_long_duration(self):
+  from independent_av import compile_av_plan
+  d=[{'media_id':'a','field':'a','voice':'a','speaker_visible':True,'start_frame':0,'end_frame':100,'record_frame':0,'ids':['u']}, {'media_id':'a','field':'a','voice':'b','speaker_visible':False,'start_frame':200,'end_frame':300,'record_frame':100,'ids':['v']}]
+  self.assertEqual(len(compile_av_plan(d,[],25)['visual_review_requests']),1)
  def test_reaction_is_video_only_and_audio_performance_survives(self):
   from independent_av import compile_av_plan
   decisions=[{'media_id':'a','path':'a.mp4','field':'a:close','voice':'a','speaker_visible':True,'start_frame':100,'end_frame':250,'record_frame':0,'ids':['q']}]
