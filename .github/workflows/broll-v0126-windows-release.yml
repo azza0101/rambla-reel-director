@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - release/broll-v0126-publish
+  workflow_dispatch:
 permissions:
   contents: write
 jobs:
