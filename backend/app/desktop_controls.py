@@ -122,7 +122,9 @@ def install_desktop_controls(app, project_root: Path) -> None:
                 expected = (project_root / project_id / "run").resolve()
                 if Path(run.output_dir).resolve() != expected:
                     continue
-            running.append(run.snapshot())
+            snapshot = run.snapshot()
+            running.append({key: snapshot[key] for key in
+                            ("run_id", "status", "stage_type", "total_progress", "last_message")})
         running.sort(key=lambda row: row.get("run_id", ""))
         return {
             "running": running,
