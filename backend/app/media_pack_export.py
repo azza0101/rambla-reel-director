@@ -49,6 +49,7 @@ def create_media_pack(
     rows: list[dict[str, Any]] = []
     missed: list[dict[str, str]] = []
     unique: set[str] = set()
+    safe_timeline_clips: list[dict[str, Any]] = []
 
     def add(z: zipfile.ZipFile, source_value: Any, arcname: str, *, label: str, source_page: str = "", beat_id: str = "") -> None:
         source = Path(str(source_value or ""))
@@ -72,6 +73,8 @@ def create_media_pack(
             destination = f"01_FRASI/{beat}/{asset}{suffix}"
             add(z, source, destination, label=str(row.get("title") or asset),
                 beat_id=str(row.get("beat_id") or ""), source_page=str(row.get("source_page") or ""))
+            if destination in unique:
+                safe_timeline_clips.append(row)
 
         chosen = set(map(str, selected_generics or []))
         for row in generic_rows or []:
@@ -90,7 +93,8 @@ def create_media_pack(
 
         # The XML is generated using the authoritative time ranges; it may
         # require Resolve's Relink Media after moving this ZIP to another PC.
-        xml = render_fcp7_xml(timeline, sequence_name=project_name + " - BROLL")
+        xml_plan = {**timeline, "clips": safe_timeline_clips}
+        xml = render_fcp7_xml(xml_plan, sequence_name=project_name + " - BROLL")
         z.writestr("03_RESOLVE/timeline.xml", xml)
         z.writestr("03_RESOLVE/sottotitoli.srt", captions_srt)
         z.writestr("03_RESOLVE/titoli_e_testi.json", json.dumps(titles or [], ensure_ascii=False, indent=2))
