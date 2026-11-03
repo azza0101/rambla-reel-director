@@ -155,10 +155,10 @@ def build_director_prompt(package: dict[str, Any]) -> str:
     )
 
 
-def _clean_text(value: Any, *, allow_empty: bool = False) -> str:
+def _clean_text(value: Any, *, allow_empty: bool = False, path: str = "text") -> str:
     clean = " ".join(str(value or "").split())
     if not clean and not allow_empty:
-        raise ValueError("empty text field")
+        raise ValueError(f"{path}: empty text field")
     return clean
 
 
@@ -168,7 +168,7 @@ def _queries(values: Any, path: str) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
     for value in values:
-        query = _clean_text(value)
+        query = _clean_text(value, path=f"{path}[{len(out)}]")
         if not 2 <= len(query.split()) <= 10:
             raise ValueError(f"{path}: queries must contain 2-10 words")
         key = query.casefold()
@@ -338,18 +338,18 @@ def compile_director_decisions(
         path = f"$.beats[{index - 1}]"
         if not isinstance(raw, dict):
             raise ValueError(f"{path}: expected object")
-        chunk_id = _clean_text(raw.get("chunk_id"))
+        chunk_id = _clean_text(raw.get("chunk_id"), path=f"{path}.chunk_id")
         expected_id = str(chunk["id"])
         if chunk_id != expected_id:
             raise ValueError(f"{path}: chunk_id must be {expected_id}")
         covered = [chunk]
 
-        action = _clean_text(raw.get("action"))
+        action = _clean_text(raw.get("action"), path=f"{path}.action")
         if action not in {"BROLL", "KEEP_TALKING_HEAD", "CONTINUE_PREVIOUS_VISUAL"}:
             raise ValueError(f"{path}: unsupported action")
         if selected is not None and expected_id not in selected and action != "KEEP_TALKING_HEAD":
             raise ValueError(f"{path}: chunk {expected_id} is not selected for Coverage")
-        visual_mode = _clean_text(raw.get("visual_mode"))
+        visual_mode = _clean_text(raw.get("visual_mode"), path=f"{path}.visual_mode")
         if visual_mode not in {"single", "sequence", "juxtaposition"}:
             raise ValueError(f"{path}: unsupported visual_mode")
 
@@ -390,7 +390,7 @@ def compile_director_decisions(
                     raise ValueError(f"{path}.shots[{shot_index - 1}]: expected object")
                 compiled_shot = {
                         "shot_id": f"{beat_id}_shot_{shot_index:02d}",
-                        "description": _clean_text(shot.get("description")),
+                        "description": _clean_text(shot.get("description"), path=f"{path}.shots[{shot_index - 1}].description"),
                         "image_queries": _queries(
                             shot.get("image_queries"),
                             f"{path}.shots[{shot_index - 1}].image_queries",
@@ -444,7 +444,11 @@ def compile_director_decisions(
         avoid: list[str] = []
         seen_avoid: set[str] = set()
         for value in raw_avoid:
-            clean = _clean_text(value)
+            # Empty optional exclusions carry no editorial evidence.
+            # Dropping one must not invalidate a complete visual plan.
+            clean = _clean_text(value, allow_empty=True)
+            if not clean:
+                continue
             key = clean.casefold()
             if key not in seen_avoid:
                 seen_avoid.add(key)
@@ -465,8 +469,8 @@ def compile_director_decisions(
             "covered_chunk_ids": [str(row["id"]) for row in covered],
             "original_text": " ".join(str(row["text"]) for row in covered),
             "action": action,
-            "editorial_function": _clean_text(raw.get("editorial_function")),
-            "core_meaning": _clean_text(raw.get("core_meaning")),
+            "editorial_function": _clean_text(raw.get("editorial_function"), path=f"{path}.editorial_function"),
+            "core_meaning": _clean_text(raw.get("core_meaning"), path=f"{path}.core_meaning"),
             "subtext": _clean_text(raw.get("subtext"), allow_empty=True),
             "visual_mode": visual_mode,
             "shots": shots,
@@ -483,7 +487,7 @@ def compile_director_decisions(
         "schema_version": VERSION,
         "project_id": package["project_id"],
         "transcript_signature": package["transcript_signature"],
-        "global_topic": _clean_text(decisions.get("global_topic")),
+        "global_topic": _clean_text(decisions.get("global_topic"), path="$.global_topic"),
         "visual_beats": canonical,
     }
     validate_import(plan, package)

@@ -1115,3 +1115,27 @@ def test_groq_recovery_is_bounded_and_does_not_retry_bad_requests(message, expec
     client = GroqDirectorClient('placeholder', http_client=http, fallback_models=(), retry_delays=(0,), max_retries_per_model=2)
     with pytest.raises(GroqAPIError): client.generate_json('prompt', {'type':'object'})
     assert http.calls == expected_calls
+
+
+def test_director_ignores_empty_optional_avoid_entries():
+    from backend.app.api_first_director import compile_director_decisions
+    choices = valid_decisions()
+    choices["beats"][0]["avoid"] = ["", "   ", "empty ferry"]
+    plan = compile_director_decisions(package_fixture(), choices)
+    assert plan["visual_beats"][0]["avoid"] == ["empty ferry"]
+
+
+def test_director_empty_required_field_names_exact_chunk_and_field():
+    from backend.app.api_first_director import compile_director_decisions
+    choices = valid_decisions()
+    choices["beats"][1]["editorial_function"] = " "
+    with pytest.raises(ValueError, match=r"\$\.beats\[1\]\.editorial_function: empty text field"):
+        compile_director_decisions(package_fixture(), choices)
+
+
+def test_director_rejects_empty_required_global_topic_with_precise_path():
+    from backend.app.api_first_director import compile_director_decisions
+    choices = valid_decisions()
+    choices["global_topic"] = ""
+    with pytest.raises(ValueError, match=r"\$\.global_topic: empty text field"):
+        compile_director_decisions(package_fixture(), choices)
