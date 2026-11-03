@@ -964,7 +964,17 @@ def test_dra_export_falls_back_to_loaded_project_export_when_archive_is_refused(
     exported.unlink()
 
 
-def test_helper_tolerates_non_utf8_native_resolve_diagnostics(monkeypatch):
+def test_helper_tolerates_non_utf8_native_resolve_diagnostics(monkeypatch, tmp_path):
+    # The subprocess is mocked; provide isolated placeholder paths rather than
+    # requiring a full DaVinci Resolve installation on GitHub CI runners.
+    api_root = tmp_path / "ResolveScripting"
+    module = api_root / "Modules" / "DaVinciResolveScript.py"
+    module.parent.mkdir(parents=True)
+    module.write_text("# mocked API path", encoding="utf-8")
+    native_lib = tmp_path / "fusionscript.dll"
+    native_lib.write_bytes(b"mock")
+    monkeypatch.setenv("RESOLVE_SCRIPT_API", str(api_root))
+    monkeypatch.setenv("RESOLVE_SCRIPT_LIB", str(native_lib))
     captured = {}
 
     def fake_run(*args, **kwargs):
@@ -1099,3 +1109,112 @@ def test_broll_scaling_fills_the_frame_instead_of_overlaying_a_horizontal_strip(
     item=SimpleNamespace(SetProperty=lambda values:calls.append(values) or True)
     configure_broll_scaling(item)
     assert calls==[{'Scaling':3}]
+
+
+def test_staged_broll_reuses_identical_file_and_existing_conformed_excerpt(monkeypatch, tmp_path):
+    """Retried application must not repeat minutes of FFmpeg work."""
+    from backend.app.resolve_textplus_timeline import prepare_broll_media_files, conform_broll_media
+    source = tmp_path / "downloaded" / "video.mp4"
+    source.parent.mkdir()
+    source.write_bytes(b"original video data")
+    row = {
+        "asset_id": "youtube:abc", "title": "A KURA clip", "provider": "youtube",
+        "media_path": str(source), "record_start_frame": 10, "record_end_frame": 40,
+        "source_start_frame": 60, "source_end_frame": 90,
+    }
+    calls = []
+    monkeypatch.setattr("backend.app.resolve_textplus_timeline.probe_preview",
+                        lambda _: {"duration": 8.0})
+    def encode(command, **kwargs):
+        calls.append(command)
+        Path(command[-1]).write_bytes(b"encoded video")
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr("backend.app.resolve_textplus_timeline.subprocess.run", encode)
+    staging = tmp_path / "staging"
+    first = prepare_broll_media_files([row], staging, "kura_media_v1")
+    output1 = conform_broll_media(first, 30)
+    assert len(calls) == 1
+    second = prepare_broll_media_files([row], staging, "kura_media_v1")
+    output2 = conform_broll_media(second, 30)
+    assert second[0]["media_path"] == first[0]["media_path"]
+    assert output2[0]["media_path"] == output1[0]["media_path"]
+    assert len(calls) == 1
+
+
+def test_staged_broll_does_not_reuse_different_source_with_same_readable_name(tmp_path):
+    from backend.app.resolve_textplus_timeline import prepare_broll_media_files
+    sources = []
+    for name, data in [("a.mp4", b"clip one"), ("b.mp4", b"clip two")]:
+        src = tmp_path / name
+        src.write_bytes(data)
+        sources.append({"media_path": str(src), "asset_id": name,
+                        "title": "Same title", "provider": "pexels"})
+    rows = prepare_broll_media_files(sources, tmp_path / "stage", "kura_media_v1")
+    assert rows[0]["media_path"] != rows[1]["media_path"]
+    assert Path(rows[0]["media_path"]).read_bytes() == b"clip one"
+    assert Path(rows[1]["media_path"]).read_bytes() == b"clip two"
+    rerun = prepare_broll_media_files(sources, tmp_path / "stage", "kura_media_v1")
+    assert [x["media_path"] for x in rows] == [x["media_path"] for x in rerun]
+
+
+def test_text_tool_tolerates_slow_fusion_initialization(monkeypatch):
+    from backend.app.resolve_textplus_timeline import _text_tool
+    template = SimpleNamespace(Name="Template")
+    class Composition:
+        def __init__(self):
+            self.calls = 0
+        def GetToolList(self, *_):
+            self.calls += 1
+            return {} if self.calls <= 25 else {1: template}
+    composition = Composition()
+    item = SimpleNamespace(GetFusionCompByIndex=lambda _: composition)
+    monkeypatch.setattr("backend.app.resolve_textplus_timeline.time.sleep", lambda _: None)
+    assert _text_tool(item) is template
+    assert composition.calls == 26
+
+
+def test_text_tool_reports_longer_timeout_not_original_five_seconds(monkeypatch):
+    from backend.app.resolve_textplus_timeline import _text_tool
+    item = SimpleNamespace(GetFusionCompByIndex=lambda _: None)
+    monkeypatch.setattr("backend.app.resolve_textplus_timeline.time.sleep", lambda _: None)
+    with pytest.raises(RuntimeError, match="20 secondi"):
+        _text_tool(item)
+
+
+def test_missing_fusion_title_is_repaired_before_video_conform(tmp_path):
+    from zipfile import ZipFile
+    from backend.app.resolve_textplus_timeline import ensure_resolve_title_ready
+    from backend.app.resolve_title_templates import inspect_drfx, template_install_status
+    title = "KURA_paper_title_v9"
+    package = tmp_path / (title + ".drfx")
+    with ZipFile(package, "w") as z:
+        z.writestr("Edit/Titles/KURA/" + title + ".setting", "Tools = {}")
+        z.writestr("Edit/Titles/KURA/paper.png", b"paper")
+    destination = tmp_path / "ResolveTemplates"
+    payload = {"title_package_path": str(package)}
+    with pytest.raises(RuntimeError, match="riparato automaticamente"):
+        ensure_resolve_title_ready(title, payload, install_root=destination)
+    assert template_install_status(inspect_drfx(package), destination) == "installed"
+    assert (destination / "Edit" / "Titles" / "KURA" / (title + ".setting")).is_file()
+    # Once Resolve has been restarted, the same preflight succeeds unchanged.
+    ensure_resolve_title_ready(title, payload, install_root=destination)
+
+
+def test_missing_fusion_package_fails_before_media_work(tmp_path):
+    from backend.app.resolve_textplus_timeline import ensure_resolve_title_ready
+    with pytest.raises(RuntimeError, match="non presente"):
+        ensure_resolve_title_ready("KURA_paper_title_v9",
+                                  {"title_package_path": str(tmp_path / "missing.drfx")},
+                                  install_root=tmp_path / "ResolveTemplates")
+
+
+def test_fusion_install_never_substitutes_wrong_named_preset(tmp_path):
+    from zipfile import ZipFile
+    from backend.app.resolve_textplus_timeline import ensure_resolve_title_ready
+    package = tmp_path / "other.drfx"
+    with ZipFile(package, "w") as z:
+        z.writestr("Edit/Titles/KURA/other.setting", "Tools = {}")
+    with pytest.raises(RuntimeError, match="non corrisponde"):
+        ensure_resolve_title_ready("KURA_paper_title_v9",
+                                  {"title_package_path": str(package)},
+                                  install_root=tmp_path / "ResolveTemplates")

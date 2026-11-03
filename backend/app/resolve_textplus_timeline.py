@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import filecmp
 from datetime import datetime
 import hashlib
 import json
@@ -582,6 +583,38 @@ def restore_empty_title_composition(item, title_name, payload):
         temporary.unlink(missing_ok=True)
 
 
+def ensure_resolve_title_ready(title_name: str, payload: dict[str, Any], *, install_root: Path | None = None) -> None:
+    """Repair missing selected Fusion assets before any costly media conform.
+
+    Installing on disk cannot reload a title inside an already running Resolve
+    process. Stop this attempt early with an actionable restart requirement;
+    subsequent APPLY reuses already prepared media files.
+    """
+    from .resolve_title_templates import inspect_drfx, install_template, template_install_status
+    supplied = str(payload.get("title_package_path") or "").strip()
+    fallback = Path(__file__).resolve().parents[1] / "assets" / "resolve_titles" / f"{title_name}.drfx"
+    source = Path(supplied) if supplied else fallback
+    if not source.is_file():
+        raise RuntimeError(f"Template Fusion '{title_name}' non presente nel pacchetto RMBL; ripara l'installazione")
+    template = inspect_drfx(source)
+    if template.resolve_name != title_name:
+        raise RuntimeError(f"Il template Fusion richiesto '{title_name}' non corrisponde al pacchetto selezionato")
+    root = Path(install_root) if install_root else (
+        Path(os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming")))
+        / "Blackmagic Design" / "DaVinci Resolve" / "Support" / "Fusion" / "Templates"
+    )
+    if template_install_status(template, root) == "installed":
+        return
+    try:
+        install_template(template, root)
+    except OSError as exc:
+        raise RuntimeError(f"Impossibile riparare il template Fusion '{title_name}': {exc}") from exc
+    raise RuntimeError(
+        f"Template Fusion '{title_name}' riparato automaticamente. "
+        "Chiudi e riapri DaVinci Resolve per caricarlo, poi ripeti APPLICA."
+    )
+
+
 def append_native_cut_titles(resolve, project, target, plan, payload, *, title_name, track_index, base_frame):
     """Reuse one initialized title composition without repeated overwrite inserts."""
     from types import SimpleNamespace
@@ -889,18 +922,19 @@ def restore_track_locks(timeline: Any, states: list[tuple[str, int, bool]]) -> N
         timeline.SetTrackLock(kind, track, locked)
 
 
-def _text_tool(item: Any) -> Any:
+def _text_tool(item: Any, *, attempts: int = 100) -> Any:
+    """Wait up to 20s for slower Resolve/Fusion startup without accepting an empty template."""
     values = []
-    for attempt in range(25):
+    for attempt in range(attempts):
         composition = item.GetFusionCompByIndex(1)
         tools = composition.GetToolList(False, 'TextPlus') if composition else {}
         values = list(tools.values()) if isinstance(tools, dict) else list(tools or [])
         if values:
             break
-        if attempt < 24:
+        if attempt + 1 < attempts:
             time.sleep(.2)
     if not values:
-        raise RuntimeError('Resolve non ha inizializzato il testo Fusion entro 5 secondi')
+        raise RuntimeError(f'Resolve non ha inizializzato il testo Fusion entro {attempts * .2:g} secondi; verifica il template Fusion e COPIA DEBUG')
     exposed = [tool for tool in values if str(getattr(tool, "Name", "")).casefold() == "template"]
     if len(exposed) == 1:
         return exposed[0]
@@ -968,11 +1002,28 @@ def prepare_broll_media_files(
         stem = _safe_media_name(str(row.get("title") or source.stem), fallback="clip")
         filename = f"{stem}_{provider}{source.suffix.casefold() or '.mp4'}"
         key = filename.casefold()
-        if key in used or (destination / filename).exists():
-            token = hashlib.sha256(str(row.get("asset_id") or source).encode("utf-8")).hexdigest()[:8]
-            filename = f"{stem}_{provider}_{token}{source.suffix.casefold() or '.mp4'}"
-        used.add(filename.casefold())
         target = destination / filename
+        # Existing staged files were previously renamed on every retry, which
+        # invalidated their cached _handles_ excerpts and repeated CPU encoding.
+        # Reuse only when the original bytes match; filename alone is not proof.
+        def same_media(candidate: Path) -> bool:
+            if not candidate.is_file():
+                return False
+            try:
+                if os.path.samefile(source, candidate):
+                    return True
+                if source.stat().st_size != candidate.stat().st_size:
+                    return False
+                return filecmp.cmp(source, candidate, shallow=False)
+            except OSError:
+                return False
+        if key in used or (target.exists() and not same_media(target)):
+            token = hashlib.sha256(str(row.get("asset_id") or source.resolve()).encode("utf-8")).hexdigest()[:8]
+            filename = f"{stem}_{provider}_{token}{source.suffix.casefold() or '.mp4'}"
+            target = destination / filename
+            if target.exists() and not same_media(target):
+                raise ValueError(f"Conflitto media nel cache di Resolve: {target.name}")
+        used.add(filename.casefold())
         if not target.exists():
             try:
                 os.link(source, target)
@@ -1263,6 +1314,10 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
     title_payload = {**payload, "items": payload.get("titles") or payload.get("items") or []}
     plan = build_textplus_timeline_plan(title_payload, target_fps=fps) if include_titles else {"segments": [], "boundaries": []}
     title_name = title_name_from_payload(payload) if include_titles else str(payload.get("title_name") or "")
+    # Must precede B-roll FFmpeg conform: missing title files should never
+    # waste minutes of CPU only to fail on the first Fusion insertion.
+    if include_titles:
+        ensure_resolve_title_ready(title_name, payload)
     original_signature = _timeline_signature(original)
     original_markers = snapshot_timeline_markers(original)
     media_pool = project.GetMediaPool()
@@ -1426,11 +1481,17 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
                 )
                 if not inserted:
                     raise RuntimeError(
-                        f"Resolve could not insert Fusion Title '{title_name}' in the RMBL text layer"
+                        f"Resolve non trova il titolo Fusion '{title_name}' nella sessione corrente. "
+                        "Se RMBL lo ha appena installato, chiudi e riapri Resolve prima di ripetere APPLICA."
                     )
                 color_setter = getattr(inserted, "SetClipColor", None)
                 if color_setter:
                     color_setter("Yellow")
+                # Resolve 21.1 may return an *empty* Fusion composition despite
+                # accepting the installed title. Restore the packaged original
+                # (including Loader assets) before waiting for the TextPlus node.
+                # Operates only on the disposable text-layer timeline.
+                restore_empty_title_composition(inserted, title_name, payload)
                 # Even blank boundary titles must finish initializing before
                 # another insertion can split/overwrite their composition.
                 _text_tool(inserted)
