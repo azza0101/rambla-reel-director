@@ -1685,7 +1685,7 @@ def create_app(
         if len(raw) > 12000:
             raise HTTPException(status_code=422, detail="Troppi asset ignorati")
         values = {item.strip() for item in raw.split(",") if item.strip()}
-        if len(values) > 200 or any(len(item) > 300 or any(ch in item for ch in "\\r\\n\\x00") for item in values):
+        if len(values) > 200 or any(len(item) > 1000 or any(ord(ch) < 32 for ch in item) for item in values):
             raise HTTPException(status_code=422, detail="Identificatori coperture non validi")
         return values
 
