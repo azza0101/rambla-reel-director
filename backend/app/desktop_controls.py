@@ -51,8 +51,9 @@ def _save(provider: str, value: str | None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     rows = path.read_text(encoding="utf-8-sig").splitlines() if path.is_file() else []
     rows = [row for row in rows if row.partition("=")[0].strip() != var]
-    if value is not None:
-        rows.append(f"{var}={value}")
+    # An empty local override also masks an invalid inherited Windows
+    # environment variable after the next restart.
+    rows.append(f"{var}={value if value is not None else ''}")
     # Windows installed app lives beneath the current user's LocalAppData.
     # Use restrictive file permissions where supported; no credentials in logs.
     # Atomic replacement, with os.chmod as a best-effort extra restriction.
