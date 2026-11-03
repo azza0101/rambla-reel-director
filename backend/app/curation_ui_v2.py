@@ -74,7 +74,7 @@ function nextWorkflowStepV42(){
 }
 function syncWorkflowAccordionV42(force=false){installWorkflowAccordionV42();const next=nextWorkflowStepV42();if(!next)return;const projectChanged=workflowProjectV42!==state.pid;if(projectChanged){workflowProjectV42=state.pid;workflowSuggestedV42=next;openOnlyWorkflowStepV42(next,false);return}if(force||next!==workflowSuggestedV42){workflowSuggestedV42=next;openOnlyWorkflowStepV42(next,force)}}
 document.addEventListener('click',event=>{if(event.target.closest('#continueWorkflowV15')){transcriptConfirmedProjectV42=state.pid;workflowSuggestedV42=5;setTimeout(()=>openOnlyWorkflowStepV42(5),0)}});
-const workflowTerminalBaseV42=window.ramblaRunTerminal;window.ramblaRunTerminal=(run)=>{if(workflowTerminalBaseV42)workflowTerminalBaseV42(run);if(run?.status!=='SUCCEEDED')return;const kind=workflowKindV12(run.stage_type);if(kind==='analyze')openOnlyWorkflowStepV42(3);else if(kind==='director_api')openOnlyWorkflowStepV42(6);else if(['videos','social','images'].includes(kind))openOnlyWorkflowStepV42(7)};
+const workflowTerminalBaseV42=window.ramblaRunTerminal;window.ramblaRunTerminal=(run)=>{if(workflowTerminalBaseV42)workflowTerminalBaseV42(run);if(run?.status!=='SUCCEEDED')return;const kind=workflowKindV12(run.stage_type);if(kind==='analyze')openOnlyWorkflowStepV42(3);else if(kind==='director_api')openOnlyWorkflowStepV42(6);else if(['videos','social','images'].includes(kind))openOnlyWorkflowStepV42(7,false)};
 const workflowDrawBaseV42=draw;draw=()=>{workflowDrawBaseV42();syncWorkflowAccordionV42(false)};
 installWorkflowAccordionV42();
 """
