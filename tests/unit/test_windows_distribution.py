@@ -6,7 +6,8 @@ def test_one_click_installer_covers_app_and_resolve_bridge():
     script = Path("INSTALL_RMBL_B_ROLL.ps1").read_text(encoding="utf-8")
     assert "ExecutionPolicy Bypass" in cmd
     assert "INSTALL_RESOLVE_BRIDGE.ps1" in script
-    assert "RMBL B ROLL.lnk" in script
+    assert "@('RMBL B ROLL','RMBL_B_ROLL_APP.vbs')" in script
+    assert "CreateShortcut" in script
     assert "RMBL_B_ROLL_APP.vbs" in script
 
 
@@ -17,7 +18,10 @@ def test_installer_detects_existing_versions_and_preserves_local_data():
     assert "previous_version" in script
     assert "rambla-data" in script
     assert "data_root" in script
-    assert "Remove-Item" not in script
+    # Removing the transient update marker is safe; project/data deletion isn't.
+    assert "Remove-Item -LiteralPath $dataRoot" not in script
+    assert "Remove-Item -LiteralPath $InstallRoot" not in script
+    assert "Remove-Item -LiteralPath $updateMarker" in script
 
 
 def test_standalone_launcher_never_starts_the_resolve_bridge():
