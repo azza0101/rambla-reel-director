@@ -91,18 +91,70 @@ async def _verify_groq(value: str) -> None:
         raise HTTPException(503, f"Verifica Groq temporaneamente non disponibile (HTTP {response.status_code})")
 
 
+_LAST_CPU_SAMPLE = None
+
+
 def _resource_snapshot() -> dict[str, Any]:
+    """Global CPU/RAM telemetry; requires no extra Python packages on Windows."""
+    global _LAST_CPU_SAMPLE
     try:
         import psutil
         memory = psutil.virtual_memory()
-        cpu = psutil.cpu_percent(interval=None)
         return {
-            "available": True, "cpu_percent": round(cpu, 1),
+            "available": True,
+            "cpu_percent": round(psutil.cpu_percent(interval=None), 1),
             "ram_percent": round(memory.percent, 1),
             "ram_used_gb": round(memory.used / 1024**3, 2),
             "ram_total_gb": round(memory.total / 1024**3, 2),
         }
-    except (ImportError, OSError, RuntimeError):
+    except ImportError:
+        pass
+    if os.name != "nt":
+        return {"available": False, "message": "Metriche non disponibili"}
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class MEMORYSTATUSEX(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", wintypes.DWORD), ("dwMemoryLoad", wintypes.DWORD),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+
+        class FILETIME(ctypes.Structure):
+            _fields_ = [("low", wintypes.DWORD), ("high", wintypes.DWORD)]
+
+        kernel = ctypes.windll.kernel32
+        mem = MEMORYSTATUSEX()
+        mem.dwLength = ctypes.sizeof(mem)
+        if not kernel.GlobalMemoryStatusEx(ctypes.byref(mem)):
+            raise OSError("GlobalMemoryStatusEx failed")
+        idle, kernel_time, user_time = FILETIME(), FILETIME(), FILETIME()
+        if not kernel.GetSystemTimes(ctypes.byref(idle), ctypes.byref(kernel_time),
+                                     ctypes.byref(user_time)):
+            raise OSError("GetSystemTimes failed")
+        value = lambda ft: (ft.high << 32) | ft.low
+        current = (value(idle), value(kernel_time), value(user_time))
+        percent = 0.0
+        if _LAST_CPU_SAMPLE is not None:
+            diff_idle = current[0] - _LAST_CPU_SAMPLE[0]
+            diff_total = current[1] + current[2] - _LAST_CPU_SAMPLE[1] - _LAST_CPU_SAMPLE[2]
+            if diff_total > 0:
+                percent = max(0.0, min(100.0, 100.0 * (1 - diff_idle / diff_total)))
+        _LAST_CPU_SAMPLE = current
+        total = int(mem.ullTotalPhys)
+        used = total - int(mem.ullAvailPhys)
+        return {"available": True, "cpu_percent": round(percent, 1),
+                "ram_percent": round(100 * used / total, 1),
+                "ram_used_gb": round(used / 1024**3, 2),
+                "ram_total_gb": round(total / 1024**3, 2)}
+    except (AttributeError, OSError, ValueError):
         return {"available": False, "message": "Metriche CPU/RAM non disponibili"}
 
 
