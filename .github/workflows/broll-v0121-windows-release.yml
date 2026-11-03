@@ -37,6 +37,16 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'FFmpeg unavailable' }
             $env:PATH = [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH','Process')
           }
+          # Chocolatey exposes a tiny shim at C:\\ProgramData\\chocolatey\\bin.
+          # The release must bundle the real standalone FFmpeg binaries instead.
+          $ffRoot = Join-Path $env:ChocolateyInstall 'lib/ffmpeg'
+          if (Test-Path $ffRoot) {
+            $actual = Get-ChildItem -LiteralPath $ffRoot -Recurse -File -Filter 'ffmpeg.exe' |
+              Where-Object { Test-Path (Join-Path $_.DirectoryName 'ffprobe.exe') } |
+              Select-Object -First 1
+            if (-not $actual) { throw 'Real FFmpeg binaries missing from Chocolatey package' }
+            $env:PATH = $actual.DirectoryName + ';' + $env:PATH
+          }
           if (-not (Get-Command gh.exe -ErrorAction SilentlyContinue)) { throw 'gh CLI unavailable' }
           ./BUILD_WINDOWS_INSTALLER.ps1 -OutputDirectory (Join-Path $PWD 'dist')
           if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw 'installer builder failed' }
