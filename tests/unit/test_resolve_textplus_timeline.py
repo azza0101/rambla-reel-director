@@ -1218,3 +1218,71 @@ def test_fusion_install_never_substitutes_wrong_named_preset(tmp_path):
         ensure_resolve_title_ready("KURA_paper_title_v9",
                                   {"title_package_path": str(package)},
                                   install_root=tmp_path / "ResolveTemplates")
+
+
+def _stub_resolve_empty_title_preflight(monkeypatch, *, has_video=False):
+    import sys
+    from backend.app import resolve_textplus_timeline as mod
+
+    class Timeline:
+        def GetUniqueId(self):
+            return "source-timeline-id"
+        def GetSetting(self, key):
+            assert key == "timelineFrameRate"
+            return "30"
+        def GetName(self):
+            return "Timeline 1"
+        def GetTrackCount(self, kind):
+            return int(has_video) if kind == "video" else 0
+        def GetItemListInTrack(self, kind, index):
+            if kind == "video" and index == 1 and has_video:
+                media = SimpleNamespace(GetClipProperty=lambda key: "Video")
+                return [SimpleNamespace(GetMediaPoolItem=lambda: media)]
+            return []
+
+    timeline = Timeline()
+    project = SimpleNamespace(GetName=lambda: "test kura v2",
+                              GetTimelineCount=lambda: 1,
+                              GetTimelineByIndex=lambda i: timeline)
+    manager = SimpleNamespace(GetCurrentProject=lambda: project)
+    resolve = SimpleNamespace(GetProjectManager=lambda: manager)
+    monkeypatch.setitem(sys.modules, "DaVinciResolveScript",
+                        SimpleNamespace(scriptapp=lambda name: resolve))
+    return mod
+
+
+def test_empty_active_timeline_is_rejected_before_ffmpeg_or_fusion(monkeypatch):
+    mod = _stub_resolve_empty_title_preflight(monkeypatch)
+    def should_not_run(*args, **kwargs):
+        raise AssertionError("Expensive media processing should not start")
+    monkeypatch.setattr(mod, "ensure_resolve_title_ready", should_not_run)
+    monkeypatch.setattr(mod, "conform_broll_media", should_not_run)
+    payload = {
+        "source_project_name": "test kura v2",
+        "source_timeline_id": "source-timeline-id",
+        "destination_mode": "active",
+        "mode": "editing",
+        "components": {"highlights": True, "broll": True},
+        "titles": [{"text": "Viaggiare insieme", "start_seconds": 0, "end_seconds": 1}],
+        "title_name": "KURA_paper_title_v9",
+    }
+    with pytest.raises(RuntimeError, match="non contiene alcun video sorgente"):
+        mod.materialize_in_resolve(payload)
+
+
+def test_active_timeline_with_source_video_passes_early_preflight(monkeypatch):
+    mod = _stub_resolve_empty_title_preflight(monkeypatch, has_video=True)
+    def found_video(*args, **kwargs):
+        raise RuntimeError("READY_TO_CHECK_FUSION_TEMPLATE")
+    monkeypatch.setattr(mod, "ensure_resolve_title_ready", found_video)
+    payload = {
+        "source_project_name": "test kura v2",
+        "source_timeline_id": "source-timeline-id",
+        "destination_mode": "active",
+        "mode": "editing",
+        "components": {"highlights": True, "broll": True},
+        "titles": [{"text": "Viaggiare insieme", "start_seconds": 0, "end_seconds": 1}],
+        "title_name": "KURA_paper_title_v9",
+    }
+    with pytest.raises(RuntimeError, match="READY_TO_CHECK_FUSION_TEMPLATE"):
+        mod.materialize_in_resolve(payload)

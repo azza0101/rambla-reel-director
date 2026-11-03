@@ -1316,6 +1316,20 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
     title_name = title_name_from_payload(payload) if include_titles else str(payload.get("title_name") or "")
     # Must precede B-roll FFmpeg conform: missing title files should never
     # waste minutes of CPU only to fail on the first Fusion insertion.
+    if include_titles and str(payload.get("destination_mode") or "new") == "active":
+        # The isolated Fusion layer must be transferred back onto an ordinary
+        # media clip. An audio-only/empty Resolve timeline has no such carrier.
+        # Fail BEFORE any costly FFmpeg conform or timeline backup/mutation.
+        try:
+            find_title_carrier_media(original)
+        except RuntimeError as exc:
+            raise RuntimeError(
+                "La timeline Resolve non contiene alcun video sorgente. "
+                "RMBL ha preparato B-roll e testi ma non il video principale. "
+                "Inserisci la ripresa originale su V1 (con il suo audio), "
+                "poi premi INVIA A RESOLVE per un nuovo pacchetto e APPLICA. "
+                "In alternativa esporta solo B-roll e sottotitoli, disattivando le Frasi evidenziate."
+            ) from exc
     if include_titles:
         ensure_resolve_title_ready(title_name, payload)
     original_signature = _timeline_signature(original)
