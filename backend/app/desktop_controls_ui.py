@@ -4,7 +4,7 @@ JS = r"""<script>
 (function(){
 const el=id=>document.getElementById(id);
 const names={groq:'Groq · trascrizione',pexels:'Pexels · video stock',gemini:'Gemini · AI',google:'Google · immagini'};
-let providers={},active=null,stopping=false,busy=false;
+let providers={},active=null,stopping=false,busy=false,allowAnalyzing=false;
 function show(){if(!el('rmblSettings').open)el('rmblSettings').showModal()}
 function status(msg){el('rmblSettingsStatus').textContent=msg}
 async function api(url,options){
@@ -55,9 +55,16 @@ function init(){
  finally{stopping=false;await refresh()}
  });
  el('analyze')?.addEventListener('click',async event=>{
- if(providers.groq?.configured)return;
- event.preventDefault();event.stopImmediatePropagation();show();
- status('Prima di ANALIZZA, inserisci una chiave Groq valida.');
+ if(allowAnalyzing)return;
+ event.preventDefault();event.stopImmediatePropagation();
+ const button=el('analyze');button.disabled=true;
+ try{
+   await api('/api/curation/desktop-settings/groq/verify',{method:'POST',headers:{'X-RMBL-Settings':'1'}});
+   allowAnalyzing=true;button.disabled=false;button.click();allowAnalyzing=false;
+ }catch(e){
+   allowAnalyzing=false;button.disabled=false;show();
+   status('Impossibile avviare ANALIZZA: '+e.message+'. Inserisci una chiave valida.');
+ }
  },true);
  rows();refresh();setInterval(refresh,2000);
 }
