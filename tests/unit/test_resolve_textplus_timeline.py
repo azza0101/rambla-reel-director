@@ -964,7 +964,17 @@ def test_dra_export_falls_back_to_loaded_project_export_when_archive_is_refused(
     exported.unlink()
 
 
-def test_helper_tolerates_non_utf8_native_resolve_diagnostics(monkeypatch):
+def test_helper_tolerates_non_utf8_native_resolve_diagnostics(monkeypatch, tmp_path):
+    # The subprocess is mocked; provide isolated placeholder paths rather than
+    # requiring a full DaVinci Resolve installation on GitHub CI runners.
+    api_root = tmp_path / "ResolveScripting"
+    module = api_root / "Modules" / "DaVinciResolveScript.py"
+    module.parent.mkdir(parents=True)
+    module.write_text("# mocked API path", encoding="utf-8")
+    native_lib = tmp_path / "fusionscript.dll"
+    native_lib.write_bytes(b"mock")
+    monkeypatch.setenv("RESOLVE_SCRIPT_API", str(api_root))
+    monkeypatch.setenv("RESOLVE_SCRIPT_LIB", str(native_lib))
     captured = {}
 
     def fake_run(*args, **kwargs):
