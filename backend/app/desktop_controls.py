@@ -198,6 +198,15 @@ def install_desktop_controls(app, project_root: Path) -> None:
         return {"provider": provider, "configured": True,
                 "verified": provider == "groq", "restart_required": False}
 
+    @app.post("/api/curation/desktop-settings/groq/verify")
+    async def verify_saved_groq(request: Request):
+        _local_write(request)
+        key = os.environ.get("GROQ_API_KEY", "").strip()
+        if not key:
+            raise HTTPException(422, "Chiave Groq mancante. Apri IMPOSTAZIONI.")
+        await _verify_groq(key)
+        return {"provider": "groq", "verified": True}
+
     @app.delete("/api/curation/desktop-settings/{provider}")
     async def delete_provider(provider: str, request: Request):
         _local_write(request)
