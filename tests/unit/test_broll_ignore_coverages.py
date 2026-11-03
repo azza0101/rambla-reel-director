@@ -15,7 +15,7 @@ def test_ignore_only_selected_asset_in_temporary_request():
     assert "params.set('ignored',[...ignoredCoverageIdsV123].join(','))" in JS
     assert "body:JSON.stringify(resolveComponentsV71)" in JS
     assert "resolveComponentsV71=trimmed" not in JS
-    assert "Copertura ignorata solo per questa esportazione" in JS
+    assert "Ignorata solo questa copertura" in JS
 
 
 def test_endpoint_accepts_ignored_asset_ids_without_modifying_project():
