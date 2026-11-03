@@ -1681,13 +1681,7 @@ def create_app(
         project_root = matches[0].parents[2]
         return project_root, handoff_store.read(project_root, package_id)
 
-    def ignored_for_export(raw: str) -> set[str]:
-        if len(raw) > 12000:
-            raise HTTPException(status_code=422, detail="Troppi asset ignorati")
-        values = {item.strip() for item in raw.split(",") if item.strip()}
-        if len(values) > 200 or any(len(item) > 300 or any(ch in item for ch in "\\r\\n\\x00") for item in values):
-            raise HTTPException(status_code=422, detail="Identificatori coperture non validi")
-        return values
+    from .export_ignore import ignored_for_export
 
     @app.post("/api/curation/projects/{project_id}/resolve-handoffs")
     async def prepare_resolve_handoff(project_id: str, components: ExportComponents | None = None, ignored: str = ""):
@@ -1843,6 +1837,62 @@ def create_app(
         rows = [_read_json(p, {}) for p in (root/project_id/'resolve-outbox').glob('*/package.json')]
         latest = max(rows, key=lambda row:row.get('created_at',''), default={})
         return {k:v for k,v in latest.items() if k != 'payload'}
+
+    @app.get("/api/curation/projects/{project_id}/exports/media-pack.zip")
+    async def export_media_pack(project_id: str):
+        """Exports already ready selected assets; never needs a Resolve bridge."""
+        from .media_pack_export import create_media_pack, safe_name
+        from .editorial_import import normalized_chunks
+        from .captions import render_semantic_srt
+        from .transcript_intents import build_combined_resolve_export
+        project = load_project(project_id)
+        run = run_root(project_id)
+        try:
+            timeline = broll_timeline_payload(project_id, allow_unavailable=True)
+        except (ValueError, FileNotFoundError):
+            timeline = {"fps": project_export_fps(project_id, project), "duration_frames": 0,
+                        "clips": [], "unavailable": []}
+        generic = _read_json(run / "generic-coverage.json", {})
+        try:
+            captions = render_semantic_srt(normalized_chunks(run))
+        except (OSError, ValueError, KeyError, TypeError):
+            captions = ""
+        try:
+            titles = build_combined_resolve_export(
+                run, project_id, fps=project_export_fps(project_id, project)
+            ).get("titles", [])
+        except (OSError, ValueError, KeyError, TypeError):
+            titles = []
+        from .curation_artifacts import load_curation_run
+        selection = _read_json(active_retrieval_root(run) / "selection-plan.json", {"chunks": {}})
+        selected_images = []
+        try:
+            candidates = load_curation_run(run).candidate_index
+            for beat_id, choice in (selection.get("chunks") or {}).items():
+                for selected in (choice.get("selected_assets") or []):
+                    candidate = candidates.get(str(selected.get("asset_id") or ""))
+                    if candidate and candidate.kind == "image":
+                        selected_images.append({
+                            "beat_id": beat_id, "asset_id": candidate.asset_id,
+                            "title": candidate.title, "source_page": candidate.source_page,
+                            "media_path": candidate.local_asset_path,
+                        })
+        except (OSError, ValueError, KeyError):
+            pass
+        name = safe_name(project.name, fallback="RMBL_Reel")
+        archive = run / "exports" / (name + "_MediaPack_" + uuid.uuid4().hex[:8] + ".zip")
+        try:
+            await asyncio.to_thread(
+                create_media_pack, archive,
+                project_id=project_id, project_name=project.name, project_root=root / project_id,
+                timeline=timeline, generic_rows=generic.get("items") or [],
+                selected_generics=generic.get("selected") or [], selected_images=selected_images,
+                captions_srt=captions, titles=titles,
+            )
+            return FileResponse(archive, media_type="application/zip", filename=name + "_MediaPack.zip")
+        except (ValueError, OSError, KeyError, TypeError) as exc:
+            archive.unlink(missing_ok=True)
+            raise HTTPException(status_code=422, detail="Media Pack non creato: " + str(exc)) from exc
 
     @app.get("/api/curation/projects/{project_id}/exports/broll-timeline.xml")
     async def export_broll_timeline_xml(project_id: str):

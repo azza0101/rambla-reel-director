@@ -19,5 +19,5 @@ def launch_update(root: Path) -> dict:
     if not script.is_file():
         raise RuntimeError('Updater mancante: ripara con il setup.')
     from .github_auth import github_environment
-    subprocess.Popen(['powershell.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',str(script),'-AppRoot',str(root)],cwd=str(root),env=github_environment(root),creationflags=getattr(subprocess,'CREATE_NEW_CONSOLE',0))
+    subprocess.Popen(['powershell.exe','-NoExit','-NoProfile','-ExecutionPolicy','Bypass','-File',str(script),'-AppRoot',str(root)],cwd=str(root),env=github_environment(root),creationflags=getattr(subprocess,'CREATE_NEW_CONSOLE',0))
     return {'status':'started','message':'Controllo GitHub aperto nella finestra aggiornamento.'}
