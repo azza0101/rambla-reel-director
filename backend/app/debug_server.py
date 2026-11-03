@@ -437,6 +437,21 @@ async def _spawn_worker(command: list[str], cwd: Path) -> Any:
 async def _stop_worker(process: Any) -> None:
     if process.returncode is not None:
         return
+    if WINDOWS:
+        # Windows .terminate() stops only the parent Python process. Its
+        # ffmpeg/yt-dlp subprocesses can otherwise keep CPU saturated.
+        pid = getattr(getattr(process, "process", None), "pid", None)
+        if pid:
+            try:
+                result = await asyncio.to_thread(
+                    subprocess.run, ["taskkill", "/PID", str(pid), "/T", "/F"],
+                    capture_output=True, timeout=10, check=False,
+                )
+                if result.returncode == 0:
+                    await asyncio.wait_for(process.wait(), timeout=5.0)
+                    return
+            except (OSError, subprocess.SubprocessError, asyncio.TimeoutError):
+                pass
     process.terminate()
     try:
         await asyncio.wait_for(process.wait(), timeout=3.0)
