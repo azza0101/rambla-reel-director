@@ -108,6 +108,12 @@ def test_running_apply_can_be_cancelled_cooperatively_and_package_remains_reusab
             time.sleep(.005)
         assert row["status"]=="cancelled"
         assert "ripristinata" in row["progress"]["message"]
+        # The durable cancelled receipt may precede worker cleanup by one tick.
+        for _ in range(200):
+            if not jobs.is_applying:
+                break
+            time.sleep(.005)
+        assert not jobs.is_applying
         assert jobs.apply(root,package["package_id"],"active","titles",current_project="P",current_timeline_id="T")["status"]=="applying"
     finally:
         shutil.rmtree(root,ignore_errors=True)
