@@ -1555,7 +1555,7 @@ def create_app(
         run = run_root(project_id)
         path = run / "generic-coverage.json"
         existing = _read_json(path, {})
-        if existing.get("items") and not refresh and scope == "topic":
+        if existing.get("items") and not refresh and scope == "topic" and not manual_query.strip():
             return existing
         visual = _read_json(run / "visual-plan.json", {})
         transcript = _read_json(run / "transcript-raw.json", {})
@@ -1584,7 +1584,7 @@ def create_app(
             for query in queries[:max(1,min(4,max_queries))]:
                 try:
                     rows=await source.search(query, orientation="landscape", min_duration=2, max_duration=180, limit=12)
-                    group=[{**candidate_dict(row), "coverage_group": scope, "place": place} for row in rows if not place or not conflicting_place(row.title+' '+row.description,[place])]
+                    group=[{**candidate_dict(row), "coverage_group": scope, "place": place} for row in rows if manual_query or not place or not conflicting_place(row.title+' '+row.description,[place])]
                     groups.append(group)
                     if len(merge_unique(groups,limit=12)["items"])>=12: break
                 except Exception as exc: errors.append(str(exc))
