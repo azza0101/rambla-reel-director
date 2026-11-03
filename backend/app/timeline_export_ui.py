@@ -30,6 +30,7 @@ let resolveComponentsV71=null;
 async function loadResolveComponentsV71(){if(!state.pid)return;const pid=state.pid;const options=await api(`/projects/${pid}/export-options`);if(state.pid!==pid)return;resolveComponentsV71=options.components;$('resolveComponentsV71').innerHTML=Object.entries(resolveComponentLabelsV71).map(([key,label])=>`<label><input type="checkbox" data-component="${key}" ${options.components[key]?'checked':''} ${(key==='video'?!options.video_available:options.component_availability?.[key]===false)?'disabled':''}> ${label} <small>(${options.counts?.[key]||0})</small></label>`).join('');$('resolveComponentsReasonV71').textContent=options.video_reason||'';for(const input of $('resolveComponentsV71').querySelectorAll('input'))input.onchange=async()=>{const next=Object.fromEntries([...$('resolveComponentsV71').querySelectorAll('input')].map(input=>[input.dataset.component,input.checked]));resolveComponentsV71=next;try{await api(`/projects/${pid}/export-options`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(next)})}catch(error){$('resolveComponentsReasonV71').textContent=error.message}}}
 
 let resolveHandoffIdV33=null,resolveHandoffPollV33=null,resolvePreparingV37=false,resolveDeliveryStartedV37=0;
+let resolveDeliveryTargetCheckV126=0,resolveDeliveryMismatchV126='';
 let genericCoverageV33={items:[],selected:[]};
 let ignoredCoverageIdsV123=new Set();
 let ignoredCoverageProjectV125=null;
@@ -70,14 +71,29 @@ async function pollResolveHandoffV33(){
   else if(done)$('resolveDeliveryDetailV33').textContent='Operazione completata.';
   else if(applying)$('resolveDeliveryDetailV33').textContent=row.progress?.message||'Applicazione in corso';
   else if(received)$('resolveDeliveryDetailV33').textContent='Premi APPLICA nel bridge quando vuoi creare la timeline.';
-  else {const live=await api('/resolve-bridge/session'),seconds=Math.floor((Date.now()-resolveDeliveryStartedV37)/1000);$('resolveDeliveryDetailV33').textContent=!live.connected?'Preparazione terminata. Bridge offline: aprilo in Resolve, poi ripeti INVIA.':live.bridge_session_id!==row.bridge_session_id?'Il bridge è stato riaperto: ripeti INVIA per la nuova sessione.':`Attendo conferma dal bridge da ${seconds}s. ${seconds>15?'Nessuna conferma ricevuta: la consegna non è completata.':'Nessuna modifica alla timeline fino ad APPLICA.'}`;}
+  else {
+    const live=await api('/resolve-bridge/session'),seconds=Math.floor((Date.now()-resolveDeliveryStartedV37)/1000);
+    if(seconds>8 && live.connected && Date.now()-resolveDeliveryTargetCheckV126>8000){
+      resolveDeliveryTargetCheckV126=Date.now();
+      try{
+        const target=await api('/resolve-bridge/status');
+        resolveDeliveryMismatchV126=(target.connected&&row.resolve_project&&target.project!==row.resolve_project)
+          ?'Il pacchetto si riferisce a un altro progetto Resolve. Premi INVIA A RESOLVE per collegarlo al progetto attivo.':'';
+      }catch(_){resolveDeliveryMismatchV126='';}
+    }
+    const changed=live.bridge_session_id!==row.bridge_session_id;
+    $('resolveDeliveryDetailV33').textContent=!live.connected?'Preparazione terminata. Bridge offline: aprilo in Resolve, poi ripeti INVIA.':
+      changed?'Il bridge è stato riaperto: ripeti INVIA per la nuova sessione.':
+      resolveDeliveryMismatchV126||`Attendo conferma dal bridge da ${seconds}s. ${seconds>15?'Nessuna conferma ricevuta: controlla DIAGNOSTICA RESOLVE e ripeti INVIA.':'Nessuna modifica alla timeline fino ad APPLICA.'}`;
+    if(seconds>20)$('resolveDeliveryTitleV33').textContent='CONSEGNA NON CONFERMATA · VERIFICA BRIDGE';
+  }
   if(done||failed)clearInterval(resolveHandoffPollV33);
  }catch(error){$('resolveDeliveryDetailV33').textContent='Non riesco a verificare la consegna: '+(error.message||String(error))}
 }
 async function prepareResolveHandoffV33(preserveIssues=false){
  if(resolvePreparingV37)return;
  if(ignoredCoverageProjectV125!==state.pid){ignoredCoverageIdsV123.clear();ignoredCoverageProjectV125=state.pid;}
- resolvePreparingV37=true;clearInterval(resolveHandoffPollV33);resolveHandoffIdV33=null;
+ resolvePreparingV37=true;clearInterval(resolveHandoffPollV33);resolveHandoffIdV33=null;resolveDeliveryTargetCheckV126=0;resolveDeliveryMismatchV126='';
  const panel=$('timelineExportV33'),box=$('resolveDeliveryV33');syncTimelineExportV33();panel.classList.add('busyV33');panel.classList.remove('errorV33');box.hidden=false;box.classList.remove('receivedV33');$('resolveDeliveryCheckV33').hidden=true;if(!preserveIssues)renderResolveMediaIssuesV48([]);
  $('resolveDeliveryTitleV33').textContent='PREPARAZIONE PER RESOLVE';$('resolveDeliverySummaryV33').textContent='Controllo le selezioni salvate';setResolveDeliveryProgressV33(0);$('resolveDeliveryDetailV33').textContent='Avvio…';$('timelineExportStatusV33').textContent='';if(!preserveIssues)box.scrollIntoView({block:'nearest',behavior:'smooth'});
  const projectId=state.pid;
