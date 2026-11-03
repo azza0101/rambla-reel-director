@@ -30,7 +30,7 @@ jobs:
           $ast=[System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path './SEARCH_UPDATE.ps1'),[ref]$tokens,[ref]$errors)
           if ($errors.Count) { $errors | Format-List | Out-String | Write-Error; throw 'SEARCH_UPDATE.ps1 parse failed' }
           $source=Get-Content './SEARCH_UPDATE.ps1' -Raw
-          foreach ($must in @("release list", "release download $latestTag", "--pattern update.json", "verify_update_archive.py")) {
+          foreach ($must in @('release list', 'release download $latestTag', '--pattern update.json', 'verify_update_archive.py')) {
             if (-not $source.Contains($must)) { throw "Missing updater operation: $must" }
           }
           Write-Host 'SEARCH_UPDATE_PARSE_OK'
