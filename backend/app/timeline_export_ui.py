@@ -10,7 +10,7 @@ PANEL = r'''
   <button id="sendResolvePackageV33" class="primary resolvePrimaryV33">INVIA A RESOLVE</button><details class="legacyExportsV33"><summary>Componenti da esportare</summary><div id="resolveComponentsV71" class="timelineExportActionsV33"></div><p id="resolveComponentsReasonV71" class="muted"></p></details>
   <div id="resolveDeliveryV33" class="resolveDeliveryV33" hidden><div id="resolveDeliveryCheckV33" class="resolveDeliveryCheckV33" hidden>✓</div><strong id="resolveDeliveryTitleV33">Preparazione pacchetto Resolve…</strong><span id="resolveDeliverySummaryV33"></span><div id="resolveDeliveryProgressV33" class="resolveDeliveryProgressBarV34"><i></i></div><b id="resolveDeliveryPercentV37">0%</b><small id="resolveDeliveryDetailV33"></small></div>
   <div id="resolveMediaIssuesV48" class="resolveMediaIssuesV48" hidden></div>
-  <details id="resolveDebugV39" hidden><summary>Diagnostica Resolve</summary><button id="copyResolveDebugV39">COPIA DIAGNOSTICA</button><textarea id="resolveDebugTextV39" readonly aria-label="Diagnostica Resolve" style="width:100%;min-height:150px;margin-top:8px"></textarea></details><details class="legacyExportsV33"><summary>Export file e strumenti precedenti</summary><div class="timelineExportActionsV33"><button id="exportTimelineXmlV33">ESPORTA XML</button><button id="exportTimelineDraV33">ESPORTA DRA</button><button id="openTimelineResolveV33">CREA SUBITO IN RESOLVE · TEMP</button></div></details>
+  <details id="resolveDebugV39" hidden><summary>Diagnostica Resolve</summary><button id="copyResolveDebugV39">COPIA DIAGNOSTICA</button><textarea id="resolveDebugTextV39" readonly aria-label="Diagnostica Resolve" style="width:100%;min-height:150px;margin-top:8px"></textarea></details><details class="legacyExportsV33"><summary>Export file e strumenti precedenti</summary><div class="timelineExportActionsV33"><button id="exportMediaPackV125" type="button">ESPORTA MEDIA IN CARTELLE (ZIP)</button><button id="exportTimelineXmlV33">ESPORTA XML</button><button id="exportTimelineDraV33">ESPORTA DRA</button><button id="openTimelineResolveV33">CREA SUBITO IN RESOLVE · TEMP</button></div></details>
   <p id="timelineExportStatusV33" class="muted" role="status">Puoi inviare anche soltanto subs o parole evidenziate.</p>
 </section>
 '''
@@ -44,8 +44,9 @@ function renderResolveMediaIssuesV48(items=[]){
    const id=button.dataset.ignoreCoverage;
    if(!id)return;
    ignoredCoverageIdsV123.add(id);
-   $('timelineExportStatusV33').textContent='Copertura ignorata solo per questa esportazione. Mantengo tutte le altre.';
-   await prepareResolveHandoffV33();
+   button.closest('.resolveMediaIssueV48')?.remove();
+   $('timelineExportStatusV33').textContent='Ignorata solo questa copertura ('+ignoredCoverageIdsV123.size+'). Mantengo le altre clip e le selezioni originali.';
+   await prepareResolveHandoffV33(true);
  });
 }
 
@@ -71,11 +72,11 @@ async function pollResolveHandoffV33(){
   if(done||failed)clearInterval(resolveHandoffPollV33);
  }catch(error){$('resolveDeliveryDetailV33').textContent='Non riesco a verificare la consegna: '+(error.message||String(error))}
 }
-async function prepareResolveHandoffV33(){
+async function prepareResolveHandoffV33(preserveIssues=false){
  if(resolvePreparingV37)return;
  resolvePreparingV37=true;clearInterval(resolveHandoffPollV33);resolveHandoffIdV33=null;
- const panel=$('timelineExportV33'),box=$('resolveDeliveryV33');syncTimelineExportV33();panel.classList.add('busyV33');panel.classList.remove('errorV33');box.hidden=false;box.classList.remove('receivedV33');$('resolveDeliveryCheckV33').hidden=true;renderResolveMediaIssuesV48([]);
- $('resolveDeliveryTitleV33').textContent='PREPARAZIONE PER RESOLVE';$('resolveDeliverySummaryV33').textContent='Controllo le selezioni salvate';setResolveDeliveryProgressV33(0);$('resolveDeliveryDetailV33').textContent='Avvio…';$('timelineExportStatusV33').textContent='';box.scrollIntoView({block:'nearest',behavior:'smooth'});
+ const panel=$('timelineExportV33'),box=$('resolveDeliveryV33');syncTimelineExportV33();panel.classList.add('busyV33');panel.classList.remove('errorV33');box.hidden=false;box.classList.remove('receivedV33');$('resolveDeliveryCheckV33').hidden=true;if(!preserveIssues)renderResolveMediaIssuesV48([]);
+ $('resolveDeliveryTitleV33').textContent='PREPARAZIONE PER RESOLVE';$('resolveDeliverySummaryV33').textContent='Controllo le selezioni salvate';setResolveDeliveryProgressV33(0);$('resolveDeliveryDetailV33').textContent='Avvio…';$('timelineExportStatusV33').textContent='';if(!preserveIssues)box.scrollIntoView({block:'nearest',behavior:'smooth'});
  const projectId=state.pid;
  try{
   const params=new URLSearchParams();
@@ -91,6 +92,21 @@ async function prepareResolveHandoffV33(){
  }catch(error){panel.classList.add('errorV33');$('resolveDeliveryTitleV33').textContent='INVIO NON RIUSCITO';$('resolveDeliveryDetailV33').textContent=error.message||String(error)}
  finally{resolvePreparingV37=false;panel.classList.remove('busyV33');syncTimelineExportV33()}
 }
+async function exportMediaPackV125(){
+ if(!state.pid||state.run)return;
+ const button=$('exportMediaPackV125');button.disabled=true;
+ $('timelineExportStatusV33').textContent='Preparo ZIP con le clip già disponibili, SRT, XML e titoli. Resolve non è necessario.';
+ try{
+   const response=await fetch('/api/curation/projects/'+encodeURIComponent(state.pid)+'/exports/media-pack.zip');
+   if(!response.ok){const error=await response.json().catch(()=>({}));throw Error(error.detail||'Media Pack HTTP '+response.status)}
+   const blob=await response.blob(),url=URL.createObjectURL(blob);
+   const a=document.createElement('a');a.href=url;a.download='RMBL_MediaPack.zip';document.body.append(a);a.click();a.remove();
+   setTimeout(()=>URL.revokeObjectURL(url),60000);
+   $('timelineExportStatusV33').textContent='Media Pack esportato. Estrai lo ZIP; i file mancanti sono indicati in manifest.json. XML e SRT sono in 03_RESOLVE.';
+ }catch(e){$('timelineExportStatusV33').textContent='Media Pack non riuscito: '+(e.message||e)}
+ finally{button.disabled=false}
+}
+$('exportMediaPackV125').onclick=exportMediaPackV125;
 async function legacyTimelineExportV33(path,download){try{const response=await fetch(`/api/curation/projects/${state.pid}${path}`,{method:path.startsWith('/exports/')?'GET':'POST'});if(!response.ok){const body=await response.json().catch(()=>({}));throw Error(body.detail||`HTTP ${response.status}`)}if(download){const blob=await response.blob(),a=document.createElement('a'),url=URL.createObjectURL(blob);a.href=url;a.download=download;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}else{const result=await response.json();$('timelineExportStatusV33').textContent=`Timeline creata · ${result.timeline_name||''}`}}catch(error){if(typeof showResolveErrorV23==='function')showResolveErrorV23(error,'Timeline');$('timelineExportStatusV33').textContent=error.message||String(error)}}
 async function loadResolveDebugV39(){if(!resolveHandoffIdV33)return;const report=await api(`/resolve-handoffs/${resolveHandoffIdV33}/diagnostics`);$('resolveDebugTextV39').value=JSON.stringify(report,null,2)}
 $('copyResolveDebugV39').onclick=async()=>{try{await loadResolveDebugV39();await navigator.clipboard.writeText($('resolveDebugTextV39').value);$('copyResolveDebugV39').textContent='DIAGNOSTICA COPIATA'}catch(error){$('resolveDebugTextV39').select();$('copyResolveDebugV39').textContent='SELEZIONATA · PREMI CTRL+C'}};
