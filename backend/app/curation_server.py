@@ -1844,6 +1844,46 @@ def create_app(
         latest = max(rows, key=lambda row:row.get('created_at',''), default={})
         return {k:v for k,v in latest.items() if k != 'payload'}
 
+    @app.get("/api/curation/projects/{project_id}/exports/media-pack.zip")
+    async def export_media_pack(project_id: str):
+        """Exports already ready selected assets; never needs a Resolve bridge."""
+        from .media_pack_export import create_media_pack, safe_name
+        from .editorial_import import normalized_chunks
+        from .captions import render_semantic_srt
+        from .transcript_intents import build_combined_resolve_export
+        project = load_project(project_id)
+        run = run_root(project_id)
+        try:
+            timeline = broll_timeline_payload(project_id, allow_unavailable=True)
+        except (ValueError, FileNotFoundError):
+            timeline = {"fps": project_export_fps(project_id, project), "duration_frames": 0,
+                        "clips": [], "unavailable": []}
+        generic = _read_json(run / "generic-coverage.json", {})
+        try:
+            captions = render_semantic_srt(normalized_chunks(run))
+        except (OSError, ValueError, KeyError, TypeError):
+            captions = ""
+        try:
+            titles = build_combined_resolve_export(
+                run, project_id, fps=project_export_fps(project_id, project)
+            ).get("titles", [])
+        except (OSError, ValueError, KeyError, TypeError):
+            titles = []
+        name = safe_name(project.name, fallback="RMBL_Reel")
+        archive = run / "exports" / (name + "_MediaPack_" + uuid.uuid4().hex[:8] + ".zip")
+        try:
+            await asyncio.to_thread(
+                create_media_pack, archive,
+                project_id=project_id, project_name=project.name, project_root=root / project_id,
+                timeline=timeline, generic_rows=generic.get("items") or [],
+                selected_generics=generic.get("selected") or [],
+                captions_srt=captions, titles=titles,
+            )
+            return FileResponse(archive, media_type="application/zip", filename=name + "_MediaPack.zip")
+        except (ValueError, OSError, KeyError, TypeError) as exc:
+            archive.unlink(missing_ok=True)
+            raise HTTPException(status_code=422, detail="Media Pack non creato: " + str(exc)) from exc
+
     @app.get("/api/curation/projects/{project_id}/exports/broll-timeline.xml")
     async def export_broll_timeline_xml(project_id: str):
         from .broll_timeline_export import render_fcp7_xml
