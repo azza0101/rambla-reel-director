@@ -1743,12 +1743,8 @@ def create_app(
                 if target.get("connected"):
                     if session_id != active_bridge_session_id or time.time() - bridge_last_seen > 6:
                         raise ValueError("Il bridge e stato riavviato durante la preparazione: ripeti INVIA A RESOLVE")
-                    payload.update(
-                        source_project_name=target["project"],
-                        source_timeline_id=target["timeline_id"],
-                        source_timeline_name=target["timeline"],
-                        bridge_mark_in=target["mark_in"],
-                    )
+                    from .resolve_handoff import bind_standard_target
+                    payload = bind_standard_target(payload, target)
             payload.update(project_id=project_id, bridge_session_id=session_id)
             payload["media_issues"] = media_issues
             report(85, 'Salvo il pacchetto per il bridge')
