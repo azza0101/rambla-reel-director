@@ -35,6 +35,7 @@ def create_media_pack(
     timeline: dict[str, Any],
     generic_rows: list[dict[str, Any]] | None = None,
     selected_generics: list[str] | None = None,
+    selected_images: list[dict[str, Any]] | None = None,
     captions_srt: str = "",
     titles: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
@@ -75,6 +76,19 @@ def create_media_pack(
                 beat_id=str(row.get("beat_id") or ""), source_page=str(row.get("source_page") or ""))
             if destination in unique:
                 safe_timeline_clips.append(row)
+
+        # Include selected high-resolution images even if the timeline planner
+        # could not place them (e.g. a missing target time range).
+        for row in selected_images or []:
+            beat = safe_name(row.get("beat_id"), fallback="frase")
+            asset = safe_name(row.get("asset_id"), fallback="immagine")
+            source = str(row.get("media_path") or "")
+            suffix = Path(source).suffix.lower()
+            if suffix not in {".png", ".jpeg", ".jpg", ".webp"}:
+                continue
+            destination = f"01_FRASI/{beat}/{asset}{suffix}"
+            add(z, source, destination, label=str(row.get("title") or asset),
+                beat_id=str(row.get("beat_id") or ""), source_page=str(row.get("source_page") or ""))
 
         chosen = set(map(str, selected_generics or []))
         for row in generic_rows or []:
