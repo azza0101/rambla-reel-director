@@ -18,7 +18,14 @@ def load_project_credentials(root=None):
     for line in path.read_text(encoding='utf-8-sig').splitlines():
         key,sep,value=line.partition('=')
         if sep and key.strip() in KEYS:
-            os.environ.setdefault(key.strip(),value.strip().strip('"').strip("'"))
+            name=key.strip()
+            parsed=value.strip().strip('"').strip("'")
+            # App-local credentials saved from Settings override stale Windows
+            # user variables after an app restart.
+            if name in {'GROQ_API_KEY','PEXELS_API_KEY','GEMINI_API_KEY','GOOGLE_API_KEY'}:
+                os.environ[name]=parsed
+            else:
+                os.environ.setdefault(name,parsed)
 
 
 def provider_status():
