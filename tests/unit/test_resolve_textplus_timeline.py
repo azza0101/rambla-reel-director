@@ -1179,3 +1179,42 @@ def test_text_tool_reports_longer_timeout_not_original_five_seconds(monkeypatch)
     monkeypatch.setattr("backend.app.resolve_textplus_timeline.time.sleep", lambda _: None)
     with pytest.raises(RuntimeError, match="20 secondi"):
         _text_tool(item)
+
+
+def test_missing_fusion_title_is_repaired_before_video_conform(tmp_path):
+    from zipfile import ZipFile
+    from backend.app.resolve_textplus_timeline import ensure_resolve_title_ready
+    from backend.app.resolve_title_templates import inspect_drfx, template_install_status
+    title = "KURA_paper_title_v9"
+    package = tmp_path / (title + ".drfx")
+    with ZipFile(package, "w") as z:
+        z.writestr("Edit/Titles/KURA/" + title + ".setting", "Tools = {}")
+        z.writestr("Edit/Titles/KURA/paper.png", b"paper")
+    destination = tmp_path / "ResolveTemplates"
+    payload = {"title_package_path": str(package)}
+    with pytest.raises(RuntimeError, match="riparato automaticamente"):
+        ensure_resolve_title_ready(title, payload, install_root=destination)
+    assert template_install_status(inspect_drfx(package), destination) == "installed"
+    assert (destination / "Edit" / "Titles" / "KURA" / (title + ".setting")).is_file()
+    # Once Resolve has been restarted, the same preflight succeeds unchanged.
+    ensure_resolve_title_ready(title, payload, install_root=destination)
+
+
+def test_missing_fusion_package_fails_before_media_work(tmp_path):
+    from backend.app.resolve_textplus_timeline import ensure_resolve_title_ready
+    with pytest.raises(RuntimeError, match="non presente"):
+        ensure_resolve_title_ready("KURA_paper_title_v9",
+                                  {"title_package_path": str(tmp_path / "missing.drfx")},
+                                  install_root=tmp_path / "ResolveTemplates")
+
+
+def test_fusion_install_never_substitutes_wrong_named_preset(tmp_path):
+    from zipfile import ZipFile
+    from backend.app.resolve_textplus_timeline import ensure_resolve_title_ready
+    package = tmp_path / "other.drfx"
+    with ZipFile(package, "w") as z:
+        z.writestr("Edit/Titles/KURA/other.setting", "Tools = {}")
+    with pytest.raises(RuntimeError, match="non corrisponde"):
+        ensure_resolve_title_ready("KURA_paper_title_v9",
+                                  {"title_package_path": str(package)},
+                                  install_root=tmp_path / "ResolveTemplates")
