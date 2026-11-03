@@ -1863,6 +1863,22 @@ def create_app(
             ).get("titles", [])
         except (OSError, ValueError, KeyError, TypeError):
             titles = []
+        from .curation_artifacts import load_curation_run
+        selection = _read_json(active_retrieval_root(run) / "selection-plan.json", {"chunks": {}})
+        selected_images = []
+        try:
+            candidates = load_curation_run(run).candidate_index
+            for beat_id, choice in (selection.get("chunks") or {}).items():
+                for selected in (choice.get("selected_assets") or []):
+                    candidate = candidates.get(str(selected.get("asset_id") or ""))
+                    if candidate and candidate.kind == "image":
+                        selected_images.append({
+                            "beat_id": beat_id, "asset_id": candidate.asset_id,
+                            "title": candidate.title, "source_page": candidate.source_page,
+                            "media_path": candidate.local_asset_path,
+                        })
+        except (OSError, ValueError, KeyError):
+            pass
         name = safe_name(project.name, fallback="RMBL_Reel")
         archive = run / "exports" / (name + "_MediaPack_" + uuid.uuid4().hex[:8] + ".zip")
         try:
@@ -1870,7 +1886,7 @@ def create_app(
                 create_media_pack, archive,
                 project_id=project_id, project_name=project.name, project_root=root / project_id,
                 timeline=timeline, generic_rows=generic.get("items") or [],
-                selected_generics=generic.get("selected") or [],
+                selected_generics=generic.get("selected") or [], selected_images=selected_images,
                 captions_srt=captions, titles=titles,
             )
             return FileResponse(archive, media_type="application/zip", filename=name + "_MediaPack.zip")
