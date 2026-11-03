@@ -1681,13 +1681,7 @@ def create_app(
         project_root = matches[0].parents[2]
         return project_root, handoff_store.read(project_root, package_id)
 
-    def ignored_for_export(raw: str) -> set[str]:
-        if len(raw) > 12000:
-            raise HTTPException(status_code=422, detail="Troppi asset ignorati")
-        values = {item.strip() for item in raw.split(",") if item.strip()}
-        if len(values) > 200 or any(len(item) > 1000 or any(ord(ch) < 32 for ch in item) for item in values):
-            raise HTTPException(status_code=422, detail="Identificatori coperture non validi")
-        return values
+    from .export_ignore import ignored_for_export
 
     @app.post("/api/curation/projects/{project_id}/resolve-handoffs")
     async def prepare_resolve_handoff(project_id: str, components: ExportComponents | None = None, ignored: str = ""):
