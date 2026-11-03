@@ -1735,6 +1735,20 @@ def create_app(
             report(80, 'Media pronti · preparo sottotitoli, frasi e tempi')
             excluded = skipped | {row['asset_id'] for row in media_issues}
             payload = await asyncio.to_thread(editing_resolve_payload, project_id, flags, excluded)
+            # Standard exports target the Resolve project/timeline visible when
+            # INVIA A RESOLVE was pressed, not a stale capture in resolve-bridge.json.
+            # Native CUT and CUT-reference exports retain their strict source binding.
+            if session_id and not payload.get("native_cut") and not payload.get("native_cut_reference"):
+                target = await resolve_bridge_status()
+                if target.get("connected"):
+                    if session_id != active_bridge_session_id or time.time() - bridge_last_seen > 6:
+                        raise ValueError("Il bridge e stato riavviato durante la preparazione: ripeti INVIA A RESOLVE")
+                    payload.update(
+                        source_project_name=target["project"],
+                        source_timeline_id=target["timeline_id"],
+                        source_timeline_name=target["timeline"],
+                        bridge_mark_in=target["mark_in"],
+                    )
             payload.update(project_id=project_id, bridge_session_id=session_id)
             payload["media_issues"] = media_issues
             report(85, 'Salvo il pacchetto per il bridge')
