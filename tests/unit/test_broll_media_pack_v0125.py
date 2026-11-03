@@ -50,15 +50,16 @@ def test_media_pack_zip_groups_selected_media_and_reports_missing(tmp_path):
         project_root=root, timeline=plan,
         generic_rows=[{"provider_id": "123", "place": "Baku", "title": "City",
                        "source_page": "https://www.pexels.com/video/123"}],
-        selected_generics=["123"], captions_srt="1\n00:00:00,000 --> 00:00:01,000\nHello",
+        selected_generics=["123"], selected_images=[{"beat_id":"beat_020", "asset_id":"other-image", "media_path":str(local / "image.png"), "title":"Extra image"}], captions_srt="1\n00:00:00,000 --> 00:00:01,000\nHello",
         titles=[{"text": "Baku", "start_seconds": 0}],
     )
-    assert result["media_count"] == 3
+    assert result["media_count"] == 4
     assert result["missing_count"] == 1
     with zipfile.ZipFile(dest) as zipf:
         names = set(zipf.namelist())
         assert any(name.startswith("01_FRASI/beat_017/") and name.endswith(".mp4") for name in names)
         assert any(name.startswith("01_FRASI/beat_018/") and name.endswith(".png") for name in names)
+        assert any(name.startswith("01_FRASI/beat_020/") and name.endswith(".png") for name in names)
         assert "02_LUOGHI_E_GENERICI/Baku/pexels_123.mp4" in names
         assert "03_RESOLVE/timeline.xml" in names
         assert "03_RESOLVE/sottotitoli.srt" in names
