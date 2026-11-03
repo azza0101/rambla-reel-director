@@ -1548,14 +1548,14 @@ def create_app(
             raise ValueError('Download coperture generiche non completato: ' + ' · '.join(errors))
         return
     @app.get("/api/curation/projects/{project_id}/generic-coverage")
-    async def generic_coverage(project_id: str, refresh: bool = False, scope: str = "topic", max_queries: int = 4):
+    async def generic_coverage(project_id: str, refresh: bool = False, scope: str = "topic", max_queries: int = 4, manual_query: str = ""):
         from .atomic_io import write_json
         from .generic_coverage import candidate_dict, derive_topic_queries, merge_unique
         from .online_assets import PexelsSource
         run = run_root(project_id)
         path = run / "generic-coverage.json"
         existing = _read_json(path, {})
-        if existing.get("items") and not refresh and scope == "topic":
+        if existing.get("items") and not refresh and scope == "topic" and not manual_query.strip():
             return existing
         visual = _read_json(run / "visual-plan.json", {})
         transcript = _read_json(run / "transcript-raw.json", {})
@@ -1564,23 +1564,37 @@ def create_app(
         from .geographic_context import places_in, conflicting_place
         from .stock_export_media import preserve_selected_generics
         if scope not in {"topic", "places"}: raise HTTPException(status_code=422, detail="Tipo di copertura sconosciuto")
+        manual_query = manual_query.strip()
+        if len(manual_query) > 180 or any(ord(ch) < 32 for ch in manual_query):
+            raise HTTPException(status_code=422, detail="Query manuale non valida (max 180 caratteri)")
+        if manual_query and len(manual_query) < 2:
+            raise HTTPException(status_code=422, detail="Inserisci almeno 2 caratteri nella query")
         source=PexelsSource(os.environ.get("PEXELS_API_KEY"))
         errors=[]; items=[]; places=places_in(raw_text) or places_in(topic)
-        query_groups = [(place, [place + " landscape", place + " city", place]) for place in places] if scope == "places" else [("", derive_topic_queries(topic, raw_text))]
-        if scope == 'places' and not places:
-            errors.append('Nessun luogo riconosciuto nel testo. Specifica il luogo nella trascrizione o usa una query manuale sulla scena.')
+        if manual_query:
+            # The user-provided search is the authority, even if NER detected no place.
+            # Keep previous candidates and selections as in manual per-beat B-roll search.
+            query_groups = [(manual_query if scope == "places" else "", [manual_query])]
+        else:
+            query_groups = [(place, [place + " landscape", place + " city", place]) for place in places] if scope == "places" else [("", derive_topic_queries(topic, raw_text))]
+        if scope == 'places' and not places and not manual_query:
+            errors.append('Nessun luogo riconosciuto nel testo. Usa la query manuale qui sotto.')
         for place, queries in query_groups:
             groups=[]
             for query in queries[:max(1,min(4,max_queries))]:
                 try:
                     rows=await source.search(query, orientation="landscape", min_duration=2, max_duration=180, limit=12)
-                    group=[{**candidate_dict(row), "coverage_group": scope, "place": place} for row in rows if not place or not conflicting_place(row.title+' '+row.description,[place])]
+                    group=[{**candidate_dict(row), "coverage_group": scope, "place": place} for row in rows if manual_query or not place or not conflicting_place(row.title+' '+row.description,[place])]
                     groups.append(group)
                     if len(merge_unique(groups,limit=12)["items"])>=12: break
                 except Exception as exc: errors.append(str(exc))
             items.extend(merge_unique(groups,limit=12)['items'])
-        retained=[row for row in existing.get('items',[]) if row.get('coverage_group','topic')!=scope]
-        merged=merge_unique([items,retained],limit=max(12,len(retained)+len(items)))
+        if manual_query:
+            prior = existing.get("items", [])
+            merged=merge_unique([prior,items],limit=max(120,len(prior)+len(items)))
+        else:
+            retained=[row for row in existing.get('items',[]) if row.get('coverage_group','topic')!=scope]
+            merged=merge_unique([items,retained],limit=max(12,len(retained)+len(items)))
         existing = _read_json(path, existing)
         payload={**merged,"items":preserve_selected_generics(existing, merged['items']),"selected":existing.get("selected",[]),"topic":topic or raw_text[:160],"places":places,"errors":errors}
         if scope == 'places':
