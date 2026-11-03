@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import filecmp
 from datetime import datetime
 import hashlib
 import json
@@ -889,18 +890,19 @@ def restore_track_locks(timeline: Any, states: list[tuple[str, int, bool]]) -> N
         timeline.SetTrackLock(kind, track, locked)
 
 
-def _text_tool(item: Any) -> Any:
+def _text_tool(item: Any, *, attempts: int = 100) -> Any:
+    """Wait up to 20s for slower Resolve/Fusion startup without accepting an empty template."""
     values = []
-    for attempt in range(25):
+    for attempt in range(attempts):
         composition = item.GetFusionCompByIndex(1)
         tools = composition.GetToolList(False, 'TextPlus') if composition else {}
         values = list(tools.values()) if isinstance(tools, dict) else list(tools or [])
         if values:
             break
-        if attempt < 24:
+        if attempt + 1 < attempts:
             time.sleep(.2)
     if not values:
-        raise RuntimeError('Resolve non ha inizializzato il testo Fusion entro 5 secondi')
+        raise RuntimeError(f'Resolve non ha inizializzato il testo Fusion entro {attempts * .2:g} secondi; verifica il template Fusion e COPIA DEBUG')
     exposed = [tool for tool in values if str(getattr(tool, "Name", "")).casefold() == "template"]
     if len(exposed) == 1:
         return exposed[0]
@@ -968,11 +970,28 @@ def prepare_broll_media_files(
         stem = _safe_media_name(str(row.get("title") or source.stem), fallback="clip")
         filename = f"{stem}_{provider}{source.suffix.casefold() or '.mp4'}"
         key = filename.casefold()
-        if key in used or (destination / filename).exists():
-            token = hashlib.sha256(str(row.get("asset_id") or source).encode("utf-8")).hexdigest()[:8]
-            filename = f"{stem}_{provider}_{token}{source.suffix.casefold() or '.mp4'}"
-        used.add(filename.casefold())
         target = destination / filename
+        # Existing staged files were previously renamed on every retry, which
+        # invalidated their cached _handles_ excerpts and repeated CPU encoding.
+        # Reuse only when the original bytes match; filename alone is not proof.
+        def same_media(candidate: Path) -> bool:
+            if not candidate.is_file():
+                return False
+            try:
+                if os.path.samefile(source, candidate):
+                    return True
+                if source.stat().st_size != candidate.stat().st_size:
+                    return False
+                return filecmp.cmp(source, candidate, shallow=False)
+            except OSError:
+                return False
+        if key in used or (target.exists() and not same_media(target)):
+            token = hashlib.sha256(str(row.get("asset_id") or source.resolve()).encode("utf-8")).hexdigest()[:8]
+            filename = f"{stem}_{provider}_{token}{source.suffix.casefold() or '.mp4'}"
+            target = destination / filename
+            if target.exists() and not same_media(target):
+                raise ValueError(f"Conflitto media nel cache di Resolve: {target.name}")
+        used.add(filename.casefold())
         if not target.exists():
             try:
                 os.link(source, target)
@@ -1431,6 +1450,11 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
                 color_setter = getattr(inserted, "SetClipColor", None)
                 if color_setter:
                     color_setter("Yellow")
+                # Resolve 21.1 may return an *empty* Fusion composition despite
+                # accepting the installed title. Restore the packaged original
+                # (including Loader assets) before waiting for the TextPlus node.
+                # Operates only on the disposable text-layer timeline.
+                restore_empty_title_composition(inserted, title_name, payload)
                 # Even blank boundary titles must finish initializing before
                 # another insertion can split/overwrite their composition.
                 _text_tool(inserted)
