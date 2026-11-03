@@ -17,7 +17,8 @@ def test_provider_settings_save_update_delete_without_returning_secret(tmp_path,
     assert "gsk_test_second_value" in text
     controls._save("groq", None)
     assert "GROQ_API_KEY" not in os.environ
-    assert "GROQ_API_KEY" not in target.read_text(encoding="utf-8")
+    # Empty local override masks a stale invalid Windows user variable after restart.
+    assert target.read_text(encoding="utf-8") == "GROQ_API_KEY=\\n"
 
 
 def test_unknown_provider_never_reaches_filesystem(tmp_path, monkeypatch):
