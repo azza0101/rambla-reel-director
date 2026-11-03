@@ -32,6 +32,8 @@ async function loadResolveComponentsV71(){if(!state.pid)return;const pid=state.p
 let resolveHandoffIdV33=null,resolveHandoffPollV33=null,resolvePreparingV37=false,resolveDeliveryStartedV37=0;
 let genericCoverageV33={items:[],selected:[]};
 let ignoredCoverageIdsV123=new Set();
+let ignoredCoverageProjectV125=null;
+
 function renderResolveMediaIssuesV48(items=[]){
  const box=$('resolveMediaIssuesV48');
  const remaining=(items||[]).filter(row=>!ignoredCoverageIdsV123.has(String(row.asset_id||'')));
@@ -74,6 +76,7 @@ async function pollResolveHandoffV33(){
 }
 async function prepareResolveHandoffV33(preserveIssues=false){
  if(resolvePreparingV37)return;
+ if(ignoredCoverageProjectV125!==state.pid){ignoredCoverageIdsV123.clear();ignoredCoverageProjectV125=state.pid;}
  resolvePreparingV37=true;clearInterval(resolveHandoffPollV33);resolveHandoffIdV33=null;
  const panel=$('timelineExportV33'),box=$('resolveDeliveryV33');syncTimelineExportV33();panel.classList.add('busyV33');panel.classList.remove('errorV33');box.hidden=false;box.classList.remove('receivedV33');$('resolveDeliveryCheckV33').hidden=true;if(!preserveIssues)renderResolveMediaIssuesV48([]);
  $('resolveDeliveryTitleV33').textContent='PREPARAZIONE PER RESOLVE';$('resolveDeliverySummaryV33').textContent='Controllo le selezioni salvate';setResolveDeliveryProgressV33(0);$('resolveDeliveryDetailV33').textContent='Avvio…';$('timelineExportStatusV33').textContent='';if(!preserveIssues)box.scrollIntoView({block:'nearest',behavior:'smooth'});
@@ -110,7 +113,7 @@ $('exportMediaPackV125').onclick=exportMediaPackV125;
 async function legacyTimelineExportV33(path,download){try{const response=await fetch(`/api/curation/projects/${state.pid}${path}`,{method:path.startsWith('/exports/')?'GET':'POST'});if(!response.ok){const body=await response.json().catch(()=>({}));throw Error(body.detail||`HTTP ${response.status}`)}if(download){const blob=await response.blob(),a=document.createElement('a'),url=URL.createObjectURL(blob);a.href=url;a.download=download;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}else{const result=await response.json();$('timelineExportStatusV33').textContent=`Timeline creata · ${result.timeline_name||''}`}}catch(error){if(typeof showResolveErrorV23==='function')showResolveErrorV23(error,'Timeline');$('timelineExportStatusV33').textContent=error.message||String(error)}}
 async function loadResolveDebugV39(){if(!resolveHandoffIdV33)return;const report=await api(`/resolve-handoffs/${resolveHandoffIdV33}/diagnostics`);$('resolveDebugTextV39').value=JSON.stringify(report,null,2)}
 $('copyResolveDebugV39').onclick=async()=>{try{await loadResolveDebugV39();await navigator.clipboard.writeText($('resolveDebugTextV39').value);$('copyResolveDebugV39').textContent='DIAGNOSTICA COPIATA'}catch(error){$('resolveDebugTextV39').select();$('copyResolveDebugV39').textContent='SELEZIONATA · PREMI CTRL+C'}};
-$('sendResolvePackageV33').onclick=prepareResolveHandoffV33;$('exportTimelineXmlV33').onclick=()=>legacyTimelineExportV33('/exports/broll-timeline.xml','broll-timeline.xml');$('exportTimelineDraV33').onclick=()=>legacyTimelineExportV33('/resolve/broll-timeline.dra','broll-timeline.dra.zip');$('openTimelineResolveV33').onclick=()=>legacyTimelineExportV33('/resolve/broll-timeline',null);
+$('sendResolvePackageV33').onclick=()=>prepareResolveHandoffV33();$('exportTimelineXmlV33').onclick=()=>legacyTimelineExportV33('/exports/broll-timeline.xml','broll-timeline.xml');$('exportTimelineDraV33').onclick=()=>legacyTimelineExportV33('/resolve/broll-timeline.dra','broll-timeline.dra.zip');$('openTimelineResolveV33').onclick=()=>legacyTimelineExportV33('/resolve/broll-timeline',null);
 document.querySelector('.genericCoverageV33').ontoggle=e=>{if(e.target.open&&!genericCoverageV33.items.length)loadGenericCoverageV33(false)};
 for(const [formId,inputId,scope] of [['manualGenericCoverageV122','genericQueryV122','topic'],['manualPlaceCoverageV122','placeQueryV122','places']]){const form=$(formId);form.onsubmit=async event=>{event.preventDefault();const query=$(inputId).value.trim();if(!query||!state.pid)return;await loadGenericCoverageV33(true,scope,query)}};
 $('loadPlaceCoverageV35').onclick=()=>loadGenericCoverageV33(true,'places');
