@@ -583,6 +583,38 @@ def restore_empty_title_composition(item, title_name, payload):
         temporary.unlink(missing_ok=True)
 
 
+def ensure_resolve_title_ready(title_name: str, payload: dict[str, Any], *, install_root: Path | None = None) -> None:
+    """Repair missing selected Fusion assets before any costly media conform.
+
+    Installing on disk cannot reload a title inside an already running Resolve
+    process. Stop this attempt early with an actionable restart requirement;
+    subsequent APPLY reuses already prepared media files.
+    """
+    from .resolve_title_templates import inspect_drfx, install_template, template_install_status
+    supplied = str(payload.get("title_package_path") or "").strip()
+    fallback = Path(__file__).resolve().parents[1] / "assets" / "resolve_titles" / f"{title_name}.drfx"
+    source = Path(supplied) if supplied else fallback
+    if not source.is_file():
+        raise RuntimeError(f"Template Fusion '{title_name}' non presente nel pacchetto RMBL; ripara l'installazione")
+    template = inspect_drfx(source)
+    if template.resolve_name != title_name:
+        raise RuntimeError(f"Il template Fusion richiesto '{title_name}' non corrisponde al pacchetto selezionato")
+    root = Path(install_root) if install_root else (
+        Path(os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming")))
+        / "Blackmagic Design" / "DaVinci Resolve" / "Support" / "Fusion" / "Templates"
+    )
+    if template_install_status(template, root) == "installed":
+        return
+    try:
+        install_template(template, root)
+    except OSError as exc:
+        raise RuntimeError(f"Impossibile riparare il template Fusion '{title_name}': {exc}") from exc
+    raise RuntimeError(
+        f"Template Fusion '{title_name}' riparato automaticamente. "
+        "Chiudi e riapri DaVinci Resolve per caricarlo, poi ripeti APPLICA."
+    )
+
+
 def append_native_cut_titles(resolve, project, target, plan, payload, *, title_name, track_index, base_frame):
     """Reuse one initialized title composition without repeated overwrite inserts."""
     from types import SimpleNamespace
@@ -1282,6 +1314,10 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
     title_payload = {**payload, "items": payload.get("titles") or payload.get("items") or []}
     plan = build_textplus_timeline_plan(title_payload, target_fps=fps) if include_titles else {"segments": [], "boundaries": []}
     title_name = title_name_from_payload(payload) if include_titles else str(payload.get("title_name") or "")
+    # Must precede B-roll FFmpeg conform: missing title files should never
+    # waste minutes of CPU only to fail on the first Fusion insertion.
+    if include_titles:
+        ensure_resolve_title_ready(title_name, payload)
     original_signature = _timeline_signature(original)
     original_markers = snapshot_timeline_markers(original)
     media_pool = project.GetMediaPool()
