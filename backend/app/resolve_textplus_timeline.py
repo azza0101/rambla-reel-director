@@ -1481,7 +1481,8 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
                 )
                 if not inserted:
                     raise RuntimeError(
-                        f"Resolve could not insert Fusion Title '{title_name}' in the RMBL text layer"
+                        f"Resolve non trova il titolo Fusion '{title_name}' nella sessione corrente. "
+                        "Se RMBL lo ha appena installato, chiudi e riapri Resolve prima di ripetere APPLICA."
                     )
                 color_setter = getattr(inserted, "SetClipColor", None)
                 if color_setter:
