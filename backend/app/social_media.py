@@ -22,6 +22,34 @@ def media_path(source, provider, root, mode):
     return Path(root)/'social-media'/key/(mode + ('.gif' if mode=='hover' else '.jpg' if mode == 'poster' else '.mp4'))
 
 
+def classify_media_download_error(stderr: str) -> str:
+    """Sanitized actionable error categories; never expose URLs, cookies or tokens."""
+    detail = str(stderr or "").casefold()
+    if any(phrase in detail for phrase in (
+        "confirm you", "not a bot", "captcha", "verification required"
+    )):
+        return "YouTube richiede una verifica anti-bot al downloader; apri la fonte per verificare l'accesso. Non sono previsti tentativi automatici di aggiramento."
+    if any(phrase in detail for phrase in (
+        "sign in", "login required", "login to confirm", "cookies are no longer valid",
+        "authentication required", "members-only", "private video"
+    )):
+        return "Il downloader non dispone di una sessione YouTube autorizzata per questo video. Aprirlo nel browser non trasferisce automaticamente i cookie a RMBL."
+    if any(phrase in detail for phrase in (
+        "requested format is not available", "format is not available",
+        "no video formats found", "no suitable formats"
+    )):
+        return "Formato video non disponibile per il downloader. Prova una sorgente o un formato alternativo."
+    if any(phrase in detail for phrase in (
+        "http error 429", "too many requests"
+    )):
+        return "YouTube limita temporaneamente le richieste (429). Riprova più tardi."
+    if any(phrase in detail for phrase in (
+        "http error 403", "forbidden"
+    )):
+        return "YouTube ha rifiutato il download (403). Il video può essere visibile nel browser ma non accessibile al downloader."
+    return "Download YouTube non riuscito: errore tecnico o accesso non disponibile; non è stato rilevato un CAPTCHA."
+
+
 def prepare_media(source, provider, root, mode, *, cookies=(), runner=subprocess.run, python=None):
     output = media_path(source, provider, root, mode)
     if mode == 'poster':
@@ -73,11 +101,11 @@ def prepare_media(source, provider, root, mode, *, cookies=(), runner=subprocess
         return output
     except subprocess.CalledProcessError as exc:
         detail=exc.stderr.decode('utf-8',errors='replace') if isinstance(exc.stderr,bytes) else str(exc.stderr or '')
-        if any(word in detail.lower() for word in ('captcha','confirm you','not a bot','requiring login','sign in')):
-            raise RuntimeError('Provider verification required: open the source and complete login/CAPTCHA manually. No automatic retries.') from None
-        raise RuntimeError('Provider could not supply this media format. Open the source; download is unavailable.') from None
+        raise RuntimeError(classify_media_download_error(detail)) from None
+    except subprocess.TimeoutExpired:
+        raise RuntimeError('Video download timeout: riprova più tardi o usa una fonte alternativa.') from None
     except Exception:
-        raise RuntimeError('Video unavailable: provider download failed; open the source to check access or CAPTCHA') from None
+        raise RuntimeError('Download video non riuscito: errore tecnico del downloader. Non è necessariamente un CAPTCHA.') from None
     finally:
         if cookie_path:
             cookie_path.unlink(missing_ok=True)
