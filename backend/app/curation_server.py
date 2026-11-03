@@ -491,6 +491,9 @@ def create_app(
         audio_command_runner=audio_command_runner,
     )
 
+    from .desktop_controls import install_desktop_controls
+    install_desktop_controls(app, root)
+
     from .diagnostics_routes import install_diagnostics_routes
     diagnostics = install_diagnostics_routes(app, root.parent/'diagnostics', app_root=Path(__file__).resolve().parents[2])
 
