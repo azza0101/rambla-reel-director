@@ -146,3 +146,59 @@ def test_cancelled_handoff_stays_discoverable_and_can_be_reapplied():
         assert reapplied["status"]=="applying"
     finally:
         shutil.rmtree(root,ignore_errors=True)
+
+
+def test_standard_delivery_retargets_stale_capture_safely():
+    from backend.app.resolve_handoff import bind_standard_target
+    original = _payload(source_project_name="Old project", source_timeline_id="old-tl", bridge_mark_in=3)
+    target = {"connected": True, "project": "Active project", "timeline_id": "active-tl",
+              "timeline": "Edit 1", "mark_in": 42}
+    result = bind_standard_target(original, target)
+    assert result["source_project_name"] == "Active project"
+    assert result["source_timeline_id"] == "active-tl"
+    assert result["source_timeline_name"] == "Edit 1"
+    assert result["bridge_mark_in"] == 42
+    assert original["source_project_name"] == "Old project"
+
+
+@pytest.mark.parametrize("cut_flag", ["native_cut", "native_cut_reference"])
+def test_native_cut_delivery_never_retargets(cut_flag):
+    from backend.app.resolve_handoff import bind_standard_target
+    original = _payload(**{cut_flag: {"segments": []}})
+    target = {"connected": True, "project": "Wrong project", "timeline_id": "wrong-tl",
+              "timeline": "Wrong edit", "mark_in": 100}
+    assert bind_standard_target(original, target) == original
+
+
+def test_offline_bridge_does_not_retarget_original_capture():
+    from backend.app.resolve_handoff import bind_standard_target
+    original = _payload()
+    assert bind_standard_target(original, {"connected": False}) == original
+
+
+def test_unbound_package_visible_only_to_its_live_bridge_session():
+    root = _root()
+    try:
+        store = ResolveHandoffStore(root.parent)
+        package = store.prepare(root, _payload(
+            source_project_name="", source_timeline_id="", bridge_session_id="live-bridge"))
+        rows = store.pending(resolve_project="Current Resolve", timeline_id="",
+                             bridge_session_id="live-bridge")
+        assert [row["package_id"] for row in rows] == [package["package_id"]]
+        assert store.pending(resolve_project="Current Resolve", timeline_id="",
+                             bridge_session_id="other-bridge") == []
+        received = store.mark_received(root, package["package_id"], bridge_session_id="live-bridge")
+        assert received["bridge_received_at"]
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_bound_project_remains_invisible_to_other_project_same_session():
+    root = _root()
+    try:
+        store = ResolveHandoffStore(root.parent)
+        store.prepare(root, _payload(bridge_session_id="live-bridge"))
+        assert store.pending(resolve_project="Wrong project", timeline_id="",
+                             bridge_session_id="live-bridge") == []
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
