@@ -1397,7 +1397,7 @@ def create_app(
             raise ValueError("No selected clip is ready for timeline export. Download or replace them: " + rows)
         return plan
 
-    async def prepare_selected_timeline_media(project_id: str, report=None, components=None, asset_ids=None) -> list[dict[str, str]]:
+    async def prepare_selected_timeline_media(project_id: str, report=None, components=None, asset_ids=None, ignored_assets=None) -> list[dict[str, str]]:
         if components is not None and not (components['broll'] or components['social']):
             if report:
                 report(60, 'Media esclusi dall’export · salto download')
@@ -1416,6 +1416,8 @@ def create_app(
         wanted = [str(row.get("asset_id")) for choice in (selection.get("chunks") or {}).values() for row in (choice.get("selected_assets") or [])]
         if asset_ids is not None:
             wanted = list(dict.fromkeys(asset_ids))
+        ignored_assets = set(ignored_assets or ())
+        wanted = [aid for aid in wanted if aid not in ignored_assets]
         if components is not None:
             wanted = [aid for aid in wanted if filter_selected_media([view.candidate_index.get(aid)], components)]
         failures = []
@@ -1453,9 +1455,10 @@ def create_app(
                 failures.append(download_issue(candidate, exc))
         return failures
 
-    def editing_resolve_payload(project_id: str, components=None) -> dict[str, Any]:
+    def editing_resolve_payload(project_id: str, components=None, ignored_assets=None) -> dict[str, Any]:
         from .transcript_intents import has_selected_intent
         components = normalize_components(components)
+        ignored_assets = set(ignored_assets or ())
         from .native_cut_export import assert_current_cut
         assert_current_cut(root / project_id, root, allow_pending=not (components['broll'] or components['social']))
         native_cut = None
@@ -1487,9 +1490,11 @@ def create_app(
         if (components['broll'] or components['social']) and has_selected_intent(run_root(project_id), "coverage"):
             broll = broll_timeline_payload(project_id, allow_unavailable=True,
                 fps_override=float(Fraction(export_cut['fps'])) if export_cut else None, components=components)
-            broll['clips'] = filter_selected_media(broll['clips'], components)
+            broll['clips'] = [clip for clip in filter_selected_media(broll['clips'], components)
+                              if str(clip.get('asset_id')) not in ignored_assets]
             broll['unavailable'] = [row for row in broll['unavailable']
-                                    if filter_selected_media([{'provider': str(row.get('asset_id', '')).split(':')[0].split('--')[-1]}], components)]
+                                    if str(row.get('asset_id')) not in ignored_assets
+                                    and filter_selected_media([{'provider': str(row.get('asset_id', '')).split(':')[0].split('--')[-1]}], components)]
             broll['clip_count'] = len(broll['clips'])
         else:
             broll = {"clips": [], "clip_count": 0, "unavailable": []}
@@ -1498,7 +1503,8 @@ def create_app(
         generic = _read_json(run_root(project_id) / "generic-coverage.json", {"items": [], "selected": []})
         chosen = set(generic.get("selected") or [])
         used_generics = {str(row.get('asset_id','')).rsplit(':',1)[-1] for row in broll['clips'] if row.get('role') == 'generic'}
-        generic_clips = [row for row in generic.get("items") or [] if components['generic'] and str(row.get("provider_id")) in chosen and str(row.get('provider_id')) not in used_generics]
+        generic_clips = [row for row in generic.get("items") or [] if components['generic'] and str(row.get("provider_id")) in chosen and str(row.get('provider_id')) not in used_generics
+                         and 'generic:' + str(row.get('provider_id')) not in ignored_assets]
         payload.update(
             mode="editing", broll_clips=broll["clips"], broll_count=broll["clip_count"], broll_unavailable=broll["unavailable"],
             timeline_name=f"{project.name} - SUBS + KEYWORDS + B-ROLL TIMELINE v1",
@@ -1522,7 +1528,7 @@ def create_app(
                            duration_seconds=native_reference['duration_seconds'], destination_mode='active')
         return payload
 
-    async def prepare_generic_media(project_id: str, report=None) -> None:
+    async def prepare_generic_media(project_id: str, report=None, ignored_assets=None) -> list[dict[str, str]]:
         import httpx
         from .atomic_io import write_json
         path = run_root(project_id) / "generic-coverage.json"
@@ -1530,7 +1536,9 @@ def create_app(
         from .stock_export_media import prepare_pexels_video
         by_id = {str(row['provider_id']): row for row in data.get('items') or []}
         errors = []
-        selected = list(map(str, data.get('selected') or []))
+        ignored_assets = set(ignored_assets or ())
+        selected = [str(value) for value in data.get('selected') or []
+                    if 'generic:' + str(value) not in ignored_assets]
         for index, provider_id in enumerate(selected):
             if report:
                 report(65 + int(15 * index / max(1, len(selected))), f'Video finali: {index}/{len(selected)} pronti · controllo Pexels {provider_id}')
@@ -1541,12 +1549,15 @@ def create_app(
                            f'Scarico video finale Pexels {provider_id} · {received/1048576:.1f}' + (f'/{total/1048576:.1f}' if total else '') + ' MB')
                 by_id[provider_id] = {**by_id.get(provider_id, {}), **await prepare_pexels_video(run_root(project_id), provider_id, progress=download_progress if report else None)}
             except Exception as exc:
-                errors.append(f'Pexels {provider_id}: {exc}')
+                errors.append({'asset_id': 'generic:' + provider_id,
+                               'beat_id': 'COPERTURE GENERICHE', 'provider': 'pexels',
+                               'title': str(by_id.get(provider_id, {}).get('title') or f'Pexels {provider_id}'),
+                               'source_page': str(by_id.get(provider_id, {}).get('source_page') or ''),
+                               'reason': 'download_failed',
+                               'message': f'Download Pexels non riuscito ({type(exc).__name__}). Puoi ignorare solo questa clip.'})
         data['items'] = list(by_id.values())
         write_json(path, data)
-        if errors:
-            raise ValueError('Download coperture generiche non completato: ' + ' · '.join(errors))
-        return
+        return errors
     @app.get("/api/curation/projects/{project_id}/generic-coverage")
     async def generic_coverage(project_id: str, refresh: bool = False, scope: str = "topic", max_queries: int = 4, manual_query: str = ""):
         from .atomic_io import write_json
@@ -1670,14 +1681,24 @@ def create_app(
         project_root = matches[0].parents[2]
         return project_root, handoff_store.read(project_root, package_id)
 
+    def ignored_for_export(raw: str) -> set[str]:
+        if len(raw) > 12000:
+            raise HTTPException(status_code=422, detail="Troppi asset ignorati")
+        values = {item.strip() for item in raw.split(",") if item.strip()}
+        if len(values) > 200 or any(len(item) > 300 or any(ch in item for ch in "\\r\\n\\x00") for item in values):
+            raise HTTPException(status_code=422, detail="Identificatori coperture non validi")
+        return values
+
     @app.post("/api/curation/projects/{project_id}/resolve-handoffs")
-    async def prepare_resolve_handoff(project_id: str, components: ExportComponents | None = None):
+    async def prepare_resolve_handoff(project_id: str, components: ExportComponents | None = None, ignored: str = ""):
         try:
             flags = normalize_components(components)
-            media_issues = await prepare_selected_timeline_media(project_id, components=flags)
+            skipped = ignored_for_export(ignored)
+            media_issues = await prepare_selected_timeline_media(project_id, components=flags, ignored_assets=skipped)
             if flags['generic']:
-                await prepare_generic_media(project_id)
-            payload = editing_resolve_payload(project_id, flags)
+                media_issues.extend(await prepare_generic_media(project_id, ignored_assets=skipped))
+            skipped.update(row['asset_id'] for row in media_issues)
+            payload = editing_resolve_payload(project_id, flags, ignored_assets=skipped)
             payload["project_id"] = project_id
             payload["bridge_session_id"] = active_bridge_session_id
             payload["media_issues"] = media_issues
@@ -1687,7 +1708,7 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post('/api/curation/projects/{project_id}/resolve-preparation')
-    async def start_resolve_preparation(project_id: str, components: ExportComponents | None = None):
+    async def start_resolve_preparation(project_id: str, components: ExportComponents | None = None, ignored: str = ''):
         load_project(project_id)
         try:
             from .native_cut_export import assert_current_cut
@@ -1711,13 +1732,15 @@ def create_app(
             if not active_bridge_version.startswith('v') or not active_bridge_version[1:].isdigit() or int(active_bridge_version[1:]) < 71:
                 raise HTTPException(status_code=409, detail='Aggiorna il bridge a v0071 per ricevere il CUT nativo')
         session_id = active_bridge_session_id
+        skipped = ignored_for_export(ignored)
         async def prepare(report):
-            media_issues = await prepare_selected_timeline_media(project_id, report, flags)
+            media_issues = await prepare_selected_timeline_media(project_id, report, flags, ignored_assets=skipped)
             report(65, 'Coperture pronte · controllo video finali')
             if flags['generic']:
-                await prepare_generic_media(project_id, report)
+                media_issues.extend(await prepare_generic_media(project_id, report, ignored_assets=skipped))
             report(80, 'Media pronti · preparo sottotitoli, frasi e tempi')
-            payload = await asyncio.to_thread(editing_resolve_payload, project_id, flags)
+            excluded = skipped | {row['asset_id'] for row in media_issues}
+            payload = await asyncio.to_thread(editing_resolve_payload, project_id, flags, excluded)
             payload.update(project_id=project_id, bridge_session_id=session_id)
             payload["media_issues"] = media_issues
             report(85, 'Salvo il pacchetto per il bridge')
