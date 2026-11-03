@@ -71,6 +71,24 @@ def _summary(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 
+def bind_standard_target(payload: dict[str, Any], target: dict[str, Any]) -> dict[str, Any]:
+    """Bind a regular export to the Resolve timeline visible at SEND time.
+
+    Native CUT and its reference are intentionally immutable and stay on
+    their own stricter source timeline contract.
+    """
+    result = deepcopy(payload)
+    if result.get("native_cut") or result.get("native_cut_reference") or not target.get("connected"):
+        return result
+    result.update(
+        source_project_name=str(target["project"]),
+        source_timeline_id=str(target["timeline_id"]),
+        source_timeline_name=str(target["timeline"]),
+        bridge_mark_in=int(target["mark_in"]),
+    )
+    return result
+
+
 def _row_keys(payload: dict[str, Any], field: str) -> set[str]:
     return {str(row.get("asset_id") or row.get("provider_id") or row.get("source_page") or "") for row in payload.get(field) or [] if isinstance(row, dict)} - {""}
 
@@ -140,7 +158,14 @@ class ResolveHandoffStore:
                     continue
             native_session = bool((row.get('summary') or {}).get('native_cut') and bridge_session_id
                                   and row.get('bridge_session_id') == bridge_session_id)
-            if resolve_project and row.get("resolve_project") != resolve_project and not native_session:
+            # Unbound standard exports are allowed only when explicitly
+            # addressed to this live bridge session. Bound projects must still
+            # match exactly, so no cross-project package can be applied.
+            unbound_session = bool(
+                not row.get("resolve_project") and bridge_session_id
+                and row.get("bridge_session_id") == bridge_session_id
+            )
+            if resolve_project and row.get("resolve_project") != resolve_project and not (native_session or unbound_session):
                 continue
             if bridge_session_id and row.get("bridge_session_id") not in {"", bridge_session_id}:
                 continue
