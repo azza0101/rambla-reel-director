@@ -1099,3 +1099,73 @@ def test_broll_scaling_fills_the_frame_instead_of_overlaying_a_horizontal_strip(
     item=SimpleNamespace(SetProperty=lambda values:calls.append(values) or True)
     configure_broll_scaling(item)
     assert calls==[{'Scaling':3}]
+
+
+def test_staged_broll_reuses_identical_file_and_existing_conformed_excerpt(monkeypatch, tmp_path):
+    """Retried application must not repeat minutes of FFmpeg work."""
+    from backend.app.resolve_textplus_timeline import prepare_broll_media_files, conform_broll_media
+    source = tmp_path / "downloaded" / "video.mp4"
+    source.parent.mkdir()
+    source.write_bytes(b"original video data")
+    row = {
+        "asset_id": "youtube:abc", "title": "A KURA clip", "provider": "youtube",
+        "media_path": str(source), "record_start_frame": 10, "record_end_frame": 40,
+        "source_start_frame": 60, "source_end_frame": 90,
+    }
+    calls = []
+    monkeypatch.setattr("backend.app.resolve_textplus_timeline.probe_preview",
+                        lambda _: {"duration": 8.0})
+    def encode(command, **kwargs):
+        calls.append(command)
+        Path(command[-1]).write_bytes(b"encoded video")
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr("backend.app.resolve_textplus_timeline.subprocess.run", encode)
+    staging = tmp_path / "staging"
+    first = prepare_broll_media_files([row], staging, "kura_media_v1")
+    output1 = conform_broll_media(first, 30)
+    assert len(calls) == 1
+    second = prepare_broll_media_files([row], staging, "kura_media_v1")
+    output2 = conform_broll_media(second, 30)
+    assert second[0]["media_path"] == first[0]["media_path"]
+    assert output2[0]["media_path"] == output1[0]["media_path"]
+    assert len(calls) == 1
+
+
+def test_staged_broll_does_not_reuse_different_source_with_same_readable_name(tmp_path):
+    from backend.app.resolve_textplus_timeline import prepare_broll_media_files
+    sources = []
+    for name, data in [("a.mp4", b"clip one"), ("b.mp4", b"clip two")]:
+        src = tmp_path / name
+        src.write_bytes(data)
+        sources.append({"media_path": str(src), "asset_id": name,
+                        "title": "Same title", "provider": "pexels"})
+    rows = prepare_broll_media_files(sources, tmp_path / "stage", "kura_media_v1")
+    assert rows[0]["media_path"] != rows[1]["media_path"]
+    assert Path(rows[0]["media_path"]).read_bytes() == b"clip one"
+    assert Path(rows[1]["media_path"]).read_bytes() == b"clip two"
+    rerun = prepare_broll_media_files(sources, tmp_path / "stage", "kura_media_v1")
+    assert [x["media_path"] for x in rows] == [x["media_path"] for x in rerun]
+
+
+def test_text_tool_tolerates_slow_fusion_initialization(monkeypatch):
+    from backend.app.resolve_textplus_timeline import _text_tool
+    template = SimpleNamespace(Name="Template")
+    class Composition:
+        def __init__(self):
+            self.calls = 0
+        def GetToolList(self, *_):
+            self.calls += 1
+            return {} if self.calls <= 25 else {1: template}
+    composition = Composition()
+    item = SimpleNamespace(GetFusionCompByIndex=lambda _: composition)
+    monkeypatch.setattr("backend.app.resolve_textplus_timeline.time.sleep", lambda _: None)
+    assert _text_tool(item) is template
+    assert composition.calls == 26
+
+
+def test_text_tool_reports_longer_timeout_not_original_five_seconds(monkeypatch):
+    from backend.app.resolve_textplus_timeline import _text_tool
+    item = SimpleNamespace(GetFusionCompByIndex=lambda _: None)
+    monkeypatch.setattr("backend.app.resolve_textplus_timeline.time.sleep", lambda _: None)
+    with pytest.raises(RuntimeError, match="20 secondi"):
+        _text_tool(item)
