@@ -162,6 +162,7 @@ def test_envato_login_and_official_user_download_are_visible_in_media_section():
     html = render_curation_page_v2()
     assert 'id="envatoLoginV2"' in html
     assert 'id="socialConnectionsV5"' in html
-    assert "SCARICA DA ENVATO" in html
+    assert "SCARICA ORA (OPZIONALE)" in html
+    assert "scaricate automaticamente" in html
     assert "envato/auto/start" in html
     assert "started.token" in html
