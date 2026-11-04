@@ -186,6 +186,6 @@ def test_video_only_before_analysis_is_exposed_and_delivered(tmp_path, monkeypat
                 break
             time.sleep(.01)
         assert status["status"] == "completed", status.get("error")
-        assert calls[0]["destination_mode"] == "new"
+        assert calls[0]["destination_mode"] == "active"
         assert calls[0]["original_video"]["duration_frames"] == 120
         assert not calls[0].get("native_cut")

@@ -7,7 +7,13 @@ PANEL = r'''
 <section class="panel timelineExportV33" id="timelineExportV33" data-workflow-step-v42="9">
   <div class="top"><div><h2>9 · Export timeline <span id="timelineExportCompleteV28" class="stepStatusV12" hidden></span> <span id="resolveBridgeLiveV34" class="resolveBridgeLiveV34 off">BRIDGE OFFLINE</span></h2>
   <p class="muted">Prepara sottotitoli, parole evidenziate e B-roll. Resolve li applica soltanto dopo la conferma nel bridge.</p></div></div>
-  <button id="sendResolvePackageV33" class="primary resolvePrimaryV33">INVIA A RESOLVE</button><p id="resolveOriginalInfoV129" class="muted" style="margin:8px 0 0" hidden>Il video caricato viene aggiunto intero, con audio, su una nuova timeline Resolve. AutoCut non serve.</p><button id="exportMediaPackV125" class="ghost" type="button" style="margin-top:8px;width:100%">ESPORTA MEDIA IN CARTELLE (ZIP) · SENZA BRIDGE</button><details class="legacyExportsV33"><summary>Componenti da esportare</summary><div id="resolveComponentsV71" class="timelineExportActionsV33"></div><p id="resolveComponentsReasonV71" class="muted"></p></details>
+  <div class="resolveExportSelectionV133" id="resolveExportSelectionV133">
+    <div class="resolveExportSelectionTitleV133"><strong>Componenti da esportare</strong><span>✓ Seleziona le componenti da includere</span></div>
+    <div id="resolveComponentsV71" class="resolveExportComponentGridV133"></div>
+    <p id="resolveComponentsReasonV71" class="muted"></p>
+  </div>
+  <p id="resolveOriginalInfoV129" class="muted" style="margin:8px 0 0" hidden>Video originale con audio, senza AutoCut. Nel bridge puoi scegliere se applicare alla timeline attiva oppure creare una nuova timeline.</p>
+  <button id="sendResolvePackageV33" class="primary resolvePrimaryV33">INVIA A RESOLVE</button><button id="exportMediaPackV125" class="ghost" type="button" style="margin-top:8px;width:100%">ESPORTA MEDIA IN CARTELLE (ZIP) · SENZA BRIDGE</button>
   <div id="resolveDeliveryV33" class="resolveDeliveryV33" hidden><div id="resolveDeliveryCheckV33" class="resolveDeliveryCheckV33" hidden>✓</div><strong id="resolveDeliveryTitleV33">Preparazione pacchetto Resolve…</strong><span id="resolveDeliverySummaryV33"></span><div id="resolveDeliveryProgressV33" class="resolveDeliveryProgressBarV34"><i></i></div><b id="resolveDeliveryPercentV37">0%</b><small id="resolveDeliveryDetailV33"></small></div>
   <div id="resolveMediaIssuesV48" class="resolveMediaIssuesV48" hidden></div>
   <details id="resolveDebugV39" hidden><summary>Diagnostica Resolve</summary><button id="copyResolveDebugV39">COPIA DIAGNOSTICA</button><textarea id="resolveDebugTextV39" readonly aria-label="Diagnostica Resolve" style="width:100%;min-height:150px;margin-top:8px"></textarea></details><details class="legacyExportsV33"><summary>Export file e strumenti precedenti</summary><div class="timelineExportActionsV33"><button id="exportTimelineXmlV33">ESPORTA XML</button><button id="exportTimelineDraV33">ESPORTA DRA</button><button id="openTimelineResolveV33">CREA SUBITO IN RESOLVE · TEMP</button></div></details>
@@ -21,13 +27,49 @@ CSS = r'''<style id="timeline-export-v33-style">
 .timelineExportV33{margin-top:16px;background:linear-gradient(145deg,#252b4c,#1d223e);border-color:#58658f}.resolvePrimaryV33{width:100%;min-height:52px;font-size:15px;margin-top:12px}.resolveDeliveryV33{display:grid;grid-template-columns:auto 1fr;gap:7px 12px;align-items:center;margin-top:12px;padding:16px;border:1px solid #778548;border-radius:12px;background:#18263a}.resolveDeliveryV33 strong,.resolveDeliveryV33 span,.resolveDeliveryV33 progress,.resolveDeliveryV33 small{grid-column:2}.resolveDeliveryV33 strong{color:#d8ff5b;font-size:15px}.resolveDeliveryV33 progress{width:100%;height:10px}.resolveDeliveryV33.receivedV33{border-color:#48a967;background:#142d22}.resolveDeliveryCheckV33{grid-row:1/5;align-self:center;width:58px;height:58px;border-radius:50%;display:grid;place-items:center;background:#50c878;color:#08160d;font-size:38px;font-weight:950;box-shadow:0 0 24px #50c87855}.resolveDeliveryCheckV33[hidden]{display:none}.legacyExportsV33{margin-top:12px}.timelineExportActionsV33{display:flex;gap:9px;flex-wrap:wrap;margin-top:9px}.timelineExportV33.busyV33{border-color:#c69b39}.timelineExportV33.errorV33{border-color:#a54d58}@media(max-width:700px){.timelineExportActionsV33 button{flex:1 1 100%}}
 .resolveBridgeLiveV34{display:inline-block;margin-left:9px;padding:4px 8px;border-radius:999px;font-size:10px;vertical-align:middle;color:#d8ff5b;background:#183727;border:1px solid #4e9d68}.resolveBridgeLiveV34.off{color:#ff9d9d;background:#3a202b;border-color:#9f5263}
 .resolveDeliveryV33[hidden]{display:none}.resolveDeliveryProgressBarV34{grid-column:1/-1;width:100%;min-width:0;height:14px;border-radius:999px;background:#e5e7ee;overflow:hidden}.resolveDeliveryProgressBarV34 i{display:block;width:var(--p,0%);height:100%;background:#5576e8;transition:width .2s linear}
+.resolveExportSelectionV133{margin-top:16px;padding:14px;border:1px solid #6875ac;border-radius:12px;background:#141b33}.resolveExportSelectionTitleV133{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:10px;color:#f1f4ff}.resolveExportSelectionTitleV133 span{font-size:11px;color:#acb6d4}.resolveExportComponentGridV133{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:7px}.resolveExportComponentGridV133 label{display:flex;align-items:center;gap:9px;padding:10px 12px;border:1px solid #4d597e;border-radius:9px;background:#232c48;cursor:pointer;color:#f7f9ff;font-size:13px}.resolveExportComponentGridV133 label:has(input:checked){border-color:#b9d971;background:#273d30}.resolveExportComponentGridV133 label:has(input:disabled){opacity:.52;cursor:not-allowed}.resolveExportComponentGridV133 label input{accent-color:#d8ff5b;min-width:18px;width:18px;height:18px}.resolveExportComponentGridV133 label small{margin-left:auto;color:#cfdbff;font-weight:700;white-space:nowrap}.resolveExportSelectionV133 .muted{display:block;margin:9px 0 0;font-size:12px}.resolvePrimaryV33:disabled{opacity:.6;cursor:not-allowed}
 .resolveMediaIssuesV48{margin-top:12px;padding:12px;border:1px solid #c69b39;border-radius:12px;background:#2a2519}.resolveMediaIssuesV48[hidden]{display:none}.resolveMediaIssueV48{display:grid;grid-template-columns:1fr auto;gap:5px 12px;padding:9px 0;border-bottom:1px solid #ffffff1b}.resolveMediaIssueV48:last-of-type{border-bottom:0}.resolveMediaIssueV48 span{grid-column:1}.resolveMediaIssueV48 a{grid-column:2;grid-row:1/3;align-self:center;padding:9px 12px;border:1px solid #d8ff5b;border-radius:8px;color:#d8ff5b;font-weight:800;text-decoration:none}.resolveMediaIssuesV48>button{margin-top:10px}
 </style>'''
 
 JS = r'''
 const resolveComponentLabelsV71={video:'Video · CUT nativo',source_video:'Video originale caricato + audio · SENZA AUTO-CUT (nuova timeline)',subtitles:'Sottotitoli',highlights:'Parole evidenziate',broll:'B-roll e immagini',social:'Clip social',generic:'Coperture generiche'};
 let resolveComponentsV71=null;
-async function loadResolveComponentsV71(){if(!state.pid)return;const pid=state.pid;const options=await api(`/projects/${pid}/export-options`);if(state.pid!==pid)return;resolveComponentsV71=options.components;$('resolveOriginalInfoV129').hidden=!options.components.source_video;$('resolveComponentsV71').innerHTML=Object.entries(resolveComponentLabelsV71).map(([key,label])=>`<label><input type="checkbox" data-component="${key}" ${options.components[key]?'checked':''} ${(key==='video'?!options.video_available:options.component_availability?.[key]===false)?'disabled':''}> ${label} <small>(${options.counts?.[key]||0})</small></label>`).join('');$('resolveComponentsReasonV71').textContent=options.video_reason||'';for(const input of $('resolveComponentsV71').querySelectorAll('input'))input.onchange=async()=>{const next=Object.fromEntries([...$('resolveComponentsV71').querySelectorAll('input')].map(input=>[input.dataset.component,input.checked]));if(input.checked&&input.dataset.component==='source_video')next.video=false;if(input.checked&&input.dataset.component==='video')next.source_video=false;resolveComponentsV71=next;$('resolveOriginalInfoV129').hidden=!next.source_video;try{await api(`/projects/${pid}/export-options`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(next)})}catch(error){$('resolveComponentsReasonV71').textContent=error.message}}}
+async function loadResolveComponentsV71(){
+ if(!state.pid)return;
+ const pid=state.pid,options=await api(`/projects/${pid}/export-options`);
+ if(state.pid!==pid)return;
+ const list=$('resolveComponentsV71');
+ const available=(key)=>!!(key==='video'?options.video_available:options.component_availability?.[key]!==false);
+ const effective=Object.fromEntries(Object.keys(resolveComponentLabelsV71).map(key=>[
+   key,!!options.components[key]&&available(key)&&Number(options.counts?.[key]||0)>0
+ ]));
+ resolveComponentsV71=effective;
+ $('resolveOriginalInfoV129').hidden=!effective.source_video;
+ list.innerHTML=Object.entries(resolveComponentLabelsV71).map(([key,label])=>{
+   const count=Number(options.counts?.[key]||0);
+   const usable=available(key)&&count>0;
+   return `<label><input type="checkbox" data-component="${key}" ${effective[key]?'checked':''} ${usable?'':'disabled'}><span>${label}</span><small>${count}</small></label>`;
+ }).join('');
+ $('resolveComponentsReasonV71').textContent=options.video_reason||'';
+ for(const input of list.querySelectorAll('input'))input.onchange=async()=>{
+   const next=Object.fromEntries([...list.querySelectorAll('input')].map(x=>[x.dataset.component,x.checked]));
+   if(input.checked&&input.dataset.component==='source_video')next.video=false;
+   if(input.checked&&input.dataset.component==='video')next.source_video=false;
+   for(const x of list.querySelectorAll('input'))x.checked=next[x.dataset.component];
+   const previous={...resolveComponentsV71};
+   resolveComponentsV71=next;
+   $('resolveOriginalInfoV129').hidden=!next.source_video;
+   try{
+     await api(`/projects/${pid}/export-options`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(next)});
+     $('resolveComponentsReasonV71').textContent=options.video_reason||'';
+   }catch(error){
+     resolveComponentsV71=previous;
+     for(const x of list.querySelectorAll('input'))x.checked=previous[x.dataset.component];
+     $('resolveOriginalInfoV129').hidden=!previous.source_video;
+     $('resolveComponentsReasonV71').textContent=error.message||String(error);
+   }
+ };
+}
 
 let resolveHandoffIdV33=null,resolveHandoffPollV33=null,resolvePreparingV37=false,resolveDeliveryStartedV37=0;
 let resolveDeliveryTargetCheckV126=0,resolveDeliveryMismatchV126='';
