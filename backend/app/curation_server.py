@@ -556,6 +556,8 @@ def create_app(
     social_profiles = browser_profile_manager or BrowserProfileManager(_default_browser_profile_root(root), owns_live_session=True)
     app.state.social_profiles = social_profiles
     envato_download_sessions: dict[str, dict[str, Any]] = {}
+    from .envato_auto_download import EnvatoSession
+    envato_auto = EnvatoSession(root.parent / "browser-profiles" / "envato-auto")
     bridge_session_path = root.parent / "bridge-session.json"
     theme_preferences_path = root.parent / "theme-preferences.json"
     bridge_session_state = _read_json(bridge_session_path, {})
@@ -781,6 +783,7 @@ def create_app(
             try:
                 yield state
             finally:
+                await envato_auto.close()
                 closer = getattr(social_profiles, "close", None)
                 if closer:
                     await closer()
@@ -1062,6 +1065,39 @@ def create_app(
         if clean not in {"tiktok", "instagram"}:
             raise HTTPException(status_code=404, detail="unsupported social provider")
         return {**await social_profiles.check_search(clean), "resolve_calls": 0}
+
+    @app.post("/api/curation/envato/auto/login")
+    async def envato_auto_login():
+        try:return await envato_auto.login()
+        except Exception as exc:raise HTTPException(503, detail=str(exc)[:400]) from exc
+
+    @app.post("/api/curation/projects/{project_id}/envato/auto/start")
+    async def envato_auto_start(project_id: str, request: EnvatoDownloadRequest):
+        from .curation_artifacts import load_curation_run
+        run=run_root(project_id)
+        candidate=load_curation_run(run).candidate_index.get(request.asset_id)
+        if candidate is None or candidate.provider != "envato":raise HTTPException(404, detail="Video Envato non trovato")
+        from .envato_auto_download import valid_url
+        if not valid_url(candidate.source_page):raise HTTPException(422,detail="Pagina Envato non valida")
+        name=load_project(project_id).name
+        run=active_retrieval_root(run)
+        for existing_token,existing in envato_download_sessions.items():
+            if existing.get("project_id")==project_id and existing.get("asset_id")==request.asset_id and existing.get("status")=="running":
+                return {"status":"running","token":existing_token,"asset_id":request.asset_id}
+        token=uuid.uuid4().hex
+        state={"project_id":project_id,"asset_id":request.asset_id,"status":"running","detail":"Registro la licenza e scarico il video…"}
+        envato_download_sessions[token]=state
+        async def execute():
+            try:state.update(await envato_auto.download(candidate.source_page,name,run,request.asset_id))
+            except Exception as exc:state.update(status="error",detail=str(exc)[:400])
+        state['task']=asyncio.create_task(execute())
+        return {"status":"running","token":token,"asset_id":request.asset_id}
+
+    @app.get("/api/curation/projects/{project_id}/envato/auto/{token}")
+    async def envato_auto_status(project_id: str, token: str):
+        state=envato_download_sessions.get(token)
+        if not state or state.get('project_id')!=project_id:raise HTTPException(404,detail="Download Envato non trovato")
+        return {k:v for k,v in state.items() if k!='task'}
 
     @app.post("/api/curation/projects/{project_id}/envato/download/start")
     async def start_envato_download(project_id: str, request: EnvatoDownloadRequest) -> dict[str, Any]:

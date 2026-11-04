@@ -1,3 +1,4 @@
+from tests.unit.test_cut_pass_routes import tmp_path
 """Active Resolve source safety for user-uploaded uncut reels."""
 from pathlib import Path
 from types import SimpleNamespace
@@ -161,6 +162,6 @@ def test_envato_login_and_official_user_download_are_visible_in_media_section():
     html = render_curation_page_v2()
     assert 'id="envatoLoginV2"' in html
     assert 'id="socialConnectionsV5"' in html
-    assert "APRI ENVATO E IMPORTA DOWNLOAD" in html
-    assert "download/start" in html
+    assert "SCARICA DA ENVATO" in html
+    assert "envato/auto/start" in html
     assert "started.token" in html

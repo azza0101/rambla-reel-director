@@ -87,7 +87,14 @@ def load_curation_run(run_dir: Path) -> CurationRunView:
             errors.append('Video retrieval predates clip verification: rerun video search.')
             online=[slot for slot in online if slot.get('quality_version')==VIDEO_QUALITY_VERSION]
     from .envato_download_bridge import load_registry
+    from .envato_auto_download import valid_video
     envato_downloads = load_registry(run_dir)["assets"]
+    def attach_envato(candidate):
+        downloaded = envato_downloads.get(candidate.asset_id) if candidate.provider == "envato" else None
+        downloaded_path = Path(str((downloaded or {}).get("media_path") or ""))
+        if downloaded_path.is_file() and valid_video(downloaded_path):
+            return replace(candidate, local_asset_path=str(downloaded_path.resolve()), clip_verified=True, acquisition_state="CLIP_READY")
+        return candidate
     found: dict[str, list[CurationCandidate]] = {}
     for slot in online:
         cid = slot.get("parent_beat_id")
@@ -98,16 +105,7 @@ def load_curation_run(run_dir: Path) -> CurationRunView:
             if not isinstance(row, dict):
                 continue
             candidate = _video_candidate(str(cid), row)
-            downloaded = envato_downloads.get(candidate.asset_id) if candidate.provider == "envato" else None
-            downloaded_path = Path(str((downloaded or {}).get("media_path") or ""))
-            if downloaded_path.is_file() and probe_preview(downloaded_path)["playable"]:
-                candidate = replace(
-                    candidate,
-                    local_asset_path=str(downloaded_path.resolve()),
-                    clip_verified=True,
-                    acquisition_state="CLIP_READY",
-                    preview_status="ready",
-                )
+            candidate = attach_envato(candidate)
             seen_ids.add(candidate.asset_id)
             found.setdefault(str(cid), []).append(candidate)
         # Discovery is intentionally kept separate from final verified candidates.
@@ -116,7 +114,7 @@ def load_curation_run(run_dir: Path) -> CurationRunView:
         for row in slot.get("discovery_sources", []):
             if not isinstance(row, dict):
                 continue
-            candidate = _video_candidate(str(cid), row, discovery=True)
+            candidate = attach_envato(_video_candidate(str(cid), row, discovery=True))
             if candidate.asset_id in seen_ids:
                 continue
             seen_ids.add(candidate.asset_id)
