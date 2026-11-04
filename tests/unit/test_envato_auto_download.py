@@ -105,7 +105,7 @@ def test_auto_api_accepts_only_existing_envato_asset_and_runs_job(tmp_path,monke
         assert result['status']=='ready' and result['asset_id']=='asset-123'
 
 
-def test_missing_1080_stops_before_download_and_registration(tmp_path,monkeypatch):
+def test_unreadable_resolution_menu_stops_before_download_and_registration(tmp_path,monkeypatch):
     import backend.app.social_page_evidence as evidence
     monkeypatch.setattr(evidence,'challenge_required',lambda html:False)
     class Page:
@@ -113,13 +113,13 @@ def test_missing_1080_stops_before_download_and_registration(tmp_path,monkeypatc
         async def goto(self,*a,**k):pass
         async def wait_for_timeout(self,*a):pass
         async def content(self):return ''
-        async def evaluate(self,*a):return {'ok':False,'error':'Questo video non offre il formato 1080p'}
+        async def evaluate(self,*a):return {'ok':False,'error':'Non riesco a leggere i formati Envato'}
         async def close(self):pass
     class Context:
         async def new_page(self):return Page()
     session=EnvatoSession(tmp_path/'profile')
     async def context():return Context()
     session._context=context
-    with pytest.raises(RuntimeError,match='non offre il formato 1080p'):
+    with pytest.raises(RuntimeError,match='Non riesco a leggere i formati Envato'):
         asyncio.run(session.download('https://app.envato.com/stock-video/test','Project',tmp_path/'run','beat-1'))
     assert not (tmp_path/'run/envato-downloads.json').exists()

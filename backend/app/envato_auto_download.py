@@ -48,25 +48,26 @@ def valid_1080_video(path):
 RESOLUTION_SCRIPT = r"""async () => {
   const wait=ms=>new Promise(r=>setTimeout(r,ms));
   const visible=e=>{if(!e)return false;const r=e.getBoundingClientRect();return r.width>0&&r.height>0};
-  const button=()=>[...document.querySelectorAll('[data-cy="idp-download-button"], [data-cy="idp-header-download-button"]')].find(visible);
   const trigger=[...document.querySelectorAll('[data-cy="idp-format-dropdown-trigger"]')].find(visible);
-  const fullhd=s=>/1080\s*p|1920\s*[x×]\s*1080/i.test(s||'');
-  if(trigger){
-    trigger.click();await wait(500);
-    const options=[...document.querySelectorAll('[data-cy="idp-format-option"]')].filter(visible);
-    const hd=options.find(e=>fullhd(e.innerText||e.textContent));
-    if(!hd)return {ok:false,error:'Questo video non offre il formato 1080p'};
-    hd.click();await wait(800);
-    const selected=button();
-    if(!selected||!fullhd(selected.innerText||selected.textContent))return {ok:false,error:'Non riesco a verificare il formato 1080p selezionato'};
-    return {ok:true};
-  }
-  const selected=button(),label=selected&&(selected.innerText||selected.textContent)||'';
-  const details=document.querySelector('[data-cy="idp-attributes"]');
-  if(fullhd(label)||(!/4k|2160|uhd/i.test(label)&&fullhd(details&&(details.innerText||details.textContent))))return {ok:true};
-  return {ok:false,error:'Risoluzione 1080p non disponibile o non verificabile'};
+  if(!trigger)return {ok:true,resolution:'default'};
+  trigger.click();await wait(500);
+  const options=[...document.querySelectorAll('[data-cy="idp-format-option"]')].filter(visible);
+  if(!options.length)return {ok:false,error:'Non riesco a leggere i formati Envato'};
+  const score=e=>{
+    const text=(e.innerText||e.textContent||'').toLowerCase();
+    const dimensions=text.match(/(\d{3,5})\s*[x×]\s*(\d{3,5})/);
+    const label=text.match(/(\d{3,4})\s*p/);
+    const height=dimensions?Math.min(+dimensions[1],+dimensions[2]):label?+label[1]:/\b4k\b/.test(text)?2160:/\bhd\b/.test(text)?720:0;
+    if(height===1080)return 0;
+    if(height>0&&height<1080)return 10000-height;
+    if(height>1080)return 20000+height;
+    return 99999;
+  };
+  const sorted=options.map((el,i)=>({el,i,score:score(el)})).sort((a,b)=>a.score-b.score||a.i-b.i);
+  const chosen=sorted[0];const name=(chosen.el.innerText||chosen.el.textContent||'').trim();
+  chosen.el.click();await wait(800);
+  return {ok:true,resolution:name||'default'};
 }"""
-
 
 class EnvatoSession:
     def __init__(self,profile):
@@ -127,7 +128,6 @@ class EnvatoSession:
                 if failure:raise RuntimeError('Download Envato interrotto: '+str(failure))
                 target=_materialize(source,scratch / "verified")
                 if not target or not await asyncio.to_thread(valid_video,target):raise RuntimeError('Il file Envato non contiene un video utilizzabile')
-                if not await asyncio.to_thread(valid_1080_video,target):raise RuntimeError('Envato ha inviato un formato superiore a 1080p o non verificabile')
                 final=scratch.parent / target.name
                 target.replace(final)
                 target=final
