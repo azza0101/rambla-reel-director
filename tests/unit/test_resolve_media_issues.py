@@ -48,7 +48,7 @@ def test_export_ui_renders_source_links_and_retry_for_skipped_clips():
 
     source = Path("backend/app/timeline_export_ui.py").read_text(encoding="utf-8")
     assert "renderResolveMediaIssuesV48" in source
-    assert "APRI FONTE E RISOLVI CAPTCHA" in source
+    assert "APRI FONTE E VERIFICA" in source
     assert "RIPROVA DOWNLOAD" in source
     assert 'target="_blank"' in source
 

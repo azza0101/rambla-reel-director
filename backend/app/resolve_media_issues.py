@@ -11,7 +11,10 @@ def _safe_source(value: str) -> str:
 
 def download_issue(candidate, error: Exception) -> dict[str, str]:
     detail = str(error or "").casefold()
-    if any(token in detail for token in ("verification required", "captcha", "login", "sign in", "not a bot")):
+    if str(candidate.provider) in {"youtube", "youtube_shorts"} and "accesso" in detail and "captcha" not in detail:
+        reason = "login_required"
+        message = "Accedi a YouTube in Impostazioni e riprova il download."
+    elif any(token in detail for token in ("verification required", "captcha", "login", "sign in", "not a bot")):
         reason = "verification_required"
         message = "Apri la fonte e completa login/CAPTCHA, poi riprova il download."
     elif any(token in detail for token in ("media format", "format unavailable", "could not supply")):

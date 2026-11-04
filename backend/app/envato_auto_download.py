@@ -65,11 +65,22 @@ def session_evidence(provider, url, html):
     from .social_page_evidence import inspect_search_html, challenge_required
     parsed = urlparse(str(url))
     host = (parsed.hostname or '').lower()
-    if not (host == ('tiktok.com' if provider == 'tiktok' else 'envato.com') or host.endswith('.' + ('tiktok.com' if provider == 'tiktok' else 'envato.com'))):
+    expected = {'tiktok':'tiktok.com', 'youtube':'youtube.com', 'envato':'envato.com'}.get(provider, '')
+    if not expected or not (host == expected or host.endswith('.' + expected)):
         return 'unknown'
     evidence = inspect_search_html(html)
     if challenge_required(html): return 'verification_required'
     if provider == 'tiktok' and evidence.signed_in: return 'connected'
+    if provider == 'youtube':
+        from .social_page_evidence import SearchPageEvidence
+        class YouTubeEvidence(SearchPageEvidence):
+            account = False
+            def handle_starttag(self, tag, attrs):
+                super().handle_starttag(tag, attrs)
+                if dict(attrs).get('id') == 'avatar-btn' and not any(self.stack):
+                    self.account = True
+        yt = YouTubeEvidence(); yt.feed(html)
+        if yt.account: return 'connected'
     if provider == 'envato':
         from html.parser import HTMLParser
         class AccountLinks(HTMLParser):
@@ -134,7 +145,7 @@ class EnvatoSession:
                     context = await self._context(headless=True)
                     page = await context.new_page()
                     try:
-                        await page.goto('https://www.tiktok.com/' if provider == 'tiktok' else 'https://elements.envato.com/', wait_until='domcontentloaded', timeout=20000)
+                        await page.goto({'tiktok':'https://www.tiktok.com/', 'youtube':'https://www.youtube.com/', 'envato':'https://elements.envato.com/'}[provider], wait_until='domcontentloaded', timeout=20000)
                         await page.wait_for_timeout(1500)
                         return {'status': session_evidence(provider, page.url, await page.content())}
                     finally:

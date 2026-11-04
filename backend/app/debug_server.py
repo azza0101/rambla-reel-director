@@ -932,7 +932,7 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
     async def prepare_social_media(project_id: str, asset_id: str, mode: str):
         from .social_media import prepare_media, media_path
         candidate = project_run(project_id).candidate_index.get(asset_id)
-        if candidate is None or candidate.provider not in {'tiktok','instagram','youtube_shorts'} or mode not in {'preview','full','hover'}:
+        if candidate is None or candidate.provider not in {'tiktok','instagram','youtube','youtube_shorts'} or mode not in {'preview','full','hover'}:
             raise HTTPException(status_code=404, detail='Social video not found')
         root = project_run_root(project_id)
         key=(project_id,asset_id,mode)
@@ -943,6 +943,8 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
                 profiles=getattr(app.state,'social_profiles',None)
                 if candidate.provider == 'tiktok' and getattr(app.state,'tiktok_cookie_reader',None):
                     cookies=await app.state.tiktok_cookie_reader(candidate.source_page)
+                elif candidate.provider in {'youtube','youtube_shorts'} and getattr(app.state,'youtube_cookie_reader',None):
+                    cookies=await app.state.youtube_cookie_reader(candidate.source_page)
                 elif profiles and candidate.provider in {'tiktok','instagram'} and profiles.status()[candidate.provider].get('connection_ready'):
                     async def read_session(page,context):
                         return await context.cookies([candidate.source_page])

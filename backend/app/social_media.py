@@ -73,11 +73,13 @@ def prepare_media(source, provider, root, mode, *, cookies=(), runner=subprocess
         return output
     except subprocess.CalledProcessError as exc:
         detail=exc.stderr.decode('utf-8',errors='replace') if isinstance(exc.stderr,bytes) else str(exc.stderr or '')
+        if provider in {'youtube', 'youtube_shorts'} and any(word in detail.lower() for word in ('sign in','not a bot','confirm you','requiring login')) and 'captcha' not in detail.lower():
+            raise RuntimeError('YouTube richiede accesso: apri Impostazioni e accedi a YouTube, poi riprova.') from None
         if any(word in detail.lower() for word in ('captcha','confirm you','not a bot','requiring login','sign in')):
             raise RuntimeError('Provider verification required: open the source and complete login/CAPTCHA manually. No automatic retries.') from None
         raise RuntimeError('Provider could not supply this media format. Open the source; download is unavailable.') from None
     except Exception:
-        raise RuntimeError('Video unavailable: provider download failed; open the source to check access or CAPTCHA') from None
+        raise RuntimeError('Video non disponibile: download non riuscito. Apri la fonte e verifica accesso e disponibilità.') from None
     finally:
         if cookie_path:
             cookie_path.unlink(missing_ok=True)

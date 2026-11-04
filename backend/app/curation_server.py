@@ -559,6 +559,7 @@ def create_app(
     from .envato_auto_download import EnvatoSession
     envato_auto = EnvatoSession(root.parent / "browser-profiles" / "envato-auto")
     tiktok_auto = EnvatoSession(social_profiles.profile_dir("tiktok") if isinstance(social_profiles, BrowserProfileManager) else root.parent / "browser-profiles" / "tiktok")
+    youtube_auto = EnvatoSession(root.parent / "browser-profiles" / "youtube")
     bridge_session_path = root.parent / "bridge-session.json"
     theme_preferences_path = root.parent / "theme-preferences.json"
     bridge_session_state = _read_json(bridge_session_path, {})
@@ -786,6 +787,7 @@ def create_app(
             finally:
                 await envato_auto.close()
                 await tiktok_auto.close()
+                await youtube_auto.close()
                 closer = getattr(social_profiles, "close", None)
                 if closer:
                     await closer()
@@ -809,6 +811,28 @@ def create_app(
             finally:await tiktok_auto.close()
 
     app.state.tiktok_cookie_reader=tiktok_session_cookies
+
+    async def youtube_session_cookies(source):
+        from urllib.parse import urlsplit
+        parsed = urlsplit(source)
+        if parsed.scheme != 'https' or parsed.hostname not in {'youtube.com','www.youtube.com','youtu.be'} or parsed.username or parsed.port:
+            raise ValueError('Indirizzo YouTube non valido')
+        if not youtube_auto.profile.is_dir() and not youtube_auto.context:
+            return []
+        async with youtube_auto.lock:
+            visible = bool(youtube_auto.context and youtube_auto.headless is False)
+            try:
+                context = youtube_auto.context if visible else await youtube_auto._context()
+                return await context.cookies(['https://www.youtube.com/'])
+            finally:
+                if not visible: await youtube_auto.close()
+
+    app.state.youtube_cookie_reader=youtube_session_cookies
+
+    @app.post("/api/curation/youtube/login")
+    async def youtube_login():
+        try: return await youtube_auto.login('https://www.youtube.com/')
+        except Exception as exc: raise HTTPException(503, detail='Impossibile aprire la finestra YouTube') from exc
 
     @app.post("/api/curation/social/{provider}/session-search")
     async def session_search(provider: str, query: SocialSessionQuery, request: Request):
@@ -1093,8 +1117,8 @@ def create_app(
 
     @app.get("/api/curation/provider-session-status")
     async def provider_session_status():
-        envato, tiktok = await asyncio.gather(envato_auto.session_status('envato'), tiktok_auto.session_status('tiktok'))
-        return {'envato': envato, 'tiktok': tiktok}
+        envato, tiktok, youtube = await asyncio.gather(envato_auto.session_status('envato'), tiktok_auto.session_status('tiktok'), youtube_auto.session_status('youtube'))
+        return {'envato': envato, 'tiktok': tiktok, 'youtube': youtube}
 
     @app.post("/api/curation/envato/auto/login")
     async def envato_auto_login():
@@ -1553,6 +1577,8 @@ def create_app(
             try:
                 if candidate.provider == 'tiktok' and isinstance(social_profiles, BrowserProfileManager):
                     cookies = await tiktok_session_cookies(candidate.source_page)
+                elif candidate.provider in {'youtube', 'youtube_shorts'}:
+                    cookies = await youtube_session_cookies(candidate.source_page)
                 elif candidate.provider == 'instagram' and social_profiles.status().get('instagram', {}).get('connection_ready'):
                     async def read_session(page, context, source=candidate.source_page):
                         return await context.cookies([source])
