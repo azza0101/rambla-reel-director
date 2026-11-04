@@ -36,14 +36,6 @@ def valid_video(path):
     except OSError:return False
 
 
-def valid_1080_video(path):
-    try:
-        result=subprocess.run(['ffprobe','-v','error','-select_streams','v:0','-show_entries','stream=width,height','-of','json',str(path)],capture_output=True,text=True,check=True,timeout=20)
-        stream=json.loads(result.stdout)['streams'][0]
-        width,height=int(stream['width']),int(stream['height'])
-        return width>0 and height>0 and max(width,height)<=1920 and min(width,height)<=1080
-    except (OSError,ValueError,TypeError,KeyError,IndexError,subprocess.SubprocessError):return False
-
 
 RESOLUTION_SCRIPT = r"""async () => {
   const wait=ms=>new Promise(r=>setTimeout(r,ms));
@@ -71,28 +63,35 @@ RESOLUTION_SCRIPT = r"""async () => {
 
 class EnvatoSession:
     def __init__(self,profile):
-        self.profile=Path(profile);self.driver=None;self.context=None;self.lock=asyncio.Lock()
+        self.profile=Path(profile);self.driver=None;self.context=None;self.headless=None;self.lock=asyncio.Lock()
 
-    async def _context(self):
-        if self.context:return self.context
+    async def _context(self, *, headless=True):
+        if self.context and self.headless == headless and self.context.pages:return self.context
+        if self.context:
+            try:await self.context.close()
+            finally:self.context=None
+        if self.driver:
+            await self.driver.stop();self.driver=None
         from playwright.async_api import async_playwright
         from .browser_profiles import _installed_browser
         browser=_installed_browser()
         if not browser:raise RuntimeError('Chrome o Edge non disponibile')
         self.profile.mkdir(parents=True,exist_ok=True)
         self.driver=await async_playwright().start()
-        try:self.context=await self.driver.chromium.launch_persistent_context(str(self.profile),executable_path=browser,headless=False,accept_downloads=True,chromium_sandbox=True)
+        try:
+            self.context=await self.driver.chromium.launch_persistent_context(str(self.profile),executable_path=browser,headless=headless,accept_downloads=True,chromium_sandbox=True,args=['--mute-audio'])
+            self.headless=headless
         except Exception:
             await self.driver.stop();self.driver=None;raise
         return self.context
 
-    async def login(self):
+    async def login(self,url='https://elements.envato.com/'):
         async with self.lock:
-            context=await self._context()
+            context=await self._context(headless=False)
             page=next((p for p in context.pages if not p.is_closed()),None) or await context.new_page()
-            await page.goto('https://elements.envato.com/',wait_until='domcontentloaded',timeout=30000)
+            await page.goto(url,wait_until='domcontentloaded',timeout=30000)
             await page.bring_to_front()
-        return {'status':'opened','detail':'Accedi nella finestra Envato di RMBL; poi torna al programma.'}
+        return {'status':'opened','detail':'Accedi nella finestra dedicata di RMBL; poi torna al programma.'}
 
     async def download(self,url,project_name,run_root,asset_id):
         if not valid_url(url):raise ValueError('Indirizzo Envato non valido')
@@ -131,6 +130,8 @@ class EnvatoSession:
                 final=scratch.parent / target.name
                 target.replace(final)
                 target=final
+                try:source.unlink(missing_ok=True)
+                except OSError:pass
                 registry=load_registry(Path(run_root));registry['assets'][str(asset_id)]={'media_path':str(target.resolve()),'license_project':str(project_name).strip()}
                 write_json(Path(run_root)/'envato-downloads.json',registry)
                 return {'status':'ready','asset_id':asset_id,'media_path':str(target.resolve())}

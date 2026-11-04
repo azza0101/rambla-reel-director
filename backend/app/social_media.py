@@ -35,7 +35,7 @@ def prepare_media(source, provider, root, mode, *, cookies=(), runner=subprocess
     try:
         command = [runtime, '-m', 'yt_dlp', '--no-playlist', '--no-warnings', '--socket-timeout', '10',
                    '--retries', '0', '--max-filesize', '250M', '-f',
-                   'bv*[ext=mp4][height<=1080]+ba[ext=m4a]/b[ext=mp4]/best',
+                   'bv*[ext=mp4][width<=1080][height<=1920]+ba[ext=m4a]/bv*[ext=mp4][width<=1920][height<=1080]+ba[ext=m4a]/b[width<=1080][height<=1920]/b[width<=1920][height<=1080]/best',
                    '--merge-output-format', 'mp4', '-o', str(temporary)]
         if mode == 'preview':
             command += ['--download-sections', '*0-3.5', '--force-keyframes-at-cuts']

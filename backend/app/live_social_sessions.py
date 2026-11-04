@@ -41,7 +41,7 @@ class LiveSocialSessions:
                         self.driver = await self.driver_factory().start()
                 context = await self.driver.chromium.launch_persistent_context(
                     user_data_dir=key, executable_path=browser,
-                    headless=False, accept_downloads=False, chromium_sandbox=True,
+                    headless=(__import__('pathlib').Path(key).name == 'tiktok'), accept_downloads=False, chromium_sandbox=True, args=['--mute-audio'],
                 )
                 page = context.pages[0] if context.pages else await context.new_page()
                 self.contexts[key] = context
@@ -85,6 +85,12 @@ class LiveSocialSessions:
                 except Exception: pass
         await page.bring_to_front()
         return True
+
+    async def close_profile(self, profile_dir):
+        key=str(profile_dir)
+        context=self.contexts.pop(key,None)
+        self.pages.pop(key,None)
+        if context:await context.close()
 
     async def close(self):
         for context in self.contexts.values():

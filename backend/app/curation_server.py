@@ -558,6 +558,7 @@ def create_app(
     envato_download_sessions: dict[str, dict[str, Any]] = {}
     from .envato_auto_download import EnvatoSession
     envato_auto = EnvatoSession(root.parent / "browser-profiles" / "envato-auto")
+    tiktok_auto = EnvatoSession(social_profiles.profile_dir("tiktok") if isinstance(social_profiles, BrowserProfileManager) else root.parent / "browser-profiles" / "tiktok")
     bridge_session_path = root.parent / "bridge-session.json"
     theme_preferences_path = root.parent / "theme-preferences.json"
     bridge_session_state = _read_json(bridge_session_path, {})
@@ -784,11 +785,30 @@ def create_app(
                 yield state
             finally:
                 await envato_auto.close()
+                await tiktok_auto.close()
                 closer = getattr(social_profiles, "close", None)
                 if closer:
                     await closer()
 
     app.router.lifespan_context = social_lifespan
+
+    async def tiktok_session_cookies(source):
+        from urllib.parse import urlsplit
+        parsed=urlsplit(source)
+        if parsed.scheme!='https' or parsed.hostname not in {'tiktok.com','www.tiktok.com'} or parsed.username or parsed.port:
+            raise ValueError('Indirizzo TikTok non valido')
+        runner=getattr(social_profiles,'_runner',None)
+        connected=getattr(runner,'is_connected',lambda p:False)(social_profiles.profile_dir('tiktok')) if isinstance(social_profiles,BrowserProfileManager) else False
+        if connected:
+            async def read(page,context):return await context.cookies([source])
+            return await social_profiles.run_in_profile('tiktok',read)
+        async with tiktok_auto.lock:
+            try:
+                context=await tiktok_auto._context()
+                return await context.cookies([source])
+            finally:await tiktok_auto.close()
+
+    app.state.tiktok_cookie_reader=tiktok_session_cookies
 
     @app.post("/api/curation/social/{provider}/session-search")
     async def session_search(provider: str, query: SocialSessionQuery, request: Request):
@@ -1053,6 +1073,11 @@ def create_app(
         if clean not in SUPPORTED_SOCIAL_PROVIDERS:
             raise HTTPException(status_code=404, detail="social provider non supportato")
         try:
+            if clean == "tiktok" and isinstance(social_profiles,BrowserProfileManager):
+                closer=getattr(social_profiles._runner,'close_profile',None)
+                if closer:await closer(social_profiles.profile_dir('tiktok'))
+                result=await tiktok_auto.login('https://www.tiktok.com/login')
+                return {**result,"provider":"tiktok","session":"visible_persistent","resolve_calls":0}
             opener = getattr(social_profiles, "open_login_async", None)
             result = await opener(clean) if opener else await asyncio.to_thread(social_profiles.open_login, clean)
         except (OSError, RuntimeError, ValueError) as exc:
@@ -1386,7 +1411,7 @@ def create_app(
             path = str(candidate.local_asset_path or "").strip()
             preview_path = str(candidate.preview_path or "").strip()
             full_source = bool(
-                path and candidate.source_start_seconds is not None
+                path and (candidate.provider == "envato" or candidate.source_start_seconds is not None)
                 and (not preview_path or os.path.normcase(os.path.abspath(path)) != os.path.normcase(os.path.abspath(preview_path)))
             )
             if kind == "video" and candidate.provider == 'pexels':
@@ -1401,7 +1426,11 @@ def create_app(
                 if social_path.is_file():
                     path = str(social_path)
                     full_source = True
-            facts = probe_preview(path) if path and kind == "video" else {"playable": bool(path), "duration": 0}
+            if path and kind == "video" and full_source:
+                from .video_preview import probe_full_video
+                facts = probe_full_video(path)
+            else:
+                facts = probe_preview(path) if path and kind == "video" else {"playable": bool(path), "duration": 0}
             selected_start = float(candidate.source_start_seconds or 0) if full_source else 0.0
             selected_end = (
                 float(candidate.source_end_seconds)
@@ -1481,11 +1510,13 @@ def create_app(
             if media_path(candidate.source_page, candidate.provider, run, "full").is_file():
                 continue
             cookies = []
-            if candidate.provider in {"tiktok", "instagram"} and social_profiles.status().get(candidate.provider, {}).get("connection_ready"):
-                async def read_session(page, context, source=candidate.source_page):
-                    return await context.cookies([source])
-                cookies = await social_profiles.run_in_profile(candidate.provider, read_session)
             try:
+                if candidate.provider == 'tiktok' and isinstance(social_profiles, BrowserProfileManager):
+                    cookies = await tiktok_session_cookies(candidate.source_page)
+                elif candidate.provider == 'instagram' and social_profiles.status().get('instagram', {}).get('connection_ready'):
+                    async def read_session(page, context, source=candidate.source_page):
+                        return await context.cookies([source])
+                    cookies = await social_profiles.run_in_profile(candidate.provider, read_session)
                 await asyncio.to_thread(prepare_media, candidate.source_page, candidate.provider, run, "full", cookies=cookies)
             except (ValueError, RuntimeError) as exc:
                 failures.append(download_issue(candidate, exc))

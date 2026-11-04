@@ -940,7 +940,9 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
             async with lock, social_media_slots:
                 cookies=[]
                 profiles=getattr(app.state,'social_profiles',None)
-                if profiles and candidate.provider in {'tiktok','instagram'} and profiles.status()[candidate.provider].get('connection_ready'):
+                if candidate.provider == 'tiktok' and getattr(app.state,'tiktok_cookie_reader',None):
+                    cookies=await app.state.tiktok_cookie_reader(candidate.source_page)
+                elif profiles and candidate.provider in {'tiktok','instagram'} and profiles.status()[candidate.provider].get('connection_ready'):
                     async def read_session(page,context):
                         return await context.cookies([candidate.source_page])
                     cookies=await profiles.run_in_profile(candidate.provider,read_session)

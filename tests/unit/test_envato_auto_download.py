@@ -18,7 +18,6 @@ def test_download_uses_exact_event_and_attaches_asset(tmp_path,monkeypatch):
     import backend.app.envato_auto_download as auto
     monkeypatch.setattr(evidence,'challenge_required',lambda html:False)
     monkeypatch.setattr(auto,'valid_video',lambda path:True)
-    monkeypatch.setattr(auto,'valid_1080_video',lambda path:True)
     class Download:
         suggested_filename='file.mp4'
         async def save_as(self,path):Path(path).write_bytes(b'valid video')
@@ -37,11 +36,12 @@ def test_download_uses_exact_event_and_attaches_asset(tmp_path,monkeypatch):
     class Context:
         async def new_page(self):return page
     session=EnvatoSession(tmp_path/'profile')
-    async def context():return Context()
+    async def context(**kwargs):return Context()
     session._context=context
     result=asyncio.run(session.download(page.url,'My project',tmp_path/'run','beat-1'))
     assert result['status']=='ready'
     assert Path(result['media_path']).read_bytes()==b'valid video'
+    assert not list((tmp_path/'run').rglob('download.mp4'))
     import json
     registry=json.loads((tmp_path/'run/envato-downloads.json').read_text('utf-8'))
     assert registry['assets']['beat-1']['license_project']=='My project'
@@ -61,18 +61,20 @@ def test_failed_licensing_never_creates_registry(tmp_path,monkeypatch):
     class Context:
         async def new_page(self):return Page()
     session=EnvatoSession(tmp_path/'profile')
-    async def context():return Context()
+    async def context(**kwargs):return Context()
     session._context=context
     with pytest.raises(RuntimeError,match='accesso richiesto'):
         asyncio.run(session.download('https://elements.envato.com/item','Project',tmp_path/'run','beat-1'))
     assert not (tmp_path/'run/envato-downloads.json').exists()
 def test_full_length_mov_is_valid_media_and_missing_video_is_rejected(tmp_path):
     import shutil,subprocess
-    from backend.app.envato_auto_download import valid_video,valid_1080_video
+    from backend.app.envato_auto_download import valid_video
     if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):pytest.skip('ffmpeg tools unavailable')
     media=tmp_path/'full.mov'
     subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','color=black:size=64x64:rate=2','-t','6','-c:v','mpeg4',str(media)],check=True,capture_output=True)
-    assert valid_video(media) and valid_1080_video(media)
+    assert valid_video(media)
+    from backend.app.video_preview import probe_full_video
+    assert probe_full_video(media)["duration"] >= 5.9
     invalid=tmp_path/'bad.mp4';invalid.write_bytes(b'not a video')
     assert not valid_video(invalid)
 
@@ -118,7 +120,7 @@ def test_unreadable_resolution_menu_stops_before_download_and_registration(tmp_p
     class Context:
         async def new_page(self):return Page()
     session=EnvatoSession(tmp_path/'profile')
-    async def context():return Context()
+    async def context(**kwargs):return Context()
     session._context=context
     with pytest.raises(RuntimeError,match='Non riesco a leggere i formati Envato'):
         asyncio.run(session.download('https://app.envato.com/stock-video/test','Project',tmp_path/'run','beat-1'))

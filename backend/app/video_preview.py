@@ -58,6 +58,26 @@ def probe_preview(value: str | None) -> dict:
     return dict(_probe(str(path),stat.st_size,stat.st_mtime_ns))
 
 
+@lru_cache(maxsize=512)
+def _probe_full(path: str, size: int, mtime: int) -> dict:
+    try:
+        result=subprocess.run(['ffprobe','-v','error','-show_entries','format=duration:stream=codec_type,width,height','-of','json',path],check=True,capture_output=True,text=True,timeout=20)
+        data=json.loads(result.stdout)
+        stream=next(s for s in data.get('streams',[]) if s.get('codec_type')=='video')
+        duration=float(data.get('format',{}).get('duration') or 0)
+        return {'playable':duration>0,'duration':duration,'width':int(stream.get('width') or 0),'height':int(stream.get('height') or 0)}
+    except (OSError,ValueError,TypeError,KeyError,StopIteration,subprocess.SubprocessError):return {'playable':False,'duration':0}
+
+
+def probe_full_video(value):
+    try:
+        p=Path(value)
+        if not p.is_file():return {'playable':False,'duration':0}
+        st=p.stat()
+        return dict(_probe_full(str(p.resolve()),st.st_size,st.st_mtime_ns))
+    except (OSError,ValueError,TypeError):return {'playable':False,'duration':0}
+
+
 def materialize_clip(source: str, directory: Path, identity: str, *, start_seconds: float = 0.0, streaming: bool = False) -> dict:
     directory.mkdir(parents=True,exist_ok=True)
     key = hashlib.sha256((identity+'|preview-v2|'+str(start_seconds)).encode()).hexdigest()[:24]
