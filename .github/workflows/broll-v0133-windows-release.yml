@@ -4,6 +4,9 @@ on:
     branches:
       - release/broll-v0133-publish
   workflow_dispatch:
+concurrency:
+  group: broll-v0133-windows-publish
+  cancel-in-progress: true
 permissions:
   contents: write
 jobs:
@@ -94,5 +97,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if ((Get-Content RAMBLA_VERSION -Raw).Trim() -ne 'v0133') { throw 'Unexpected version' }
+          $existingJson = & gh release view v0133 --repo "${{ github.repository }}" --json assets,isDraft 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host 'Existing v0133 draft/release detected: refreshing verified Windows assets.'
+            gh release upload v0133 'dist/RMBL-B-ROLL-Windows-v0133.zip' 'dist/RMBL-B-ROLL-Setup-v0133.exe' 'dist/update.json' --repo "${{ github.repository }}" --clobber
+            if ($LASTEXITCODE -ne 0) { throw 'Release asset refresh failed' }
+            gh release edit v0133 --repo "${{ github.repository }}" --draft=false --latest
+            if ($LASTEXITCODE -ne 0) { throw 'Release finalization failed' }
+          } else {
           gh release create v0133 'dist/RMBL-B-ROLL-Windows-v0133.zip' 'dist/RMBL-B-ROLL-Setup-v0133.exe' 'dist/update.json' --repo "${{ github.repository }}" --target "${{ github.sha }}" --title 'RMBL B ROLL v0133 — Selectable export, active Resolve timeline and Envato acquisition UX' --notes 'Maintenance update from v0132. The component checklist is visible above INVIA A RESOLVE with counts and saved selections. Original uploaded video can now be safely applied to an active Resolve timeline: import V1/A1 only if empty, reuse the exact same preexisting source without duplication, reject different footage, preserve BCK rollback; new-timeline and native CUT remain available. Clarifies Envato Elements official sign-in and automatically attaches user-downloaded assets locally, with no bot downloads. Retains local backup cleanup from v0132.' --latest
+          }
           if ($LASTEXITCODE -ne 0) { throw 'Release publish failed' }
