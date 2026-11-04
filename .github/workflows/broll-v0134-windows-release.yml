@@ -2,7 +2,7 @@ name: Publish RMBL B ROLL v0134 Windows package
 on:
   push:
     branches:
-      - release/broll-v0134-publish
+      - release/broll-v0134-envato-auto
   workflow_dispatch:
 concurrency:
   group: broll-v0134-windows-publish
@@ -105,6 +105,6 @@ jobs:
             gh release edit v0134 --repo "${{ github.repository }}" --draft=false --latest
             if ($LASTEXITCODE -ne 0) { throw 'Release finalization failed' }
           } else {
-          gh release create v0134 'dist/RMBL-B-ROLL-Windows-v0134.zip' 'dist/RMBL-B-ROLL-Setup-v0134.exe' 'dist/update.json' --repo "${{ github.repository }}" --target "${{ github.sha }}" --title 'RMBL B ROLL v0134 — Selectable export, active Resolve timeline and Envato acquisition UX' --notes 'Envato automatic download with dedicated login and project licensing; verified on a live Envato video. Includes previous v0133 improvements. The component checklist is visible above INVIA A RESOLVE with counts and saved selections. Original uploaded video can now be safely applied to an active Resolve timeline: import V1/A1 only if empty, reuse the exact same preexisting source without duplication, reject different footage, preserve BCK rollback; new-timeline and native CUT remain available. Clarifies Envato Elements official sign-in and automatically attaches user-downloaded assets locally, with no bot downloads. Retains local backup cleanup from v0132.' --latest
+          gh release create v0134 'dist/RMBL-B-ROLL-Windows-v0134.zip' 'dist/RMBL-B-ROLL-Setup-v0134.exe' 'dist/update.json' --repo "${{ github.repository }}" --target "${{ github.sha }}" --title 'RMBL B ROLL v0134 - Download Envato automatico' --notes 'Envato login dedicato, download automatico con licenza del progetto e associazione della clip; video completi MP4 e MOV verificati. Include le funzioni v0133.' --latest
           }
           if ($LASTEXITCODE -ne 0) { throw 'Release publish failed' }
