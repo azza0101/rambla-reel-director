@@ -8,7 +8,7 @@ PANEL = r'''
   <div class="top"><div><h2>9 · Export timeline <span id="timelineExportCompleteV28" class="stepStatusV12" hidden></span> <span id="resolveBridgeLiveV34" class="resolveBridgeLiveV34 off">BRIDGE OFFLINE</span></h2>
   <p class="muted">Prepara sottotitoli, parole evidenziate e B-roll. Resolve li applica soltanto dopo la conferma nel bridge.</p></div></div>
   <div class="resolveExportSelectionV133" id="resolveExportSelectionV133">
-    <div class="resolveExportSelectionTitleV133"><strong>COSA INVIARE A RESOLVE</strong><span>✓ Seleziona le componenti da includere</span></div>
+    <div class="resolveExportSelectionTitleV133"><strong>Componenti da esportare</strong><span>✓ Seleziona le componenti da includere</span></div>
     <div id="resolveComponentsV71" class="resolveExportComponentGridV133"></div>
     <p id="resolveComponentsReasonV71" class="muted"></p>
   </div>
