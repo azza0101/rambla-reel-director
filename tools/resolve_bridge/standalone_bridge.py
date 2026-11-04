@@ -426,7 +426,11 @@ class BridgeClient:
             raise RuntimeError("Package has not been received by this bridge session")
         if apply_scope not in {"all", "titles", "subtitles", "media"}:
             raise ValueError("apply_scope non valido")
-        if apply_scope != "all":
+        if (self.current_package.get("summary") or {}).get("original_video"):
+            if apply_scope != "all":
+                raise ValueError("Il video originale richiede INVIA TUTTO su una nuova timeline")
+            destination_mode = "new"
+        elif apply_scope != "all":
             destination_mode = "active"
         status = self.request_json("/api/curation/resolve-bridge/status")
         return self.request_json(f"/api/curation/resolve-handoffs/{self.current_package['package_id']}/apply", "POST", {
@@ -661,7 +665,8 @@ class BridgeApp:
         self._fit_window(package_visible=False)
 
     def _select_destination(self, value: str) -> None:
-        if (getattr(self, '_debug_row', {}).get('summary') or {}).get('native_cut'):
+        summary = (getattr(self, '_debug_row', {}).get('summary') or {})
+        if summary.get('native_cut') or summary.get('original_video'):
             self.destination.set('new')
             return
         self._destination_explicit = True
@@ -831,6 +836,13 @@ class BridgeApp:
                 self.destination.set('new')
                 self.widgets['package'].configure(text=self.widgets['package'].cget('text') +
                     f"\nCUT nativo · {summary['cut_count']} tagli · {summary['fps']} fps · {summary['width']}×{summary['height']}\nCrea una nuova timeline dal video originale")
+                for key in ('apply_subtitles', 'apply_titles', 'apply_media'):
+                    self.widgets[key].configure(state='disabled')
+            if summary.get('original_video'):
+                self.destination.set('new')
+                suffix = 'audio incorporato' if summary.get('original_has_audio') else 'nessun audio incorporato'
+                self.widgets['package'].configure(text=self.widgets['package'].cget('text') +
+                    f"\nVIDEO ORIGINALE SENZA AUTO-CUT · {summary.get('fps')} fps\nImporta tutto il video e {suffix} su una nuova timeline")
                 for key in ('apply_subtitles', 'apply_titles', 'apply_media'):
                     self.widgets[key].configure(state='disabled')
             if self.widgets.get('apply_all') is not None:
