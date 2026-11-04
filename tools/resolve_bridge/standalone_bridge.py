@@ -426,11 +426,9 @@ class BridgeClient:
             raise RuntimeError("Package has not been received by this bridge session")
         if apply_scope not in {"all", "titles", "subtitles", "media"}:
             raise ValueError("apply_scope non valido")
-        if (self.current_package.get("summary") or {}).get("original_video"):
-            if apply_scope != "all":
-                raise ValueError("Il video originale richiede INVIA TUTTO su una nuova timeline")
-            destination_mode = "new"
-        elif apply_scope != "all":
+        if (self.current_package.get("summary") or {}).get("original_video") and apply_scope != "all":
+            raise ValueError("Con Video originale selezionato, applica tutte le componenti. Per modifiche selettive, deseleziona Video originale nel pannello EXPORT.")
+        if apply_scope != "all":
             destination_mode = "active"
         status = self.request_json("/api/curation/resolve-bridge/status")
         return self.request_json(f"/api/curation/resolve-handoffs/{self.current_package['package_id']}/apply", "POST", {
@@ -626,7 +624,7 @@ class BridgeApp:
         self.destination = tk.StringVar(value=default_destination())
         destinations = tk.Frame(receive, bg="#11152b"); destinations.pack(fill="x", pady=(12, 5))
         tk.Label(destinations,text="DESTINAZIONE",bg="#11152b",fg="#9299bc",font=("Segoe UI Semibold",8),anchor="w").pack(fill="x",pady=(0,6))
-        DestinationCard(destinations,title="APPLICA ALLA TIMELINE ATTIVA",description="Crea prima un backup numerato in BCK, poi aggiorna direttamente la timeline reale dall'IN corrente",value="active",variable=self.destination,recommended=True,on_select=self._select_destination).pack(fill="x",pady=(0,7))
+        DestinationCard(destinations,title="APPLICA ALLA TIMELINE ATTIVA",description="Backup BCK prima di modificare; il video originale viene importato su V1 solo se manca, senza duplicarlo",value="active",variable=self.destination,recommended=True,on_select=self._select_destination).pack(fill="x",pady=(0,7))
         DestinationCard(destinations,title="CREA UNA NUOVA TIMELINE TEMP",description="Genera una timeline separata contenente soltanto il nuovo montaggio",value="new",variable=self.destination,on_select=self._select_destination).pack(fill="x")
 
         self.widgets["progress"] = ProgressBar(receive); self.widgets["progress"].pack(fill="x", pady=(12, 8))
@@ -666,7 +664,7 @@ class BridgeApp:
 
     def _select_destination(self, value: str) -> None:
         summary = (getattr(self, '_debug_row', {}).get('summary') or {})
-        if summary.get('native_cut') or summary.get('original_video'):
+        if summary.get('native_cut'):
             self.destination.set('new')
             return
         self._destination_explicit = True
@@ -839,10 +837,9 @@ class BridgeApp:
                 for key in ('apply_subtitles', 'apply_titles', 'apply_media'):
                     self.widgets[key].configure(state='disabled')
             if summary.get('original_video'):
-                self.destination.set('new')
                 suffix = 'audio incorporato' if summary.get('original_has_audio') else 'nessun audio incorporato'
                 self.widgets['package'].configure(text=self.widgets['package'].cget('text') +
-                    f"\nVIDEO ORIGINALE SENZA AUTO-CUT · {summary.get('fps')} fps\nImporta tutto il video e {suffix} su una nuova timeline")
+                    f"\nVIDEO ORIGINALE SENZA AUTO-CUT · {summary.get('fps')} fps\n{suffix} · scegli APPLICA ALLA TIMELINE ATTIVA oppure CREA UNA NUOVA")
                 for key in ('apply_subtitles', 'apply_titles', 'apply_media'):
                     self.widgets[key].configure(state='disabled')
             if self.widgets.get('apply_all') is not None:
