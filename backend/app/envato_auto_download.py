@@ -36,6 +36,29 @@ def valid_video(path):
     except OSError:return False
 
 
+RESOLUTION_SCRIPT = r"""async () => {
+  const wait=ms=>new Promise(r=>setTimeout(r,ms));
+  const visible=e=>{if(!e)return false;const r=e.getBoundingClientRect();return r.width>0&&r.height>0};
+  const button=()=>[...document.querySelectorAll('[data-cy="idp-download-button"], [data-cy="idp-header-download-button"]')].find(visible);
+  const trigger=[...document.querySelectorAll('[data-cy="idp-format-dropdown-trigger"]')].find(visible);
+  const fullhd=s=>/1080\s*p|1920\s*[x×]\s*1080/i.test(s||'');
+  if(trigger){
+    trigger.click();await wait(500);
+    const options=[...document.querySelectorAll('[data-cy="idp-format-option"]')].filter(visible);
+    const hd=options.find(e=>fullhd(e.innerText||e.textContent));
+    if(!hd)return {ok:false,error:'Questo video non offre il formato 1080p'};
+    hd.click();await wait(800);
+    const selected=button();
+    if(!selected||!fullhd(selected.innerText||selected.textContent))return {ok:false,error:'Non riesco a verificare il formato 1080p selezionato'};
+    return {ok:true};
+  }
+  const selected=button(),label=selected&&(selected.innerText||selected.textContent)||'';
+  const details=document.querySelector('[data-cy="idp-attributes"]');
+  if(fullhd(label)||(!/4k|2160|uhd/i.test(label)&&fullhd(details&&(details.innerText||details.textContent))))return {ok:true};
+  return {ok:false,error:'Risoluzione 1080p non disponibile o non verificabile'};
+}"""
+
+
 class EnvatoSession:
     def __init__(self,profile):
         self.profile=Path(profile);self.driver=None;self.context=None;self.lock=asyncio.Lock()
@@ -72,6 +95,9 @@ class EnvatoSession:
                 if not valid_url(page.url):raise RuntimeError('Accesso Envato richiesto: apri le impostazioni e accedi')
                 from .social_page_evidence import challenge_required
                 if challenge_required(await page.content()):raise RuntimeError('Verifica Envato richiesta: completala nella finestra di accesso')
+                resolution=await page.evaluate(RESOLUTION_SCRIPT)
+                if not isinstance(resolution,dict) or not resolution.get('ok'):
+                    raise RuntimeError('Envato: '+str((resolution or {}).get('error','formato 1080p non disponibile')))
                 event=asyncio.get_running_loop().create_future()
                 def got_download(value):
                     if not event.done():event.set_result(value)

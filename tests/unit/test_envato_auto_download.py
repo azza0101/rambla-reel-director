@@ -28,7 +28,9 @@ def test_download_uses_exact_event_and_attaches_asset(tmp_path,monkeypatch):
         async def wait_for_timeout(self,*a):pass
         async def content(self):return 'signed in'
         def on(self,event,cb):self.cb=cb
-        async def evaluate(self,script,name):self.cb(Download());return {'ok':True}
+        async def evaluate(self,script,*args):
+            if not args:return {'ok':True}
+            self.cb(Download());return {'ok':True}
         async def close(self):pass
     page=Page()
     class Context:
@@ -53,7 +55,7 @@ def test_failed_licensing_never_creates_registry(tmp_path,monkeypatch):
         async def wait_for_timeout(self,*a):pass
         async def content(self):return ''
         def on(self,*a):pass
-        async def evaluate(self,*a):return {'ok':False,'errore':'accesso richiesto'}
+        async def evaluate(self,*a):return {'ok':True} if len(a)==1 else {'ok':False,'errore':'accesso richiesto'}
         async def close(self):pass
     class Context:
         async def new_page(self):return Page()
@@ -100,3 +102,23 @@ def test_auto_api_accepts_only_existing_envato_asset_and_runs_job(tmp_path,monke
             if result['status']=='ready':break
             time.sleep(.02)
         assert result['status']=='ready' and result['asset_id']=='asset-123'
+
+
+def test_missing_1080_stops_before_download_and_registration(tmp_path,monkeypatch):
+    import backend.app.social_page_evidence as evidence
+    monkeypatch.setattr(evidence,'challenge_required',lambda html:False)
+    class Page:
+        url='https://app.envato.com/stock-video/test'
+        async def goto(self,*a,**k):pass
+        async def wait_for_timeout(self,*a):pass
+        async def content(self):return ''
+        async def evaluate(self,*a):return {'ok':False,'error':'Questo video non offre il formato 1080p'}
+        async def close(self):pass
+    class Context:
+        async def new_page(self):return Page()
+    session=EnvatoSession(tmp_path/'profile')
+    async def context():return Context()
+    session._context=context
+    with pytest.raises(RuntimeError,match='non offre il formato 1080p'):
+        asyncio.run(session.download('https://app.envato.com/stock-video/test','Project',tmp_path/'run','beat-1'))
+    assert not (tmp_path/'run/envato-downloads.json').exists()
