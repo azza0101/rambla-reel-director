@@ -119,3 +119,17 @@ def verified_alignment(turns,candidates,similarities,verify,minimum=.65,max_roun
   if not rejected:return mapping
  mapping=align_windows(turns,candidates,scores,minimum)
  return [j if j is not None and checked.get(j) else None for j in mapping]
+
+
+def verified_alignment_options(turns,candidates,similarities,verifiers,minimum=.65,max_rounds=3):
+ """Keep positively verified paths until the global sequence search.
+
+ A source file can contain multiple performances. A new visible candidate in
+ one performance must not erase a previously verified option in another.
+ These are alternatives, not an instruction to concatenate the local paths.
+ """
+ options=[[] for _ in turns]
+ for verify in verifiers:
+  for i,j in enumerate(verified_alignment(turns,candidates,similarities,verify,minimum,max_rounds)):
+   if j is not None and j not in options[i]:options[i].append(j)
+ return options

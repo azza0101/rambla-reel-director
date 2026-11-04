@@ -2,6 +2,12 @@ import unittest,sys
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'worker'))
 class ObservedCameraTests(unittest.TestCase):
+ def test_verified_paths_are_preserved_as_options_for_global_selection(self):
+  from observed_camera import verified_alignment_options
+  turns=[{'voice':'a'},{'voice':'a'}]
+  candidates=[{'voice':'a','start_frame':0,'end_frame':50},{'voice':'a','start_frame':100,'end_frame':150}]
+  options=verified_alignment_options(turns,candidates,[[.9,.95],[.96,0]],(lambda j:True,lambda j:j==1))
+  self.assertEqual(options,[[1],[0]])
  def test_last_complete_performance_wins_before_literal_similarity(self):
   from observed_camera import lock_performances
   rows=[{'id':'old','field':'a','order':1,'coverage':1.,'usable':True},{'id':'last','field':'a','order':2,'coverage':.94,'usable':True},{'id':'pickup','field':'a','order':3,'coverage':.4,'usable':True}]

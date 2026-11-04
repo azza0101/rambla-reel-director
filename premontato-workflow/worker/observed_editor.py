@@ -34,6 +34,11 @@ def prepare_voice_data(payload,report=None,voice_data=None):
 
 
 def build_observed_excerpt(payload,report=None,voice_data=None):
+ from contextlib import ExitStack
+ with ExitStack() as resources:
+  return _build_observed_excerpt(payload,report,voice_data,resources)
+
+def _build_observed_excerpt(payload,report=None,voice_data=None,resources=None):
  from transcript_align import get_semantic_encoder,normalize
  from staged_dialogue import content_equivalent
  from active_speaker import analyze_candidate
@@ -70,16 +75,38 @@ def build_observed_excerpt(payload,report=None,voice_data=None):
     windows.append({'voice':u['voice'],'start_frame':u['start'],'end_frame':group[-1]['end'],'text':' '.join(v['text'] for v in group),'unit_ids':[v['id'] for v in group],'context':' '.join(v['text'] for v in d['units'][max(0,index-1):index+count+1])})
   turns_by_source[mid]=windows
  raw_face_count=len(faces);faces=consensus_gallery(faces)
+ early=None;reference_visual={};early_rescued=0
+ if payload.get('inventory_config') and payload.get('visual_stage','upstream')=='upstream':
+  from upstream_visual import UpstreamVisual
+  import os
+  early=resources.enter_context(UpstreamVisual(payload['inventory_config'],os.environ.get('PREMONTATO_CACHE_DIR','.premontato-cache'),faces,face_budget=payload.get('visual_face_budget',480),object_budget=payload.get('inventory_frame_budget',12)))
+  if report:report({'phase':'source_visual_index','current':0,'total':len(turns),'label':'Indicizzo i soggetti prima del filtro battute'})
+  for i,t in enumerate(turns):
+   if report:report({'phase':'source_visual_index','current':i,'total':len(turns),'label':'Verifico i soggetti nei turni osservati'})
+   if t['voice'] is not None:reference_visual[i]=early.observe(main,t['start_frame'],t['end_frame'])
+  if report:report({'phase':'source_visual_index','current':len(turns),'total':len(turns),'label':'Indice dei turni osservati completato'})
  enc=get_semantic_encoder();queries=enc.encode([t['text'] for t in turns]);context=enc.encode([' '.join(t['text'] for t in turns[max(0,i-1):i+2]) for i in range(len(turns))]);matches={};records=[]
  def size(mid,start,end):
   rows=[s for s in payload.get('shots',[]) if s['media_id']==mid and max(s['start_frame'],start)<min(s['end_frame'],end)]
   return max(rows,key=lambda s:min(s['end_frame'],end)-max(s['start_frame'],start)).get('shot_size','unknown') if rows else 'unknown'
- for index,(mid,ts) in enumerate(turns_by_source.items()):
+ source_order=sorted(turns_by_source.items(),key=lambda row:(sources[row[0]].get('start_tc',''),sources[row[0]]['name']),reverse=True) if early else turns_by_source.items()
+ for index,(mid,ts) in enumerate(source_order):
   if report:report({'phase':'camera_alignment','current':index,'total':len(turns_by_source),'label':'Allineo turni completi e verifico i campi'})
   if mid==main['media_id']:continue
   ts=[t for t in ts if t['voice'] is not None and t['end_frame']-t['start_frame']<=20*fps]
   if not ts:continue
   vectors=enc.encode([t['text'] for t in ts]);contexts=enc.encode([t['context'] for t in ts]);direct=queries@vectors.T;scores=.75*direct+.25*(context@contexts.T)
+  if early:
+   import re
+   source_roles={r['role'] for r in faces if r['media_id']==mid}
+   for i,t in enumerate(turns):
+    if t['voice'] is None or len(t['text'].split())<3 or source_roles and t['voice'] not in source_roles:continue
+    if reference_visual.get(i,{}).get('visible_role')==t['voice'] and size(main['media_id'],t['start_frame'],t['end_frame'])=='close':continue
+    possible=[j for j,c in enumerate(ts) if c['voice']==t['voice'] and direct[i,j]>=.70 and c['end_frame']-c['start_frame']>=fps*.5]
+    for j in sorted(possible,key=lambda j:float(scores[i,j]),reverse=True)[:2]:
+     c=ts[j];related=bool(re.search(r'\b(questo|guarda|mostra\w*|prend\w*|pos[ao]\w*|oggetto|prodotto|this|show|hold|object)\b',t['text'],re.I))
+     if not c.get('upstream_visual',{}).get('objects_requested'):
+      c['upstream_visual']=early.observe(sources[mid],c['start_frame'],c['end_frame'],objects=related)
   for i,t in enumerate(turns):
    for j,c in enumerate(ts):
     a,b=normalize(t['text']).split(),normalize(c['text']).split();ratio=len(b)/max(1,len(a))
@@ -87,35 +114,56 @@ def build_observed_excerpt(payload,report=None,voice_data=None):
     if payload.get('contextual_questions',False):
      from sequence_director import contextual_question_match
      contextual=contextual_question_match(t['text'],c['text'],float(direct[i,j]),float(context[i]@contexts[j]))
+    if early:
+     from upstream_visual import may_rescue_question
+     contextual=contextual or may_rescue_question(t['text'],c['text'],float(direct[i,j]),float(context[i]@contexts[j]),t['voice'],c['voice'],c.get('upstream_visual',{}).get('visible_role'))
     # Preserve semantic negatives and reject half answers. Repeated short answers
     # are disambiguated by monotonic order plus neighboring observed turns.
     if not .55<=ratio<=1.8 or (not contextual and (direct[i,j]<(.70 if len(a)>=5 else .82) or not content_equivalent(t['text'],c['text'],float(direct[i,j])))) or ('non' in a)!=('non' in b):scores[i,j]=-1
+    elif early and contextual and not content_equivalent(t['text'],c['text'],float(direct[i,j])):early_rescued+=1
   proofs={}
-  def verify(j):
+  def verify_legacy(j):
    c=ts[j];s=sources[mid];proof=analyze_candidate(s,c['start_frame'],c['end_frame'])
    vector=face_vector(s,c['start_frame'],c['end_frame'],proof,active_only=False)
    if not vector and proof.get('status')=='visible':vector=face_vector(s,c['start_frame'],c['end_frame'],proof)
-   proofs[j]=proof
+   proofs.setdefault(j,proof)
    return bool(vector and match_role(vector,faces)==c['voice'])
-  mapping=verified_alignment(turns,ts,scores.tolist(),verify,minimum=.70,max_rounds=3)
+  def verify(j):
+   c=ts[j]
+   if early and c.get('upstream_visual',{}).get('visible_role')==c['voice']:
+    proof=analyze_candidate(sources[mid],c['start_frame'],c['end_frame'])
+    proofs[j]={**proof,'upstream_visual':c['upstream_visual']};return True
+   # A dominant listener must not veto another verified speaking face.
+   return verify_legacy(j)
+  if early and editorial_mode=='sequence_director':
+   from observed_camera import verified_alignment_options
+   mapping=verified_alignment_options(turns,ts,scores.tolist(),(verify,verify_legacy),minimum=.70)
+  else:mapping=[[j] if j is not None else [] for j in verified_alignment(turns,ts,scores.tolist(),verify,minimum=.70,max_rounds=3)]
   accepted=[]
-  for i,j in enumerate(mapping):
-   if j is None:continue
-   c=ts[j];s=sources[mid];c={**c,'guard_end':min([u['start'] for u in data[mid]['units'] if u['start']>=c['end_frame']] or [s['duration_frames']])}
-   field=str(turns[i]['voice'])+':'+size(mid,c['start_frame'],c['end_frame']);row={**c,'media_id':mid,'field':field,'proof':proofs[j],'similarity':float(direct[i,j])};matches[mid,i]=row;accepted.append(i)
-  for field in {matches[mid,i]['field'] for i in accepted}:
-   covered=[i for i in accepted if matches[mid,i]['field']==field];duration=sum(turns[i]['end_frame']-turns[i]['start_frame'] for i in covered);total=sum(t['end_frame']-t['start_frame'] for t in turns if str(t['voice'])==field.split(':')[0]);records.append({'id':mid,'field':field,'order':(sources[mid].get('start_tc',''),sources[mid]['name']),'coverage':duration/max(1,total),'usable':True})
+  for i,choices in enumerate(mapping):
+   for j in choices:
+    c=ts[j];s=sources[mid];c={**c,'guard_end':min([u['start'] for u in data[mid]['units'] if u['start']>=c['end_frame']] or [s['duration_frames']])}
+    field=str(turns[i]['voice'])+':'+size(mid,c['start_frame'],c['end_frame']);row={**c,'media_id':mid,'field':field,'proof':proofs[j],'similarity':float(direct[i,j])};matches[mid,i,j]=row;accepted.append((i,j))
+  for field in {matches[mid,i,j]['field'] for i,j in accepted}:
+   covered={i for i,j in accepted if matches[mid,i,j]['field']==field};duration=sum(turns[i]['end_frame']-turns[i]['start_frame'] for i in covered);total=sum(t['end_frame']-t['start_frame'] for t in turns if str(t['voice'])==field.split(':')[0]);records.append({'id':mid,'field':field,'order':(sources[mid].get('start_tc',''),sources[mid]['name']),'coverage':duration/max(1,total),'usable':True})
  locks=lock_performances(records);decisions=[];warnings=[];candidate_sets=[];sequence=None
  for i,t in enumerate(turns):
   lo=t['start_frame'];hi=turns[i+1]['start_frame'] if i+1<len(turns) else min(main['duration_frames'],t['end_frame']+round(.32*fps))
   proof=analyze_candidate(main,lo,t['end_frame']);vector=face_vector(main,lo,t['end_frame'],proof,active_only=False)
   if not vector and proof.get('status')=='visible':vector=face_vector(main,lo,t['end_frame'],proof)
   visible=match_role(vector,faces) if vector else None
+  if early and visible is None:visible=reference_visual.get(i,{}).get('visible_role')
   chosen={'media_id':main['media_id'],'start_frame':lo,'end_frame':hi,'field':str(field_voice.get(main['media_id']))+':'+size(main['media_id'],lo,hi),'text':t['text'],'ids':list(t['unit_ids']),'base_start':lo,'base_end':hi,'speaker_visible':visible is not None and visible==t['voice'],'voice':t['voice'],'evidence':proof}
-  candidates=[v for (mid,k),v in matches.items() if k==i]
+  candidates=sorted([v for (mid,k,j),v in matches.items() if k==i],key=lambda c:list(sources).index(c['media_id']))
   options=[{**chosen,'ids':list(chosen['ids'])}]
   for c in candidates:
    options.append({**chosen,'ids':list(chosen['ids']),'media_id':c['media_id'],'start_frame':c['start_frame'],'end_frame':min(c['guard_end'],sources[c['media_id']]['duration_frames'],c['end_frame']+min(round(.32*fps),max(0,hi-t['end_frame']))),'field':c['field'],'text':c['text'],'speaker_visible':True,'evidence':c['proof'],'similarity':c['similarity'],'equivalence':'semantic_candidate_unverified_visual_actions'})
+   if early and c.get('upstream_visual',{}).get('objects_requested'):
+    options[-1]['visual_inventory']=c['upstream_visual']['inventory'];options[-1]['object_required']=True
+  if early:
+   import re
+   relevant=bool(re.search(r'\b(questo|guarda|mostra\w*|prend\w*|pos[ao]\w*|oggetto|prodotto|this|show|hold|object)\b',t['text'],re.I))
+   for c in options:c['object_required']=relevant
   candidate_sets.append(options)
   if not chosen['speaker_visible'] and candidates:
    c=max(candidates,key=lambda c:(locks.get(c['field'])==c['media_id'],c['similarity']))
@@ -127,7 +175,7 @@ def build_observed_excerpt(payload,report=None,voice_data=None):
   else:decisions.append(chosen)
  if editorial_mode=='sequence_director':
   inventory_run=None
-  if payload.get('inventory_config'):
+  if payload.get('inventory_config') and early is None:
    from visual_inventory import annotate_candidates
    import os
    try:inventory_run=annotate_candidates(candidate_sets,list(sources.values()),payload['inventory_config'],os.environ.get('PREMONTATO_CACHE_DIR','.premontato-cache'),report,max_frames=payload.get('inventory_frame_budget',12))
@@ -167,16 +215,17 @@ def build_observed_excerpt(payload,report=None,voice_data=None):
   result['av_plan']=compile_av_plan(decisions,proposals,fps)
   # Preserve unresolved turn boundaries even where contiguous source video is merged.
   result['av_plan']['observed_turns']=[dict(t) for t in turns]
-  result['av_plan']['turn_checks']=[{'ids':t['unit_ids'],'voice':t['voice'],'text':t['text'],'start_frame':t['start_frame'],'end_frame':t['end_frame'],'verified_alternatives':sum(k==i for mid,k in matches)} for i,t in enumerate(turns)]
+  result['av_plan']['turn_checks']=[{'ids':t['unit_ids'],'voice':t['voice'],'text':t['text'],'start_frame':t['start_frame'],'end_frame':t['end_frame'],'verified_alternatives':sum(k==i for mid,k,j in matches)} for i,t in enumerate(turns)]
   for request in result['av_plan']['visual_review_requests']:
    ids=set(request['ids'])
    request['turns']=[t for t in result['av_plan']['turn_checks'] if ids.intersection(t['ids'])]
-   request['alternatives']=[{'candidate_id':f'{mid}:{c["start_frame"]}:{c["end_frame"]}','media_id':mid,'start_frame':c['start_frame'],'end_frame':c['end_frame'],'text':c['text'],'voice':c['voice'],'field':c['field'],'similarity':c['similarity']} for (mid,i),c in matches.items() if ids.intersection(turns[i]['unit_ids'])]
+   request['alternatives']=[{'candidate_id':f'{mid}:{c["start_frame"]}:{c["end_frame"]}','media_id':mid,'start_frame':c['start_frame'],'end_frame':c['end_frame'],'text':c['text'],'voice':c['voice'],'field':c['field'],'similarity':c['similarity']} for (mid,i,j),c in matches.items() if ids.intersection(turns[i]['unit_ids'])]
   result['av_plan']['jump_covers']=covers
   if sequence is not None:
    result['sequence_summary']={k:v for k,v in sequence.items() if k!='decisions'}
    if inventory_run is not None:result['inventory_run']=inventory_run
   result['candidate_sets']=candidate_sets
+  if early:result['upstream_visual']={**early.diagnostics(),'reopened_content_pairs':early_rescued,'identity_verified_matches':sum('upstream_visual' in c['proof'] for c in matches.values())}
   result['editorial_mode']=editorial_mode
   if editorial_mode=='evidence_director':
    from sync_coverage import discover_sync,compile_sync_coverage

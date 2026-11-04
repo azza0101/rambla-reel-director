@@ -1,5 +1,7 @@
 # Inventario visivo integrato — verifica del 4 novembre 2026
 
+Il seguito che porta l'indice **prima dei filtri**, con nuovo confronto reale e limiti, è in [2026-11-04-upstream-visual-index.md](2026-11-04-upstream-visual-index.md). Il presente documento descrive la precedente prova a valle.
+
 Richiesta: integrare l'inventario separato di oggetti e volti, provarlo sul girato e verificare la resa. Nessun piano camere scritto dall'agente; i frame annotati manualmente sono riferimenti di valutazione, non istruzioni di montaggio. Il modulo non contiene file, attori o timecode del progetto privato.
 
 ## Implementazione e confini

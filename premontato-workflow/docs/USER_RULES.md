@@ -109,3 +109,9 @@ Questo documento è memoria persistente nel repository. Non crea da solo un appr
 - Richiesta esplicita: prima di collegare automaticamente il controllo Qwen sugli hold lunghi, confrontare anche altri metodi e repository; preferire soluzioni locali e veloci, con test autonomi sul girato reale.
 - Non promuovere una variante soltanto perche produce piu stacchi o meno avvisi: verificare che inquadri davvero la persona corretta e conservi la versione recitata. I risultati negativi vanno registrati quanto quelli positivi.
 - Stato delle prove, dei moduli sperimentali e dei limiti nel rapporto `docs/performance/2026-11-04-evidence-first-director.md`; non e una dichiarazione di aggiornamento stabile del plugin.
+
+## Prove visive prima della scelta (4 novembre 2026)
+- Richiesta: usare l'analisi visiva prima dei filtri e della scelta delle inquadrature, per correggere il problema all'origine. Verificare sul girato se il montaggio cambia davvero e migliora.
+- Un volto dominante di ascolto non deve annullare una verifica positiva di un altro volto parlante nel campo a due persone.
+- Conservare alternative verificate di performance diverse nello stesso file fino alla scelta globale, rispettando ordine sorgente e assenza di sovrapposizioni.
+- Prova upstream integrata nel worker sperimentale: quattro alternative in piu, ma sequenza finale invariata. Rapporto `docs/performance/2026-11-04-upstream-visual-index.md`. Non dichiarare miglioramento o aggiornamento installato.
