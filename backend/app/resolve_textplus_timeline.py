@@ -501,8 +501,18 @@ def append_separate_fusion_titles(
             if len(raw) != 1:
                 raise RuntimeError(f"Resolve could not place RMBL title carrier {index}")
             fusion_item = raw[0]
-            if fusion_item.SetName(title_name) is False:
-                raise RuntimeError(f"Resolve could not name RMBL title clip {index}")
+            # Resolve TimelineItem.GetName is supported, but SetName is not
+            # available on all TimelineItem wrappers (it can resolve to None).
+            # Naming is cosmetic: the protected RMBL TEXT track, yellow color,
+            # imported Fusion composition and exact timing identify this clip.
+            # Never rename the shared MediaPoolItem: that would rename the
+            # user's original video source and other clips using it.
+            rename = getattr(fusion_item, "SetName", None)
+            if callable(rename):
+                try:
+                    rename(title_name)
+                except (AttributeError, TypeError):
+                    pass
             if not fusion_item.ImportFusionComp(str(comp_path)):
                 raise RuntimeError(f"Resolve could not import RMBL title composition {index}")
             color_setter = getattr(fusion_item, "SetClipColor", None)
