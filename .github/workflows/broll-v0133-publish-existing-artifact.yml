@@ -1,0 +1,59 @@
+name: Publish validated B ROLL v0133 diagnostic artifact
+on:
+  push:
+    branches:
+      - support/broll-v0133-publish-validated-artifact
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish-existing-windows-artifacts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Download and verify validated Windows installer assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          repo='${{ github.repository }}'
+          mkdir -p dist
+          gh run download 41811018502 --repo "$repo" --name rmbl-broll-v0133-windows-validation --dir dist
+          test -s dist/RMBL-B-ROLL-Setup-v0133.exe
+          test -s dist/RMBL-B-ROLL-Windows-v0133.zip
+          test -s dist/update.json
+          test "$(jq -r .version dist/update.json)" = v0133
+          test "$(jq -r .archive dist/update.json)" = RMBL-B-ROLL-Windows-v0133.zip
+          printf '%s  %s\n' "$(jq -r .sha256 dist/update.json)" dist/RMBL-B-ROLL-Windows-v0133.zip | sha256sum --check
+          unzip -tq dist/RMBL-B-ROLL-Windows-v0133.zip >/dev/null
+          echo VERIFIED_V0133_ARTIFACT
+      - name: Create or repair v0133 GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          repo='${{ github.repository }}'
+          success=0
+          for attempt in 1 2 3 4 5; do
+            if gh release view v0133 --repo "$repo" >/dev/null 2>&1; then
+              echo "Existing v0133 release detected, refreshing files (attempt $attempt)"
+              if gh release upload v0133 dist/RMBL-B-ROLL-Windows-v0133.zip dist/RMBL-B-ROLL-Setup-v0133.exe dist/update.json --repo "$repo" --clobber &&
+                 gh release edit v0133 --repo "$repo" --draft=false --latest; then
+                success=1
+                break
+              fi
+            else
+              echo "Creating v0133 release (attempt $attempt)"
+              if gh release create v0133 dist/RMBL-B-ROLL-Windows-v0133.zip dist/RMBL-B-ROLL-Setup-v0133.exe dist/update.json --repo "$repo" --target bd7f6c56b0e17825ee23d5e3b31c3ab17c4f5778 --title 'RMBL B ROLL v0133 — Export checklist + active Resolve timeline' --notes 'Checked export components above INVIA A RESOLVE; apply original footage to active Resolve timeline with BCK rollback or create a new timeline; official Envato browser login and automatic association of user-downloaded files; includes v0132 local backup cleanup.' --latest; then
+                success=1
+                break
+              fi
+            fi
+            sleep $((attempt * 5))
+          done
+          test "$success" = 1
+          gh release view v0133 --repo "$repo" --json tagName,isDraft,assets --jq '{tagName,isDraft,assets:[.assets[].name]}'
+          test "$(gh release view v0133 --repo "$repo" --json isDraft --jq .isDraft)" = false
+          for name in RMBL-B-ROLL-Windows-v0133.zip RMBL-B-ROLL-Setup-v0133.exe update.json; do
+            gh release view v0133 --repo "$repo" --json assets --jq '.assets[].name' | grep -Fx "$name"
+          done
