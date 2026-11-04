@@ -87,6 +87,10 @@ def test_finished_timeline_is_recovered_after_receipt_failure(tmp_path):
     assert recover_native_cut_result(project, payload) == result
     assert active == [timeline]
     source.write_bytes(b'replaced')
+    # Same-length rewrites can retain the original mtime on Windows runners.
+    # Make this timestamp-identity contract deterministic across filesystems.
+    import os
+    os.utime(source, ns=(stat.st_atime_ns, stat.st_mtime_ns + 2_000_000_000))
     with pytest.raises(ValueError, match='modificato'):
         recover_native_cut_result(project, payload)
 
