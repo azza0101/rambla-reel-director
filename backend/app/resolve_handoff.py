@@ -61,6 +61,11 @@ def _summary(payload: dict[str, Any]) -> dict[str, Any]:
         "generic_broll_count": generic_ready,
         "unavailable_count": unavailable,
     }
+    if payload.get('original_video'):
+        original = payload['original_video']
+        summary.update(original_video=True, fps=original['fps'],
+                       width=original['width'], height=original['height'],
+                       original_has_audio=bool(original['has_audio']))
     if payload.get('native_cut'):
         cut = payload['native_cut']
         summary.update(native_cut=True, cut_count=len(cut['segments']), fps=cut['fps'],
