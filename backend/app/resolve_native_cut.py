@@ -97,7 +97,7 @@ def delete_owned_native_cut(project, pool, timeline, original, payload):
     clear_native_cut_checkpoint(payload)
 
 
-def append_exact_segment(pool, timeline, source, segment, base_frame, *, convention=None):
+def append_exact_segment(pool, timeline, source, segment, base_frame, *, convention=None, media_types=(1, 2)):
     """Calibrate endFrame on our new clips, then enforce half-open CUT bounds."""
     start = base_frame + segment['edited_in_frame']
     end = base_frame + segment['edited_out_frame']
@@ -105,17 +105,17 @@ def append_exact_segment(pool, timeline, source, segment, base_frame, *, convent
     for adjustment in adjustments:
         rows = [dict(mediaPoolItem=source, startFrame=segment['source_in_frame'],
                      endFrame=segment['source_out_frame'] - adjustment,
-                     mediaType=kind, trackIndex=1, recordFrame=start) for kind in (1, 2)]
+                     mediaType=kind, trackIndex=1, recordFrame=start) for kind in media_types]
         clips = pool.AppendToTimeline(rows) or []
         bounds = [(c.GetStart(), c.GetEnd()) for c in clips]
-        if bounds == [(start, end)] * 2:
+        if bounds == [(start, end)] * len(media_types):
             return clips, adjustment
         # Never ripple delete: only the clips just returned by this append belong to us.
         if clips and not timeline.DeleteClips(clips, False):
             raise RuntimeError('Impossibile rimuovere il taglio di verifica dalla nuova timeline CUT')
-        if len(clips) != 2:
-            raise RuntimeError('Resolve non ha creato entrambe le clip video/audio del CUT')
-        if adjustment != 0 or bounds != [(start, end + 1)] * 2:
+        if len(clips) != len(media_types):
+            raise RuntimeError('Resolve non ha creato le clip video/audio richieste')
+        if adjustment != 0 or bounds != [(start, end + 1)] * len(media_types):
             raise RuntimeError('Resolve ha restituito tempi diversi dal piano CUT')
     raise RuntimeError('Resolve non rispetta gli intervalli del CUT')
 
@@ -131,6 +131,11 @@ def verify_native_cut_base(timeline, cut, base_frame):
     counts = {}
     for kind in ('video', 'audio'):
         items = timeline.GetItemListInTrack(kind, 1) or []
+        if kind == 'audio' and cut.get('source_has_audio') is False:
+            if items:
+                raise RuntimeError('Importazione originale senza audio ha creato audio inatteso')
+            counts['audio_count'] = 0
+            continue
         actual = sorted((c.GetStart(), c.GetEnd()) for c in items)
         if actual != expected:
             raise RuntimeError(f'Verifica CUT {kind} fallita: tagli o sincronizzazione non corrispondono')
@@ -206,7 +211,8 @@ def create_native_cut_base(resolve, project, payload, *, progress=None):
         if len(source_items) != 1:
             raise RuntimeError('Resolve non riesce a importare il video lungo originale')
         source = source_items[0]
-        name = f"RMBL CUT {datetime.now():%Y%m%d %H%M%S} {uuid.uuid4().hex[:6]}"
+        prefix = "RMBL ORIGINALE" if payload.get('original_video_import') else "RMBL CUT"
+        name = f"{prefix} {datetime.now():%Y%m%d %H%M%S} {uuid.uuid4().hex[:6]}"
         timeline = pool.CreateEmptyTimeline(name)
         if timeline and checkpoint:
             from .atomic_io import write_json
@@ -218,13 +224,19 @@ def create_native_cut_base(resolve, project, payload, *, progress=None):
         base = int(timeline.GetStartFrame())
         convention = None
         for index, segment in enumerate(cut['segments']):
-            clips, convention = append_exact_segment(pool, timeline, source, segment, base, convention=convention)
+            media_types = (1, 2) if cut.get('source_has_audio', True) else (1,)
+            clips, convention = append_exact_segment(
+                pool, timeline, source, segment, base,
+                convention=convention, media_types=media_types,
+            )
             linker = getattr(timeline, 'SetClipsLinked', None)
-            if callable(linker) and not linker(clips, True):
-                raise RuntimeError('Resolve non riesce a collegare video e audio del CUT')
+            if len(clips) > 1 and callable(linker) and not linker(clips, True):
+                raise RuntimeError('Resolve non riesce a collegare video e audio della sorgente')
             if progress:
-                progress(10 + int(55 * (index + 1) / len(cut['segments'])),
-                         f"CUT nativo: {index + 1}/{len(cut['segments'])} tagli")
+                message = ("Video originale intero importato, senza AutoCut"
+                           if payload.get('original_video_import')
+                           else f"CUT nativo: {index + 1}/{len(cut['segments'])} tagli")
+                progress(10 + int(55 * (index + 1) / len(cut['segments'])), message)
         counts = verify_native_cut_base(timeline, cut, base)
         alternatives = cut.get('alternatives') or []
         alternative_tracks = []
