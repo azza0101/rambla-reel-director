@@ -15,7 +15,7 @@
 - [x] Compare LR-ASD ONNX with Light-ASD on identical real source windows, with reconciled speaker labels. Report proxy-label agreement separately from human accuracy and warm/cold timing.
 - [x] Test-first sequence selector: no event omission, no backwards/reused source intervals, bounded work, deterministic choices, preference for a coherent last good performance, and avoidance of exposed same-field take splices. Do not force a master or invent reaction shots.
 - [x] Integrate the sequence selector as an opt-in observed-editor mode, retaining the existing default and independent audio/video compilation. Replay the frozen real scene and an additional excerpt; persist diagnostics. No new preview promoted: no visual improvement demonstrated over the existing independent-AV preview.
-- [ ] Run full Python/JavaScript suites and review the final diff. Commit/push only product code, synthetic tests and non-private evidence. Publish a draft PR; no stable release or native Resolve apply is implied.
+- [x] Run full Python/JavaScript suites and review the final diff. Commit/push only product code, synthetic tests and non-private evidence. Publish a draft PR; no stable release or native Resolve apply is implied.
 
 ## Ledger
 
@@ -28,3 +28,4 @@
 - Other red/green corrections: invalidate rejected visual columns across all repeated turns; audit physical contiguous holds instead of treating every short voice turn as a flash cut.
 - Final automatic verification: Python 392/392, JavaScript 262/262. Real scene replay after candidate fix retains the same ten unresolved turns; do not claim quality gains from passing interval tests.
 - Public evidence and source links: docs/performance/2026-11-04-evidence-first-director.md. No native timeline apply, installer or stable update in this research branch.
+- Delivery: draft PR https://github.com/azza0101/rambla-reel-director/pull/47, stacked on #37. Remote head verified against the tested local code; no merge.
