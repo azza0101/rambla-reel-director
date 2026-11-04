@@ -1243,13 +1243,22 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
     if not project:
         raise RuntimeError("Open a DaVinci Resolve project first")
     if payload.get("original_video"):
-        from .original_video_apply import materialize_original_video
-        return materialize_original_video(
-            resolve, project, payload,
-            materialize_overlay=materialize_in_resolve,
-            report=report_handoff_progress,
-            save_project=save_resolve_project,
-        )
+        if payload.get("destination_mode") == "active":
+            # Use the regular active-timeline BCK/rollback mechanism. Do NOT
+            # make a new original timeline or import duplicate V1/A1 media.
+            from .original_video_export import uncut_native_contract
+            payload = {**payload}
+            payload["active_original_video"] = uncut_native_contract(payload.pop("original_video"))
+            payload["native_cut_fps"] = payload["active_original_video"]["fps"]
+            payload["bridge_mark_in"] = None  # aligns overlays to original V1 start
+        else:
+            from .original_video_apply import materialize_original_video
+            return materialize_original_video(
+                resolve, project, payload,
+                materialize_overlay=materialize_in_resolve,
+                report=report_handoff_progress,
+                save_project=save_resolve_project,
+            )
     if payload.get('native_cut'):
         from .resolve_native_cut import create_native_cut_base, verify_native_cut_base, delete_owned_native_cut, recover_native_cut_result, record_native_cut_result
         recovered = recover_native_cut_result(project, payload)
@@ -1329,12 +1338,19 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
         include_titles = include_titles and components.get('highlights', False) and bool(payload.get('titles'))
         include_subtitles = include_subtitles and components.get('subtitles', False) and bool(payload.get('subtitles'))
         include_broll = include_broll and any(components.get(key, False) for key in ('broll', 'social', 'generic'))
+    active_original_source = payload.get("active_original_video")
+    active_original_mode = None
+    if active_original_source:
+        if str(payload.get("destination_mode")) != "active" or apply_scope != "all":
+            raise ValueError("Il video originale sulla timeline attiva richiede APPLICA TUTTO")
+        from .original_video_active import inspect_active_original_timeline
+        active_original_mode = inspect_active_original_timeline(original, active_original_source)
     title_payload = {**payload, "items": payload.get("titles") or payload.get("items") or []}
     plan = build_textplus_timeline_plan(title_payload, target_fps=fps) if include_titles else {"segments": [], "boundaries": []}
     title_name = title_name_from_payload(payload) if include_titles else str(payload.get("title_name") or "")
     # Must precede B-roll FFmpeg conform: missing title files should never
     # waste minutes of CPU only to fail on the first Fusion insertion.
-    if include_titles and str(payload.get("destination_mode") or "new") == "active":
+    if include_titles and str(payload.get("destination_mode") or "new") == "active" and active_original_mode != "import":
         # The isolated Fusion layer must be transferred back onto an ordinary
         # media clip. An audio-only/empty Resolve timeline has no such carrier.
         # Fail BEFORE any costly FFmpeg conform or timeline backup/mutation.
@@ -1462,6 +1478,19 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
                 subtitle_target_track = reserve_subtitle_track_at_start(generated)
             elif apply_scope == "media":
                 removed_broll_count, reusable_broll_tracks = remove_prior_rambla_broll(generated)
+            if active_original_source:
+                from .original_video_active import append_active_original_video
+                # Import only after the BCK snapshot was archived. Existing
+                # matching V1/A1 is reused. Failure restores the original BCK.
+                source_receipt = append_active_original_video(
+                    media_pool, generated, active_original_source, active_original_mode
+                )
+                report_handoff_progress(
+                    payload, "source", 19,
+                    "Video originale sulla timeline attiva " +
+                    ("gia presente · nessun duplicato" if active_original_mode == "reuse"
+                     else "importato con audio")
+                )
             protected_items = snapshot_existing_timeline_items(generated)
             if include_broll and apply_scope == "media":
                 prepared_broll_clips = remap_broll_for_selective_refresh(
@@ -1653,6 +1682,8 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
             "broll_count": broll_count,
             "generic_broll_count": len(generic_rows),
             "broll_skipped": len(payload.get("broll_unavailable") or []),
+            "original_video": bool(active_original_source),
+            "original_video_action": active_original_mode,
             "destination_mode": destination_mode,
             "apply_scope": apply_scope,
             "muted_title_count": muted_title_count,
