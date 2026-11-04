@@ -1286,3 +1286,90 @@ def test_active_timeline_with_source_video_passes_early_preflight(monkeypatch):
     }
     with pytest.raises(RuntimeError, match="READY_TO_CHECK_FUSION_TEMPLATE"):
         mod.materialize_in_resolve(payload)
+
+
+@pytest.mark.parametrize("rename_behavior", ["missing", "refused"])
+def test_separate_fusion_titles_support_resolve_carrier_without_rename(tmp_path, rename_behavior):
+    """Real Resolve may expose TimelineItem.SetName as None or reject renaming.
+
+    Each title must still get its independent composition, exact position and
+    identification through RMBL TEXT track + Yellow without renaming V1 media.
+    """
+    from backend.app.resolve_textplus_timeline import (
+        append_separate_fusion_titles, _is_rambla_generated_title,
+    )
+
+    class OriginalMedia:
+        def __init__(self):
+            self.name = "premontato_originale.mp4"
+        def GetClipProperty(self, key):
+            return "Video" if key == "Type" else ""
+        def SetName(self, _value):
+            raise AssertionError("Never rename the user's shared source media")
+
+    original = OriginalMedia()
+    timeline = SimpleNamespace(
+        GetTrackCount=lambda kind: 1 if kind == "video" else 0,
+        GetItemListInTrack=lambda kind, track: [
+            SimpleNamespace(GetMediaPoolItem=lambda: original)
+        ] if kind == "video" and track == 1 else [],
+    )
+
+    class Carrier:
+        def __init__(self, info):
+            self.info = info
+            self.color = ""
+            self.imported = False
+            self.SetName = None if rename_behavior == "missing" else lambda _: False
+        def GetName(self):
+            return original.name
+        def GetStart(self):
+            return self.info["recordFrame"]
+        def GetEnd(self):
+            return self.info["recordFrame"] + self.info["endFrame"]
+        def GetFusionCompCount(self):
+            return int(self.imported)
+        def ImportFusionComp(self, path):
+            self.imported = Path(path).is_file()
+            return self.imported
+        def SetClipColor(self, color):
+            self.color = color
+            return True
+        def GetClipColor(self):
+            return self.color
+
+    class Pool:
+        def __init__(self):
+            self.rows = []
+        def AppendToTimeline(self, rows):
+            self.rows.extend(rows)
+            return [Carrier(rows[0])]
+
+    class SourceTitle:
+        def __init__(self, start, end):
+            self.start, self.end = start, end
+        def GetStart(self):
+            return self.start
+        def GetEnd(self):
+            return self.end
+        def ExportFusionComp(self, path, index):
+            assert index == 1
+            Path(path).write_text("Composition {}", encoding="utf-8")
+            return True
+
+    pool = Pool()
+    clips = append_separate_fusion_titles(
+        pool, timeline, [SourceTitle(108005, 108035), SourceTitle(108040, 108065)],
+        source_base_frame=108000, destination_base_frame=200000,
+        track_index=5, title_name="KURA_paper_title_v9",
+        composition_root=tmp_path / "title-comps",
+    )
+    assert [(clip.GetStart(), clip.GetEnd()) for clip in clips] == [
+        (200005, 200035), (200040, 200065)
+    ]
+    assert all(clip.imported and clip.color == "Yellow" for clip in clips)
+    assert all(_is_rambla_generated_title(
+        clip, title_name="KURA_paper_title_v9", track_name="RMBL TEXT v1"
+    ) for clip in clips)
+    assert original.name == "premontato_originale.mp4"
+    assert [row["mediaType"] for row in pool.rows] == [1, 1]
