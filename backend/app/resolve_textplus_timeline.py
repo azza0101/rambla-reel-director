@@ -1065,6 +1065,35 @@ def _apply_broll_metadata(item: Any, row: dict[str, Any]) -> bool:
         return all(result is not False for result in results)
 
 
+def direct_broll_compatible(source: Path, fps: float) -> bool:
+    """Use original H.264 MP4 only when its reported frame rates match the timeline."""
+    from fractions import Fraction
+    if source.suffix.lower() != '.mp4' or fps <= 0:
+        return False
+    try:
+        completed = subprocess.run(
+            ['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_streams', '-show_frames', '-show_entries',
+             'stream=codec_name,avg_frame_rate,r_frame_rate:frame=best_effort_timestamp_time', '-of', 'json', str(source)],
+            check=True, capture_output=True, text=True, timeout=30,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        data = json.loads(completed.stdout)
+        stream = data['streams'][0]
+        average = Fraction(stream['avg_frame_rate'])
+        nominal = Fraction(stream['r_frame_rate'])
+        if stream['codec_name'] != 'h264' or average != nominal or abs(float(average) - fps) >= .001:
+            return False
+        frames = data.get('frames') or []
+        if len(frames) < 2:
+            return False
+        # A rate label alone does not establish constant frame timing. Reject
+        # gaps, variable-rate frames and nonzero starts; fall back to conform.
+        period = 1.0 / float(average)
+        return all(abs(float(frame['best_effort_timestamp_time']) - index * period) <= .002
+                   for index, frame in enumerate(frames))
+    except (OSError, subprocess.SubprocessError, ValueError, ZeroDivisionError, KeyError, IndexError, TypeError, AttributeError):
+        return False
+
+
 def conform_broll_media(clips: list[dict[str, Any]], fps: float, progress=None) -> list[dict[str, Any]]:
     """Create frame-exact excerpts with editorial handles around the visible range.
 
@@ -1109,6 +1138,12 @@ def conform_broll_media(clips: list[dict[str, Any]], fps: float, progress=None) 
         total = max(duration, cut_end - cut_start)
         handle_before = start - cut_start
         handle_after = max(0, cut_end - selected_end)
+        if direct_broll_compatible(source, fps):
+            result.append({**row, 'media_path': str(source), 'source_start_frame': start,
+                'source_end_frame': selected_end, 'handle_before_frames': handle_before,
+                'handle_after_frames': handle_after, 'selected_source_start_frame_absolute': start,
+                'selected_source_end_frame_absolute': selected_end, 'conformed_cut_start_frame_absolute': 0})
+            continue
         target = source.with_name(f'{source.stem}_handles_{cut_start}_{total}_{fps:g}fps.mp4')
         if not target.is_file():
             temporary = target.with_name(target.stem + '.working.mp4')
