@@ -1513,8 +1513,8 @@ def create_app(
         failures = []
         async def record_failure(candidate, exc):
             issue=download_issue(candidate, exc)
-            if 'entro 50 secondi' in str(exc): issue['message']='Envato non ha risposto entro 50 secondi. Apri la pagina o ignora la clip.'
-            if report and getattr(report, 'interactive', False) and hasattr(report, 'issue'):
+            if candidate.provider=='envato' and ('entro 50 secondi' in str(exc) or 'entro 25 secondi' in str(exc) or 'fermo da troppo tempo' in str(exc)): issue['message']=str(exc)
+            if candidate.provider not in {'youtube','youtube_shorts'} and report and getattr(report, 'interactive', False) and hasattr(report, 'issue'):
                 if await report.issue(issue) == 'retry':
                     return await prepare_selected_timeline_media(project_id, report, components, asset_ids=[candidate.asset_id], ignored_assets=ignored_assets)
             return [issue]
@@ -1588,7 +1588,8 @@ def create_app(
                 if candidate.provider == 'tiktok' and isinstance(social_profiles, BrowserProfileManager):
                     cookies = await tiktok_session_cookies(candidate.source_page)
                 elif candidate.provider in {'youtube', 'youtube_shorts'}:
-                    cookies = await youtube_session_cookies(candidate.source_page)
+                    try: cookies = await youtube_session_cookies(candidate.source_page)
+                    except Exception: cookies = []
                 elif candidate.provider == 'instagram' and social_profiles.status().get('instagram', {}).get('connection_ready'):
                     async def read_session(page, context, source=candidate.source_page):
                         return await context.cookies([source])
@@ -1757,7 +1758,7 @@ def create_app(
                     from .resolve_media_issues import download_issue
                     candidate=SimpleNamespace(asset_id=asset_id,chunk_id='COPERTURE GENERICHE',provider='envato',title=row.get('title') or 'Envato',source_page=row.get('source_page') or '')
                     issue=download_issue(candidate,exc)
-                    if "entro 50 secondi" in str(exc): issue["message"]="Envato non ha risposto entro 50 secondi. Apri la pagina o ignora la clip."
+                    if "entro 50 secondi" in str(exc) or "entro 25 secondi" in str(exc) or "fermo da troppo tempo" in str(exc): issue["message"]=str(exc)
                     errors.extend(await record_generic_failure(issue))
                 continue
             media = {'asset_id':'generic:'+provider_id, 'title':str(by_id.get(provider_id, {}).get('title') or f'Pexels {provider_id}'),

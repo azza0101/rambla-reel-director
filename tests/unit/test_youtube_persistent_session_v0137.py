@@ -138,3 +138,25 @@ def test_cookie_reader_retries_if_browser_closes_during_read(tmp_path):
     async def context(**kwargs):session.context=Live();session.headless=True;return session.context
     session._context=context
     assert asyncio.run(session.read_session_cookies('https://www.youtube.com/')) == [{'name':'SID'}]
+
+def test_youtube_failure_does_not_force_interactive_popup(tmp_path,monkeypatch):
+    import asyncio,json
+    import backend.app.curation_artifacts as artifacts
+    import backend.app.transcript_intents as intents
+    import backend.app.social_media as social
+    from backend.app.curation_project import ProjectStore
+    from backend.app.curation_server import create_app
+    root=tmp_path/'projects';p=ProjectStore(root,probe_runner=lambda _:{}).create('Test')
+    run=root/p.project_id/'run';run.mkdir(exist_ok=True)
+    (run/'selection-plan.json').write_text(json.dumps({'chunks':{'beat':{'selected_assets':[{'asset_id':'one'}]}}}))
+    candidate=SimpleNamespace(asset_id='one',chunk_id='beat',provider='youtube_shorts',kind='video',title='Clip',source_page='https://www.youtube.com/shorts/test',local_asset_path=None,preview_path=None)
+    monkeypatch.setattr(artifacts,'load_curation_run',lambda _:SimpleNamespace(candidate_index={'one':candidate}))
+    monkeypatch.setattr(intents,'has_selected_intent',lambda *a:True)
+    def prepare(*args,**kwargs):raise RuntimeError('YouTube richiede accesso')
+    monkeypatch.setattr(social,'prepare_media',prepare)
+    def report(*args):pass
+    async def issue(row):raise AssertionError('YouTube must not force a popup')
+    report.interactive=True;report.issue=issue
+    app=create_app(project_root=root)
+    errors=asyncio.run(app.state.prepare_selected_timeline_media(p.project_id,report=report))
+    assert [e['asset_id'] for e in errors]==['one']

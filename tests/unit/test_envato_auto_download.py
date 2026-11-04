@@ -41,7 +41,7 @@ def test_download_uses_exact_event_and_attaches_asset(tmp_path,monkeypatch):
     session._context=context
     phases=[]
     result=asyncio.run(session.download(page.url,'My project',tmp_path/'run','beat-1',progress=phases.append))
-    assert phases == ['Apertura pagina Envato', 'Scelta formato video', 'Registrazione licenza Envato', 'Download del file in corso', 'Verifica del video scaricato']
+    assert phases == ['Apertura pagina Envato', 'Scelta formato video', 'Registrazione licenza Envato', 'Attendo avvio download da Envato', 'Download del file in corso', 'Verifica del video scaricato']
     assert result['status']=='ready'
     assert Path(result['media_path']).read_bytes()==b'valid video'
     assert not list((tmp_path/'run').rglob('download.mp4'))
@@ -130,3 +130,67 @@ def test_unreadable_resolution_menu_stops_before_download_and_registration(tmp_p
     with pytest.raises(RuntimeError,match='Non riesco a leggere i formati Envato'):
         asyncio.run(session.download('https://app.envato.com/stock-video/test','Project',tmp_path/'run','beat-1'))
     assert not (tmp_path/'run/envato-downloads.json').exists()
+
+def test_envato_download_reports_waiting_for_browser_event(tmp_path,monkeypatch):
+    import backend.app.social_page_evidence as evidence
+    import backend.app.envato_auto_download as auto
+    monkeypatch.setattr(evidence,'challenge_required',lambda html:False)
+    monkeypatch.setattr(auto,'valid_video',lambda path:True)
+    class Download:
+        suggested_filename='file.mp4'
+        async def save_as(self,path):Path(path).write_bytes(b'valid')
+        async def failure(self):return None
+    class Page:
+        url='https://elements.envato.com/item'
+        async def goto(self,*a,**k):pass
+        async def wait_for_selector(self,*a,**k):pass
+        async def content(self):return ''
+        def on(self,event,cb):self.cb=cb
+        async def evaluate(self,script,*args):
+            if args:self.cb(Download())
+            return {'ok':True}
+        async def close(self):pass
+    class Context:
+        async def new_page(self):return Page()
+    session=EnvatoSession(tmp_path/'profile')
+    async def context(**kw):return Context()
+    session._context=context;phases=[]
+    asyncio.run(session.download('https://elements.envato.com/item','Test',tmp_path/'run','one',progress=phases.append))
+    assert 'Attendo avvio download da Envato' in phases
+
+
+def test_deadline_does_not_wait_for_uncooperative_cancel():
+    from backend.app.envato_auto_download import bounded_step
+    async def scenario():
+        release=asyncio.Event()
+        async def stuck():
+            try:await asyncio.Event().wait()
+            except asyncio.CancelledError:await release.wait()
+        with pytest.raises(TimeoutError):await bounded_step(stuck(),.05)
+        release.set();await asyncio.sleep(0)
+    asyncio.run(scenario())
+
+def test_missing_browser_download_event_returns_actionable_timeout(tmp_path,monkeypatch):
+    import backend.app.envato_auto_download as auto
+    import backend.app.social_page_evidence as evidence
+    monkeypatch.setattr(evidence,'challenge_required',lambda html:False)
+    original=auto.bounded_step
+    async def bounded(awaitable,timeout):
+        if isinstance(awaitable,asyncio.Future):raise TimeoutError('test')
+        return await original(awaitable,timeout)
+    monkeypatch.setattr(auto,'bounded_step',bounded)
+    class Page:
+        url='https://elements.envato.com/item'
+        async def goto(self,*a,**k):pass
+        async def wait_for_selector(self,*a,**k):pass
+        async def content(self):return ''
+        def on(self,event,cb):pass
+        async def evaluate(self,*args):return {'ok':True}
+        async def close(self):pass
+    class Context:
+        async def new_page(self):return Page()
+    session=EnvatoSession(tmp_path/'profile')
+    async def context(**kw):return Context()
+    session._context=context
+    with pytest.raises(RuntimeError,match='entro 25 secondi'):
+        asyncio.run(session.download('https://elements.envato.com/item','Test',tmp_path/'run','one'))

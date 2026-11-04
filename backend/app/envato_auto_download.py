@@ -11,6 +11,23 @@ from .envato_site_flow import SCRIPT
 from .atomic_io import write_json
 
 
+async def bounded_step(awaitable, timeout):
+    """Enforce a wall-clock deadline even if a browser command ignores cancellation."""
+    task=asyncio.ensure_future(awaitable)
+    def consume(done):
+        try: done.exception()
+        except (asyncio.CancelledError, Exception): pass
+    try:
+        done,_=await asyncio.wait({task},timeout=timeout)
+    except asyncio.CancelledError:
+        task.cancel();task.add_done_callback(consume)
+        raise
+    if not done:
+        task.cancel();task.add_done_callback(consume)
+        raise TimeoutError('Operazione browser scaduta')
+    return task.result()
+
+
 def valid_url(url):
     try:
         parsed=urlparse(str(url))
@@ -199,19 +216,21 @@ class EnvatoSession:
                     if not event.done():event.set_result(value)
                 page.on('download',got_download)
                 notify('Registrazione licenza Envato')
-                try:reply=await asyncio.wait_for(page.evaluate(SCRIPT,str(project_name).strip()),timeout=50)
-                except asyncio.TimeoutError:raise RuntimeError('Envato non ha risposto entro 50 secondi: apri la pagina o ignora questa clip') from None
+                try:reply=await bounded_step(page.evaluate(SCRIPT,str(project_name).strip()),50)
+                except TimeoutError:raise RuntimeError('Envato non ha risposto entro 50 secondi: apri la pagina o ignora questa clip') from None
                 if not isinstance(reply,dict) or not reply.get('ok'):
                     raise RuntimeError('Envato: '+str((reply or {}).get('errore','download non avviato'))+'. Verifica accesso e abbonamento nelle impostazioni.')
-                try:item=await asyncio.wait_for(event,timeout=90)
-                except asyncio.TimeoutError:raise RuntimeError('Envato non ha avviato il download: verifica accesso e licenza') from None
+                notify('Attendo avvio download da Envato')
+                try:item=await bounded_step(event,25)
+                except TimeoutError:raise RuntimeError('Envato non ha avviato il download entro 25 secondi: apri la pagina o ignora questa clip') from None
                 suffix=Path(item.suggested_filename).suffix.lower()
                 if suffix not in DOWNLOAD_SUFFIXES:raise RuntimeError('Formato scaricato da Envato non supportato')
                 token=hashlib.sha256(str(asset_id).encode()).hexdigest()[:20]
                 scratch=Path(run_root)/'envato-media'/token/'incoming'
                 scratch.mkdir(parents=True,exist_ok=True);source=scratch/('download'+suffix)
                 notify('Download del file in corso')
-                await item.save_as(str(source))
+                try: await bounded_step(item.save_as(str(source)),180)
+                except TimeoutError: raise RuntimeError('Download Envato fermo da troppo tempo: apri la pagina o ignora questa clip') from None
                 failure=await item.failure()
                 if failure:raise RuntimeError('Download Envato interrotto: '+str(failure))
                 notify('Verifica del video scaricato')
@@ -225,7 +244,9 @@ class EnvatoSession:
                 registry=load_registry(Path(run_root));registry['assets'][str(asset_id)]={'media_path':str(target.resolve()),'license_project':str(project_name).strip()}
                 write_json(Path(run_root)/'envato-downloads.json',registry)
                 return {'status':'ready','asset_id':asset_id,'media_path':str(target.resolve())}
-            finally:await page.close()
+            finally:
+                try: await bounded_step(page.close(),5)
+                except Exception: pass
 
     async def close(self):
         if self.context:await self.context.close();self.context=None
