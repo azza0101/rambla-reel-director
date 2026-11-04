@@ -61,6 +61,33 @@ RESOLUTION_SCRIPT = r"""async () => {
   return {ok:true,resolution:name||'default'};
 }"""
 
+def session_evidence(provider, url, html):
+    from .social_page_evidence import inspect_search_html, challenge_required
+    parsed = urlparse(str(url))
+    host = (parsed.hostname or '').lower()
+    if not (host == ('tiktok.com' if provider == 'tiktok' else 'envato.com') or host.endswith('.' + ('tiktok.com' if provider == 'tiktok' else 'envato.com'))):
+        return 'unknown'
+    evidence = inspect_search_html(html)
+    if challenge_required(html): return 'verification_required'
+    if provider == 'tiktok' and evidence.signed_in: return 'connected'
+    if provider == 'envato':
+        from html.parser import HTMLParser
+        class AccountLinks(HTMLParser):
+            connected = False
+            def handle_starttag(self, tag, attrs):
+                attrs = dict(attrs)
+                href = urlparse(attrs.get('href', '')).path.rstrip('/').lower()
+                marker = (attrs.get('data-testid','') + ' ' + attrs.get('data-cy','')).lower()
+                if tag == 'a' and href in {'/account/downloads','/user/downloads','/account/licenses'}: self.connected = True
+                if marker in {'user-menu', 'account-menu', 'profile-menu'}: self.connected = True
+        links=AccountLinks(); links.feed(html)
+        if links.connected: return 'connected'
+    if evidence.login_required or parsed.path.startswith(('/login','/sign-in','/accounts/login')):
+        return 'login_required'
+    if provider == 'envato' and 'href="/login"' in html: return 'login_required'
+    return 'unknown'
+
+
 class EnvatoSession:
     def __init__(self,profile):
         self.profile=Path(profile);self.driver=None;self.context=None;self.headless=None;self.lock=asyncio.Lock()
@@ -92,6 +119,30 @@ class EnvatoSession:
             await page.goto(url,wait_until='domcontentloaded',timeout=30000)
             await page.bring_to_front()
         return {'status':'opened','detail':'Accedi nella finestra dedicata di RMBL; poi torna al programma.'}
+
+    async def session_status(self, provider):
+        if self.lock.locked(): return {'status': 'checking'}
+        async with self.lock:
+            try:
+                if not self.profile.is_dir() and not self.context:
+                    return {'status': 'login_required'}
+                context = self.context
+                if context and self.headless is False:
+                    page = next((p for p in context.pages if not p.is_closed()), None)
+                    if not page: return {'status': 'unknown'}
+                else:
+                    context = await self._context(headless=True)
+                    page = await context.new_page()
+                    try:
+                        await page.goto('https://www.tiktok.com/' if provider == 'tiktok' else 'https://elements.envato.com/', wait_until='domcontentloaded', timeout=20000)
+                        await page.wait_for_timeout(1500)
+                        return {'status': session_evidence(provider, page.url, await page.content())}
+                    finally:
+                        await page.close()
+                        await self.close()
+                return {'status': session_evidence(provider, page.url, await page.content())}
+            except Exception:
+                return {'status': 'unknown'}
 
     async def download(self,url,project_name,run_root,asset_id):
         if not valid_url(url):raise ValueError('Indirizzo Envato non valido')

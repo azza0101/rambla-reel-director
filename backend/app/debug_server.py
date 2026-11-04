@@ -830,6 +830,7 @@ def create_app(*, project_root: Path | None = None, curation_run_root: Path | No
                  "orientation": item.orientation, "source_page":item.source_page, "preview_status":item.preview_status, "license_name":item.license_name,"license_url":item.license_url,"attribution":item.attribution,"shot_id":item.shot_id,"matched_query":item.matched_query,"score":item.score,"source_url":item.source_page,
                  "source_start_seconds":item.source_start_seconds,"source_end_seconds":item.source_end_seconds,
                  "quality_state":item.quality_state,"quality_reasons":list(item.quality_reasons),
+                 "envato_full_ready": bool(item.provider == "envato" and item.local_asset_path and item.local_asset_path != item.preview_path and Path(item.local_asset_path).is_file()),
                  "selectable":_candidate_can_be_selected(item),
                  "download_url": f"/api/curation/projects/{project_id}/media/{item.asset_id}/download" if item.kind=="video" and item.preview_status=="ready" and item.clip_verified and item.preview_path and Path(item.preview_path).is_file() else None,
                  "preview_url": item.preview_url or f"/api/curation/projects/{project_id}/media/{item.asset_id}/preview",

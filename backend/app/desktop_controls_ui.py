@@ -1,11 +1,22 @@
 """Settings UI and live worker monitoring for the installed desktop build."""
-PANEL = """<dialog id="rmblSettings" style="background:#151d29;color:white;padding:24px;border:1px solid #526579;border-radius:12px;max-width:560px;width:90vw"><h2>IMPOSTAZIONI API</h2><p>Le credenziali rimangono sul PC. Groq viene verificata prima di salvarla.</p><div id="rmblProviderRows"></div><div style="margin:12px 0;padding:8px;border:1px solid #304055;border-radius:8px"><b>Envato Elements</b><p>Accedi una volta nella finestra dedicata per scaricare automaticamente i video con la licenza del progetto.</p><button id="rmblEnvatoLogin" type="button">ACCEDI A ENVATO</button></div><div style="margin:12px 0;padding:8px;border:1px solid #304055;border-radius:8px"><b>TikTok</b><p>Accedi una volta; i download successivi avvengono senza finestre e senza audio.</p><button id="rmblTikTokLogin" type="button">ACCEDI A TIKTOK</button></div><p id="rmblSettingsStatus" role="status"></p><button id="rmblCloseSettings">CHIUDI</button></dialog><div id="rmblSystemBar" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;background:#101923;padding:10px;border-radius:8px;margin-top:10px"><span id="rmblSystemText">Stato del sistema…</span><button id="rmblStopAnalysis" type="button" style="background:#822a32;color:white" hidden>■ STOP ANALISI</button></div>"""
+PANEL = """<dialog id="rmblSettings" style="background:#151d29;color:white;padding:24px;border:1px solid #526579;border-radius:12px;max-width:560px;width:90vw"><h2>IMPOSTAZIONI API</h2><p>Le credenziali rimangono sul PC. Groq viene verificata prima di salvarla.</p><div id="rmblProviderRows"></div><div style="margin:12px 0;padding:8px;border:1px solid #304055;border-radius:8px"><b>Envato Elements</b> <span id="rmblEnvatoState" role="status">· da verificare</span><p>Accedi una volta nella finestra dedicata per scaricare automaticamente i video con la licenza del progetto.</p><button id="rmblEnvatoLogin" type="button">ACCEDI A ENVATO</button></div><div style="margin:12px 0;padding:8px;border:1px solid #304055;border-radius:8px"><b>TikTok</b> <span id="rmblTikTokState" role="status">· da verificare</span><p>Accedi una volta; i download successivi avvengono senza finestre e senza audio.</p><button id="rmblTikTokLogin" type="button">ACCEDI A TIKTOK</button></div><p id="rmblSettingsStatus" role="status"></p><button id="rmblCloseSettings">CHIUDI</button></dialog><div id="rmblSystemBar" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;background:#101923;padding:10px;border-radius:8px;margin-top:10px"><span id="rmblSystemText">Stato del sistema…</span><button id="rmblStopAnalysis" type="button" style="background:#822a32;color:white" hidden>■ STOP ANALISI</button></div>"""
 JS = r"""<script>
 (function(){
 const el=id=>document.getElementById(id);
 const names={groq:'Groq · trascrizione',pexels:'Pexels · video stock',gemini:'Gemini · AI',google:'Google · immagini'};
 let providers={},active=null,stopping=false,busy=false,allowAnalyzing=false;
-function show(){if(!el('rmblSettings').open)el('rmblSettings').showModal()}
+function show(){if(!el('rmblSettings').open)el('rmblSettings').showModal();refreshSessions()}
+let sessionBusy=false;
+async function refreshSessions(){
+ if(sessionBusy||!el('rmblSettings').open)return;sessionBusy=true;
+ try{const r=await api('/api/curation/provider-session-status');
+ for(const [name,id] of [['envato','rmblEnvatoState'],['tiktok','rmblTikTokState']]){
+  const state=r[name]?.status||'unknown',e=el(id);
+  e.textContent=({connected:' · ✓ CONNESSO',login_required:' · ACCESSO NECESSARIO',verification_required:' · VERIFICA RICHIESTA',checking:' · verifica…',unknown:' · accesso da verificare'})[state]||' · accesso da verificare';
+  e.style.color=state==='connected'?'#7ee5ad':'#e5c47a';
+ }
+ }catch(_){}finally{sessionBusy=false}
+}
 function status(msg){el('rmblSettingsStatus').textContent=msg}
 async function api(url,options){
  const r=await fetch(url,options);let d={};try{d=await r.json()}catch(_){}
@@ -68,7 +79,7 @@ function init(){
    status('Impossibile avviare ANALIZZA: '+e.message+'. Inserisci una chiave valida.');
  }
  },true);
- rows();refresh();setInterval(refresh,2000);
+ rows();refresh();setInterval(refresh,2000);setInterval(refreshSessions,12000);
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init,{once:true});else init();
 })();

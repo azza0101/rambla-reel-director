@@ -82,8 +82,14 @@ function renderResolveMediaIssuesV48(items=[]){
  const remaining=(items||[]).filter(row=>!ignoredCoverageIdsV123.has(String(row.asset_id||'')));
  box.hidden=!remaining.length;
  if(!remaining.length){box.innerHTML='';return}
- box.innerHTML=`<strong>${remaining.length} coperture non disponibili · ignora solo quelle problematiche</strong>${remaining.map(row=>`<article class="resolveMediaIssueV48"><b>${esc(row.beat_id)} · ${esc(row.title||row.provider)}</b><span>${esc(row.message)}</span><div class="row">${row.source_page?`<a href="${esc(row.source_page)}" target="_blank" rel="noopener">APRI FONTE</a>`:''}<button type="button" data-ignore-coverage="${esc(String(row.asset_id||''))}">IGNORA QUESTA COPERTURA</button></div></article>`).join('')}<button id="retryResolveMediaV48" type="button">RIPROVA DOWNLOAD</button>`;
+ box.innerHTML=`<strong>${remaining.length} coperture non disponibili · ignora solo quelle problematiche</strong>${remaining.map(row=>`<article class="resolveMediaIssueV48"><b>${esc(row.beat_id)} · ${esc(row.title||row.provider)}</b><span>${esc(row.message)}</span><div class="row">${row.source_page?`<a href="${esc(row.source_page)}" target="_blank" rel="noopener">APRI FONTE E RISOLVI CAPTCHA</a>`:''}<button type="button" data-ignore-coverage="${esc(String(row.asset_id||''))}">IGNORA QUESTA COPERTURA</button></div></article>`).join('')}<button id="ignoreAllResolveMediaV48" type="button">IGNORA TUTTE LE COPERTURE NON DISPONIBILI</button> <button id="retryResolveMediaV48" type="button">RIPROVA DOWNLOAD</button>`;
  box.querySelector('#retryResolveMediaV48').onclick=()=>prepareResolveHandoffV33();
+ box.querySelector('#ignoreAllResolveMediaV48').onclick=async()=>{
+   if(resolvePreparingV37)return;
+   remaining.forEach(row=>{if(row.asset_id)ignoredCoverageIdsV123.add(String(row.asset_id))});
+   $('timelineExportStatusV33').textContent='Ignoro le '+remaining.length+' coperture non disponibili per questo invio.';
+   await prepareResolveHandoffV33(true);
+ };
  box.querySelectorAll('[data-ignore-coverage]').forEach(button=>button.onclick=async()=>{
    if(resolvePreparingV37)return;
    const id=button.dataset.ignoreCoverage;

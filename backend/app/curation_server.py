@@ -1091,6 +1091,11 @@ def create_app(
             raise HTTPException(status_code=404, detail="unsupported social provider")
         return {**await social_profiles.check_search(clean), "resolve_calls": 0}
 
+    @app.get("/api/curation/provider-session-status")
+    async def provider_session_status():
+        envato, tiktok = await asyncio.gather(envato_auto.session_status('envato'), tiktok_auto.session_status('tiktok'))
+        return {'envato': envato, 'tiktok': tiktok}
+
     @app.post("/api/curation/envato/auto/login")
     async def envato_auto_login():
         try:return await envato_auto.login()
@@ -1494,6 +1499,29 @@ def create_app(
                 if not candidate.local_asset_path or not Path(candidate.local_asset_path).is_file():
                     failures.append(download_issue(candidate, RuntimeError("Selected image is not available locally")))
                 continue
+            if candidate and candidate.provider == 'envato':
+                from .envato_download_bridge import load_registry
+                from .envato_auto_download import valid_video
+                retrieval = active_retrieval_root(run)
+                existing = load_registry(retrieval)['assets'].get(asset_id) or {}
+                if valid_video(existing.get('media_path') or ''):
+                    continue
+                if report:
+                    report(5 + int(60 * index / max(1, len(wanted))),
+                           f'Scarico Envato {index + 1}/{len(wanted)} · {candidate.title}')
+                try:
+                    pending = next((row for row in envato_download_sessions.values()
+                        if row.get('project_id') == project_id and row.get('asset_id') == asset_id
+                        and row.get('status') == 'running'), None)
+                    if pending:
+                        await pending['task']
+                        if pending.get('status') != 'ready':
+                            raise RuntimeError(pending.get('detail') or 'Download Envato non riuscito')
+                    else:
+                        await envato_auto.download(candidate.source_page, load_project(project_id).name, retrieval, asset_id)
+                except Exception as exc:
+                    failures.append(download_issue(candidate, exc))
+                continue
             if candidate and candidate.provider == 'pexels':
                 from .stock_export_media import prepare_pexels_video
                 try:
@@ -1521,6 +1549,8 @@ def create_app(
             except (ValueError, RuntimeError) as exc:
                 failures.append(download_issue(candidate, exc))
         return failures
+
+    app.state.prepare_selected_timeline_media = prepare_selected_timeline_media
 
     def editing_resolve_payload(project_id: str, components=None, ignored_assets=None) -> dict[str, Any]:
         from fractions import Fraction
@@ -1844,7 +1874,7 @@ def create_app(
         skipped = ignored_for_export(ignored)
         async def prepare(report):
             media_issues = await prepare_selected_timeline_media(project_id, report, flags, ignored_assets=skipped)
-            report(65, 'Coperture pronte · controllo video finali')
+            report(65, f'Coperture controllate · {len(media_issues)} non disponibili')
             if flags['generic']:
                 media_issues.extend(await prepare_generic_media(project_id, report, ignored_assets=skipped))
             report(80, 'Media pronti · preparo sottotitoli, frasi e tempi')
