@@ -33,11 +33,13 @@ class ResolveHandoffJobs:
             raise ValueError("Selective Resolve updates require the active timeline")
         package = self.store.read(project_root, package_id)
         if package.get('payload', {}).get('original_video'):
-            if package['status'] == 'completed':
+            if package['status'] == 'completed' and destination_mode == 'new':
                 return package
             if apply_scope != 'all':
-                raise ValueError('Il video originale e i suoi overlay vanno importati insieme in una nuova timeline')
-            destination_mode = 'new'
+                raise ValueError('Con Video originale attivo, usa APPLICA COMPONENTI SELEZIONATE; oppure deseleziona il video originale per aggiornare soltanto media, testi o sottotitoli.')
+            # For active target, the Resolve helper validates identical source
+            # and backs up the timeline before touching a frame. For new, the
+            # existing isolated-original workflow remains unchanged.
         if package.get('payload', {}).get('native_cut'):
             if package['status'] == 'completed':
                 return package
