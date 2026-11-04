@@ -26,6 +26,7 @@ def test_download_uses_exact_event_and_attaches_asset(tmp_path,monkeypatch):
         url='https://elements.envato.com/item'
         async def goto(self,*a,**k):pass
         async def wait_for_timeout(self,*a):pass
+        async def wait_for_selector(self,*a,**k):pass
         async def content(self):return 'signed in'
         def on(self,event,cb):self.cb=cb
         async def evaluate(self,script,*args):
@@ -38,7 +39,9 @@ def test_download_uses_exact_event_and_attaches_asset(tmp_path,monkeypatch):
     session=EnvatoSession(tmp_path/'profile')
     async def context(**kwargs):return Context()
     session._context=context
-    result=asyncio.run(session.download(page.url,'My project',tmp_path/'run','beat-1'))
+    phases=[]
+    result=asyncio.run(session.download(page.url,'My project',tmp_path/'run','beat-1',progress=phases.append))
+    assert phases == ['Apertura pagina Envato', 'Scelta formato video', 'Registrazione licenza Envato', 'Download del file in corso', 'Verifica del video scaricato']
     assert result['status']=='ready'
     assert Path(result['media_path']).read_bytes()==b'valid video'
     assert not list((tmp_path/'run').rglob('download.mp4'))
@@ -54,6 +57,7 @@ def test_failed_licensing_never_creates_registry(tmp_path,monkeypatch):
         url='https://elements.envato.com/item'
         async def goto(self,*a,**k):pass
         async def wait_for_timeout(self,*a):pass
+        async def wait_for_selector(self,*a,**k):pass
         async def content(self):return ''
         def on(self,*a):pass
         async def evaluate(self,*a):return {'ok':True} if len(a)==1 else {'ok':False,'errore':'accesso richiesto'}
@@ -114,6 +118,7 @@ def test_unreadable_resolution_menu_stops_before_download_and_registration(tmp_p
         url='https://app.envato.com/stock-video/test'
         async def goto(self,*a,**k):pass
         async def wait_for_timeout(self,*a):pass
+        async def wait_for_selector(self,*a,**k):pass
         async def content(self):return ''
         async def evaluate(self,*a):return {'ok':False,'error':'Non riesco a leggere i formati Envato'}
         async def close(self):pass

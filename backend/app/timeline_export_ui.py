@@ -14,7 +14,7 @@ PANEL = r'''
   </div>
   <p id="resolveOriginalInfoV129" class="muted" style="margin:8px 0 0" hidden>Video originale con audio, senza AutoCut. Nel bridge puoi scegliere se applicare alla timeline attiva oppure creare una nuova timeline.</p>
   <button id="sendResolvePackageV33" class="primary resolvePrimaryV33">INVIA A RESOLVE</button><button id="exportMediaPackV125" class="ghost" type="button" style="margin-top:8px;width:100%">ESPORTA MEDIA IN CARTELLE (ZIP) · SENZA BRIDGE</button>
-  <div id="resolveDeliveryV33" class="resolveDeliveryV33" hidden><div id="resolveDeliveryCheckV33" class="resolveDeliveryCheckV33" hidden>✓</div><strong id="resolveDeliveryTitleV33">Preparazione pacchetto Resolve…</strong><span id="resolveDeliverySummaryV33"></span><div id="resolveDeliveryProgressV33" class="resolveDeliveryProgressBarV34"><i></i></div><b id="resolveDeliveryPercentV37">0%</b><small id="resolveDeliveryDetailV33"></small></div>
+  <div id="resolveDeliveryV33" class="resolveDeliveryV33" hidden><div id="resolveDeliveryCheckV33" class="resolveDeliveryCheckV33" hidden>✓</div><strong id="resolveDeliveryTitleV33">Preparazione pacchetto Resolve…</strong><span id="resolveDeliverySummaryV33"></span><div id="resolveDeliveryProgressV33" class="resolveDeliveryProgressBarV34"><i></i></div><b id="resolveDeliveryPercentV37">0%</b><small id="resolveDeliveryDetailV33"></small><div id="resolveCurrentMediaV136" class="resolveCurrentMediaV136" hidden><strong id="resolveCurrentMediaTitleV136"></strong><div id="resolveCurrentMediaBarV136" class="resolveCurrentMediaBarV136"><i></i></div><small id="resolveCurrentMediaDetailV136"></small></div></div>
   <div id="resolveMediaIssuesV48" class="resolveMediaIssuesV48" hidden></div>
   <details id="resolveDebugV39" hidden><summary>Diagnostica Resolve</summary><button id="copyResolveDebugV39">COPIA DIAGNOSTICA</button><textarea id="resolveDebugTextV39" readonly aria-label="Diagnostica Resolve" style="width:100%;min-height:150px;margin-top:8px"></textarea></details><details class="legacyExportsV33"><summary>Export file e strumenti precedenti</summary><div class="timelineExportActionsV33"><button id="exportTimelineXmlV33">ESPORTA XML</button><button id="exportTimelineDraV33">ESPORTA DRA</button><button id="openTimelineResolveV33">CREA SUBITO IN RESOLVE · TEMP</button></div></details>
   <p id="timelineExportStatusV33" class="muted" role="status">Puoi inviare anche soltanto subs o parole evidenziate.</p>
@@ -29,6 +29,7 @@ CSS = r'''<style id="timeline-export-v33-style">
 .resolveDeliveryV33[hidden]{display:none}.resolveDeliveryProgressBarV34{grid-column:1/-1;width:100%;min-width:0;height:14px;border-radius:999px;background:#e5e7ee;overflow:hidden}.resolveDeliveryProgressBarV34 i{display:block;width:var(--p,0%);height:100%;background:#5576e8;transition:width .2s linear}
 .resolveExportSelectionV133{margin-top:16px;padding:14px;border:1px solid #6875ac;border-radius:12px;background:#141b33}.resolveExportSelectionTitleV133{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:10px;color:#f1f4ff}.resolveExportSelectionTitleV133 span{font-size:11px;color:#acb6d4}.resolveExportComponentGridV133{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:7px}.resolveExportComponentGridV133 label{display:flex;align-items:center;gap:9px;padding:10px 12px;border:1px solid #4d597e;border-radius:9px;background:#232c48;cursor:pointer;color:#f7f9ff;font-size:13px}.resolveExportComponentGridV133 label:has(input:checked){border-color:#b9d971;background:#273d30}.resolveExportComponentGridV133 label:has(input:disabled){opacity:.52;cursor:not-allowed}.resolveExportComponentGridV133 label input{accent-color:#d8ff5b;min-width:18px;width:18px;height:18px}.resolveExportComponentGridV133 label small{margin-left:auto;color:#cfdbff;font-weight:700;white-space:nowrap}.resolveExportSelectionV133 .muted{display:block;margin:9px 0 0;font-size:12px}.resolvePrimaryV33:disabled{opacity:.6;cursor:not-allowed}
 .resolveMediaIssuesV48{margin-top:12px;padding:12px;border:1px solid #c69b39;border-radius:12px;background:#2a2519}.resolveMediaIssuesV48[hidden]{display:none}.resolveMediaIssueV48{display:grid;grid-template-columns:1fr auto;gap:5px 12px;padding:9px 0;border-bottom:1px solid #ffffff1b}.resolveMediaIssueV48:last-of-type{border-bottom:0}.resolveMediaIssueV48 span{grid-column:1}.resolveMediaIssueV48 a{grid-column:2;grid-row:1/3;align-self:center;padding:9px 12px;border:1px solid #d8ff5b;border-radius:8px;color:#d8ff5b;font-weight:800;text-decoration:none}.resolveMediaIssuesV48>button{margin-top:10px}
+ .resolveCurrentMediaV136{grid-column:1/-1;margin-top:4px;padding:10px 12px;border:1px solid #596d84;border-radius:9px;background:#101d2b}.resolveCurrentMediaV136[hidden]{display:none}.resolveCurrentMediaV136 strong,.resolveCurrentMediaV136 small{display:block}.resolveCurrentMediaV136 strong{color:#e7f8f0;font-size:12px}.resolveCurrentMediaV136 small{margin-top:5px;color:#b9cbd8}.resolveCurrentMediaBarV136{height:7px;margin-top:7px;background:#314352;border-radius:9px;overflow:hidden}.resolveCurrentMediaBarV136 i{display:block;height:100%;width:var(--media-p,0%);background:#72d9b4;transition:width .2s}.resolveCurrentMediaBarV136.indeterminate i{width:35%;animation:resolveMediaPulseV136 1.4s ease-in-out infinite}@keyframes resolveMediaPulseV136{from{transform:translateX(-100%)}to{transform:translateX(300%)}}@media(prefers-reduced-motion:reduce){.resolveCurrentMediaBarV136.indeterminate i{animation:none;width:100%;opacity:.5}}
 </style>'''
 
 JS = r'''
@@ -138,26 +139,36 @@ async function pollResolveHandoffV33(){
   if(done||failed)clearInterval(resolveHandoffPollV33);
  }catch(error){$('resolveDeliveryDetailV33').textContent='Non riesco a verificare la consegna: '+(error.message||String(error))}
 }
+function renderCurrentMediaV136(media){
+ const box=$('resolveCurrentMediaV136'),bar=$('resolveCurrentMediaBarV136');
+ box.hidden=!media;if(!media)return;
+ $('resolveCurrentMediaTitleV136').textContent=`${media.provider||'Media'} · ${media.index||1}/${media.count||1} · ${media.title||'File'}`;
+ const total=Number(media.total)||0,received=Number(media.received)||0,known=total>0;
+ bar.classList.toggle('indeterminate',!known);bar.style.setProperty('--media-p',`${known?Math.max(0,Math.min(100,100*received/total)):0}%`);
+ const seconds=Math.max(0,Math.floor(Date.now()/1000-(Number(media.started_at)||Date.now()/1000)));
+ const amount=known?`${(received/1048576).toFixed(1)} / ${(total/1048576).toFixed(1)} MB · ${Math.floor(100*received/total)}%`:'Dimensione non disponibile';
+ $('resolveCurrentMediaDetailV136').textContent=`${media.phase||'Preparazione'} · ${amount} · ${seconds}s trascorsi`;
+}
 async function prepareResolveHandoffV33(preserveIssues=false){
  if(resolvePreparingV37)return;
  if(ignoredCoverageProjectV125!==state.pid){ignoredCoverageIdsV123.clear();ignoredCoverageProjectV125=state.pid;}
  resolvePreparingV37=true;clearInterval(resolveHandoffPollV33);resolveHandoffIdV33=null;resolveDeliveryTargetCheckV126=0;resolveDeliveryMismatchV126='';
  const panel=$('timelineExportV33'),box=$('resolveDeliveryV33');syncTimelineExportV33();panel.classList.add('busyV33');panel.classList.remove('errorV33');box.hidden=false;box.classList.remove('receivedV33');$('resolveDeliveryCheckV33').hidden=true;if(!preserveIssues)renderResolveMediaIssuesV48([]);
- $('resolveDeliveryTitleV33').textContent='PREPARAZIONE PER RESOLVE';$('resolveDeliverySummaryV33').textContent='Controllo le selezioni salvate';setResolveDeliveryProgressV33(0);$('resolveDeliveryDetailV33').textContent='Avvio…';$('timelineExportStatusV33').textContent='';if(!preserveIssues)box.scrollIntoView({block:'nearest',behavior:'smooth'});
+ renderCurrentMediaV136(null);$('resolveDeliveryTitleV33').textContent='PREPARAZIONE PER RESOLVE';$('resolveDeliverySummaryV33').textContent='Controllo le selezioni salvate';setResolveDeliveryProgressV33(0);$('resolveDeliveryDetailV33').textContent='Avvio…';$('timelineExportStatusV33').textContent='';if(!preserveIssues)box.scrollIntoView({block:'nearest',behavior:'smooth'});
  const projectId=state.pid;
  try{
   const params=new URLSearchParams();
    if(ignoredCoverageIdsV123.size)params.set('ignored',[...ignoredCoverageIdsV123].join(','));
    let job=await api(`/projects/${projectId}/resolve-preparation${params.size?'?'+params:''}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(resolveComponentsV71)});
   while(true){
-   setResolveDeliveryProgressV33(job.percent);$('resolveDeliverySummaryV33').textContent=job.message;$('resolveDeliveryDetailV33').textContent=`Tempo trascorso: ${job.elapsed_seconds||0}s · avanzamento aggiornato dal server`;
+   renderCurrentMediaV136(job.media);setResolveDeliveryProgressV33(job.percent);$('resolveDeliverySummaryV33').textContent=job.message;$('resolveDeliveryDetailV33').textContent=`Tempo trascorso: ${job.elapsed_seconds||0}s · avanzamento aggiornato dal server`;
    if(job.status==='failed')throw Error(job.message||job.error||'Preparazione non riuscita');
    if(job.status==='ready'){resolveHandoffIdV33=job.package.package_id;renderResolveMediaIssuesV48(job.package.media_issues||[]);break;}
    await new Promise(resolve=>setTimeout(resolve,500));job=await api(`/resolve-preparation/${job.job_id}`);
   }
   resolveDeliveryStartedV37=Date.now();resolveHandoffPollV33=setInterval(pollResolveHandoffV33,1000);await pollResolveHandoffV33();
  }catch(error){panel.classList.add('errorV33');$('resolveDeliveryTitleV33').textContent='INVIO NON RIUSCITO';$('resolveDeliveryDetailV33').textContent=error.message||String(error)}
- finally{resolvePreparingV37=false;panel.classList.remove('busyV33');syncTimelineExportV33()}
+ finally{renderCurrentMediaV136(null);resolvePreparingV37=false;panel.classList.remove('busyV33');syncTimelineExportV33()}
 }
 async function exportMediaPackV125(){
  if(!state.pid||state.run)return;

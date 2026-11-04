@@ -25,3 +25,19 @@ def test_failure_is_visible_and_retry_is_allowed():
         assert jobs.status(row['job_id'])['message']=='Pexels download failed'
         retry=jobs.start('p',fail);assert retry['job_id']!=row['job_id'];await jobs.tasks[retry['job_id']]
     asyncio.run(scenario())
+
+def test_media_progress_is_exposed_and_cleared_when_preparation_finishes():
+    async def scenario():
+        jobs=ResolvePrepareJobs(); gate=asyncio.Event()
+        async def runner(report):
+            report.media({'asset_id':'asset-1', 'title':'Video', 'received':5, 'total':10, 'phase':'download'})
+            await gate.wait()
+            report.media(None)
+            return {'package_id':'p'}
+        row=jobs.start('project',runner)
+        await asyncio.sleep(0); await asyncio.sleep(0)
+        media=jobs.status(row['job_id'])['media']
+        assert media['received']==5 and media['total']==10
+        task=jobs.tasks[row['job_id']];gate.set();await task
+        assert jobs.status(row['job_id'])['media'] is None
+    asyncio.run(scenario())

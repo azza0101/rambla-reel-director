@@ -19,6 +19,7 @@ class ResolvePrepareJobs:
         self.jobs[job_id] = row
         def report(percent, message):
             row.update(percent=percent, message=message)
+        report.media = lambda media: row.update(media=media)
         async def run():
             try:
                 result = await asyncio.wait_for(runner(report), timeout=600)
@@ -26,6 +27,7 @@ class ResolvePrepareJobs:
             except Exception as exc:
                 row.update(status='failed', message=str(exc) or 'Preparazione scaduta dopo 10 minuti', error=str(exc))
             finally:
+                row['media'] = None
                 self.tasks.pop(job_id, None)
         self.tasks[job_id] = asyncio.create_task(run())
         return self.status(job_id)

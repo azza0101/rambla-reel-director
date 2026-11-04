@@ -1491,8 +1491,15 @@ def create_app(
         if components is not None:
             wanted = [aid for aid in wanted if filter_selected_media([view.candidate_index.get(aid)], components)]
         failures = []
+        def media_status(value):
+            if report and hasattr(report, 'media'):
+                report.media(value)
         for index, asset_id in enumerate(wanted):
             candidate = view.candidate_index.get(asset_id)
+            media = {'asset_id': asset_id, 'title': candidate.title if candidate else asset_id,
+                     'provider': candidate.provider if candidate else '', 'index': index+1,
+                     'count': len(wanted), 'started_at': time.time(), 'phase': 'Controllo file'}
+            media_status(media.copy())
             if report:
                 report(5 + int(60 * index / max(1, len(wanted))), f'Coperture: {index}/{len(wanted)} pronte · controllo {candidate.title if candidate else asset_id}')
             if candidate and candidate.kind == "image":
@@ -1518,7 +1525,10 @@ def create_app(
                         if pending.get('status') != 'ready':
                             raise RuntimeError(pending.get('detail') or 'Download Envato non riuscito')
                     else:
-                        await envato_auto.download(candidate.source_page, load_project(project_id).name, retrieval, asset_id)
+                        def envato_progress(phase):
+                            media.update(phase=phase, received=None, total=None)
+                            media_status(media.copy())
+                        await envato_auto.download(candidate.source_page, load_project(project_id).name, retrieval, asset_id, progress=envato_progress)
                 except Exception as exc:
                     failures.append(download_issue(candidate, exc))
                 continue
@@ -1527,6 +1537,8 @@ def create_app(
                 try:
                     def download_progress(received, total):
                         fraction = received / total if total else 0
+                        media.update(phase='Download del file', received=received, total=total)
+                        media_status(media.copy())
                         report(5 + int(60 * (index + min(1, fraction)) / max(1, len(wanted))),
                                f'Scarico {candidate.title} · {received/1048576:.1f}' + (f'/{total/1048576:.1f}' if total else '') + ' MB')
                     await prepare_pexels_video(run, asset_id.rsplit(':', 1)[-1], progress=download_progress if report else None)
@@ -1545,9 +1557,12 @@ def create_app(
                     async def read_session(page, context, source=candidate.source_page):
                         return await context.cookies([source])
                     cookies = await social_profiles.run_in_profile(candidate.provider, read_session)
+                media.update(phase='Download del file in corso')
+                media_status(media.copy())
                 await asyncio.to_thread(prepare_media, candidate.source_page, candidate.provider, run, "full", cookies=cookies)
             except (ValueError, RuntimeError) as exc:
                 failures.append(download_issue(candidate, exc))
+        media_status(None)
         return failures
 
     app.state.prepare_selected_timeline_media = prepare_selected_timeline_media
@@ -1654,11 +1669,17 @@ def create_app(
         selected = [str(value) for value in data.get('selected') or []
                     if 'generic:' + str(value) not in ignored_assets]
         for index, provider_id in enumerate(selected):
+            media = {'asset_id':'generic:'+provider_id, 'title':str(by_id.get(provider_id, {}).get('title') or f'Pexels {provider_id}'),
+                     'provider':'pexels', 'index':index+1, 'count':len(selected),
+                     'started_at':time.time(), 'phase':'Controllo file'}
+            if report and hasattr(report, 'media'): report.media(media.copy())
             if report:
                 report(65 + int(15 * index / max(1, len(selected))), f'Video finali: {index}/{len(selected)} pronti · controllo Pexels {provider_id}')
             try:
                 def download_progress(received, total):
                     fraction = received / total if total else 0
+                    media.update(phase='Download del file', received=received, total=total)
+                    if hasattr(report, 'media'): report.media(media.copy())
                     report(65 + int(15 * (index + min(1, fraction)) / max(1, len(selected))),
                            f'Scarico video finale Pexels {provider_id} · {received/1048576:.1f}' + (f'/{total/1048576:.1f}' if total else '') + ' MB')
                 by_id[provider_id] = {**by_id.get(provider_id, {}), **await prepare_pexels_video(run_root(project_id), provider_id, progress=download_progress if report else None)}
@@ -1669,6 +1690,7 @@ def create_app(
                                'source_page': str(by_id.get(provider_id, {}).get('source_page') or ''),
                                'reason': 'download_failed',
                                'message': f'Download Pexels non riuscito ({type(exc).__name__}). Puoi ignorare solo questa clip.'})
+        if report and hasattr(report, 'media'): report.media(None)
         data['items'] = list(by_id.values())
         write_json(path, data)
         return errors

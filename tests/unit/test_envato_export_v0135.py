@@ -18,7 +18,7 @@ def test_selected_envato_is_downloaded_and_failures_are_reported(tmp_path, monke
     monkeypatch.setattr(artifacts, 'load_curation_run', lambda _: SimpleNamespace(candidate_index={x:candidate(x) for x in ('one','two')}))
     monkeypatch.setattr(intents, 'has_selected_intent', lambda *args: True)
     calls=[]
-    async def download(self, url, name, folder, asset_id):
+    async def download(self, url, name, folder, asset_id, progress=None):
         calls.append((name, asset_id))
         if asset_id == 'two': raise RuntimeError('login required')
         return {'status':'ready'}
@@ -42,3 +42,9 @@ def test_session_status_never_claims_connected_from_profile_alone(tmp_path):
     assert session_evidence('envato', 'https://elements.envato.com/', '<a href="/account/downloads">My downloads</a>') == 'connected'
     assert session_evidence('tiktok', 'https://www.tiktok.com/', '<span data-e2e="profile-icon"></span>') == 'connected'
     assert session_evidence('tiktok', 'https://www.tiktok.com/', '<p>Verify you are human</p>') == 'verification_required'
+
+def test_export_ui_has_individual_media_progress():
+    from backend.app.timeline_export_ui import PANEL, JS
+    assert 'resolveCurrentMediaV136' in PANEL
+    assert 'job.media' in JS
+    assert 'Dimensione non disponibile' in JS

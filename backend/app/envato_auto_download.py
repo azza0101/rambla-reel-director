@@ -144,17 +144,24 @@ class EnvatoSession:
             except Exception:
                 return {'status': 'unknown'}
 
-    async def download(self,url,project_name,run_root,asset_id):
+    async def download(self,url,project_name,run_root,asset_id,progress=None):
         if not valid_url(url):raise ValueError('Indirizzo Envato non valido')
         if not str(project_name).strip():raise ValueError('Nome progetto necessario per la licenza Envato')
         async with self.lock:
             context=await self._context();page=await context.new_page()
+            def notify(phase):
+                if progress: progress(phase)
             try:
-                await page.goto(url,wait_until='load',timeout=45000)
-                await page.wait_for_timeout(4000)
+                notify('Apertura pagina Envato')
+                await page.goto(url,wait_until='domcontentloaded',timeout=45000)
+                try:
+                    await page.wait_for_selector('[data-cy="idp-format-dropdown-trigger"], [data-cy="idp-download-button"], [data-cy="idp-header-download-button"], [data-testid="button-download"], [data-testid="button-download-for-free"], [data-testid="action-bar-button-download"], [data-testid="subscribed-onboarding-modal-cta"]',state='attached',timeout=15000)
+                except Exception:
+                    pass
                 if not valid_url(page.url):raise RuntimeError('Accesso Envato richiesto: apri le impostazioni e accedi')
                 from .social_page_evidence import challenge_required
                 if challenge_required(await page.content()):raise RuntimeError('Verifica Envato richiesta: completala nella finestra di accesso')
+                notify('Scelta formato video')
                 resolution=await page.evaluate(RESOLUTION_SCRIPT)
                 if not isinstance(resolution,dict) or not resolution.get('ok'):
                     raise RuntimeError('Envato: '+str((resolution or {}).get('error','formato 1080p non disponibile')))
@@ -162,6 +169,7 @@ class EnvatoSession:
                 def got_download(value):
                     if not event.done():event.set_result(value)
                 page.on('download',got_download)
+                notify('Registrazione licenza Envato')
                 try:reply=await asyncio.wait_for(page.evaluate(SCRIPT,str(project_name).strip()),timeout=75)
                 except asyncio.TimeoutError:raise RuntimeError('Envato non ha risposto: verifica accesso e riprova') from None
                 if not isinstance(reply,dict) or not reply.get('ok'):
@@ -173,9 +181,11 @@ class EnvatoSession:
                 token=hashlib.sha256(str(asset_id).encode()).hexdigest()[:20]
                 scratch=Path(run_root)/'envato-media'/token/'incoming'
                 scratch.mkdir(parents=True,exist_ok=True);source=scratch/('download'+suffix)
+                notify('Download del file in corso')
                 await item.save_as(str(source))
                 failure=await item.failure()
                 if failure:raise RuntimeError('Download Envato interrotto: '+str(failure))
+                notify('Verifica del video scaricato')
                 target=_materialize(source,scratch / "verified")
                 if not target or not await asyncio.to_thread(valid_video,target):raise RuntimeError('Il file Envato non contiene un video utilizzabile')
                 final=scratch.parent / target.name
