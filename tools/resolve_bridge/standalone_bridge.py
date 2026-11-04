@@ -624,7 +624,7 @@ class BridgeApp:
         self.destination = tk.StringVar(value=default_destination())
         destinations = tk.Frame(receive, bg="#11152b"); destinations.pack(fill="x", pady=(12, 5))
         tk.Label(destinations,text="DESTINAZIONE",bg="#11152b",fg="#9299bc",font=("Segoe UI Semibold",8),anchor="w").pack(fill="x",pady=(0,6))
-        DestinationCard(destinations,title="APPLICA ALLA TIMELINE ATTIVA",description="Backup BCK prima di modificare; il video originale viene importato su V1 solo se manca, senza duplicarlo",value="active",variable=self.destination,recommended=True,on_select=self._select_destination).pack(fill="x",pady=(0,7))
+        DestinationCard(destinations,title="APPLICA ALLA TIMELINE ATTIVA",description="Crea prima un backup numerato in BCK; importa il video su V1 solo se manca, senza duplicarlo",value="active",variable=self.destination,recommended=True,on_select=self._select_destination).pack(fill="x",pady=(0,7))
         DestinationCard(destinations,title="CREA UNA NUOVA TIMELINE TEMP",description="Genera una timeline separata contenente soltanto il nuovo montaggio",value="new",variable=self.destination,on_select=self._select_destination).pack(fill="x")
 
         self.widgets["progress"] = ProgressBar(receive); self.widgets["progress"].pack(fill="x", pady=(12, 8))
