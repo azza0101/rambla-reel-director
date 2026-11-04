@@ -1456,6 +1456,7 @@ def create_app(
         return failures
 
     def editing_resolve_payload(project_id: str, components=None, ignored_assets=None) -> dict[str, Any]:
+        from fractions import Fraction
         from .transcript_intents import has_selected_intent
         components = normalize_components(components)
         ignored_assets = set(ignored_assets or ())
