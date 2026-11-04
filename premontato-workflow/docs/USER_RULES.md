@@ -104,3 +104,8 @@ Questo documento è memoria persistente nel repository. Non crea da solo un appr
 - Richiesta: proseguire dal test Nemotron mantenendo il funzionamento locale e automatico. Distinguere sempre una voce riconosciuta da un volto visibile e da una scelta di montaggio corretta.
 - Scelta implementativa, non nuova preferenza estetica: Nemotron Diarization come supporto prudente a WeSpeaker, con ancore indipendenti, nessuna sovrascrittura delle identita gia riconosciute e provenienza esplicita. I cluster sono locali alla singola registrazione; nessun nome di attore necessario.
 - Stato verificato: adattatore e modalita ibrida nel worker sperimentale, test reali su audio/cache e anteprima, non ancora aggiornamento stabile del pannello. Restano coperture e azioni non verificate; non presentare un audit degli intervalli come qualita umana del montaggio.
+
+## Ricerca locale prima di nuovi modelli (4 novembre 2026)
+- Richiesta esplicita: prima di collegare automaticamente il controllo Qwen sugli hold lunghi, confrontare anche altri metodi e repository; preferire soluzioni locali e veloci, con test autonomi sul girato reale.
+- Non promuovere una variante soltanto perche produce piu stacchi o meno avvisi: verificare che inquadri davvero la persona corretta e conservi la versione recitata. I risultati negativi vanno registrati quanto quelli positivi.
+- Stato delle prove, dei moduli sperimentali e dei limiti nel rapporto `docs/performance/2026-11-04-evidence-first-director.md`; non e una dichiarazione di aggiornamento stabile del plugin.
