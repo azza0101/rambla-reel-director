@@ -1698,7 +1698,7 @@ def create_app(
                 'video_available': available,
                 'source_video_available': source_available,
                 'video_reason': 'Conferma CUT e continua per aggiungere testo e coperture ai tagli' if draft_cut else (
-                    '' if available else 'Video originale senza AutoCut: viene importato intero su una nuova timeline con audio, se incluso.' if source_available else 'Carica un video prima di analizzare per includerlo in Resolve senza AutoCut.')}
+                    '' if available else 'Video originale senza AutoCut: nel bridge scegli timeline attiva (vuota o con lo stesso video su V1) oppure nuova timeline. Audio sincronizzato.' if source_available else 'Carica un video prima di analizzare per includerlo in Resolve senza AutoCut.')}
 
     @app.put('/api/curation/projects/{project_id}/export-options')
     async def put_export_options(project_id: str, components: ExportComponents):
