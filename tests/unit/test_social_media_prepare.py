@@ -47,3 +47,15 @@ def test_normal_youtube_is_supported_for_explicit_full_selected_download(tmp_pat
 
     assert output.is_file()
     assert '--download-sections' not in calls[0]
+
+
+def test_cancellable_runner_stops_child_process():
+    import sys, threading, time, pytest
+    from backend.app.social_media import cancellable_runner
+    event=threading.Event();timer=threading.Timer(.3,event.set);timer.start()
+    started=time.monotonic()
+    try:
+        with pytest.raises(RuntimeError,match='interrotto'):
+            cancellable_runner(event)([sys.executable,'-c','import time;time.sleep(20)'],check=True,capture_output=True,timeout=30)
+    finally:timer.cancel()
+    assert time.monotonic()-started < 8

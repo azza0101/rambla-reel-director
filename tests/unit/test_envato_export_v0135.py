@@ -48,3 +48,30 @@ def test_export_ui_has_individual_media_progress():
     assert 'resolveCurrentMediaV136' in PANEL
     assert 'job.media' in JS
     assert 'Dimensione non disponibile' in JS
+
+def test_failed_envato_offer_retry_and_reuses_existing_selection(tmp_path, monkeypatch):
+    import asyncio,json
+    from backend.app.curation_project import ProjectStore
+    from backend.app.curation_server import create_app
+    from backend.app.envato_auto_download import EnvatoSession
+    import backend.app.curation_artifacts as artifacts
+    import backend.app.transcript_intents as intents
+    root=tmp_path/'projects';p=ProjectStore(root,probe_runner=lambda _:{}).create('Test')
+    run=root/p.project_id/'run';run.mkdir(exist_ok=True)
+    (run/'selection-plan.json').write_text(json.dumps({'chunks':{'beat':{'selected_assets':[{'asset_id':'one'}]}}}))
+    candidate=SimpleNamespace(asset_id='one',chunk_id='beat',provider='envato',kind='video',title='Campfire',source_page='https://elements.envato.com/item-ABCDEF',local_asset_path=None,preview_path=None)
+    monkeypatch.setattr(artifacts,'load_curation_run',lambda _:SimpleNamespace(candidate_index={'one':candidate}))
+    monkeypatch.setattr(intents,'has_selected_intent',lambda *a:True)
+    calls=[]
+    async def download(self,url,name,folder,asset_id,progress=None):
+        calls.append(asset_id)
+        if len(calls)==1:raise RuntimeError('Envato non ha risposto entro 50 secondi')
+        return {'status':'ready'}
+    monkeypatch.setattr(EnvatoSession,'download',download)
+    issues=[]
+    def report(*args):pass
+    async def issue(row):issues.append(row);return 'retry'
+    report.interactive=True;report.issue=issue
+    app=create_app(project_root=root)
+    assert asyncio.run(app.state.prepare_selected_timeline_media(p.project_id,report=report))==[]
+    assert calls==['one','one'] and issues[0]['source_page']==candidate.source_page

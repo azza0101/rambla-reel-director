@@ -12,6 +12,48 @@ HOSTS = {'tiktok': {'www.tiktok.com', 'tiktok.com'},
          'youtube_shorts': {'www.youtube.com', 'youtube.com', 'youtu.be'}}
 
 
+def cancellable_runner(cancel_event):
+    """Run only this download's process tree and terminate it on cancellation."""
+    import time
+    def run(command, *, check=False, capture_output=False, timeout=None):
+        if cancel_event.is_set(): raise RuntimeError('Download interrotto')
+        kwargs = {'stdout': subprocess.PIPE if capture_output else None,
+                  'stderr': subprocess.PIPE if capture_output else None,
+                  'stdin': subprocess.DEVNULL}
+        if os.name == 'nt': kwargs['creationflags'] = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+        else: kwargs['start_new_session'] = True
+        process = subprocess.Popen(command, **kwargs)
+        start = time.monotonic()
+        def terminate():
+            if process.poll() is not None: return
+            if os.name == 'nt':
+                try:
+                    subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],
+                        stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=5,
+                        creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0),check=False)
+                except (OSError, subprocess.SubprocessError):
+                    process.kill()
+                if process.poll() is None: process.kill()
+            else:
+                import signal
+                try: os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError: pass
+        while True:
+            try:
+                out,err=process.communicate(timeout=.25)
+                break
+            except subprocess.TimeoutExpired:
+                if cancel_event.is_set():
+                    terminate();process.communicate();raise RuntimeError('Download interrotto')
+                if timeout and time.monotonic()-start >= timeout:
+                    terminate();process.communicate();raise subprocess.TimeoutExpired(command,timeout)
+        result=subprocess.CompletedProcess(command,process.returncode,out,err)
+        if check and result.returncode:
+            raise subprocess.CalledProcessError(result.returncode,command,output=out,stderr=err)
+        return result
+    return run
+
+
 def media_path(source, provider, root, mode):
     if mode not in {'preview', 'full', 'poster', 'hover'} or provider not in HOSTS:
         raise ValueError('Unsupported social media request')

@@ -199,8 +199,8 @@ class EnvatoSession:
                     if not event.done():event.set_result(value)
                 page.on('download',got_download)
                 notify('Registrazione licenza Envato')
-                try:reply=await asyncio.wait_for(page.evaluate(SCRIPT,str(project_name).strip()),timeout=75)
-                except asyncio.TimeoutError:raise RuntimeError('Envato non ha risposto: verifica accesso e riprova') from None
+                try:reply=await asyncio.wait_for(page.evaluate(SCRIPT,str(project_name).strip()),timeout=50)
+                except asyncio.TimeoutError:raise RuntimeError('Envato non ha risposto entro 50 secondi: apri la pagina o ignora questa clip') from None
                 if not isinstance(reply,dict) or not reply.get('ok'):
                     raise RuntimeError('Envato: '+str((reply or {}).get('errore','download non avviato'))+'. Verifica accesso e abbonamento nelle impostazioni.')
                 try:item=await asyncio.wait_for(event,timeout=90)

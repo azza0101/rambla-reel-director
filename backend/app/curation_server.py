@@ -1136,6 +1136,9 @@ def create_app(
         envato_download_sessions[token]=state
         async def execute():
             try:state.update(await envato_auto.download(candidate.source_page,name,run,request.asset_id))
+            except asyncio.CancelledError:
+                state.update(status="cancelled",detail="Download interrotto")
+                raise
             except Exception as exc:state.update(status="error",detail=str(exc)[:400])
         state['task']=asyncio.create_task(execute())
         return {"status":"running","token":token,"asset_id":request.asset_id}
@@ -1508,6 +1511,13 @@ def create_app(
         if components is not None:
             wanted = [aid for aid in wanted if filter_selected_media([view.candidate_index.get(aid)], components)]
         failures = []
+        async def record_failure(candidate, exc):
+            issue=download_issue(candidate, exc)
+            if 'entro 50 secondi' in str(exc): issue['message']='Envato non ha risposto entro 50 secondi. Apri la pagina o ignora la clip.'
+            if report and getattr(report, 'interactive', False) and hasattr(report, 'issue'):
+                if await report.issue(issue) == 'retry':
+                    return await prepare_selected_timeline_media(project_id, report, components, asset_ids=[candidate.asset_id], ignored_assets=ignored_assets)
+            return [issue]
         def media_status(value):
             if report and hasattr(report, 'media'):
                 report.media(value)
@@ -1521,7 +1531,7 @@ def create_app(
                 report(5 + int(60 * index / max(1, len(wanted))), f'Coperture: {index}/{len(wanted)} pronte · controllo {candidate.title if candidate else asset_id}')
             if candidate and candidate.kind == "image":
                 if not candidate.local_asset_path or not Path(candidate.local_asset_path).is_file():
-                    failures.append(download_issue(candidate, RuntimeError("Selected image is not available locally")))
+                    failures.extend(await record_failure(candidate, RuntimeError("Selected image is not available locally")))
                 continue
             if candidate and candidate.provider == 'envato':
                 from .envato_download_bridge import load_registry
@@ -1542,12 +1552,15 @@ def create_app(
                         if pending.get('status') != 'ready':
                             raise RuntimeError(pending.get('detail') or 'Download Envato non riuscito')
                     else:
+                        if report and hasattr(report, 'track_envato_cache'):
+                            token = hashlib.sha256(str(asset_id).encode()).hexdigest()[:20]
+                            report.track_envato_cache(retrieval/'envato-media'/token, retrieval/'envato-downloads.json', asset_id)
                         def envato_progress(phase):
                             media.update(phase=phase, received=None, total=None)
                             media_status(media.copy())
                         await envato_auto.download(candidate.source_page, load_project(project_id).name, retrieval, asset_id, progress=envato_progress)
                 except Exception as exc:
-                    failures.append(download_issue(candidate, exc))
+                    failures.extend(await record_failure(candidate, exc))
                 continue
             if candidate and candidate.provider == 'pexels':
                 from .stock_export_media import prepare_pexels_video
@@ -1558,9 +1571,13 @@ def create_app(
                         media_status(media.copy())
                         report(5 + int(60 * (index + min(1, fraction)) / max(1, len(wanted))),
                                f'Scarico {candidate.title} · {received/1048576:.1f}' + (f'/{total/1048576:.1f}' if total else '') + ' MB')
+                    if report and hasattr(report, 'track_cache_file'):
+                        from .stock_export_media import stock_media_path
+                        tracked = stock_media_path(run, asset_id.rsplit(':', 1)[-1])
+                        report.track_cache_file(tracked); report.track_cache_file(tracked.with_suffix('.json'))
                     await prepare_pexels_video(run, asset_id.rsplit(':', 1)[-1], progress=download_progress if report else None)
                 except Exception as exc:
-                    failures.append(download_issue(candidate, exc))
+                    failures.extend(await record_failure(candidate, exc))
                 continue
             if not candidate or candidate.provider not in {"tiktok", "instagram", "youtube", "youtube_shorts"}:
                 continue
@@ -1578,9 +1595,21 @@ def create_app(
                     cookies = await social_profiles.run_in_profile(candidate.provider, read_session)
                 media.update(phase='Download del file in corso')
                 media_status(media.copy())
-                await asyncio.to_thread(prepare_media, candidate.source_page, candidate.provider, run, "full", cookies=cookies)
+                if report and hasattr(report, 'track_cache_file'):
+                    report.track_cache_file(media_path(candidate.source_page, candidate.provider, run, 'full'))
+                if report and hasattr(report, 'cancel_event'):
+                    from .social_media import cancellable_runner
+                    worker=asyncio.create_task(asyncio.to_thread(prepare_media, candidate.source_page, candidate.provider, run, 'full', cookies=cookies, runner=cancellable_runner(report.cancel_event)))
+                    try: await asyncio.shield(worker)
+                    except asyncio.CancelledError:
+                        report.cancel_event.set()
+                        try: await worker
+                        except Exception: pass
+                        raise
+                else:
+                    await asyncio.to_thread(prepare_media, candidate.source_page, candidate.provider, run, 'full', cookies=cookies)
             except Exception as exc:
-                failures.append(download_issue(candidate, exc))
+                failures.extend(await record_failure(candidate, exc))
         media_status(None)
         return failures
 
@@ -1676,7 +1705,7 @@ def create_app(
                            destination_mode='new')
         return payload
 
-    async def prepare_generic_media(project_id: str, report=None, ignored_assets=None) -> list[dict[str, str]]:
+    async def prepare_generic_media(project_id: str, report=None, ignored_assets=None, only_assets=None) -> list[dict[str, str]]:
         import httpx
         from .atomic_io import write_json
         path = run_root(project_id) / "generic-coverage.json"
@@ -1686,7 +1715,17 @@ def create_app(
         errors = []
         ignored_assets = set(ignored_assets or ())
         selected = [str(value) for value in data.get('selected') or []
-                    if 'generic:' + str(value) not in ignored_assets]
+                    if 'generic:' + str(value) not in ignored_assets and (only_assets is None or 'generic:' + str(value) in only_assets)]
+        async def record_generic_failure(issue):
+            if report and getattr(report, 'interactive', False) and hasattr(report, 'issue'):
+                if await report.issue(issue) == 'retry':
+                    result = await prepare_generic_media(project_id, report, ignored_assets, only_assets={issue['asset_id']})
+                    latest = _read_json(path, {})
+                    for updated in latest.get('items') or []:
+                        if 'generic:' + str(updated.get('provider_id')) == issue['asset_id']:
+                            by_id[str(updated['provider_id'])] = updated
+                    return result
+            return [issue]
         for index, provider_id in enumerate(selected):
             row = by_id.get(provider_id) or {}
             if row.get('provider') == 'envato':
@@ -1705,6 +1744,10 @@ def create_app(
                     ready=registry.get('media_path')
                     if not valid_video(ready or ''):
                         if report: report(65 + int(15*index/max(1,len(selected))), f'Scarico Envato {index+1}/{len(selected)} · {row.get("title") or "video"}')
+                        if report and hasattr(report, 'track_envato_cache'):
+                            token=hashlib.sha256(str(asset_id).encode()).hexdigest()[:20]
+                            tracked_run=run_root(project_id)
+                            report.track_envato_cache(tracked_run/'envato-media'/token, tracked_run/'envato-downloads.json', asset_id)
                         result=await envato_auto.download(row.get('source_page',''), load_project(project_id).name, run_root(project_id), asset_id, progress=notify_envato)
                         ready=result['media_path']
                     facts=probe_full_video(ready)
@@ -1713,7 +1756,9 @@ def create_app(
                     from types import SimpleNamespace
                     from .resolve_media_issues import download_issue
                     candidate=SimpleNamespace(asset_id=asset_id,chunk_id='COPERTURE GENERICHE',provider='envato',title=row.get('title') or 'Envato',source_page=row.get('source_page') or '')
-                    errors.append(download_issue(candidate,exc))
+                    issue=download_issue(candidate,exc)
+                    if "entro 50 secondi" in str(exc): issue["message"]="Envato non ha risposto entro 50 secondi. Apri la pagina o ignora la clip."
+                    errors.extend(await record_generic_failure(issue))
                 continue
             media = {'asset_id':'generic:'+provider_id, 'title':str(by_id.get(provider_id, {}).get('title') or f'Pexels {provider_id}'),
                      'provider':'pexels', 'index':index+1, 'count':len(selected),
@@ -1728,14 +1773,18 @@ def create_app(
                     if hasattr(report, 'media'): report.media(media.copy())
                     report(65 + int(15 * (index + min(1, fraction)) / max(1, len(selected))),
                            f'Scarico video finale Pexels {provider_id} · {received/1048576:.1f}' + (f'/{total/1048576:.1f}' if total else '') + ' MB')
+                if report and hasattr(report, 'track_cache_file'):
+                    from .stock_export_media import stock_media_path
+                    tracked=stock_media_path(run_root(project_id),provider_id)
+                    report.track_cache_file(tracked);report.track_cache_file(tracked.with_suffix('.json'))
                 by_id[provider_id] = {**by_id.get(provider_id, {}), **await prepare_pexels_video(run_root(project_id), provider_id, progress=download_progress if report else None)}
             except Exception as exc:
-                errors.append({'asset_id': 'generic:' + provider_id,
+                errors.extend(await record_generic_failure({'asset_id': 'generic:' + provider_id,
                                'beat_id': 'COPERTURE GENERICHE', 'provider': 'pexels',
                                'title': str(by_id.get(provider_id, {}).get('title') or f'Pexels {provider_id}'),
                                'source_page': str(by_id.get(provider_id, {}).get('source_page') or ''),
                                'reason': 'download_failed',
-                               'message': f'Download Pexels non riuscito ({type(exc).__name__}). Puoi ignorare solo questa clip.'})
+                               'message': f'Download Pexels non riuscito ({type(exc).__name__}). Puoi ignorare solo questa clip.'}))
         if report and hasattr(report, 'media'): report.media(None)
         data['items'] = list(by_id.values())
         write_json(path, data)
@@ -1941,7 +1990,7 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post('/api/curation/projects/{project_id}/resolve-preparation')
-    async def start_resolve_preparation(project_id: str, components: ExportComponents | None = None, ignored: str = ''):
+    async def start_resolve_preparation(project_id: str, components: ExportComponents | None = None, ignored: str = '', interactive: bool = False):
         project = load_project(project_id)
         try:
             from .native_cut_export import assert_current_cut
@@ -1976,6 +2025,7 @@ def create_app(
         session_id = active_bridge_session_id
         skipped = ignored_for_export(ignored)
         async def prepare(report):
+            report.interactive = interactive
             media_issues = await prepare_selected_timeline_media(project_id, report, flags, ignored_assets=skipped)
             report(65, f'Coperture controllate · {len(media_issues)} non disponibili')
             if flags['generic']:
@@ -1996,7 +2046,7 @@ def create_app(
             payload.update(project_id=project_id, bridge_session_id=session_id)
             payload["media_issues"] = media_issues
             report(85, 'Salvo il pacchetto per il bridge')
-            package = await asyncio.to_thread(handoff_store.prepare, handoff_project_root(project_id), payload)
+            package = handoff_store.prepare(handoff_project_root(project_id), payload)
             return {k:v for k,v in package.items() if k != 'payload'}
         return prepare_jobs.start(project_id, prepare)
 
@@ -2006,6 +2056,39 @@ def create_app(
             return prepare_jobs.status(job_id)
         except KeyError:
             raise HTTPException(status_code=404, detail='Preparazione non disponibile: il server è stato riavviato. Ripeti INVIA A RESOLVE.') from None
+
+    @app.post('/api/curation/resolve-preparation/{job_id}/cancel')
+    async def cancel_resolve_preparation(job_id: str, keep_cached: bool = True):
+        try: return await prepare_jobs.cancel(job_id, keep_cached=keep_cached)
+        except KeyError: raise HTTPException(status_code=404, detail='Preparazione non disponibile') from None
+
+    @app.post('/api/curation/resolve-preparation/{job_id}/decision')
+    async def resolve_preparation_decision(job_id: str, choice: str):
+        try: return prepare_jobs.decide(job_id, choice)
+        except KeyError: raise HTTPException(404, detail='Preparazione non disponibile') from None
+        except ValueError as exc: raise HTTPException(409, detail=str(exc)) from None
+
+    @app.post('/api/curation/resolve-preparation/{job_id}/open-source')
+    async def resolve_preparation_open_source(job_id: str):
+        try: row=prepare_jobs.status(job_id)
+        except KeyError: raise HTTPException(404, detail='Preparazione non disponibile') from None
+        issue=row.get('issue') or {};url=str(issue.get('source_page') or '');provider=issue.get('provider')
+        from urllib.parse import urlsplit
+        parsed=urlsplit(url)
+        if row.get('status')!='waiting_user' or parsed.scheme!='https' or not parsed.hostname or parsed.username or parsed.port:
+            raise HTTPException(400, detail='Pagina non disponibile')
+        try:
+            if provider=='envato':
+                from .envato_auto_download import valid_url
+                if not valid_url(url): raise ValueError('Pagina Envato non valida')
+                await envato_auto.login(url)
+                return {'status':'opened'}
+            if provider in {'youtube','youtube_shorts'} and parsed.hostname in {'youtube.com','www.youtube.com','youtu.be'}:
+                await youtube_auto.login(url);return {'status':'opened'}
+            if provider=='tiktok' and parsed.hostname in {'tiktok.com','www.tiktok.com'}:
+                await tiktok_auto.login(url);return {'status':'opened'}
+        except Exception as exc: raise HTTPException(503, detail='Impossibile aprire la finestra dedicata') from exc
+        return {'status':'external','url':url}
 
     @app.get("/api/curation/resolve-handoffs/pending")
     async def pending_resolve_handoffs(resolve_project: str = "", timeline_id: str = "", bridge_session_id: str = "",

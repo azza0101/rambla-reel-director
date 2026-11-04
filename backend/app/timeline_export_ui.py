@@ -22,6 +22,9 @@ PANEL = r'''
   <p id="resolveOriginalInfoV129" class="muted" style="margin:8px 0 0" hidden>Video originale con audio, senza AutoCut. Nel bridge puoi scegliere se applicare alla timeline attiva oppure creare una nuova timeline.</p>
   <button id="sendResolvePackageV33" class="primary resolvePrimaryV33">INVIA A RESOLVE</button><button id="exportMediaPackV125" class="ghost" type="button" style="margin-top:8px;width:100%">ESPORTA MEDIA IN CARTELLE (ZIP) · SENZA BRIDGE</button>
   <div id="resolveDeliveryV33" class="resolveDeliveryV33" hidden><div id="resolveDeliveryCheckV33" class="resolveDeliveryCheckV33" hidden>✓</div><strong id="resolveDeliveryTitleV33">Preparazione pacchetto Resolve…</strong><span id="resolveDeliverySummaryV33"></span><div id="resolveDeliveryProgressV33" class="resolveDeliveryProgressBarV34"><i></i></div><b id="resolveDeliveryPercentV37">0%</b><small id="resolveDeliveryDetailV33"></small><div id="resolveCurrentMediaV136" class="resolveCurrentMediaV136" hidden><strong id="resolveCurrentMediaTitleV136"></strong><div id="resolveCurrentMediaBarV136" class="resolveCurrentMediaBarV136"><i></i></div><small id="resolveCurrentMediaDetailV136"></small></div></div>
+  <button id="stopResolvePrepareV139" type="button" hidden>■ STOP INVIO</button>
+  <dialog id="resolveStopDialogV139" class="resolveDialogV139"><h3>Interrompere l’invio?</h3><p>Scegli cosa fare con i file scaricati durante questo invio. I file già presenti e il progetto restano al sicuro.</p><div class="row"><button id="resolveStopKeepV139" type="button">STOP · MANTIENI I FILE</button><button id="resolveStopDiscardV139" type="button">STOP · ELIMINA I NUOVI FILE</button><button id="resolveStopBackV139" type="button">ANNULLA</button></div></dialog>
+  <dialog id="resolveIssueDialogV139" class="resolveDialogV139"><h3>Problema con una copertura</h3><p id="resolveIssueTitleV139"></p><p id="resolveIssueDetailV139"></p><p>Apri la pagina, risolvi il problema e premi Riprova; oppure ignora questa clip.</p><p id="resolveIssueMessageV139" role="status"></p><div class="row"><button id="resolveIssueOpenV139" type="button">APRI PAGINA</button><button id="resolveIssueRetryV139" type="button">RIPROVA</button><button id="resolveIssueIgnoreV139" type="button">IGNORA QUESTA CLIP</button><button id="resolveIssueIgnoreAllV139" type="button">IGNORA TUTTI GLI ERRORI</button><button id="resolveIssueStopV139" type="button">STOP INVIO</button></div></dialog>
   <div id="resolveMediaIssuesV48" class="resolveMediaIssuesV48" hidden></div>
   <details id="resolveDebugV39" hidden><summary>Diagnostica Resolve</summary><button id="copyResolveDebugV39">COPIA DIAGNOSTICA</button><textarea id="resolveDebugTextV39" readonly aria-label="Diagnostica Resolve" style="width:100%;min-height:150px;margin-top:8px"></textarea></details><details class="legacyExportsV33"><summary>Export file e strumenti precedenti</summary><div class="timelineExportActionsV33"><button id="exportTimelineXmlV33">ESPORTA XML</button><button id="exportTimelineDraV33">ESPORTA DRA</button><button id="openTimelineResolveV33">CREA SUBITO IN RESOLVE · TEMP</button></div></details>
   <p id="timelineExportStatusV33" class="muted" role="status">Puoi inviare anche soltanto subs o parole evidenziate.</p>
@@ -37,6 +40,7 @@ CSS = r'''<style id="timeline-export-v33-style">
 .resolveExportSelectionV133{margin-top:16px;padding:14px;border:1px solid #6875ac;border-radius:12px;background:#141b33}.resolveExportSelectionTitleV133{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:10px;color:#f1f4ff}.resolveExportSelectionTitleV133 span{font-size:11px;color:#acb6d4}.resolveExportComponentGridV133{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:7px}.resolveExportComponentGridV133 label{display:flex;align-items:center;gap:9px;padding:10px 12px;border:1px solid #4d597e;border-radius:9px;background:#232c48;cursor:pointer;color:#f7f9ff;font-size:13px}.resolveExportComponentGridV133 label:has(input:checked){border-color:#b9d971;background:#273d30}.resolveExportComponentGridV133 label:has(input:disabled){opacity:.52;cursor:not-allowed}.resolveExportComponentGridV133 label input{accent-color:#d8ff5b;min-width:18px;width:18px;height:18px}.resolveExportComponentGridV133 label small{margin-left:auto;color:#cfdbff;font-weight:700;white-space:nowrap}.resolveExportSelectionV133 .muted{display:block;margin:9px 0 0;font-size:12px}.resolvePrimaryV33:disabled{opacity:.6;cursor:not-allowed}
 .resolveMediaIssuesV48{margin-top:12px;padding:12px;border:1px solid #c69b39;border-radius:12px;background:#2a2519}.resolveMediaIssuesV48[hidden]{display:none}.resolveMediaIssueV48{display:grid;grid-template-columns:1fr auto;gap:5px 12px;padding:9px 0;border-bottom:1px solid #ffffff1b}.resolveMediaIssueV48:last-of-type{border-bottom:0}.resolveMediaIssueV48 span{grid-column:1}.resolveMediaIssueV48 a{grid-column:2;grid-row:1/3;align-self:center;padding:9px 12px;border:1px solid #d8ff5b;border-radius:8px;color:#d8ff5b;font-weight:800;text-decoration:none}.resolveMediaIssuesV48>button{margin-top:10px}
  .resolveCurrentMediaV136{grid-column:1/-1;margin-top:4px;padding:10px 12px;border:1px solid #596d84;border-radius:9px;background:#101d2b}.resolveCurrentMediaV136[hidden]{display:none}.resolveCurrentMediaV136 strong,.resolveCurrentMediaV136 small{display:block}.resolveCurrentMediaV136 strong{color:#e7f8f0;font-size:12px}.resolveCurrentMediaV136 small{margin-top:5px;color:#b9cbd8}.resolveCurrentMediaBarV136{height:7px;margin-top:7px;background:#314352;border-radius:9px;overflow:hidden}.resolveCurrentMediaBarV136 i{display:block;height:100%;width:var(--media-p,0%);background:#72d9b4;transition:width .2s}.resolveCurrentMediaBarV136.indeterminate i{width:35%;animation:resolveMediaPulseV136 1.4s ease-in-out infinite}@keyframes resolveMediaPulseV136{from{transform:translateX(-100%)}to{transform:translateX(300%)}}@media(prefers-reduced-motion:reduce){.resolveCurrentMediaBarV136.indeterminate i{animation:none;width:100%;opacity:.5}}
+.resolveDialogV139{background:#151d29;color:#eef7f5;border:1px solid #4d806e;border-radius:14px;padding:22px;max-width:560px;width:min(90vw,560px)}.resolveDialogV139::backdrop{background:#000a}.resolveDialogV139 .row{display:flex;flex-wrap:wrap;gap:8px}.resolveDialogV139 p{line-height:1.5}#stopResolvePrepareV139{margin-top:8px;border-color:#df7880;color:#ffd1d4}#stopResolvePrepareV139[hidden]{display:none}
 </style>'''
 
 JS = r'''
@@ -80,6 +84,7 @@ async function loadResolveComponentsV71(){
 }
 
 let resolveHandoffIdV33=null,resolveHandoffPollV33=null,resolvePreparingV37=false,resolveDeliveryStartedV37=0;
+let resolvePrepareJobV139=null,resolveCurrentIssueV139=null;
 let resolveDeliveryTargetCheckV126=0,resolveDeliveryMismatchV126='';
 let genericCoverageV33={items:[],selected:[]};
 let ignoredCoverageIdsV123=new Set();
@@ -177,6 +182,46 @@ function renderCurrentMediaV136(media){
  const amount=known?`${(received/1048576).toFixed(1)} / ${(total/1048576).toFixed(1)} MB · ${Math.floor(100*received/total)}%`:'Dimensione non disponibile';
  $('resolveCurrentMediaDetailV136').textContent=`${media.phase||'Preparazione'} · ${amount} · ${seconds}s trascorsi`;
 }
+function showResolveIssueV139(issue){
+ resolveCurrentIssueV139=issue;
+ const dialog=$('resolveIssueDialogV139');
+ $('resolveIssueTitleV139').textContent=(issue.provider||'Video')+' · '+(issue.title||issue.asset_id||'');
+ $('resolveIssueDetailV139').textContent=issue.message||'Download non riuscito.';
+ $('resolveIssueOpenV139').disabled=!issue.source_page;
+ if(!dialog.open&&!$('resolveStopDialogV139').open)dialog.showModal();
+}
+$('resolveIssueDialogV139').addEventListener('cancel',event=>event.preventDefault());
+$('resolveStopDialogV139').addEventListener('cancel',event=>{event.preventDefault();$('resolveStopDialogV139').close()});
+$('stopResolvePrepareV139').onclick=()=>{if(resolvePrepareJobV139)$('resolveStopDialogV139').showModal()};
+$('resolveIssueStopV139').onclick=()=>{$('resolveIssueDialogV139').close();$('resolveStopDialogV139').showModal()};
+$('resolveStopBackV139').onclick=()=>$('resolveStopDialogV139').close();
+async function stopResolvePrepareV139(keep){
+ if(!resolvePrepareJobV139)return;
+ $('resolveStopDialogV139').close();$('stopResolvePrepareV139').disabled=true;
+ $('resolveDeliveryDetailV33').textContent='Interruzione in corso…';
+ try{await api(`/resolve-preparation/${resolvePrepareJobV139}/cancel?keep_cached=${keep}`,{method:'POST'})}
+ catch(e){$('resolveDeliveryDetailV33').textContent='Impossibile interrompere: '+(e.message||e);$('stopResolvePrepareV139').disabled=false}
+}
+$('resolveStopKeepV139').onclick=()=>stopResolvePrepareV139(true);
+$('resolveStopDiscardV139').onclick=()=>stopResolvePrepareV139(false);
+async function decideResolveIssueV139(choice){
+ if(!resolvePrepareJobV139)return;
+ try{await api(`/resolve-preparation/${resolvePrepareJobV139}/decision?choice=${choice}`,{method:'POST'});$('resolveIssueDialogV139').close();$('resolveIssueMessageV139').textContent=''}
+ catch(e){$('resolveIssueMessageV139').textContent=e.message||String(e)}
+}
+$('resolveIssueRetryV139').onclick=()=>decideResolveIssueV139('retry');
+$('resolveIssueIgnoreV139').onclick=()=>decideResolveIssueV139('ignore');
+$('resolveIssueIgnoreAllV139').onclick=()=>decideResolveIssueV139('ignore_all');
+$('resolveIssueOpenV139').onclick=async()=>{
+ if(!resolvePrepareJobV139)return;
+ if(!['envato','tiktok','youtube','youtube_shorts'].includes(resolveCurrentIssueV139?.provider)){
+  try{const url=new URL(resolveCurrentIssueV139?.source_page||'');if(url.protocol!=='https:')throw Error('Pagina non valida');const opened=window.open(url.href,'_blank','noopener');$('resolveIssueMessageV139').textContent='Pagina aperta. Dopo aver risolto, torna qui e premi RIPROVA.'}
+  catch(e){$('resolveIssueMessageV139').textContent=e.message||String(e)}return;
+ }
+ $('resolveIssueMessageV139').textContent='Apro la pagina…';
+ try{const r=await api(`/resolve-preparation/${resolvePrepareJobV139}/open-source`,{method:'POST'});if(r.status==='external')window.open(r.url,'_blank','noopener');$('resolveIssueMessageV139').textContent='Pagina aperta. Dopo aver risolto, torna qui e premi RIPROVA.'}
+ catch(e){$('resolveIssueMessageV139').textContent=e.message||String(e)}
+};
 async function prepareResolveHandoffV33(preserveIssues=false){
  if(resolvePreparingV37)return;
  if(ignoredCoverageProjectV125!==state.pid){ignoredCoverageIdsV123.clear();ignoredCoverageProjectV125=state.pid;}
@@ -186,9 +231,13 @@ async function prepareResolveHandoffV33(preserveIssues=false){
  const projectId=state.pid;
  try{
   const params=new URLSearchParams();
+   params.set('interactive','true');
    if(ignoredCoverageIdsV123.size)params.set('ignored',[...ignoredCoverageIdsV123].join(','));
    let job=await api(`/projects/${projectId}/resolve-preparation${params.size?'?'+params:''}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(resolveComponentsV71)});
+  resolvePrepareJobV139=job.job_id;$('stopResolvePrepareV139').hidden=false;$('stopResolvePrepareV139').disabled=false;
   while(true){
+   if(job.status==='waiting_user'&&job.issue)showResolveIssueV139(job.issue);
+   if(job.status==='cancelled'){$('resolveDeliveryTitleV33').textContent='INVIO INTERROTTO';$('resolveDeliveryDetailV33').textContent=job.message;return}
    renderCurrentMediaV136(job.media);setResolveDeliveryProgressV33(job.percent);$('resolveDeliverySummaryV33').textContent=job.message;$('resolveDeliveryDetailV33').textContent=`Tempo trascorso: ${job.elapsed_seconds||0}s · avanzamento aggiornato dal server`;
    if(job.status==='failed')throw Error(job.message||job.error||'Preparazione non riuscita');
    if(job.status==='ready'){resolveHandoffIdV33=job.package.package_id;renderResolveMediaIssuesV48(job.package.media_issues||[]);break;}
@@ -196,7 +245,7 @@ async function prepareResolveHandoffV33(preserveIssues=false){
   }
   resolveDeliveryStartedV37=Date.now();resolveHandoffPollV33=setInterval(pollResolveHandoffV33,1000);await pollResolveHandoffV33();
  }catch(error){panel.classList.add('errorV33');$('resolveDeliveryTitleV33').textContent='INVIO NON RIUSCITO';$('resolveDeliveryDetailV33').textContent=error.message||String(error)}
- finally{renderCurrentMediaV136(null);resolvePreparingV37=false;panel.classList.remove('busyV33');syncTimelineExportV33()}
+ finally{resolvePrepareJobV139=null;$('stopResolvePrepareV139').hidden=true;if($('resolveIssueDialogV139').open)$('resolveIssueDialogV139').close();if($('resolveStopDialogV139').open)$('resolveStopDialogV139').close();renderCurrentMediaV136(null);resolvePreparingV37=false;panel.classList.remove('busyV33');syncTimelineExportV33()}
 }
 async function exportMediaPackV125(){
  if(!state.pid||state.run)return;
