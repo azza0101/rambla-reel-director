@@ -803,12 +803,11 @@ def create_app(
         connected=getattr(runner,'is_connected',lambda p:False)(social_profiles.profile_dir('tiktok')) if isinstance(social_profiles,BrowserProfileManager) else False
         if connected:
             async def read(page,context):return await context.cookies([source])
-            return await social_profiles.run_in_profile('tiktok',read)
-        async with tiktok_auto.lock:
             try:
-                context=await tiktok_auto._context()
-                return await context.cookies([source])
-            finally:await tiktok_auto.close()
+                return await social_profiles.run_in_profile('tiktok',read)
+            except Exception:
+                pass  # The login window may have been closed; reopen its saved profile.
+        return await tiktok_auto.read_session_cookies(source)
 
     app.state.tiktok_cookie_reader=tiktok_session_cookies
 
@@ -819,13 +818,7 @@ def create_app(
             raise ValueError('Indirizzo YouTube non valido')
         if not youtube_auto.profile.is_dir() and not youtube_auto.context:
             return []
-        async with youtube_auto.lock:
-            visible = bool(youtube_auto.context and youtube_auto.headless is False)
-            try:
-                context = youtube_auto.context if visible else await youtube_auto._context()
-                return await context.cookies(['https://www.youtube.com/'])
-            finally:
-                if not visible: await youtube_auto.close()
+        return await youtube_auto.read_session_cookies('https://www.youtube.com/')
 
     app.state.youtube_cookie_reader=youtube_session_cookies
 
@@ -1586,7 +1579,7 @@ def create_app(
                 media.update(phase='Download del file in corso')
                 media_status(media.copy())
                 await asyncio.to_thread(prepare_media, candidate.source_page, candidate.provider, run, "full", cookies=cookies)
-            except (ValueError, RuntimeError) as exc:
+            except Exception as exc:
                 failures.append(download_issue(candidate, exc))
         media_status(None)
         return failures
@@ -1695,6 +1688,33 @@ def create_app(
         selected = [str(value) for value in data.get('selected') or []
                     if 'generic:' + str(value) not in ignored_assets]
         for index, provider_id in enumerate(selected):
+            row = by_id.get(provider_id) or {}
+            if row.get('provider') == 'envato':
+                asset_id = 'generic:' + provider_id
+                started = time.time()
+                def notify_envato(phase):
+                    if report and hasattr(report, 'media'):
+                        report.media({'asset_id':asset_id, 'title':str(row.get('title') or 'Envato'),
+                            'provider':'envato','index':index+1,'count':len(selected),
+                            'started_at':started,'phase':phase})
+                try:
+                    from .envato_download_bridge import load_registry
+                    from .envato_auto_download import valid_video
+                    from .video_preview import probe_full_video
+                    registry=load_registry(run_root(project_id))['assets'].get(asset_id) or {}
+                    ready=registry.get('media_path')
+                    if not valid_video(ready or ''):
+                        if report: report(65 + int(15*index/max(1,len(selected))), f'Scarico Envato {index+1}/{len(selected)} · {row.get("title") or "video"}')
+                        result=await envato_auto.download(row.get('source_page',''), load_project(project_id).name, run_root(project_id), asset_id, progress=notify_envato)
+                        ready=result['media_path']
+                    facts=probe_full_video(ready)
+                    by_id[provider_id]={**row,'media_path':str(ready),'duration':facts.get('duration') or row.get('duration')}
+                except Exception as exc:
+                    from types import SimpleNamespace
+                    from .resolve_media_issues import download_issue
+                    candidate=SimpleNamespace(asset_id=asset_id,chunk_id='COPERTURE GENERICHE',provider='envato',title=row.get('title') or 'Envato',source_page=row.get('source_page') or '')
+                    errors.append(download_issue(candidate,exc))
+                continue
             media = {'asset_id':'generic:'+provider_id, 'title':str(by_id.get(provider_id, {}).get('title') or f'Pexels {provider_id}'),
                      'provider':'pexels', 'index':index+1, 'count':len(selected),
                      'started_at':time.time(), 'phase':'Controllo file'}
@@ -1720,6 +1740,8 @@ def create_app(
         data['items'] = list(by_id.values())
         write_json(path, data)
         return errors
+    app.state.prepare_generic_media = prepare_generic_media
+
     @app.get("/api/curation/projects/{project_id}/generic-coverage")
     async def generic_coverage(project_id: str, refresh: bool = False, scope: str = "topic", max_queries: int = 4, manual_query: str = ""):
         from .atomic_io import write_json
@@ -1736,13 +1758,46 @@ def create_app(
         raw_text = str(transcript.get("text") or " ".join(str(x.get("text") or "") for x in transcript.get("segments", []) if isinstance(x, dict)))
         from .geographic_context import places_in, conflicting_place
         from .stock_export_media import preserve_selected_generics
-        if scope not in {"topic", "places"}: raise HTTPException(status_code=422, detail="Tipo di copertura sconosciuto")
+        if scope not in {"topic", "places", "custom"}: raise HTTPException(status_code=422, detail="Tipo di copertura sconosciuto")
         manual_query = manual_query.strip()
         if len(manual_query) > 180 or any(ord(ch) < 32 for ch in manual_query):
             raise HTTPException(status_code=422, detail="Query manuale non valida (max 180 caratteri)")
         if manual_query and len(manual_query) < 2:
             raise HTTPException(status_code=422, detail="Inserisci almeno 2 caratteri nella query")
         source=PexelsSource(os.environ.get("PEXELS_API_KEY"))
+        if scope == 'custom':
+            if not manual_query: raise HTTPException(status_code=422, detail='Inserisci una ricerca')
+            from .envato_source import EnvatoSource
+            envato = EnvatoSource()
+            params = dict(orientation='landscape', min_duration=2, max_duration=180, limit=24)
+            results = await asyncio.gather(source.search(manual_query, **params), envato.search(manual_query, **params), return_exceptions=True)
+            custom = []; errors = []
+            for provider, result in zip(('pexels', 'envato'), results):
+                if isinstance(result, Exception):
+                    errors.append(f'{provider}: ricerca non disponibile')
+                    continue
+                for row in result:
+                    item = {**candidate_dict(row), 'coverage_group': 'custom', 'place': ''}
+                    if provider == 'envato': item['provider_id'] = 'envato:' + str(item['provider_id'])
+                    custom.append(item)
+            if envato.last_attempt.get('status') == 'failed': errors.append('envato: ricerca non disponibile')
+            prior = [dict(row) for row in existing.get('items', [])]
+            prior_by_id = {str(row.get('provider_id')): row for row in prior}
+            for item in custom:
+                previous = prior_by_id.get(str(item['provider_id']))
+                if previous:
+                    previous['coverage_groups'] = list(dict.fromkeys([*(previous.get('coverage_groups') or [previous.get('coverage_group','topic')]), 'custom']))
+            merged = merge_unique([prior, custom], limit=max(120, len(prior)+len(custom)))
+            latest = _read_json(path, existing)
+            results_by_id = {str(row.get('provider_id')): row for row in merged['items']}
+            retained = preserve_selected_generics(latest, merged['items'])
+            for row in retained:
+                match = results_by_id.get(str(row.get('provider_id'))) or {}
+                if match.get('coverage_groups'): row['coverage_groups'] = match['coverage_groups']
+            payload = {**latest, 'items': retained,
+                       'selected': latest.get('selected', []), 'errors': errors}
+            write_json(path, payload)
+            return payload
         errors=[]; items=[]; places=places_in(raw_text) or places_in(topic)
         if manual_query:
             # The user-provided search is the authority, even if NER detected no place.

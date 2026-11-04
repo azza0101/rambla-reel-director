@@ -5,19 +5,17 @@ import inspect
 from backend.app import curation_server
 
 
-def test_manual_generic_and_place_search_controls():
-    assert 'id="manualGenericCoverageV122"' in PANEL
-    assert 'id="manualPlaceCoverageV122"' in PANEL
-    assert 'id="genericQueryV122"' in PANEL
-    assert 'id="placeQueryV122"' in PANEL
+def test_custom_search_controls():
+    assert 'id="customSearchV138"' in PANEL
+    assert 'id="customQueryV138"' in PANEL
     assert "params.set('manual_query',manualQuery)" in JS
-    assert "window.scrollTo({top,behavior:'instant'})" in JS
+    assert "loadGenericCoverageV33(true,'custom',query)" in JS
 
 
 def test_research_run_never_auto_scrolls_to_workflow_header():
     html = render_curation_page_v2("scroll-v122")
     assert "else if(['videos','social','images'].includes(kind))openOnlyWorkflowStepV42(7,false)" in html
-    assert 'manualPlaceCoverageV122' in html
+    assert 'customSearchV138' in html
 
 
 def test_server_exposes_manual_query_and_preserves_prior_assets():

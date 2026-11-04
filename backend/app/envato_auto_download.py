@@ -131,6 +131,24 @@ class EnvatoSession:
             await page.bring_to_front()
         return {'status':'opened','detail':'Accedi nella finestra dedicata di RMBL; poi torna al programma.'}
 
+    async def read_session_cookies(self, url):
+        async with self.lock:
+            for attempt in range(2):
+                visible = bool(self.context and self.headless is False and
+                               any(not page.is_closed() for page in self.context.pages))
+                try:
+                    context = self.context if visible else await self._context()
+                    return await context.cookies([url])
+                except Exception:
+                    if attempt:
+                        raise RuntimeError('Sessione browser non disponibile: riapri l’accesso nelle impostazioni') from None
+                    try: await self.close()
+                    except Exception: pass
+                finally:
+                    if not visible:
+                        try: await self.close()
+                        except Exception: pass
+
     async def session_status(self, provider):
         if self.lock.locked(): return {'status': 'checking'}
         async with self.lock:

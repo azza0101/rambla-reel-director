@@ -43,7 +43,16 @@ public static class RamblaWindow {
   $origin=([Uri]$Url).GetLeftPart([UriPartial]::Authority)
   $originPath=Join-Path $UserDataDir 'rambla-window-origin.txt'
   $savedOrigin=if(Test-Path $originPath){(Get-Content -LiteralPath $originPath -Raw).Trim()}else{''}
+  $buildPath=Join-Path $UserDataDir 'rambla-window-build.txt'
+  $build=if (([Uri]$Url).Query -match '(?:[?&])build=([a-f0-9]+)') { $Matches[1] } else { '' }
+  if(-not $build) { $build = '' }
+  $savedBuild=if(Test-Path $buildPath){(Get-Content -LiteralPath $buildPath -Raw).Trim()}else{''}
   $windows=@([RamblaWindow]::FindAll($expectedProcess))
+  if($build -and $savedBuild -ne $build -and $windows.Count -gt 0) {
+    foreach($old in $windows){[RamblaWindow]::Close($old)}
+    Start-Sleep -Milliseconds 500
+    $windows=@()
+  }
   if($savedOrigin -and $savedOrigin -ne $origin) {
     foreach($old in $windows){[RamblaWindow]::Close($old)}
     Start-Sleep -Milliseconds 500
@@ -57,6 +66,7 @@ public static class RamblaWindow {
     [void][RamblaWindow]::ShowWindowAsync($window,9)
     [void][RamblaWindow]::SetForegroundWindow($window)
     Set-Content -LiteralPath $originPath -Value $origin -NoNewline
+    Set-Content -LiteralPath $buildPath -Value $build -NoNewline
     exit 0
   }
   $arguments=@("--user-data-dir=`"$UserDataDir`"","--profile-directory=`"$ProfileDirectory`"","--app=`"$Url`"","--start-maximized","--no-first-run")
@@ -68,6 +78,7 @@ public static class RamblaWindow {
   }
   if($windows.Count -gt 1){for($i=1;$i -lt $windows.Count;$i++){[RamblaWindow]::Close($windows[$i])}}
   Set-Content -LiteralPath $originPath -Value $origin -NoNewline
+  Set-Content -LiteralPath $buildPath -Value $build -NoNewline
 } finally {
   if ($acquired) { try { $mutex.ReleaseMutex() } catch {} }
   $mutex.Dispose()

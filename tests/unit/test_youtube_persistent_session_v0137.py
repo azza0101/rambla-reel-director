@@ -79,3 +79,62 @@ def test_youtube_session_state_requires_visible_account_element():
     from backend.app.envato_auto_download import session_evidence
     assert session_evidence('youtube','https://www.youtube.com/', '<script>id="avatar-btn"</script>') == 'unknown'
     assert session_evidence('youtube','https://www.youtube.com/', '<button id="avatar-btn" aria-label="Account"></button>') == 'connected'
+
+def test_closed_visible_youtube_session_recovers_headless(tmp_path, monkeypatch):
+    from backend.app.curation_server import create_app
+    from backend.app.envato_auto_download import EnvatoSession
+    root=tmp_path/'projects'; (tmp_path/'browser-profiles'/'youtube').mkdir(parents=True)
+    class Dead:
+        pages=[]
+        async def cookies(self,urls):raise RuntimeError('Target page, context or browser has been closed')
+        async def close(self):pass
+    class Live:
+        async def cookies(self,urls):return [{'name':'SID'}]
+        async def close(self):pass
+    old_init=EnvatoSession.__init__
+    def init(self,profile):
+        old_init(self,profile)
+        if self.profile.name=='youtube':self.context=Dead();self.headless=False
+    async def context(self,**kw):self.context=Live();self.headless=True;return self.context
+    monkeypatch.setattr(EnvatoSession,'__init__',init)
+    monkeypatch.setattr(EnvatoSession,'_context',context)
+    app=create_app(project_root=root)
+    assert asyncio.run(app.state.youtube_cookie_reader('https://www.youtube.com/shorts/test')) == [{'name':'SID'}]
+
+
+def test_session_error_only_marks_the_affected_clip(tmp_path, monkeypatch):
+    import json
+    import backend.app.curation_artifacts as artifacts
+    import backend.app.transcript_intents as intents
+    from backend.app.curation_project import ProjectStore
+    from backend.app.curation_server import create_app
+    from backend.app.envato_auto_download import EnvatoSession
+    root=tmp_path/'projects'; project=ProjectStore(root,probe_runner=lambda _:{}).create('Example')
+    run=root/project.project_id/'run';run.mkdir(exist_ok=True)
+    (run/'selection-plan.json').write_text(json.dumps({'chunks':{'beat':{'selected_assets':[{'asset_id':'one'}]}}}))
+    (tmp_path/'browser-profiles'/'youtube').mkdir(parents=True)
+    candidate=SimpleNamespace(asset_id='one',chunk_id='beat',provider='youtube',kind='video',title='Video',source_page='https://www.youtube.com/watch?v=test',local_asset_path=None,preview_path=None)
+    monkeypatch.setattr(artifacts,'load_curation_run',lambda _:SimpleNamespace(candidate_index={'one':candidate}))
+    monkeypatch.setattr(intents,'has_selected_intent',lambda *a:True)
+    class BrowserError(Exception):pass
+    async def context(self,**kw):raise BrowserError('Target closed')
+    monkeypatch.setattr(EnvatoSession,'_context',context)
+    app=create_app(project_root=root)
+    issues=asyncio.run(app.state.prepare_selected_timeline_media(project.project_id))
+    assert [row['asset_id'] for row in issues] == ['one']
+
+def test_cookie_reader_retries_if_browser_closes_during_read(tmp_path):
+    from backend.app.envato_auto_download import EnvatoSession
+    class Page:
+        def is_closed(self):return False
+    class Dead:
+        pages=[Page()]
+        async def cookies(self,urls):raise RuntimeError('Target closed')
+        async def close(self):pass
+    class Live:
+        async def cookies(self,urls):return [{'name':'SID'}]
+        async def close(self):pass
+    session=EnvatoSession(tmp_path/'profile');session.context=Dead();session.headless=False
+    async def context(**kwargs):session.context=Live();session.headless=True;return session.context
+    session._context=context
+    assert asyncio.run(session.read_session_cookies('https://www.youtube.com/')) == [{'name':'SID'}]
