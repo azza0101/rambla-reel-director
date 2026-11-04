@@ -114,7 +114,7 @@ class ResolveHandoffJobs:
                 while not stop.wait(.02):
                     try:
                         progress=json.loads(progress_path.read_text(encoding="utf-8"))
-                        marker=(progress.get("phase"),progress.get("percent"))
+                        marker=(progress.get("phase"),progress.get("percent"),progress.get("message"))
                         if marker!=last:
                             last_progress = progress
                             phases.append({**progress, 'elapsed_seconds': round(time.time()-started_at, 1)})

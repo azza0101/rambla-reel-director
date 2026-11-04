@@ -989,6 +989,12 @@ def test_helper_tolerates_non_utf8_native_resolve_diagnostics(monkeypatch, tmp_p
     assert captured["env"]["PYTHONUTF8"] == "1"
 
 
+def test_resolve_helper_budget_accounts_for_number_of_media():
+    from backend.app.resolve_textplus_timeline import resolve_helper_timeout
+    assert resolve_helper_timeout({}) == 600
+    assert resolve_helper_timeout({'broll_clips': [{}] * 19, 'generic_broll_clips': [{}] * 12}) >= 31 * 180
+
+
 def test_canonical_timeline_name_uses_readable_project_name_and_version():
     assert canonical_timeline_name({"project_name": "New Reel", "mode": "combined"}) == "New Reel - SUBS + KEYWORDS TIMELINE v1"
     assert canonical_timeline_name({"project_name": "  KURA / Thailand:*  ", "mode": "combined"}) == "KURA Thailand - SUBS + KEYWORDS TIMELINE v1"

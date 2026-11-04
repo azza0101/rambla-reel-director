@@ -1402,7 +1402,8 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
             media_folder_name,
         )
         prepared_broll_clips = conform_broll_media(prepared_broll_clips, fps,
-            progress=lambda index,total: report_handoff_progress(payload,'conform',5+int(12*index/max(1,total)),f'Preparo estratti video: {index}/{total}'))
+            progress=lambda index,total: report_handoff_progress(payload,'conform',5+int(12*index/max(1,total)),
+                f'Preparo estratto {index + 1}/{total}: {Path(str(prepared_broll_clips[index].get("media_path") or "video")).name}'))
     build_name = f"__RAMBLA_BUILD_{int(time.time() * 1000)}"
     generated = None
     backup = None
@@ -1729,7 +1730,16 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def run_resolve_helper(payload: dict[str, Any], *, timeout: float = 600.0) -> dict[str, Any]:
+def resolve_helper_timeout(payload: dict[str, Any]) -> float:
+    count = len(payload.get('broll_clips') or []) + len(payload.get('generic_broll_clips') or [])
+    # Each conversion has its own 180-second timeout; allow for all selected
+    # conversions as well as setup and the subsequent Resolve operations.
+    return 600.0 + 180.0 * count
+
+
+def run_resolve_helper(payload: dict[str, Any], *, timeout: float | None = None) -> dict[str, Any]:
+    if timeout is None:
+        timeout = resolve_helper_timeout(payload)
     root = Path(__file__).resolve().parents[2]
     api_root = Path(os.environ.get(
         "RESOLVE_SCRIPT_API",
