@@ -153,3 +153,9 @@ def test_launch_aborts_when_mutex_is_not_acquired():
     assert "if (-not $acquired) { throw" in script
     assert script.index("if (-not $acquired)") < script.index('Start-Process')
     assert 'if ($acquired)' in script
+
+
+def test_window_launcher_falls_back_to_default_browser_when_no_app_window_appears():
+    script=Path('tools/focus_rambla_app.ps1').read_text(encoding='ascii')
+    assert 'if ($windows.Count -eq 0)' in script
+    assert 'Start-Process -FilePath $Url' in script

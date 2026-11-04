@@ -76,6 +76,12 @@ public static class RamblaWindow {
     $windows=@([RamblaWindow]::FindAll($expectedProcess))
     if($windows.Count -gt 0){break}
   }
+  if ($windows.Count -eq 0) {
+    # If the dedicated app window is not available, keep RMBL reachable in
+    # the user's normal browser instead of silently leaving it in the background.
+    Start-Process -FilePath $Url
+    exit 0
+  }
   if($windows.Count -gt 1){for($i=1;$i -lt $windows.Count;$i++){[RamblaWindow]::Close($windows[$i])}}
   Set-Content -LiteralPath $originPath -Value $origin -NoNewline
   Set-Content -LiteralPath $buildPath -Value $build -NoNewline
