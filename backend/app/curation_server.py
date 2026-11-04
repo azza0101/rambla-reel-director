@@ -1463,6 +1463,12 @@ def create_app(
         assert_current_cut(root / project_id, root, allow_pending=not (components['broll'] or components['social']))
         native_cut = None
         native_reference = None
+        original_video = None
+        if components['source_video']:
+            if (root / project_id / 'cut-origin.json').is_file() or (root / project_id / 'resolve-bridge.json').is_file():
+                raise ValueError('Il video originale non tagliato e disponibile soltanto sul progetto con video caricato, prima di AutoCut')
+            from .original_video_export import load_original_video
+            original_video = load_original_video(load_project(project_id))
         if components['video']:
             from .native_cut_export import load_native_cut
             from fractions import Fraction
@@ -1480,8 +1486,11 @@ def create_app(
             if not receipt:
                 raise ValueError('Seleziona Video CUT per creare prima la base nativa corrispondente')
         export_cut = native_cut or native_reference
+        target_fps = float(Fraction(export_cut['fps'])) if export_cut else (
+            float(Fraction(original_video['fps'])) if original_video else None
+        )
         if components['subtitles'] or components['highlights']:
-            payload = combined_resolve_payload(project_id, components, float(Fraction(export_cut['fps'])) if export_cut else None)
+            payload = combined_resolve_payload(project_id, components, target_fps)
         else:
             project = load_project(project_id)
             payload = {'project_id': project_id, 'project_name': project.name,
@@ -1489,7 +1498,7 @@ def create_app(
                        'title_count': 0, 'subtitle_count': 0}
         if (components['broll'] or components['social']) and has_selected_intent(run_root(project_id), "coverage"):
             broll = broll_timeline_payload(project_id, allow_unavailable=True,
-                fps_override=float(Fraction(export_cut['fps'])) if export_cut else None, components=components)
+                fps_override=target_fps, components=components)
             broll['clips'] = [clip for clip in filter_selected_media(broll['clips'], components)
                               if str(clip.get('asset_id')) not in ignored_assets]
             broll['unavailable'] = [row for row in broll['unavailable']
@@ -1526,6 +1535,13 @@ def create_app(
                            source_project_name=receipt.get('resolve_project'), source_timeline_name=receipt.get('timeline_name'),
                            native_cut_fps=native_reference['fps'], fps=float(Fraction(native_reference['fps'])),
                            duration_seconds=native_reference['duration_seconds'], destination_mode='active')
+        elif original_video:
+            # The file is already the user's finished/premounted video: import
+            # it untrimmed with its embedded audio, then build overlays above it.
+            payload.update(original_video=original_video,
+                           fps=float(Fraction(original_video['fps'])),
+                           duration_seconds=original_video['duration_seconds'],
+                           destination_mode='new')
         return payload
 
     async def prepare_generic_media(project_id: str, report=None, ignored_assets=None) -> list[dict[str, str]]:
