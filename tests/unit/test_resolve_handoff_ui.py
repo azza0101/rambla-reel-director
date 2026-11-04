@@ -9,8 +9,8 @@ def test_rambla_primary_control_prepares_package_without_direct_resolve_mutation
     assert '/resolve-handoffs' in source
     assert 'PACCHETTO PRONTO · ATTESA RICEZIONE' in source
     assert "resolveDeliveryProgressV33').removeAttribute('value')" not in source
-    assert 'poster="${esc(row.preview_url)}"' in source
-    assert 'src="${esc(row.selected_rendition_url)}"' in source
+    assert 'poster="${esc(row.preview_url||\'\')}"' in source
+    assert 'src="${esc(row.selected_rendition_url||\'\')}"' in source
     assert '<progress id="resolveDeliveryProgressV33"' not in source
     assert 'setResolveDeliveryProgressV33(job.percent)' in source
     assert 'ESPORTA XML' in source and 'ESPORTA DRA' in source
