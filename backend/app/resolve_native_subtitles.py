@@ -29,6 +29,28 @@ def render_filtered_srt(rows: list[dict[str, Any]]) -> str:
     return "\n\n".join(blocks) + ("\n" if blocks else "")
 
 
+def timeline_start_timecode(timeline: Any, fps: int, base_frame: int) -> str:
+    """Find a stable origin for native SRT insertion on Resolve 21.
+
+    GetStartTimecode is absent on some Resolve Python Timeline wrappers.
+    Never silently leave the playhead after the last generated Fusion title.
+    Native CUT timelines use non-drop-frame timecode and GetStartFrame.
+    """
+    getter = getattr(timeline, "GetStartTimecode", None)
+    reported = getter() if callable(getter) else None
+    if reported and isinstance(reported, str):
+        return reported
+    get_frame = getattr(timeline, "GetStartFrame", None)
+    absolute_frame = int(get_frame()) if callable(get_frame) else int(base_frame)
+    nominal_rate = int(round(float(fps)))
+    if nominal_rate < 1:
+        raise ValueError("FPS non validi per ancorare i sottotitoli")
+    hours, remainder = divmod(absolute_frame, nominal_rate * 3600)
+    minutes, remainder = divmod(remainder, nominal_rate * 60)
+    seconds, frames = divmod(remainder, nominal_rate)
+    return f"{hours:02}:{minutes:02}:{seconds:02}:{frames:02}"
+
+
 def subtitle_content_path(requested_path: Path, content: str) -> Path:
     digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:20]
     return requested_path.with_name(requested_path.stem + "-" + digest + requested_path.suffix)
@@ -230,16 +252,31 @@ def insert_native_subtitles(
     try:
         pool = project.GetMediaPool()
         get_current_timecode = getattr(timeline, "GetCurrentTimecode", None)
-        get_start_timecode = getattr(timeline, "GetStartTimecode", None)
         set_current_timecode = getattr(timeline, "SetCurrentTimecode", None)
         previous_timecode = get_current_timecode() if callable(get_current_timecode) else None
-        start_timecode = get_start_timecode() if callable(get_start_timecode) else None
-        # Resolve 21.1 binds an imported SRT's timeline origin while the media
-        # is created, before AppendToTimeline. Keep the playhead at the timeline
-        # start for both operations, then restore the user's position.
-        if callable(set_current_timecode) and start_timecode:
-            if set_current_timecode(str(start_timecode)) is False:
-                raise RuntimeError("Resolve could not anchor native subtitles to the timeline start")
+        start_timecode = timeline_start_timecode(timeline, fps, base_frame)
+
+        def anchor_subtitles() -> None:
+            # Native SRT import is sensitive to the playhead, even when a valid
+            # SRT contains timestamps relative to the timeline origin.
+            if callable(set_current_timecode):
+                if set_current_timecode(start_timecode) is False:
+                    raise RuntimeError("Resolve could not anchor native subtitles to the timeline start")
+                if callable(get_current_timecode):
+                    observed = get_current_timecode()
+                    if observed and str(observed).replace(";", ":") != start_timecode.replace(";", ":"):
+                        raise RuntimeError(
+                            f"Resolve non ha posizionato il cursore all'inizio: {observed} != {start_timecode}"
+                        )
+            elif callable(get_current_timecode):
+                current = get_current_timecode()
+                if current and str(current).replace(";", ":") != start_timecode.replace(";", ":"):
+                    raise RuntimeError(
+                        "Resolve non espone SetCurrentTimecode: impossibile ancorare i sottotitoli"
+                    )
+        # Set it before both ImportMedia and AppendToTimeline: either operation
+        # can move the playhead in some Resolve versions.
+        anchor_subtitles()
         target_folder = ensure_media_pool_folder(pool, "TEMP")
         original_folder = pool.GetCurrentFolder()
         existing_media = find_subtitle_media(pool, path)
@@ -278,6 +315,7 @@ def insert_native_subtitles(
                     if set_enabled("subtitle", track, should_enable) is False:
                         raise RuntimeError(f"Resolve could not isolate Subtitle track {wanted_track}")
         try:
+            anchor_subtitles()
             appended = (
                 pool.AppendToTimeline(imported)
                 if target_track is None or wanted_track == 1
@@ -330,7 +368,6 @@ def verify_native_subtitles(
     track_index: int | None = None,
     items: list[Any] | None = None,
 ) -> None:
-    del fps
     source_items = list(items) if items is not None else _subtitle_items(timeline, track_index)
     actual = sorted(
         (str(item.GetName()).strip(), int(item.GetStart()), int(item.GetEnd()))
@@ -352,4 +389,25 @@ def verify_native_subtitles(
         in zip(actual, expected)
     )
     if not matches:
-        raise RuntimeError(f"Resolve native Subtitle verification failed: expected {expected}, got {actual}")
+        if len(actual) == len(expected) and actual:
+            offsets = [
+                actual_start - wanted_start
+                for (actual_text, actual_start, actual_end), (wanted_text, wanted_start, wanted_end)
+                in zip(actual, expected)
+                if actual_text == wanted_text and actual_end - wanted_end == actual_start - wanted_start
+            ]
+            if len(offsets) == len(actual) and len(set(offsets)) == 1 and abs(offsets[0]) > 1:
+                raise RuntimeError(
+                    f"Resolve native Subtitle verification failed: {len(actual)} sottotitoli "
+                    f"traslati tutti di {offsets[0]} fotogrammi ({offsets[0] / float(fps):.2f}s). "
+                    "L'import SRT si e agganciato al cursore anziche all'inizio della timeline."
+                )
+        first_mismatch = next(
+            ((wanted, got) for wanted, got in zip(expected, actual)
+             if wanted[0] != got[0] or abs(wanted[1]-got[1]) > 1 or abs(wanted[2]-got[2]) > 1),
+            None,
+        )
+        raise RuntimeError(
+            f"Resolve native Subtitle verification failed: {len(expected)} attesi, "
+            f"{len(actual)} ottenuti; primo errore {first_mismatch}"
+        )
