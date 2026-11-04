@@ -38,9 +38,14 @@ def select_sequence(candidate_sets, performance_locks, fps, beam_width=64):
    if c.get('ids')!=ids or not isinstance(c.get('media_id'),str) or not c['media_id'] or not isinstance(c.get('field'),str) or not c['field'] or type(lo) is not int or type(hi) is not int or not 0<=lo<hi:
     raise ValueError('Candidato o corrispondenza eventi non validi')
    if not math.isfinite(c.get('similarity',1.)):raise ValueError('Similarita non valida')
- states=[((0,0,0,0.,0.,0),[],{})];expanded=0;pruned=False
+ states=[((0,0,0,0.,0.,0.,0),[],{})];expanded=0;pruned=False
  for choices in candidate_sets:
   next_states={}
+  visible_choices=[c for c in choices if c.get('speaker_visible') and c.get('voice') is not None]
+  def complete_inventory(c):
+   inv=c.get('visual_inventory') or {};s=inv.get('summary') or {};v=s.get('known_object_fraction')
+   return inv.get('complete') and s.get('sample_count',0)>=2 and isinstance(v,(int,float)) and math.isfinite(v)
+  compare_objects=bool(visible_choices) and all(c.get('object_required') and complete_inventory(c) for c in visible_choices)
   for cost,path,last_by_source in states:
    for raw in choices:
     expanded+=1;mid=raw['media_id'];lo,hi=raw['start_frame'],raw['end_frame']
@@ -51,7 +56,10 @@ def select_sequence(candidate_sets, performance_locks, fps, beam_width=64):
     splice=bool(prev and prev['field']==c['field'] and not continuous)
     stale=bool(performance_locks.get(c['field']) and performance_locks[c['field']]!=mid)
     framing=c['field'].rsplit(':',1)[-1];size={'close':1.,'detail':1.,'medium':.5}.get(framing,0.)
-    delta=(int(not c['speaker_visible']),int(splice),int(stale),1.-size,1.-max(0.,min(1.,c.get('similarity',1.))),int(prev is not None and not continuous))
+    inventory=c.get('visual_inventory') or {};summary=inventory.get('summary') or {};coverage=summary.get('known_object_fraction',0.)
+    if not inventory.get('complete') or summary.get('sample_count',0)<2 or not isinstance(coverage,(int,float)) or not math.isfinite(coverage):coverage=0.
+    object_cost=1.-max(0.,min(1.,coverage)) if compare_objects else 0.
+    delta=(int(not c['speaker_visible']),int(splice),int(stale),object_cost,1.-size,1.-max(0.,min(1.,c.get('similarity',1.))),int(prev is not None and not continuous))
     score=tuple(a+b for a,b in zip(cost,delta));positions={**last_by_source,mid:hi}
     key=(tuple(sorted(positions.items())),mid,hi,c['field'])
     if key not in next_states or score<next_states[key][0]:next_states[key]=(score,path+[c],positions)

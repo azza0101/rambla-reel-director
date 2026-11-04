@@ -8,6 +8,26 @@ def shot(mid,start,end,ids,field='a:close',visible=True,similarity=1.):
 
 
 class SequenceDirectorTests(unittest.TestCase):
+ def test_partial_inventory_budget_does_not_bias_toward_first_tested_candidate(self):
+  from sequence_director import select_sequence
+  a=shot('a',0,50,['q'],similarity=.9);b=shot('b',0,50,['q'],similarity=1.)
+  a['object_required']=b['object_required']=True
+  a['visual_inventory']={'complete':True,'summary':{'sample_count':3,'known_object_fraction':1.}}
+  self.assertEqual(select_sequence([[a,b]],{},25)['decisions'][0]['media_id'],'b')
+ def test_verified_object_view_wins_tie_for_object_related_dialogue(self):
+  from sequence_director import select_sequence
+  a=shot('a',0,50,['q']);b=shot('b',0,50,['q'])
+  for c,v in ((a,0),(b,1)):
+   c['object_required']=True;c['visual_inventory']={'complete':True,'summary':{'sample_count':3,'known_object_fraction':v}}
+  self.assertEqual(select_sequence([[a,b]],{},25)['decisions'][0]['media_id'],'b')
+ def test_inventory_never_overrides_speaker_or_last_good_take(self):
+  from sequence_director import select_sequence
+  a=shot('a',0,50,['q']);b=shot('b',0,50,['q'],visible=False)
+  for c,v in ((a,0),(b,1)):
+   c['object_required']=True;c['visual_inventory']={'complete':True,'summary':{'sample_count':3,'known_object_fraction':v}}
+  self.assertEqual(select_sequence([[a,b]],{},25)['decisions'][0]['media_id'],'a')
+  b['speaker_visible']=True
+  self.assertEqual(select_sequence([[a,b]],{'a:close':'a'},25)['decisions'][0]['media_id'],'a')
  def test_context_can_disambiguate_a_reordered_short_question(self):
   from sequence_director import contextual_question_match
   self.assertTrue(contextual_question_match("E questo che cos'è?","Che cos'è questo?",.80,.91))

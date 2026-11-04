@@ -11,13 +11,20 @@ PROTOCOL = 1
 ACTIONS = {"analyze_voice_evidence", "audit_observed_edit", "build_observed_excerpt", "expand_scene_edits", "route_scene_edits", "catalog_preview_frames", "catalog_frames", "render_scene_debug_titles", "catalog_scenes", "ping", "parse_script", "extract_pdf_script", "select_scene", "align", "propose_take_segments", "choose_take", "build_plan", "analyze_shots", "analyze_audio", "pace_plan", "visual_review", "prepare_dialogue", "build_staged"}
 
 
+ACTIONS.add('analyze_visual_inventory')
+
 def dispatch(request):
     if request.get("protocol") != PROTOCOL or not isinstance(request.get("request_id"), str):
         raise ValueError("Richiesta protocollo non valida")
     action, payload = request.get("action"), request.get("payload", {})
     if action not in ACTIONS:
         raise ValueError("Azione sconosciuta")
-    if action == "analyze_voice_evidence":
+    if action == 'analyze_visual_inventory':
+        from visual_inventory import analyze_inventory
+        def report(event):
+            sys.stdout.write(json.dumps({'protocol':1,'request_id':request['request_id'],'status':'progress','result':event})+'\n');sys.stdout.flush()
+        result=analyze_inventory(payload,report)
+    elif action == "analyze_voice_evidence":
         from voice_fusion import analyze_voice_evidence
         def report(event):
             sys.stdout.write(json.dumps({'protocol':1,'request_id':request['request_id'],'status':'progress','result':event})+'\n');sys.stdout.flush()

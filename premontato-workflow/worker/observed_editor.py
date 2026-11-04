@@ -126,6 +126,13 @@ def build_observed_excerpt(payload,report=None,voice_data=None):
    d=decisions[-1];d['end_frame']=chosen['end_frame'];d['base_end']=hi;d['ids']+=chosen['ids'];d['text']+=' '+chosen['text'];d['speaker_visible']=d['speaker_visible'] and chosen['speaker_visible']
   else:decisions.append(chosen)
  if editorial_mode=='sequence_director':
+  inventory_run=None
+  if payload.get('inventory_config'):
+   from visual_inventory import annotate_candidates
+   import os
+   try:inventory_run=annotate_candidates(candidate_sets,list(sources.values()),payload['inventory_config'],os.environ.get('PREMONTATO_CACHE_DIR','.premontato-cache'),report,max_frames=payload.get('inventory_frame_budget',12))
+   except (OSError,ValueError,RuntimeError,KeyError) as error:
+    inventory_run={'status':'unavailable','errors':[{'kind':type(error).__name__}],'frames':0}
   from sequence_director import select_sequence
   sequence=select_sequence(candidate_sets,locks,fps)
   decisions=sequence['decisions']
@@ -166,7 +173,9 @@ def build_observed_excerpt(payload,report=None,voice_data=None):
    request['turns']=[t for t in result['av_plan']['turn_checks'] if ids.intersection(t['ids'])]
    request['alternatives']=[{'candidate_id':f'{mid}:{c["start_frame"]}:{c["end_frame"]}','media_id':mid,'start_frame':c['start_frame'],'end_frame':c['end_frame'],'text':c['text'],'voice':c['voice'],'field':c['field'],'similarity':c['similarity']} for (mid,i),c in matches.items() if ids.intersection(turns[i]['unit_ids'])]
   result['av_plan']['jump_covers']=covers
-  if sequence is not None:result['sequence_summary']={k:v for k,v in sequence.items() if k!='decisions'}
+  if sequence is not None:
+   result['sequence_summary']={k:v for k,v in sequence.items() if k!='decisions'}
+   if inventory_run is not None:result['inventory_run']=inventory_run
   result['candidate_sets']=candidate_sets
   result['editorial_mode']=editorial_mode
   if editorial_mode=='evidence_director':
