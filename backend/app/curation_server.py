@@ -1646,17 +1646,30 @@ def create_app(
 
     @app.get('/api/curation/projects/{project_id}/export-options')
     async def get_export_options(project_id: str):
-        load_project(project_id)
+        project = load_project(project_id)
         saved = _read_json(root / project_id / 'export-options.json', {})
         available = ((root / project_id / 'cut-origin.json').is_file() or (root / project_id / 'cut' / 'plan.json').is_file()) and not (root / project_id / 'resolve-bridge.json').is_file()
         draft_cut = available and not (root / project_id / 'cut-origin.json').is_file()
+        source_available = bool(
+            project.source_video
+            and Path(project.source_video.path).is_file()
+            and not available
+            and not (root / project_id / 'cut-origin.json').is_file()
+            and not (root / project_id / 'resolve-bridge.json').is_file()
+        )
         defaults = {'video': True} if draft_cut else None
-        flags = normalize_components(saved.get('components', defaults), has_native_cut=available)
+        saved_flags = saved.get('components', defaults)
+        flags = normalize_components(saved_flags, has_native_cut=available)
+        # Pre-v0129 saved selections lack this key: make the uploaded, uncut
+        # main video part of SEND ALL without requiring the AutoCut workflow.
+        if source_available and not (isinstance(saved_flags, dict) and 'source_video' in saved_flags):
+            flags['source_video'] = True
         counts = {key: 0 for key in flags}
         run = run_root(project_id)
         origin = _read_json(root / project_id / 'cut-origin.json', {})
         cut = origin.get('plan') or _read_json(root / project_id / 'cut' / 'plan.json', {})
         counts['video'] = len(cut.get('segments') or [])
+        counts['source_video'] = 1 if source_available else 0
         generic = _read_json(run / 'generic-coverage.json', {})
         counts['generic'] = len(generic.get('selected') or [])
         if (run / 'semantic-chunks.json').is_file():
@@ -1673,9 +1686,14 @@ def create_app(
                     if candidate:
                         counts['social' if candidate.provider in SOCIAL else 'broll'] += 1
         return {'components': flags, 'counts': counts,
-                'component_availability': {key: not draft_cut for key in ('subtitles', 'highlights', 'broll', 'social', 'generic')},
+                'component_availability': {
+                    **{key: not draft_cut for key in ('subtitles', 'highlights', 'broll', 'social', 'generic')},
+                    'source_video': source_available,
+                },
                 'video_available': available,
-                'video_reason': 'Conferma CUT e continua per aggiungere testo e coperture ai tagli' if draft_cut else '' if available else 'Video disponibile dopo AUTO-CUT sul file originale caricato'}
+                'source_video_available': source_available,
+                'video_reason': 'Conferma CUT e continua per aggiungere testo e coperture ai tagli' if draft_cut else (
+                    '' if available else 'Video originale: esportabile senza AutoCut, con audio e senza modifiche, su una nuova timeline Resolve.')}
 
     @app.put('/api/curation/projects/{project_id}/export-options')
     async def put_export_options(project_id: str, components: ExportComponents):
@@ -1719,10 +1737,15 @@ def create_app(
 
     @app.post('/api/curation/projects/{project_id}/resolve-preparation')
     async def start_resolve_preparation(project_id: str, components: ExportComponents | None = None, ignored: str = ''):
-        load_project(project_id)
+        project = load_project(project_id)
         try:
             from .native_cut_export import assert_current_cut
             flags = normalize_components(components)
+            if flags['source_video']:
+                if (root / project_id / 'cut-origin.json').exists() or (root / project_id / 'resolve-bridge.json').exists():
+                    raise ValueError('Il video originale senza AutoCut non e disponibile su un progetto CUT o acquisito da Resolve')
+                from .original_video_export import load_original_video
+                load_original_video(project)
             assert_current_cut(root / project_id, root, allow_pending=not (flags['broll'] or flags['social']))
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
