@@ -1456,6 +1456,7 @@ def create_app(
         return failures
 
     def editing_resolve_payload(project_id: str, components=None, ignored_assets=None) -> dict[str, Any]:
+        from fractions import Fraction
         from .transcript_intents import has_selected_intent
         components = normalize_components(components)
         ignored_assets = set(ignored_assets or ())
@@ -1463,6 +1464,12 @@ def create_app(
         assert_current_cut(root / project_id, root, allow_pending=not (components['broll'] or components['social']))
         native_cut = None
         native_reference = None
+        original_video = None
+        if components['source_video']:
+            if (root / project_id / 'cut-origin.json').is_file() or (root / project_id / 'resolve-bridge.json').is_file():
+                raise ValueError('Il video originale non tagliato e disponibile soltanto sul progetto con video caricato, prima di AutoCut')
+            from .original_video_export import load_original_video
+            original_video = load_original_video(load_project(project_id))
         if components['video']:
             from .native_cut_export import load_native_cut
             from fractions import Fraction
@@ -1480,8 +1487,11 @@ def create_app(
             if not receipt:
                 raise ValueError('Seleziona Video CUT per creare prima la base nativa corrispondente')
         export_cut = native_cut or native_reference
+        target_fps = float(Fraction(export_cut['fps'])) if export_cut else (
+            float(Fraction(original_video['fps'])) if original_video else None
+        )
         if components['subtitles'] or components['highlights']:
-            payload = combined_resolve_payload(project_id, components, float(Fraction(export_cut['fps'])) if export_cut else None)
+            payload = combined_resolve_payload(project_id, components, target_fps)
         else:
             project = load_project(project_id)
             payload = {'project_id': project_id, 'project_name': project.name,
@@ -1489,7 +1499,7 @@ def create_app(
                        'title_count': 0, 'subtitle_count': 0}
         if (components['broll'] or components['social']) and has_selected_intent(run_root(project_id), "coverage"):
             broll = broll_timeline_payload(project_id, allow_unavailable=True,
-                fps_override=float(Fraction(export_cut['fps'])) if export_cut else None, components=components)
+                fps_override=target_fps, components=components)
             broll['clips'] = [clip for clip in filter_selected_media(broll['clips'], components)
                               if str(clip.get('asset_id')) not in ignored_assets]
             broll['unavailable'] = [row for row in broll['unavailable']
@@ -1526,6 +1536,13 @@ def create_app(
                            source_project_name=receipt.get('resolve_project'), source_timeline_name=receipt.get('timeline_name'),
                            native_cut_fps=native_reference['fps'], fps=float(Fraction(native_reference['fps'])),
                            duration_seconds=native_reference['duration_seconds'], destination_mode='active')
+        elif original_video:
+            # The file is already the user's finished/premounted video: import
+            # it untrimmed with its embedded audio, then build overlays above it.
+            payload.update(original_video=original_video,
+                           fps=float(Fraction(original_video['fps'])),
+                           duration_seconds=original_video['duration_seconds'],
+                           destination_mode='new')
         return payload
 
     async def prepare_generic_media(project_id: str, report=None, ignored_assets=None) -> list[dict[str, str]]:
@@ -1630,17 +1647,34 @@ def create_app(
 
     @app.get('/api/curation/projects/{project_id}/export-options')
     async def get_export_options(project_id: str):
-        load_project(project_id)
+        project = load_project(project_id)
         saved = _read_json(root / project_id / 'export-options.json', {})
         available = ((root / project_id / 'cut-origin.json').is_file() or (root / project_id / 'cut' / 'plan.json').is_file()) and not (root / project_id / 'resolve-bridge.json').is_file()
         draft_cut = available and not (root / project_id / 'cut-origin.json').is_file()
+        source_available = bool(
+            project.source_video
+            and Path(project.source_video.path).is_file()
+            and not available
+            and not (root / project_id / 'cut-origin.json').is_file()
+            and not (root / project_id / 'resolve-bridge.json').is_file()
+        )
         defaults = {'video': True} if draft_cut else None
-        flags = normalize_components(saved.get('components', defaults), has_native_cut=available)
+        saved_flags = saved.get('components', defaults)
+        flags = normalize_components(saved_flags, has_native_cut=available)
+        # Pre-v0129 saved selections lack this key: make the uploaded, uncut
+        # main video part of SEND ALL without requiring the AutoCut workflow.
+        if source_available and not flags['video'] and not (isinstance(saved_flags, dict) and 'source_video' in saved_flags):
+            flags['source_video'] = True
+        if source_available and not (run_root(project_id) / 'semantic-chunks.json').is_file() and not saved.get('components'):
+            # It is valid to send only the uploaded video before ANALIZZA.
+            for key in ('subtitles', 'highlights', 'broll', 'social', 'generic'):
+                flags[key] = False
         counts = {key: 0 for key in flags}
         run = run_root(project_id)
         origin = _read_json(root / project_id / 'cut-origin.json', {})
         cut = origin.get('plan') or _read_json(root / project_id / 'cut' / 'plan.json', {})
         counts['video'] = len(cut.get('segments') or [])
+        counts['source_video'] = 1 if source_available else 0
         generic = _read_json(run / 'generic-coverage.json', {})
         counts['generic'] = len(generic.get('selected') or [])
         if (run / 'semantic-chunks.json').is_file():
@@ -1657,9 +1691,14 @@ def create_app(
                     if candidate:
                         counts['social' if candidate.provider in SOCIAL else 'broll'] += 1
         return {'components': flags, 'counts': counts,
-                'component_availability': {key: not draft_cut for key in ('subtitles', 'highlights', 'broll', 'social', 'generic')},
+                'component_availability': {
+                    **{key: not draft_cut for key in ('subtitles', 'highlights', 'broll', 'social', 'generic')},
+                    'source_video': source_available,
+                },
                 'video_available': available,
-                'video_reason': 'Conferma CUT e continua per aggiungere testo e coperture ai tagli' if draft_cut else '' if available else 'Video disponibile dopo AUTO-CUT sul file originale caricato'}
+                'source_video_available': source_available,
+                'video_reason': 'Conferma CUT e continua per aggiungere testo e coperture ai tagli' if draft_cut else (
+                    '' if available else 'Video originale senza AutoCut: viene importato intero su una nuova timeline con audio, se incluso.' if source_available else 'Carica un video prima di analizzare per includerlo in Resolve senza AutoCut.')}
 
     @app.put('/api/curation/projects/{project_id}/export-options')
     async def put_export_options(project_id: str, components: ExportComponents):
@@ -1703,10 +1742,19 @@ def create_app(
 
     @app.post('/api/curation/projects/{project_id}/resolve-preparation')
     async def start_resolve_preparation(project_id: str, components: ExportComponents | None = None, ignored: str = ''):
-        load_project(project_id)
+        project = load_project(project_id)
         try:
             from .native_cut_export import assert_current_cut
             flags = normalize_components(components)
+            if flags['source_video']:
+                if (root / project_id / 'cut-origin.json').exists() or (root / project_id / 'resolve-bridge.json').exists():
+                    raise ValueError('Il video originale senza AutoCut non e disponibile su un progetto CUT o acquisito da Resolve')
+                from .original_video_export import load_original_video
+                load_original_video(project)
+                if not active_bridge_session_id or time.time() - bridge_last_seen > 6:
+                    raise ValueError('Apri il bridge Resolve e attendi CONNECTED prima di inviare il video originale')
+                if not active_bridge_version.startswith('v') or not active_bridge_version[1:].isdigit() or int(active_bridge_version[1:]) < 129:
+                    raise ValueError('Aggiorna il bridge RMBL alla versione v0129 per importare il video originale senza AutoCut')
             assert_current_cut(root / project_id, root, allow_pending=not (flags['broll'] or flags['social']))
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

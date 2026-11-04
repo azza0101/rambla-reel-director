@@ -32,6 +32,12 @@ class ResolveHandoffJobs:
         if apply_scope != "all" and destination_mode != "active":
             raise ValueError("Selective Resolve updates require the active timeline")
         package = self.store.read(project_root, package_id)
+        if package.get('payload', {}).get('original_video'):
+            if package['status'] == 'completed':
+                return package
+            if apply_scope != 'all':
+                raise ValueError('Il video originale e i suoi overlay vanno importati insieme in una nuova timeline')
+            destination_mode = 'new'
         if package.get('payload', {}).get('native_cut'):
             if package['status'] == 'completed':
                 return package

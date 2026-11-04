@@ -1232,6 +1232,14 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
     project = project_manager.GetCurrentProject()
     if not project:
         raise RuntimeError("Open a DaVinci Resolve project first")
+    if payload.get("original_video"):
+        from .original_video_apply import materialize_original_video
+        return materialize_original_video(
+            resolve, project, payload,
+            materialize_overlay=materialize_in_resolve,
+            report=report_handoff_progress,
+            save_project=save_resolve_project,
+        )
     if payload.get('native_cut'):
         from .resolve_native_cut import create_native_cut_base, verify_native_cut_base, delete_owned_native_cut, recover_native_cut_result, record_native_cut_result
         recovered = recover_native_cut_result(project, payload)
