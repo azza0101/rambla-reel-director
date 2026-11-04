@@ -1513,7 +1513,7 @@ def create_app(
         failures = []
         async def record_failure(candidate, exc):
             issue=download_issue(candidate, exc)
-            if candidate.provider=='envato' and ('entro 50 secondi' in str(exc) or 'entro 25 secondi' in str(exc) or 'fermo da troppo tempo' in str(exc)): issue['message']=str(exc)
+            if candidate.provider=='envato' and ('entro 50 secondi' in str(exc) or 'entro 25 secondi' in str(exc) or 'fermo da troppo tempo' in str(exc) or 'ha cambiato pagina' in str(exc) or 'continua a cambiare pagina' in str(exc)): issue['message']=str(exc)
             if candidate.provider not in {'youtube','youtube_shorts'} and report and getattr(report, 'interactive', False) and hasattr(report, 'issue'):
                 if await report.issue(issue) == 'retry':
                     return await prepare_selected_timeline_media(project_id, report, components, asset_ids=[candidate.asset_id], ignored_assets=ignored_assets)
@@ -1758,7 +1758,7 @@ def create_app(
                     from .resolve_media_issues import download_issue
                     candidate=SimpleNamespace(asset_id=asset_id,chunk_id='COPERTURE GENERICHE',provider='envato',title=row.get('title') or 'Envato',source_page=row.get('source_page') or '')
                     issue=download_issue(candidate,exc)
-                    if "entro 50 secondi" in str(exc) or "entro 25 secondi" in str(exc) or "fermo da troppo tempo" in str(exc): issue["message"]=str(exc)
+                    if "entro 50 secondi" in str(exc) or "entro 25 secondi" in str(exc) or "fermo da troppo tempo" in str(exc) or "ha cambiato pagina" in str(exc) or "continua a cambiare pagina" in str(exc): issue["message"]=str(exc)
                     errors.extend(await record_generic_failure(issue))
                 continue
             media = {'asset_id':'generic:'+provider_id, 'title':str(by_id.get(provider_id, {}).get('title') or f'Pexels {provider_id}'),

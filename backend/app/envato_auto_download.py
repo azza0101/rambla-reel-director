@@ -28,6 +28,19 @@ async def bounded_step(awaitable, timeout):
     return task.result()
 
 
+async def wait_for_stable_navigation(page, *, interval=.5, required=6, timeout=12):
+    """Wait until client-side Envato redirects have settled before licensing."""
+    loop=asyncio.get_running_loop();deadline=loop.time()+timeout
+    previous=str(page.url);stable=0
+    while loop.time() < deadline:
+        await asyncio.sleep(interval)
+        current=str(page.url)
+        if current==previous: stable+=1
+        else: previous=current;stable=0
+        if stable>=required: return current
+    raise RuntimeError('Envato continua a cambiare pagina: apri la pagina e riprova')
+
+
 def valid_url(url):
     try:
         parsed=urlparse(str(url))
@@ -200,10 +213,13 @@ class EnvatoSession:
             try:
                 notify('Apertura pagina Envato')
                 await page.goto(url,wait_until='domcontentloaded',timeout=45000)
+                notify('Attendo apertura della pagina Envato')
+                await wait_for_stable_navigation(page)
                 try:
                     await page.wait_for_selector('[data-cy="idp-format-dropdown-trigger"], [data-cy="idp-download-button"], [data-cy="idp-header-download-button"], [data-testid="button-download"], [data-testid="button-download-for-free"], [data-testid="action-bar-button-download"], [data-testid="subscribed-onboarding-modal-cta"]',state='attached',timeout=15000)
                 except Exception:
                     pass
+                await wait_for_stable_navigation(page, required=2)
                 if not valid_url(page.url):raise RuntimeError('Accesso Envato richiesto: apri le impostazioni e accedi')
                 from .social_page_evidence import challenge_required
                 if challenge_required(await page.content()):raise RuntimeError('Verifica Envato richiesta: completala nella finestra di accesso')
@@ -218,6 +234,9 @@ class EnvatoSession:
                 notify('Registrazione licenza Envato')
                 try:reply=await bounded_step(page.evaluate(SCRIPT,str(project_name).strip()),50)
                 except TimeoutError:raise RuntimeError('Envato non ha risposto entro 50 secondi: apri la pagina o ignora questa clip') from None
+                except Exception as exc:
+                    if 'execution context was destroyed' in str(exc).lower(): raise RuntimeError('Envato ha cambiato pagina durante la licenza: apri la pagina e riprova') from None
+                    raise
                 if not isinstance(reply,dict) or not reply.get('ok'):
                     raise RuntimeError('Envato: '+str((reply or {}).get('errore','download non avviato'))+'. Verifica accesso e abbonamento nelle impostazioni.')
                 notify('Attendo avvio download da Envato')

@@ -41,7 +41,7 @@ def test_download_uses_exact_event_and_attaches_asset(tmp_path,monkeypatch):
     session._context=context
     phases=[]
     result=asyncio.run(session.download(page.url,'My project',tmp_path/'run','beat-1',progress=phases.append))
-    assert phases == ['Apertura pagina Envato', 'Scelta formato video', 'Registrazione licenza Envato', 'Attendo avvio download da Envato', 'Download del file in corso', 'Verifica del video scaricato']
+    assert phases == ['Apertura pagina Envato', 'Attendo apertura della pagina Envato', 'Scelta formato video', 'Registrazione licenza Envato', 'Attendo avvio download da Envato', 'Download del file in corso', 'Verifica del video scaricato']
     assert result['status']=='ready'
     assert Path(result['media_path']).read_bytes()==b'valid video'
     assert not list((tmp_path/'run').rglob('download.mp4'))
@@ -194,3 +194,16 @@ def test_missing_browser_download_event_returns_actionable_timeout(tmp_path,monk
     session._context=context
     with pytest.raises(RuntimeError,match='entro 25 secondi'):
         asyncio.run(session.download('https://elements.envato.com/item','Test',tmp_path/'run','one'))
+
+def test_waits_for_envato_redirect_before_starting_licence():
+    from backend.app.envato_auto_download import wait_for_stable_navigation
+    class Page:
+        def __init__(self):self.count=0
+        @property
+        def url(self):
+            self.count+=1
+            return 'https://elements.envato.com/item' if self.count<3 else 'https://app.envato.com/stock-video/item'
+    async def scenario():
+        page=Page();result=await wait_for_stable_navigation(page,interval=.001,required=3,timeout=.3)
+        assert result=='https://app.envato.com/stock-video/item' and page.count>=6
+    asyncio.run(scenario())
