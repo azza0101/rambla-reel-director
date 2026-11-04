@@ -1,5 +1,54 @@
 ﻿param([string]$AppRoot = $PSScriptRoot, [string]$LocalReleaseDirectory, [switch]$CheckOnly)
 $ErrorActionPreference = 'Stop'
+function Confirm-RMBLSoftwareUpdate {
+    param([string]$CurrentVersion, [string]$TargetVersion)
+    # An unowned MessageBox can hide behind PowerShell or DaVinci Resolve.
+    # Use an explicit topmost modal with its own taskbar entry.
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = 'RMBL - SEARCH UPDATE'
+    $form.Size = [System.Drawing.Size]::new(540, 245)
+    $form.StartPosition = 'CenterScreen'
+    $form.FormBorderStyle = 'FixedDialog'
+    $form.MinimizeBox = $false
+    $form.MaximizeBox = $false
+    $form.ShowInTaskbar = $true
+    $form.TopMost = $true
+    $label = New-Object System.Windows.Forms.Label
+    $label.Location = [System.Drawing.Point]::new(22, 20)
+    $label.Size = [System.Drawing.Size]::new(485, 118)
+    $label.Font = [System.Drawing.Font]::new('Segoe UI', 10)
+    $label.Text = "RMBL B ROLL $CurrentVersion -> $TargetVersion" + [Environment]::NewLine +
+        [Environment]::NewLine + 'Aggiornamento scaricato e verificato.' +
+        [Environment]::NewLine + 'RMBL verra riavviato; Resolve rimane aperto.' +
+        [Environment]::NewLine + 'Progetti, impostazioni e backup conservati.'
+    $yes = New-Object System.Windows.Forms.Button
+    $yes.Text = 'INSTALLA AGGIORNAMENTO'
+    $yes.Location = [System.Drawing.Point]::new(240, 154)
+    $yes.Size = [System.Drawing.Size]::new(262, 33)
+    $yes.DialogResult = [System.Windows.Forms.DialogResult]::Yes
+    $no = New-Object System.Windows.Forms.Button
+    $no.Text = 'ANNULLA'
+    $no.Location = [System.Drawing.Point]::new(22, 154)
+    $no.Size = [System.Drawing.Size]::new(122, 33)
+    $no.DialogResult = [System.Windows.Forms.DialogResult]::No
+    $form.Controls.Add($label)
+    $form.Controls.Add($yes)
+    $form.Controls.Add($no)
+    $form.AcceptButton = $yes
+    $form.CancelButton = $no
+    $form.Add_Shown({
+        $form.BringToFront()
+        $form.Activate()
+    })
+    try {
+        return $form.ShowDialog()
+    } finally {
+        $form.Dispose()
+    }
+}
+
 $mutex = New-Object Threading.Mutex($false, 'Local\RMBLSoftwareUpdate')
 if (-not $mutex.WaitOne(0)) { Write-Host 'Un aggiornamento e gia aperto.'; exit 0 }
 try {
@@ -33,6 +82,12 @@ try {
     }
     $manifest = Get-Content -LiteralPath (Join-Path $stage 'update.json') -Raw | ConvertFrom-Json
     if ($manifest.archive -notmatch '^RMBL-B-ROLL-Windows-v\d{4}\.zip$' -or $manifest.version -notmatch '^v\d{4}$') { throw 'Manifest non valido.' }
+    if (-not $CheckOnly -and $manifest.version -le $current) {
+        Write-Host "RMBL $current e gia aggiornato. Nessun download necessario."
+        return
+    }
+    Write-Host "Versione installata: $current. Release disponibile: $($manifest.version)."
+    Write-Host 'Scarico e verifico il pacchetto Windows (circa 150 MB)...'
     if ($LocalReleaseDirectory) {
         Copy-Item -LiteralPath (Join-Path $LocalReleaseDirectory $manifest.archive) -Destination $stage
     } else {
@@ -44,9 +99,14 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Verifica pacchetto fallita. Nessun aggiornamento applicato.' }
     if ($CheckOnly) { Write-Host "CHECK OK: $current -> $($manifest.version)"; return }
     if ($manifest.version -le $current) { Write-Host "RMBL $current e aggiornato."; return }
-    Add-Type -AssemblyName PresentationFramework
-    $choice = [Windows.MessageBox]::Show("Aggiornare RMBL da $current a $($manifest.version)?`n`nAttendi la fine delle elaborazioni. RMBL verra riavviato; Resolve resta aperto. Progetti e impostazioni sono conservati.", 'RMBL - SEARCH UPDATE', 'YesNo', 'Question')
-    if ($choice -ne 'Yes') { return }
+    Write-Host 'PACCHETTO VERIFICATO. Apro la conferma in primo piano.'
+    Write-Host 'Se non la vedi, usa ALT+TAB e cerca RMBL - SEARCH UPDATE.'
+    $choice = Confirm-RMBLSoftwareUpdate -CurrentVersion $current -TargetVersion $manifest.version
+    if ($choice -ne [System.Windows.Forms.DialogResult]::Yes) {
+        Write-Host 'Aggiornamento annullato. Nessun dato modificato.'
+        return
+    }
+    Write-Host 'Installazione confermata. Estraggo il pacchetto e avvio l installer...'
     $payload = Join-Path $stage 'payload'
     Expand-Archive -LiteralPath (Join-Path $stage $manifest.archive) -DestinationPath $payload
     $record = Join-Path (Split-Path -Parent $AppRoot) 'rambla-data\desktop-runtime.json'
