@@ -187,7 +187,7 @@ def test_native_srt_import_is_anchored_to_timeline_start_and_restores_playhead()
 
     insert_native_subtitles(None, Project(), timeline, ROWS, fps=30, base_frame=108000)
 
-    assert timeline.timecode_calls == ["01:00:00:00", "01:06:42:28"]
+    assert timeline.timecode_calls == ["01:00:00:00", "01:00:00:00", "01:06:42:28"]
     assert timeline.playhead == "01:06:42:28"
 
 
@@ -458,3 +458,76 @@ def test_srt_import_path_changes_with_timing_or_text_to_avoid_resolve_cache():
     assert subtitle_content_path(path,old)!=subtitle_content_path(path,changed)
     assert subtitle_content_path(path,old)==subtitle_content_path(path,old)
     assert subtitle_content_path(path,old).suffix=='.srt'
+
+
+def test_native_srt_uses_computed_origin_without_get_start_timecode_and_reanchors_after_import():
+    from backend.app.resolve_native_subtitles import timeline_start_timecode
+    timeline = Timeline()
+    timeline.playhead = "01:01:50:03"  # +3303 frames, exactly the v0130 field failure
+    timeline.GetStartFrame = lambda: 108000
+    timeline.GetCurrentTimecode = lambda: timeline.playhead
+    timeline.timecode_calls = []
+    def set_timecode(value):
+        timeline.timecode_calls.append(value)
+        timeline.playhead = value
+        return True
+    timeline.SetCurrentTimecode = set_timecode
+    assert timeline_start_timecode(timeline, 30, 108000) == "01:00:00:00"
+
+    class Clip:
+        def GetClipProperty(self, key):
+            return "Subtitle" if key == "Type" else ""
+    clip = Clip()
+    class Folder:
+        def GetSubFolderList(self): return []
+        def GetClipList(self): return []
+    class Pool:
+        def __init__(self):
+            self.folder = Folder()
+            self.imported_at = None
+            self.appended_at = None
+        def GetRootFolder(self): return self.folder
+        def AddSubFolder(self, parent, name): return self.folder
+        def GetCurrentFolder(self): return self.folder
+        def SetCurrentFolder(self, folder): return True
+        def ImportMedia(self, paths):
+            self.imported_at = timeline.playhead
+            # Simulate Resolve 21 moving the playhead after importing the SRT.
+            timeline.playhead = "01:01:50:03"
+            return [clip]
+        def AppendToTimeline(self, rows):
+            self.appended_at = timeline.playhead
+            # When anchored, the imported native subtitles are frame-exact.
+            if timeline.playhead == "01:00:00:00":
+                timeline.items = [NativeItem("Uno due", 108000, 108030),
+                                  NativeItem("tre", 108033, 108060)]
+            else:
+                timeline.items = [NativeItem("Uno due", 111303, 111333),
+                                  NativeItem("tre", 111336, 111363)]
+            return timeline.items
+    pool = Pool()
+    project = type("Project", (), {"GetMediaPool": lambda self: pool})()
+    inserted = insert_native_subtitles(
+        None, project, timeline, ROWS, fps=30, base_frame=108000,
+    )
+    verify_native_subtitles(timeline, ROWS, fps=30, base_frame=108000, items=inserted)
+    assert pool.imported_at == "01:00:00:00"
+    assert pool.appended_at == "01:00:00:00"
+    assert timeline.timecode_calls == [
+        "01:00:00:00", "01:00:00:00", "01:01:50:03"
+    ]
+    assert timeline.playhead == "01:01:50:03"
+
+
+def test_subtitles_shifted_together_report_compact_precise_offset():
+    shifted = Timeline([
+        NativeItem("Uno due", 111303, 111333), NativeItem("tre", 111336, 111363)
+    ])
+    with pytest.raises(RuntimeError, match="3303 fotogrammi"):
+        verify_native_subtitles(shifted, ROWS, fps=30, base_frame=108000)
+
+
+def test_timecode_fallback_respects_nonstandard_timeline_start():
+    from backend.app.resolve_native_subtitles import timeline_start_timecode
+    timeline = type("Timeline", (), {"GetStartFrame": lambda self: 86400})()
+    assert timeline_start_timecode(timeline, 30, 86400) == "00:48:00:00"

@@ -58,3 +58,24 @@ def test_update_api_rejects_cross_origin_and_busy(work):
         assert client.post('/api/curation/software-update',headers={'X-RMBL-Update':'1','origin':'https://untrusted.example'}).status_code==403
         app.state.cut_jobs['active']={'status':'running'}
         assert client.post('/api/curation/software-update',headers={'X-RMBL-Update':'1'}).status_code==409
+
+
+def test_updater_uses_foreground_owned_confirmation_not_hidden_messagebox():
+    script = Path("SEARCH_UPDATE.ps1").read_text(encoding="utf-8-sig")
+    assert "function Confirm-RMBLSoftwareUpdate" in script
+    assert "$form.TopMost = $true" in script
+    assert "$form.ShowInTaskbar = $true" in script
+    assert "$form.ShowDialog()" in script
+    assert "PACCHETTO VERIFICATO" in script
+    assert "ALT+TAB" in script
+    assert "[Windows.MessageBox]::Show" not in script
+    assert "verify_update_archive.py" in script
+    assert "INSTALL_RMBL_B_ROLL.ps1" in script
+    assert "-ForceUpdate" in script
+
+
+def test_updater_skips_duplicate_download_after_reading_manifest():
+    script = Path("SEARCH_UPDATE.ps1").read_text(encoding="utf-8-sig")
+    no_op = script.index("if (-not $CheckOnly -and $manifest.version -le $current)")
+    archive_download = script.index("release download $manifest.version")
+    assert no_op < archive_download
