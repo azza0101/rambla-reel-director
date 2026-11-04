@@ -36,6 +36,15 @@ def valid_video(path):
     except OSError:return False
 
 
+def valid_1080_video(path):
+    try:
+        result=subprocess.run(['ffprobe','-v','error','-select_streams','v:0','-show_entries','stream=width,height','-of','json',str(path)],capture_output=True,text=True,check=True,timeout=20)
+        stream=json.loads(result.stdout)['streams'][0]
+        width,height=int(stream['width']),int(stream['height'])
+        return width>0 and height>0 and max(width,height)<=1920 and min(width,height)<=1080
+    except (OSError,ValueError,TypeError,KeyError,IndexError,subprocess.SubprocessError):return False
+
+
 RESOLUTION_SCRIPT = r"""async () => {
   const wait=ms=>new Promise(r=>setTimeout(r,ms));
   const visible=e=>{if(!e)return false;const r=e.getBoundingClientRect();return r.width>0&&r.height>0};
@@ -116,8 +125,12 @@ class EnvatoSession:
                 await item.save_as(str(source))
                 failure=await item.failure()
                 if failure:raise RuntimeError('Download Envato interrotto: '+str(failure))
-                target=_materialize(source,scratch.parent)
+                target=_materialize(source,scratch / "verified")
                 if not target or not await asyncio.to_thread(valid_video,target):raise RuntimeError('Il file Envato non contiene un video utilizzabile')
+                if not await asyncio.to_thread(valid_1080_video,target):raise RuntimeError('Envato ha inviato un formato superiore a 1080p o non verificabile')
+                final=scratch.parent / target.name
+                target.replace(final)
+                target=final
                 registry=load_registry(Path(run_root));registry['assets'][str(asset_id)]={'media_path':str(target.resolve()),'license_project':str(project_name).strip()}
                 write_json(Path(run_root)/'envato-downloads.json',registry)
                 return {'status':'ready','asset_id':asset_id,'media_path':str(target.resolve())}

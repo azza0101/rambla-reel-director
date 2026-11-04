@@ -18,6 +18,7 @@ def test_download_uses_exact_event_and_attaches_asset(tmp_path,monkeypatch):
     import backend.app.envato_auto_download as auto
     monkeypatch.setattr(evidence,'challenge_required',lambda html:False)
     monkeypatch.setattr(auto,'valid_video',lambda path:True)
+    monkeypatch.setattr(auto,'valid_1080_video',lambda path:True)
     class Download:
         suggested_filename='file.mp4'
         async def save_as(self,path):Path(path).write_bytes(b'valid video')
@@ -67,11 +68,11 @@ def test_failed_licensing_never_creates_registry(tmp_path,monkeypatch):
     assert not (tmp_path/'run/envato-downloads.json').exists()
 def test_full_length_mov_is_valid_media_and_missing_video_is_rejected(tmp_path):
     import shutil,subprocess
-    from backend.app.envato_auto_download import valid_video
+    from backend.app.envato_auto_download import valid_video,valid_1080_video
     if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):pytest.skip('ffmpeg tools unavailable')
     media=tmp_path/'full.mov'
     subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','color=black:size=64x64:rate=2','-t','6','-c:v','mpeg4',str(media)],check=True,capture_output=True)
-    assert valid_video(media)
+    assert valid_video(media) and valid_1080_video(media)
     invalid=tmp_path/'bad.mp4';invalid.write_bytes(b'not a video')
     assert not valid_video(invalid)
 
