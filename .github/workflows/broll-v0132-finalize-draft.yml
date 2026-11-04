@@ -1,0 +1,25 @@
+name: Finalize validated RMBL B ROLL v0132 release
+on:
+  push:
+    branches:
+      - release/broll-v0132-publish
+permissions:
+  contents: write
+jobs:
+  finalize-existing-validated-draft:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Publish existing v0132 draft only if all three validated assets exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          repo="${{ github.repository }}"
+          release=$(gh api "repos/$repo/releases/tags/v0132")
+          echo "$release" | jq -e '.draft == true and .tag_name == "v0132" and (.assets | length) == 3' >/dev/null
+          for asset in RMBL-B-ROLL-Setup-v0132.exe RMBL-B-ROLL-Windows-v0132.zip update.json; do
+            echo "$release" | jq -e --arg n "$asset" '.assets[] | select(.name == $n and .size > 100)' >/dev/null
+          done
+          gh release edit v0132 --repo "$repo" --draft=false --latest
+          gh release view v0132 --repo "$repo" --json isDraft,tagName,assets --jq '{tagName, isDraft, assetCount:(.assets|length)}'
