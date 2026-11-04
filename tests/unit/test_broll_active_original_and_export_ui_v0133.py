@@ -140,3 +140,27 @@ def test_export_component_checkboxes_are_visible_before_send_button():
     assert '<details class="legacyExportsV33"><summary>Componenti da esportare' not in PANEL
     assert "count>0" in JS
     assert "input.onchange" in JS
+
+
+def test_export_javascript_parses_in_node_when_available(tmp_path):
+    import shutil
+    import subprocess
+    from backend.app.timeline_export_ui import JS
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js not available on this host")
+    script = tmp_path / "resolve-export-v0133.js"
+    script.write_text(JS, encoding="utf-8")
+    result = subprocess.run([node, "--check", str(script)],
+                            capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+
+
+def test_envato_login_and_official_user_download_are_visible_in_media_section():
+    from backend.app.curation_ui_v2 import render_curation_page_v2
+    html = render_curation_page_v2()
+    assert 'id="envatoLoginV2"' in html
+    assert 'id="socialConnectionsV5"' in html
+    assert "APRI ENVATO E IMPORTA DOWNLOAD" in html
+    assert "download/start" in html
+    assert "started.token" in html
