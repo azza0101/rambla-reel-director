@@ -38,7 +38,7 @@ def test_bridge_uses_modern_cards_for_capture_and_destination_controls():
     assert "CompactChoiceRow" in source
     assert "DestinationCard" in source
     assert "backup numerato in BCK" in source
-    assert "timeline reale dall'IN corrente" in source
+    assert "importa il video su V1 solo se manca" in source
     assert "Analizza le tracce video superiori" in source
     assert "ToggleCard" not in source
 
