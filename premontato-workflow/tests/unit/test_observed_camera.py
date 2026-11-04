@@ -56,6 +56,14 @@ class ObservedCameraTests(unittest.TestCase):
   from observed_camera import audit_edit
   d=[{'media_id':'m','field':'a','start_frame':0,'end_frame':10,'record_frame':0,'ids':['u1']}]
   self.assertFalse(audit_edit(d,[],['u1'],25)['ready'])
+ def test_contiguous_turn_boundaries_are_not_physical_flash_cuts(self):
+  from observed_camera import audit_edit
+  d=[{'media_id':'m','field':'a','start_frame':i*10,'end_frame':(i+1)*10,'record_frame':i*10,'ids':[str(i)]} for i in range(4)]
+  self.assertEqual(audit_edit(d,[],[str(i) for i in range(4)],25)['short_shots'],[])
+ def test_discontinuous_short_fragments_remain_flash_cuts(self):
+  from observed_camera import audit_edit
+  d=[{'media_id':'m','field':'a','start_frame':i*20,'end_frame':i*20+10,'record_frame':i*10,'ids':[str(i)]} for i in range(4)]
+  self.assertEqual(audit_edit(d,[],[str(i) for i in range(4)],25)['short_shots'],[0,1,2,3])
  def test_overlapping_alternative_windows_are_not_reused_in_alignment(self):
   from observed_camera import align_windows
   t=[{'voice':'a'},{'voice':'b'}];c=[{'voice':'a','start_frame':0,'end_frame':100},{'voice':'a','start_frame':0,'end_frame':40},{'voice':'b','start_frame':40,'end_frame':80}]
@@ -74,3 +82,11 @@ class ObservedCameraTests(unittest.TestCase):
   from observed_camera import verified_alignment
   t=[{'voice':'a'}];c=[{'voice':'a','start_frame':i*50,'end_frame':i*50+40} for i in range(3)]
   self.assertEqual(verified_alignment(t,c,[[1.,.9,.8]],lambda j:False,max_rounds=1),[None])
+ def test_rejected_source_window_is_not_retried_for_another_turn(self):
+  from observed_camera import verified_alignment
+  t=[{'voice':'a'},{'voice':'a'}]
+  c=[{'voice':'a','start_frame':i*50,'end_frame':i*50+40} for i in range(3)]
+  seen=[]
+  def check(j):seen.append(j);return j==1
+  result=verified_alignment(t,c,[[.95,.9,.99],[.99,.9,.95]],check,max_rounds=2)
+  self.assertIn(1,result);self.assertEqual(seen.count(1),1)
