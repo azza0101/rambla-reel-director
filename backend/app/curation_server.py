@@ -1662,8 +1662,12 @@ def create_app(
         flags = normalize_components(saved_flags, has_native_cut=available)
         # Pre-v0129 saved selections lack this key: make the uploaded, uncut
         # main video part of SEND ALL without requiring the AutoCut workflow.
-        if source_available and not (isinstance(saved_flags, dict) and 'source_video' in saved_flags):
+        if source_available and not flags['video'] and not (isinstance(saved_flags, dict) and 'source_video' in saved_flags):
             flags['source_video'] = True
+        if source_available and not (run_root(project_id) / 'semantic-chunks.json').is_file() and not saved.get('components'):
+            # It is valid to send only the uploaded video before ANALIZZA.
+            for key in ('subtitles', 'highlights', 'broll', 'social', 'generic'):
+                flags[key] = False
         counts = {key: 0 for key in flags}
         run = run_root(project_id)
         origin = _read_json(root / project_id / 'cut-origin.json', {})
@@ -1693,7 +1697,7 @@ def create_app(
                 'video_available': available,
                 'source_video_available': source_available,
                 'video_reason': 'Conferma CUT e continua per aggiungere testo e coperture ai tagli' if draft_cut else (
-                    '' if available else 'Video originale: esportabile senza AutoCut, con audio e senza modifiche, su una nuova timeline Resolve.')}
+                    '' if available else 'Video originale senza AutoCut: viene importato intero su una nuova timeline con audio, se incluso.' if source_available else 'Carica un video prima di analizzare per includerlo in Resolve senza AutoCut.')}
 
     @app.put('/api/curation/projects/{project_id}/export-options')
     async def put_export_options(project_id: str, components: ExportComponents):
@@ -1746,6 +1750,10 @@ def create_app(
                     raise ValueError('Il video originale senza AutoCut non e disponibile su un progetto CUT o acquisito da Resolve')
                 from .original_video_export import load_original_video
                 load_original_video(project)
+                if not active_bridge_session_id or time.time() - bridge_last_seen > 6:
+                    raise ValueError('Apri il bridge Resolve e attendi CONNECTED prima di inviare il video originale')
+                if not active_bridge_version.startswith('v') or not active_bridge_version[1:].isdigit() or int(active_bridge_version[1:]) < 129:
+                    raise ValueError('Aggiorna il bridge RMBL alla versione v0129 per importare il video originale senza AutoCut')
             assert_current_cut(root / project_id, root, allow_pending=not (flags['broll'] or flags['social']))
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
