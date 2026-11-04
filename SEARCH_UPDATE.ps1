@@ -49,8 +49,42 @@ function Confirm-RMBLSoftwareUpdate {
     }
 }
 
+function Clear-RMBLUpdateStaging {
+    param([string]$OwnStage, [switch]$CleanOld)
+    # Only direct children of TEMP with our GUID-based staging name.
+    $temp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/')
+    $candidates = @()
+    if ($OwnStage) { $candidates += $OwnStage }
+    if ($CleanOld) {
+        $cutoff = (Get-Date).ToUniversalTime().AddHours(-24)
+        $candidates += @(Get-ChildItem -LiteralPath $temp -Directory -Filter 'rmbl-update-*' -ErrorAction SilentlyContinue |
+            Where-Object { $_.LastWriteTimeUtc -lt $cutoff } |
+            ForEach-Object { $_.FullName })
+    }
+    foreach ($path in ($candidates | Select-Object -Unique)) {
+        try {
+            $full = [IO.Path]::GetFullPath($path).TrimEnd('\', '/')
+            if (-not [string]::Equals((Split-Path -Parent $full), $temp, [StringComparison]::OrdinalIgnoreCase)) { continue }
+            if ((Split-Path -Leaf $full) -notmatch '^rmbl-update-[0-9a-f]{32}$') { continue }
+            if (-not (Test-Path -LiteralPath $full -PathType Container)) { continue }
+            $directory = Get-Item -LiteralPath $full -Force
+            if ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+            $links = @(Get-ChildItem -LiteralPath $full -Force -Recurse -ErrorAction Stop |
+                Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint } |
+                Select-Object -First 1)
+            if ($links.Count -gt 0) { continue }
+            Remove-Item -LiteralPath $full -Recurse -Force -ErrorAction Stop
+            Write-Host "Rimosso pacchetto temporaneo RMBL: $($directory.Name)"
+        } catch {
+            Write-Warning "Pulizia temporanea non riuscita: $($_.Exception.Message)"
+        }
+    }
+}
+
 $mutex = New-Object Threading.Mutex($false, 'Local\RMBLSoftwareUpdate')
 if (-not $mutex.WaitOne(0)) { Write-Host 'Un aggiornamento e gia aperto.'; exit 0 }
+$updateCompleted = $false
+$stage = $null
 try {
     $current = (Get-Content -LiteralPath (Join-Path $AppRoot 'RAMBLA_VERSION') -Raw).Trim()
     $stage = Join-Path ([IO.Path]::GetTempPath()) ('rmbl-update-' + [guid]::NewGuid().ToString('N'))
@@ -124,12 +158,15 @@ try {
     } finally {
         & $python (Join-Path $AppRoot 'launch_local_v5.py') start
     }
+    $updateCompleted = $true
     Write-Host 'Aggiornamento completato. Il bridge carica la nuova versione quando libero.'
 } catch {
     Write-Host $_.Exception.Message -ForegroundColor Red
     Write-Host 'Progetti conservati. Backup del codice in install-backups.'
     if ($CheckOnly) { exit 1 }
 } finally {
+    # Own stage on any exit; old abandoned stages only after a successful update.
+    Clear-RMBLUpdateStaging -OwnStage $stage -CleanOld:$updateCompleted
     $mutex.ReleaseMutex(); $mutex.Dispose()
     if (-not $CheckOnly) { Read-Host 'Premi INVIO per chiudere' }
 }

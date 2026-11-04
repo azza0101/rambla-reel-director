@@ -1,0 +1,38 @@
+name: B ROLL v0132 disk cleanup retention regression
+on:
+  push:
+    branches:
+      - feat/broll-v0132-local-backup-retention
+  pull_request:
+    branches:
+      - release/broll-v0131-publish
+permissions:
+  contents: read
+jobs:
+  retention:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install -e ".[dev]" "pytest>=8,<9"
+      - name: Backup cleanup and updater regression tests
+        run: python -m pytest -q tests/unit/test_broll_update_retention_v0132.py tests/unit/test_software_update.py tests/unit/test_windows_distribution.py tests/unit/test_original_video_no_autocut_v0129.py tests/unit/test_resolve_native_subtitles.py
+      - name: Check PowerShell syntax
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          foreach ($path in @('SEARCH_UPDATE.ps1', 'INSTALL_RMBL_B_ROLL.ps1', 'tools/prune_rmbl_backups.ps1')) {
+            $tokens=$null; $errors=$null
+            $null=[System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path),[ref]$tokens,[ref]$errors)
+            if ($errors.Count) { $errors | Out-String | Write-Error; throw "PowerShell parse failed: $path" }
+          }
+      - name: Compile application
+        run: python -m compileall -q backend/app

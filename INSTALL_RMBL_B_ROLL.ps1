@@ -199,6 +199,17 @@ if (-not $SkipDesktopIntegration) {
     }
 }
 Write-Host "Installazione completata e verificata: $InstallRoot"
+# Only after a successful installation and a verified new rollback snapshot,
+# retain the immediately previous local version. Release assets remain on GitHub.
+# Disk cleanup is best-effort and must never turn a valid install into a rollback.
+if ($backup -and (Test-Path -LiteralPath $backup -PathType Container)) {
+    try {
+        & (Join-Path $InstallRoot 'tools\prune_rmbl_backups.ps1') -InstallRoot $InstallRoot -KeepBackup $backup
+        if (-not $?) { Write-Warning 'Pulizia vecchi backup non completata; nessun dato utente eliminato.' }
+    } catch {
+        Write-Warning "Pulizia vecchi backup saltata: $($_.Exception.Message)"
+    }
+}
 Write-Host 'Progetti e chiavi del tuo PC restano separati dal programma. Configura le chiavi API al primo avvio.'
 
 } catch {
