@@ -29,7 +29,7 @@ public static class RamblaWindow {
   public const uint WM_CLOSE=0x0010;
   public static bool IsRamblaTitle(string title) {
     // ASCII source is intentional: Windows PowerShell 5 reads BOM-less scripts as ANSI.
-    return String.Equals(title.Trim(), "RMBL B ROLL", StringComparison.OrdinalIgnoreCase) || String.Equals(title.Trim(), "RAMBLA \u00b7 B-ROLL", StringComparison.OrdinalIgnoreCase);
+    return String.Equals(title.Trim(), "RMBL B ROLL", StringComparison.OrdinalIgnoreCase) || String.Equals(title.Trim(), "RAMBLA \u00b7 B-ROLL", StringComparison.OrdinalIgnoreCase) || System.Text.RegularExpressions.Regex.IsMatch(title.Trim(), @"^(RMBL B ROLL|RAMBLA \u00b7 B-ROLL) v[0-9]{4}$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
   }
   public static IntPtr[] FindAll(string expectedProcess) {
     var found=new List<IntPtr>();

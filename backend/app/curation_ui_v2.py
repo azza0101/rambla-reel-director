@@ -302,6 +302,7 @@ def _organize_workflow(html: str) -> str:
 
 def render_curation_page_v2(build_token: str | None = None) -> str:
     html = render_curation_page(build_token)
+    html = html.replace('<title>RAMBLA · B-ROLL</title>', f'<title>RAMBLA · B-ROLL {RELEASE_VERSION}</title>', 1)
     wordmark = _brand_data_uri("rmbl_wordmark_white.png")
     mark = _brand_data_uri("rmbl_mark_white.png")
     html = re.sub(

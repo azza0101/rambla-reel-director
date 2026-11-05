@@ -138,6 +138,9 @@ def test_window_identity_survives_windows_powershell_ansi_loading():
     try:
         checks="""
 if (-not [RamblaWindow]::IsRamblaTitle(('RAMBLA '+[char]0x00b7+' B-ROLL'))) { throw 'App title not recognized' }
+if (-not [RamblaWindow]::IsRamblaTitle(('RAMBLA '+[char]0x00b7+' B-ROLL v0143'))) { throw 'Versioned title not recognized' }
+if (-not [RamblaWindow]::IsRamblaTitle('RMBL B ROLL v0143')) { throw 'Current versioned title not recognized' }
+if ([RamblaWindow]::IsRamblaTitle(('RAMBLA '+[char]0x00b7+' B-ROLL v0143 - other page'))) { throw 'Unrelated window matched' }
 if ([RamblaWindow]::IsRamblaTitle('RAMBLA - B-ROLL')) { throw 'Bridge must not be matched' }
 if ([RamblaWindow]::IsRamblaTitle('YouTube - Microsoft Edge')) { throw 'Unrelated window matched' }
 """
@@ -153,6 +156,12 @@ def test_launch_aborts_when_mutex_is_not_acquired():
     assert "if (-not $acquired) { throw" in script
     assert script.index("if (-not $acquired)") < script.index('Start-Process')
     assert 'if ($acquired)' in script
+
+
+def test_application_window_title_includes_current_release():
+    from backend.app.curation_ui_v2 import render_curation_page_v2
+    from backend.app.release_version import RELEASE_VERSION
+    assert f'<title>RMBL B ROLL {RELEASE_VERSION}</title>' in render_curation_page_v2()
 
 
 def test_window_launcher_falls_back_to_default_browser_when_no_app_window_appears():
