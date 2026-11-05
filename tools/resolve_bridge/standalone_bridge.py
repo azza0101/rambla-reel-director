@@ -607,6 +607,11 @@ class BridgeApp:
         tk.Label(card.body, text="TIMELINE ATTIVA", bg="#202746", fg="#9299bc", font=("Segoe UI Semibold", 8), anchor="w").pack(fill="x")
         self.widgets["timeline"] = tk.Label(card.body, text="Timeline in attesa…", bg="#202746", fg="#f1f3ff", font=("Segoe UI", 10), justify="left", anchor="w"); self.widgets["timeline"].pack(fill="x", pady=(5, 0))
 
+        self.widgets['share_timeline'] = RoundedButton(shell, text='ESPORTA TIMELINE E MEDIA', command=self.export_timeline_share)
+        self.widgets['share_timeline'].pack(fill='x', pady=(0, 8))
+        self.widgets['share_status'] = tk.Label(shell, text='', bg='#11152b', fg='#b9c1e0', font=('Segoe UI', 9), wraplength=520, justify='left', anchor='w')
+        self.widgets['share_status'].pack(fill='x', pady=(0, 8))
+
         self.widgets["send_section"] = CollapsibleSection(shell, title="INVIO A RMBL B ROLL", expanded=False, on_toggle=self._fit_current_window)
         self.widgets["send_section"].pack(fill="x", pady=(0, 7))
         options_card = RoundedPanel(self.widgets["send_section"].body, fill="#181d39", outline="#343c65", height=320, radius=18, padding=12); options_card.pack(fill="x")
@@ -666,6 +671,53 @@ class BridgeApp:
         self.widgets["discard"] = RoundedButton(receive, text="SCARTA PACCHETTO", command=self.discard, state="disabled")
         self.widgets["discard"].pack(fill="x", pady=(0, 8))
         self._fit_window(package_visible=False)
+
+    def export_timeline_share(self) -> None:
+        from tkinter import filedialog
+        if self.applying:
+            self._show_error('Attendi la fine dell’applicazione prima di esportare la timeline.')
+            return
+        target = filedialog.asksaveasfilename(parent=self.root, title='Esporta timeline e media',
+                                             defaultextension='.zip', filetypes=[('Pacchetto timeline', '*.zip')])
+        if not target: return
+        self.widgets['share_timeline'].configure(state='disabled')
+        self.widgets['share_status'].configure(text='Esporto la timeline e copio i media…')
+        def worker():
+            try:
+                from backend.app.resolve_bridge import connect_resolve
+                from backend.app.timeline_share_package import export_timeline_package
+                resolve = connect_resolve()
+                manager = resolve.GetProjectManager()
+                project = manager.GetCurrentProject() if manager else None
+                timeline = project.GetCurrentTimeline() if project else None
+                if not timeline: raise RuntimeError('Apri un progetto e una timeline in Resolve')
+                def confirm_missing(paths):
+                    answered = threading.Event()
+                    answer = [False]
+                    def ask():
+                        try:
+                            from tkinter import messagebox
+                            listing = '\n'.join(paths[:12])
+                            if len(paths) > 12: listing += f'\n… e altri {len(paths)-12}'
+                            answer[0] = messagebox.askyesno('Media mancanti',
+                                f'{len(paths)} file non disponibili:\n\n{listing}\n\nVuoi continuare senza questi file?', parent=self.root)
+                        finally: answered.set()
+                    self.root.after(0, ask)
+                    while not answered.wait(0.25):
+                        if self.closed: return False
+                    return answer[0]
+                result = export_timeline_package(resolve, timeline, Path(target), confirm_missing=confirm_missing)
+                text = f"✓ Pacchetto creato · {result['media_count']} media. Se necessario, ricollega i file dalla cartella Media."
+                if result['missing_count']: text += f" {result['missing_count']} media mancanti: dettagli nel manifest."
+                text += ' Verifica titoli e composizioni: font, plugin e risorse Fusion possono richiedere installazione separata.'
+                if result['warnings']: text += f" Elementi da controllare: {len(result['warnings'])}."
+            except Exception as exc:
+                text = 'Esportazione non riuscita: ' + str(exc)
+            def finish():
+                self.widgets['share_status'].configure(text=text)
+                self.widgets['share_timeline'].configure(state='normal')
+            self.root.after(0, finish)
+        threading.Thread(target=worker, daemon=True).start()
 
     def _select_destination(self, value: str) -> None:
         summary = (getattr(self, '_debug_row', {}).get('summary') or {})
