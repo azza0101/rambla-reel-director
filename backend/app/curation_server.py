@@ -1932,8 +1932,10 @@ def create_app(
         counts['generic'] = len(generic.get('selected') or [])
         if (run / 'semantic-chunks.json').is_file():
             from .transcript_intents import build_combined_resolve_export
-            text = build_combined_resolve_export(run, project_id, include_highlights=flags['highlights'])
-            counts['subtitles'], counts['highlights'] = text['subtitle_count'], text['title_count']
+            text = build_combined_resolve_export(run, project_id, include_highlights=True)
+            counts['highlights'] = text['title_count']
+            counts['subtitles'] = (text if flags['highlights'] else
+                build_combined_resolve_export(run, project_id, include_highlights=False))['subtitle_count']
             from .curation_artifacts import load_curation_run
             from .export_components import SOCIAL
             view = load_curation_run(run)
