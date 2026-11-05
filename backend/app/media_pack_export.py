@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import filecmp
 import re
 import zipfile
 from pathlib import Path
@@ -68,7 +69,7 @@ def create_media_pack(
                 return arcname
             path = Path(arcname)
             suffix = hashlib.sha256(str(source.resolve()).encode('utf-8')).hexdigest()[:12]
-            arcname = str(path.with_name(path.stem + '_' + suffix + path.suffix)).replace('\\', '/')
+            arcname = str(path.parent / suffix / path.name).replace('\\', '/')
         unique.add(arcname)
         archive_sources[arcname] = source.resolve()
         z.write(source, arcname, compress_type=zipfile.ZIP_STORED)
@@ -76,10 +77,35 @@ def create_media_pack(
         path_map[str(source_value)] = arcname
         return arcname
 
+    # Resolve may have staged the same source under a title/provider name.
+    # Only include aliases whose bytes actually match the selected source.
+    staging_root = project_root / 'run' / 'resolve-media'
+    staged = list(staging_root.rglob('*')) if staging_root.is_dir() else []
+    def add_resolve_aliases(z: zipfile.ZipFile, row: dict[str, Any], source_value: str) -> None:
+        source = Path(source_value)
+        if not _inside(source, project_root): return
+        from .resolve_textplus_timeline import _safe_media_name
+        stem = _safe_media_name(str(row.get('title') or source.stem), fallback='clip')
+        provider = _safe_media_name(str(row.get('provider') or 'source'), fallback='source')
+        expected = f'{stem}_{provider}'
+        for candidate in staged:
+            if not candidate.is_file() or not _inside(candidate, staging_root): continue
+            name = candidate.stem
+            if candidate.suffix.casefold() != source.suffix.casefold(): continue
+            if name.casefold() != expected.casefold() and not re.fullmatch(re.escape(expected) + r'_[0-9a-f]{8}', name, re.I): continue
+            try:
+                if source.stat().st_size != candidate.stat().st_size or not filecmp.cmp(source, candidate, shallow=False): continue
+            except OSError: continue
+            relative = candidate.relative_to(staging_root).as_posix()
+            add(z, str(candidate), '05_RESOLVE_RELINK/' + relative, label=str(row.get('title') or candidate.name))
+            if str(row.get('kind') or '') == 'image':
+                for still in candidate.parent.glob(candidate.stem + '_still_*.mp4'):
+                    if _inside(still, staging_root):
+                        add(z, str(still), '05_RESOLVE_RELINK/' + still.relative_to(staging_root).as_posix(), label=str(row.get('title') or still.name))
+
     with zipfile.ZipFile(target, "w", allowZip64=True) as z:
         if source_video_path:
-            source_suffix=Path(source_video_path).suffix.lower()
-            add(z, source_video_path, '00_VIDEO_ORIGINALE/video_originale'+source_suffix,
+            add(z, source_video_path, '00_VIDEO_ORIGINALE/'+Path(source_video_path).name,
                 label='Video originale')
         for row in timeline.get("clips", []):
             beat = safe_name(row.get("beat_id"), fallback="frase")
@@ -88,11 +114,12 @@ def create_media_pack(
             suffix = Path(source).suffix.lower()
             if suffix not in {".mp4", ".mov", ".mkv", ".webm", ".jpg", ".jpeg", ".png", ".webp"}:
                 suffix = ".mp4"
-            destination = f"01_FRASI/{beat}/{asset}{suffix}"
+            destination = f"01_FRASI/{beat}/{Path(source).name}"
             added = add(z, source, destination, label=str(row.get("title") or asset),
                 beat_id=str(row.get("beat_id") or ""), source_page=str(row.get("source_page") or ""))
             if added:
                 safe_timeline_clips.append(row)
+                add_resolve_aliases(z, row, source)
 
         # Include selected high-resolution images even if the timeline planner
         # could not place them (e.g. a missing target time range).
@@ -103,9 +130,10 @@ def create_media_pack(
             suffix = Path(source).suffix.lower()
             if suffix not in {".png", ".jpeg", ".jpg", ".webp"}:
                 continue
-            destination = f"01_FRASI/{beat}/{asset}{suffix}"
+            destination = f"01_FRASI/{beat}/{Path(source).name}"
             add(z, source, destination, label=str(row.get("title") or asset),
                 beat_id=str(row.get("beat_id") or ""), source_page=str(row.get("source_page") or ""))
+            add_resolve_aliases(z, {**row,'kind':'image'}, source)
 
         chosen = set(map(str, selected_generics or []))
         for row in generic_rows or []:
@@ -115,9 +143,10 @@ def create_media_pack(
             location = safe_name(row.get("place"), fallback="TEMA_GENERALE")
             provider = safe_name(row.get('provider'),fallback='pexels')
             source = Path(str(row.get('media_path') or project_root / 'run' / 'resolve-media' / 'pexels' / f'pexels_{provider_id}.mp4'))
-            arc = f"02_LUOGHI_E_GENERICI/{location}/{provider}_{safe_name(provider_id)}{source.suffix or '.mp4'}"
+            arc = f"02_LUOGHI_E_GENERICI/{location}/{source.name}"
             add(z, str(source), arc, label=str(row.get("title") or provider_id),
                 beat_id="generic:" + provider_id, source_page=str(row.get("source_page") or ""))
+            add_resolve_aliases(z, row, str(source))
             safe_generics.append({**row, 'media_path':str(source), 'role':'generic'})
 
         for entry in timeline.get("unavailable", []):
@@ -152,8 +181,9 @@ def create_media_pack(
             "03_RESOLVE/timeline.xml: timeline FCP7 XML importabile in DaVinci Resolve.\n"
             "03_RESOLVE/sottotitoli.srt: sottotitoli importabili direttamente.\n"
             "03_RESOLVE/titoli_e_testi.json: posizioni e testi delle evidenziazioni,\n"
-            "04_OMNICUT/progetto.json: contesto e tempi selezionati per una futura integrazione OmniCut.\n"
             "non equivalgono a titoli Fusion gia' ricostruiti nella timeline.\n"
+            "04_OMNICUT/progetto.json: contesto e tempi selezionati per una futura integrazione OmniCut.\n"
+            "05_RESOLVE_RELINK: copie dei file gia' preparati per Resolve, quando disponibili.\n"
             "Se muovi il pacchetto, in Resolve usa RELINK MEDIA verso le cartelle estratte.\n"
             "Il file .DRP non e' generabile indipendentemente dalle API Resolve.\n"
             "I media assenti non bloccano il pacchetto: consulta manifest.json.\n"

@@ -86,6 +86,42 @@ def test_media_pack_does_not_exfiltrate_external_file(tmp_path):
         assert b"PRIVATE SECRET" not in z.read("manifest.json")
 
 
+def test_media_pack_keeps_original_names_and_includes_matching_resolve_names(tmp_path):
+    root=tmp_path/'project'; assets=root/'run'/'assets'; assets.mkdir(parents=True)
+    source=assets/'original-video.mp4'; source.write_bytes(b'video')
+    staging=root/'run'/'resolve-media'/'Test_media_v1'/'VIDEO'; staging.mkdir(parents=True)
+    (staging/'Baku_tower_pexels.mp4').write_bytes(b'video')
+    (staging/'Baku_tower_pexels_deadbeef.mp4').write_bytes(b'OTHER')
+    row={'asset_id':'pexels:123','beat_id':'beat_1','title':'Baku tower','provider':'pexels',
+         'media_path':str(source),'track_index':1,'duration_frames':25,'record_start_frame':0,
+         'record_end_frame':25,'source_start_frame':0,'source_end_frame':25}
+    dest=tmp_path/'export.zip'
+    create_media_pack(dest,project_id='p',project_name='Test',project_root=root,
+                      timeline={'fps':25,'duration_frames':25,'clips':[row]})
+    with zipfile.ZipFile(dest) as z:
+        names=z.namelist()
+        assert any(name.endswith('/original-video.mp4') for name in names)
+        alias=next(name for name in names if name.endswith('/Baku_tower_pexels.mp4'))
+        assert z.read(alias)==b'video'
+        assert not any(name.endswith('/Baku_tower_pexels_deadbeef.mp4') for name in names)
+
+
+def test_media_pack_includes_generated_still_used_in_resolve(tmp_path):
+    root=tmp_path/'project'; assets=root/'run'/'assets'; assets.mkdir(parents=True)
+    source=assets/'photo.jpg'; source.write_bytes(b'photo')
+    staging=root/'run'/'resolve-media'/'Test_media_v1'/'IMMAGINI'; staging.mkdir(parents=True)
+    (staging/'Baku_pexels.jpg').write_bytes(b'photo')
+    (staging/'Baku_pexels_still_50_25fps.mp4').write_bytes(b'generated')
+    row={'asset_id':'image:1','beat_id':'beat_1','title':'Baku','provider':'pexels','kind':'image',
+         'media_path':str(source),'track_index':1,'duration_frames':50,'record_start_frame':0,
+         'record_end_frame':50,'source_start_frame':0,'source_end_frame':50}
+    dest=tmp_path/'export.zip'
+    create_media_pack(dest,project_id='p',project_name='Test',project_root=root,
+                      timeline={'fps':25,'duration_frames':50,'clips':[row]})
+    with zipfile.ZipFile(dest) as z:
+        assert any(name.endswith('/Baku_pexels_still_50_25fps.mp4') for name in z.namelist())
+
+
 def test_media_pack_button_and_selective_skip_suppression():
     from backend.app.timeline_export_ui import JS, PANEL
     assert 'id="exportMediaPackV125"' in PANEL
