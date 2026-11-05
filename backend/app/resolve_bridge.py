@@ -6,8 +6,45 @@ import sys
 import time
 import hashlib
 import json
+import subprocess
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+
+@lru_cache(maxsize=2)
+def _visible_resolve_windows_for_period(period: int) -> tuple[tuple[int, str], ...]:
+    if os.name != 'nt':
+        return ()
+    command = ("[Console]::OutputEncoding=[Text.UTF8Encoding]::new(); "
+               "@(Get-Process -Name Resolve -ErrorAction SilentlyContinue | "
+               "Where-Object { $_.MainWindowTitle } | "
+               "ForEach-Object { @{pid=$_.Id;title=$_.MainWindowTitle} }) | ConvertTo-Json -Compress")
+    try:
+        result = subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-Command',command],
+            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=4,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), check=True)
+        rows = json.loads(result.stdout or '[]')
+        if isinstance(rows, dict): rows = [rows]
+        return tuple((int(row['pid']), str(row['title'])) for row in rows if row.get('title'))
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError):
+        return ()
+
+
+def visible_resolve_windows() -> list[dict[str, Any]]:
+    return [{'pid': pid, 'title': title} for pid, title in
+            _visible_resolve_windows_for_period(int(time.monotonic() // 10))]
+
+
+def missing_timeline_detail(project_name: str, windows: list[dict[str, Any]]) -> str:
+    manager = [row for row in windows if str(row.get('title') or '').strip().casefold() == 'project manager']
+    projects = [row for row in windows if str(row.get('title') or '').strip().casefold().startswith('davinci resolve')]
+    if manager and projects:
+        title = str(projects[0]['title'])
+        return (f'RMBL legge "{project_name or "nessun progetto"}" senza timeline, ma rileva anche "{title}". '
+                'Potrebbero esserci due istanze Resolve: salva e chiudi solo la finestra Project Manager, '
+                'poi riprova RICOLLEGA BRIDGE.')
+    return f'Resolve risponde, ma il progetto "{project_name or "nessuno"}" non ha una timeline attiva. Apri la timeline e riprova.'
 
 
 def timeline_range(timeline: Any) -> tuple[int, int, str]:

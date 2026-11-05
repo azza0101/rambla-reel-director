@@ -617,13 +617,16 @@ def create_app(
         nonlocal last_resolve_bridge_status
         if handoff_jobs.is_applying:
             return {**last_resolve_bridge_status, 'operation_in_progress': True}
-        from .resolve_bridge import connect_resolve, timeline_range
+        from .resolve_bridge import connect_resolve, timeline_range, visible_resolve_windows, missing_timeline_detail
         try:
             resolve = await asyncio.to_thread(connect_resolve)
             project = resolve.GetProjectManager().GetCurrentProject()
             timeline = project.GetCurrentTimeline() if project else None
             if not project or not timeline:
-                raise RuntimeError("Apri un progetto e una timeline DaVinci Resolve")
+                name = project.GetName() if project else ''
+                windows = await asyncio.to_thread(visible_resolve_windows)
+                return {'connected':False,'bridge_api_version':2,'project':name,
+                        'detail':missing_timeline_detail(name, windows), 'resolve_windows':windows}
             mark_in, mark_out, source = timeline_range(timeline)
             last_resolve_bridge_status = {"connected": True, "bridge_api_version": 2,
                     "project": project.GetName(), "timeline": timeline.GetName(),

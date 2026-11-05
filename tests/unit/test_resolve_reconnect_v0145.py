@@ -44,3 +44,30 @@ def test_reconnect_control_displays_failure_and_diagnostics():
     assert 'RICOLLEGA BRIDGE' in PANEL
     assert '/reconnect' in JS and 'Collegamento non riuscito' in JS
     assert 'loadResolveDebugV39' in JS
+
+
+def test_missing_timeline_detects_multiple_resolve_windows():
+    from backend.app.resolve_bridge import missing_timeline_detail
+    rows = [{'pid':11020,'title':'Project Manager'},
+            {'pid':12224,'title':'DaVinci Resolve Studio - test kura v2'}]
+    detail = missing_timeline_detail('Untitled Project', rows)
+    assert 'Project Manager' in detail and 'test kura v2' in detail
+    assert 'chiudi' in detail.lower()
+    assert 'Project Manager' not in missing_timeline_detail('Other', rows[1:])
+
+
+def test_bridge_status_explains_wrong_resolve_instance(monkeypatch, tmp_path):
+    class Project:
+        def GetName(self): return 'Untitled Project'
+        def GetCurrentTimeline(self): return None
+    class Manager:
+        def GetCurrentProject(self): return Project()
+    class Resolve:
+        def GetProjectManager(self): return Manager()
+    monkeypatch.setattr('backend.app.resolve_bridge.connect_resolve', lambda: Resolve())
+    monkeypatch.setattr('backend.app.resolve_bridge.visible_resolve_windows', lambda: [
+        {'pid':1,'title':'Project Manager'}, {'pid':2,'title':'DaVinci Resolve Studio - test kura v2'}])
+    response = TestClient(create_app(project_root=tmp_path / 'projects')).get('/api/curation/resolve-bridge/status')
+    row = response.json()
+    assert row['connected'] is False and row['project'] == 'Untitled Project'
+    assert 'Project Manager' in row['detail'] and 'test kura v2' in row['detail']
