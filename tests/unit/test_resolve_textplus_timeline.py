@@ -420,7 +420,6 @@ def test_highlight_track_is_always_above_every_broll_track():
 
 
 def test_conformed_broll_keeps_equal_duration_handles_when_source_allows(monkeypatch):
-    monkeypatch.setattr('backend.app.resolve_textplus_timeline.direct_broll_compatible', lambda *_: False)
     root = Path.cwd() / (".test-broll-handles-" + uuid.uuid4().hex)
     root.mkdir()
     source = root / "source.mp4"
@@ -439,11 +438,11 @@ def test_conformed_broll_keeps_equal_duration_handles_when_source_allows(monkeyp
             "source_start_frame":300, "source_end_frame":390,
         }], 30)
 
-        assert rows[0]["source_start_frame"] == 90
-        assert rows[0]["source_end_frame"] == 180
+        assert rows[0]["source_start_frame"] == 300
+        assert rows[0]["source_end_frame"] == 390
         assert rows[0]["handle_before_frames"] == 90
         assert rows[0]["handle_after_frames"] == 90
-        assert commands[0][commands[0].index("-frames:v") + 1] == "270"
+        assert commands == []
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -452,7 +451,6 @@ def test_matching_rate_uses_original_media_with_precise_trim_and_handles(monkeyp
     source = tmp_path / 'original.mp4'
     source.write_bytes(b'original')
     monkeypatch.setattr('backend.app.resolve_textplus_timeline.probe_preview', lambda _: {'duration': 30.0})
-    monkeypatch.setattr('backend.app.resolve_textplus_timeline.direct_broll_compatible', lambda path, fps: True, raising=False)
     def no_encode(*args, **kwargs):
         raise AssertionError('compatible media must not be encoded')
     monkeypatch.setattr('backend.app.resolve_textplus_timeline.subprocess.run', no_encode)
@@ -461,23 +459,6 @@ def test_matching_rate_uses_original_media_with_precise_trim_and_handles(monkeyp
     assert row['media_path'] == str(source)
     assert (row['source_start_frame'], row['source_end_frame']) == (300, 390)
     assert (row['handle_before_frames'], row['handle_after_frames']) == (90, 90)
-
-
-def test_direct_broll_probe_rejects_mismatched_and_unreliable_rates(monkeypatch, tmp_path):
-    import json
-    from backend.app.resolve_textplus_timeline import direct_broll_compatible
-    source = tmp_path / 'clip.mp4'; source.write_bytes(b'video')
-    def probe(avg, rate, codec='h264', times=(0, 1/30, 2/30)):
-        data = {'streams':[{'codec_name':codec, 'avg_frame_rate':avg, 'r_frame_rate':rate}],
-                'frames':[{'best_effort_timestamp_time':str(t)} for t in times]}
-        monkeypatch.setattr('backend.app.resolve_textplus_timeline.subprocess.run',
-            lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps(data)))
-        return direct_broll_compatible(source, 30)
-    assert probe('30/1','30/1')
-    assert not probe('25/1','25/1')
-    assert not probe('30/1','60/1')
-    assert not probe('30/1','30/1','hevc')
-    assert not probe('30/1','30/1',times=(0, 1/30, 3/30))
 
 
 def test_conformed_broll_keeps_the_selected_preview_as_the_visible_anchor(monkeypatch):
@@ -1153,7 +1134,6 @@ def test_broll_scaling_fills_the_frame_instead_of_overlaying_a_horizontal_strip(
 def test_staged_broll_reuses_identical_file_and_existing_conformed_excerpt(monkeypatch, tmp_path):
     """Retried application must not repeat minutes of FFmpeg work."""
     from backend.app.resolve_textplus_timeline import prepare_broll_media_files, conform_broll_media
-    monkeypatch.setattr('backend.app.resolve_textplus_timeline.direct_broll_compatible', lambda *_: False)
     source = tmp_path / "downloaded" / "video.mp4"
     source.parent.mkdir()
     source.write_bytes(b"original video data")
@@ -1173,12 +1153,12 @@ def test_staged_broll_reuses_identical_file_and_existing_conformed_excerpt(monke
     staging = tmp_path / "staging"
     first = prepare_broll_media_files([row], staging, "kura_media_v1")
     output1 = conform_broll_media(first, 30)
-    assert len(calls) == 1
+    assert len(calls) == 0
     second = prepare_broll_media_files([row], staging, "kura_media_v1")
     output2 = conform_broll_media(second, 30)
     assert second[0]["media_path"] == first[0]["media_path"]
     assert output2[0]["media_path"] == output1[0]["media_path"]
-    assert len(calls) == 1
+    assert len(calls) == 0
 
 
 def test_staged_broll_does_not_reuse_different_source_with_same_readable_name(tmp_path):

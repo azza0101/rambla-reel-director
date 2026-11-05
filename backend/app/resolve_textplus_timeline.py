@@ -1065,41 +1065,8 @@ def _apply_broll_metadata(item: Any, row: dict[str, Any]) -> bool:
         return all(result is not False for result in results)
 
 
-def direct_broll_compatible(source: Path, fps: float) -> bool:
-    """Use original H.264 MP4 only when its reported frame rates match the timeline."""
-    from fractions import Fraction
-    if source.suffix.lower() != '.mp4' or fps <= 0:
-        return False
-    try:
-        completed = subprocess.run(
-            ['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_streams', '-show_frames', '-show_entries',
-             'stream=codec_name,avg_frame_rate,r_frame_rate:frame=best_effort_timestamp_time', '-of', 'json', str(source)],
-            check=True, capture_output=True, text=True, timeout=30,
-            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-        data = json.loads(completed.stdout)
-        stream = data['streams'][0]
-        average = Fraction(stream['avg_frame_rate'])
-        nominal = Fraction(stream['r_frame_rate'])
-        if stream['codec_name'] != 'h264' or average != nominal or abs(float(average) - fps) >= .001:
-            return False
-        frames = data.get('frames') or []
-        if len(frames) < 2:
-            return False
-        # A rate label alone does not establish constant frame timing. Reject
-        # gaps, variable-rate frames and nonzero starts; fall back to conform.
-        period = 1.0 / float(average)
-        return all(abs(float(frame['best_effort_timestamp_time']) - index * period) <= .002
-                   for index, frame in enumerate(frames))
-    except (OSError, subprocess.SubprocessError, ValueError, ZeroDivisionError, KeyError, IndexError, TypeError, AttributeError):
-        return False
-
-
 def conform_broll_media(clips: list[dict[str, Any]], fps: float, progress=None) -> list[dict[str, Any]]:
-    """Create frame-exact excerpts with editorial handles around the visible range.
-
-    Resolve rounds source-frame trims before converting clip FPS. Some requested
-    durations therefore cannot be represented with a mixed-rate source directly.
-    """
+    """Keep video originals; generate video only for still-image coverage."""
     result = []
     for index, row in enumerate(clips):
         if progress: progress(index, len(clips))
@@ -1135,39 +1102,12 @@ def conform_broll_media(clips: list[dict[str, Any]], fps: float, progress=None) 
             missing -= extra_right
         if missing:
             cut_start = max(0, cut_start - missing)
-        total = max(duration, cut_end - cut_start)
         handle_before = start - cut_start
         handle_after = max(0, cut_end - selected_end)
-        if direct_broll_compatible(source, fps):
-            result.append({**row, 'media_path': str(source), 'source_start_frame': start,
-                'source_end_frame': selected_end, 'handle_before_frames': handle_before,
-                'handle_after_frames': handle_after, 'selected_source_start_frame_absolute': start,
-                'selected_source_end_frame_absolute': selected_end, 'conformed_cut_start_frame_absolute': 0})
-            continue
-        target = source.with_name(f'{source.stem}_handles_{cut_start}_{total}_{fps:g}fps.mp4')
-        if not target.is_file():
-            temporary = target.with_name(target.stem + '.working.mp4')
-            try:
-                subprocess.run(['ffmpeg', '-v', 'error', '-y', '-ss', str(cut_start / fps),
-                    '-i', str(source), '-map', '0:v:0', '-an', '-vf', f'fps={fps:g}',
-                    '-frames:v', str(total), '-c:v', 'libx264', '-preset', 'fast',
-                    '-crf', '18', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', str(temporary)],
-                    check=True, capture_output=True, timeout=180,
-                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-                os.replace(temporary, target)
-            finally:
-                temporary.unlink(missing_ok=True)
-        result.append({
-            **row,
-            'media_path': str(target),
-            'source_start_frame': handle_before,
-            'source_end_frame': handle_before + duration,
-            'handle_before_frames': handle_before,
-            'handle_after_frames': handle_after,
-            'selected_source_start_frame_absolute': start,
-            'selected_source_end_frame_absolute': selected_end,
-            'conformed_cut_start_frame_absolute': cut_start,
-        })
+        result.append({**row, 'media_path': str(source), 'source_start_frame': start,
+            'source_end_frame': selected_end, 'handle_before_frames': handle_before,
+            'handle_after_frames': handle_after, 'selected_source_start_frame_absolute': start,
+            'selected_source_end_frame_absolute': selected_end, 'conformed_cut_start_frame_absolute': 0})
     return result
 
 
@@ -1223,7 +1163,8 @@ def append_broll_clips(media_pool: Any, timeline: Any, clips: list[dict[str, Any
                         int(base_frame) + int(row["record_end_frame"]))
             actual = (int(result[0].GetStart()), int(result[0].GetEnd()))
             if actual != expected:
-                raise RuntimeError(f"B-roll timing mismatch for {row['asset_id']}: {actual} != {expected}")
+                raise RuntimeError(f"Resolve non ha rispettato la durata del B-roll {row['asset_id']} "
+                                   f"({actual} invece di {expected}). Verifica gli fps della clip e della timeline.")
         color = "Beige" if row.get("role") == "generic" else "Purple"
         setter = getattr(result[0], "SetClipColor", None)
         if setter:
@@ -1438,7 +1379,7 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
         )
         prepared_broll_clips = conform_broll_media(prepared_broll_clips, fps,
             progress=lambda index,total: report_handoff_progress(payload,'conform',5+int(12*index/max(1,total)),
-                f'Preparo estratto {index + 1}/{total}: {Path(str(prepared_broll_clips[index].get("media_path") or "video")).name}'))
+                f'Preparo media {index + 1}/{total}: {Path(str(prepared_broll_clips[index].get("media_path") or "video")).name}'))
     build_name = f"__RAMBLA_BUILD_{int(time.time() * 1000)}"
     generated = None
     backup = None
