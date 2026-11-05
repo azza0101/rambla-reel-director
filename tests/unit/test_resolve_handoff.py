@@ -202,3 +202,34 @@ def test_bound_project_remains_invisible_to_other_project_same_session():
                              bridge_session_id="live-bridge") == []
     finally:
         shutil.rmtree(root, ignore_errors=True)
+
+
+def test_reconnect_reassigns_pending_package_without_copying_or_rebuilding(tmp_path):
+    store = ResolveHandoffStore(tmp_path)
+    root = tmp_path / 'p1'; root.mkdir()
+    package = store.prepare(root, _payload(bridge_session_id='old'))
+    row = store.reconnect(root, package['package_id'], bridge_session_id='new',
+                          resolve_project='Egitto2', timeline_id='tl-1')
+    assert row['package_id'] == package['package_id']
+    assert row['payload'] == package['payload']
+    assert row['bridge_session_id'] == 'new' and not row.get('bridge_received_at')
+    assert store.pending(resolve_project='Egitto2', timeline_id='', bridge_session_id='new')[0]['package_id'] == package['package_id']
+
+
+def test_reconnect_rejects_wrong_project_and_applying_package(tmp_path):
+    store = ResolveHandoffStore(tmp_path)
+    root = tmp_path / 'p1'; root.mkdir()
+    package = store.prepare(root, _payload(bridge_session_id='old'))
+    with pytest.raises(ValueError, match='(?i)progetto'):
+        store.reconnect(root, package['package_id'], bridge_session_id='new', resolve_project='Wrong', timeline_id='tl-1')
+    store.transition(root, package['package_id'], 'applying')
+    with pytest.raises(ValueError, match='applicazione'):
+        store.reconnect(root, package['package_id'], bridge_session_id='new', resolve_project='Egitto2', timeline_id='tl-1')
+
+
+def test_reconnect_rejects_native_cut_reference_on_wrong_timeline(tmp_path):
+    store = ResolveHandoffStore(tmp_path)
+    root = tmp_path / 'p1'; root.mkdir()
+    package = store.prepare(root, _payload(bridge_session_id='old', native_cut_reference={'x': 1}))
+    with pytest.raises(ValueError, match='timeline'):
+        store.reconnect(root, package['package_id'], bridge_session_id='new', resolve_project='Egitto2', timeline_id='wrong')

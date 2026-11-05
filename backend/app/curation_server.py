@@ -2111,6 +2111,27 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    @app.post('/api/curation/resolve-handoffs/{package_id}/reconnect')
+    async def reconnect_resolve_handoff(package_id: str):
+        project_root, package = find_handoff(package_id)
+        if package.get('status') != 'pending':
+            raise HTTPException(409, detail='Pacchetto non in attesa: controlla applicazione e diagnostica')
+        live = await resolve_bridge_session_status()
+        if not live.get('connected') or not live.get('bridge_session_id'):
+            raise HTTPException(409, detail='Bridge offline: apri RMBL B ROLL da Resolve e riprova')
+        target = await resolve_bridge_status()
+        if not target.get('connected'):
+            raise HTTPException(409, detail='Resolve non collegato: ' + str(target.get('detail') or 'apri progetto e timeline'))
+        again = await resolve_bridge_session_status()
+        if not again.get('connected') or again.get('bridge_session_id') != live.get('bridge_session_id'):
+            raise HTTPException(409, detail='La sessione del bridge è cambiata: riprova')
+        try:
+            row = handoff_store.reconnect(project_root, package_id, bridge_session_id=live['bridge_session_id'],
+                resolve_project=str(target.get('project') or ''), timeline_id=str(target.get('timeline_id') or ''))
+            return {k:v for k,v in row.items() if k != 'payload'}
+        except ValueError as exc:
+            raise HTTPException(409, detail=str(exc)) from exc
+
     @app.post("/api/curation/resolve-handoffs/{package_id}/received")
     async def receive_resolve_handoff(package_id: str, request: ResolveBridgeSessionRequest) -> dict[str, Any]:
         project_root, _ = find_handoff(package_id)
@@ -2171,7 +2192,8 @@ def create_app(
         version=(Path(__file__).resolve().parents[2]/'RAMBLA_VERSION').read_text(encoding='utf-8').strip()
         return {'version':version,'build':os.environ.get('RAMBLA_BUILD_TOKEN',''),
                 'bridge':await resolve_bridge_session_status(),
-                **{k:package.get(k) for k in ('package_id','project_id','status','created_at','updated_at','summary','destination_mode','apply_scope','destination_timeline_id','bridge_received_at','progress','error','diagnostics','result')}}
+                'resolve':await resolve_bridge_status(), 'package_bridge_session_id':package.get('bridge_session_id'),
+                **{k:package.get(k) for k in ('package_id','project_id','resolve_project','timeline_id','status','created_at','updated_at','summary','destination_mode','apply_scope','destination_timeline_id','bridge_received_at','progress','error','diagnostics','result')}}
 
     @app.get('/api/curation/projects/{project_id}/resolve-handoffs/latest')
     async def latest_resolve_handoff(project_id: str):

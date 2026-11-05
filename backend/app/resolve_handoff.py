@@ -180,6 +180,29 @@ class ResolveHandoffStore:
                 or ((row.get('summary') or {}).get('native_cut') and bridge_session_id
                     and row.get('bridge_session_id') == bridge_session_id)]
 
+    def reconnect(self, project_root: Path, package_id: str, *, bridge_session_id: str,
+                  resolve_project: str, timeline_id: str) -> dict[str, Any]:
+        """Reoffer the same pending package to a live session, without an apply."""
+        with self._lock:
+            package = self.read(project_root, package_id)
+            if package.get('status') != 'pending':
+                raise ValueError('Pacchetto non in attesa: controlla applicazione e diagnostica')
+            if not bridge_session_id:
+                raise ValueError('Bridge non collegato')
+            expected = str(package.get('resolve_project') or '')
+            if expected and expected != resolve_project:
+                raise ValueError(f'Progetto Resolve diverso: atteso {expected}, aperto {resolve_project}')
+            payload = package.get('payload') or {}
+            if payload.get('native_cut_reference') and package.get('timeline_id') != timeline_id:
+                raise ValueError('Apri la timeline CUT originale prima di ricollegare il pacchetto')
+            if package.get('bridge_session_id') != bridge_session_id:
+                package['bridge_session_id'] = bridge_session_id
+                package['bridge_received_at'] = None
+                package['progress'] = {'phase':'pending','percent':0,'message':'Attendo ricezione dal bridge'}
+                package['updated_at'] = _now()
+                _atomic_json(self._path(project_root, package_id), package)
+            return deepcopy(package)
+
     def mark_received(self, project_root: Path, package_id: str, *, bridge_session_id: str) -> dict[str, Any]:
         with self._lock:
             package = self.read(project_root, package_id)

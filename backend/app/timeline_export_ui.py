@@ -22,6 +22,7 @@ PANEL = r'''
   <p id="resolveOriginalInfoV129" class="muted" style="margin:8px 0 0" hidden>Video originale con audio, senza AutoCut. Nel bridge puoi scegliere se applicare alla timeline attiva oppure creare una nuova timeline.</p>
   <button id="sendResolvePackageV33" class="primary resolvePrimaryV33">INVIA A RESOLVE</button><button id="exportMediaPackV125" class="ghost" type="button" style="margin-top:8px;width:100%">ESPORTA MEDIA IN CARTELLE (ZIP) · SENZA BRIDGE</button>
   <div id="resolveDeliveryV33" class="resolveDeliveryV33" hidden><div id="resolveDeliveryCheckV33" class="resolveDeliveryCheckV33" hidden>✓</div><strong id="resolveDeliveryTitleV33">Preparazione pacchetto Resolve…</strong><span id="resolveDeliverySummaryV33"></span><div id="resolveDeliveryProgressV33" class="resolveDeliveryProgressBarV34"><i></i></div><b id="resolveDeliveryPercentV37">0%</b><small id="resolveDeliveryDetailV33"></small><div id="resolveCurrentMediaV136" class="resolveCurrentMediaV136" hidden><strong id="resolveCurrentMediaTitleV136"></strong><div id="resolveCurrentMediaBarV136" class="resolveCurrentMediaBarV136"><i></i></div><small id="resolveCurrentMediaDetailV136"></small></div></div>
+  <button id="reconnectResolveV145" class="ghost" type="button" hidden>↻ RICOLLEGA BRIDGE</button><small id="reconnectResolveMessageV145" role="status" hidden></small>
   <button id="stopResolvePrepareV139" type="button" hidden>■ STOP INVIO</button>
   <dialog id="resolveStopDialogV139" class="resolveDialogV139"><h3>Interrompere l’invio?</h3><p>Scegli cosa fare con i file scaricati durante questo invio. I file già presenti e il progetto restano al sicuro.</p><div class="row"><button id="resolveStopKeepV139" type="button">STOP · MANTIENI I FILE</button><button id="resolveStopDiscardV139" type="button">STOP · ELIMINA I NUOVI FILE</button><button id="resolveStopBackV139" type="button">ANNULLA</button></div></dialog>
   <dialog id="resolveIssueDialogV139" class="resolveDialogV139"><h3>Problema con una copertura</h3><p id="resolveIssueTitleV139"></p><p id="resolveIssueDetailV139"></p><p>Apri la pagina, risolvi il problema e premi Riprova; oppure ignora questa clip.</p><p id="resolveIssueMessageV139" role="status"></p><div class="row"><button id="resolveIssueOpenV139" type="button">APRI PAGINA</button><button id="resolveIssueRetryV139" type="button">RIPROVA</button><button id="resolveIssueIgnoreV139" type="button">IGNORA QUESTA CLIP</button><button id="resolveIssueIgnoreAllV139" type="button">IGNORA TUTTI GLI ERRORI</button><button id="resolveIssueStopV139" type="button">STOP INVIO</button></div></dialog>
@@ -141,10 +142,25 @@ async function loadGenericCoverageV33(refresh=false,scope='topic',manualQuery=''
 function syncTimelineExportV33(){const disabled=!state.pid||!!state.run||resolvePreparingV37;for(const id of ['sendResolvePackageV33','exportTimelineXmlV33','exportTimelineDraV33','openTimelineResolveV33'])$(id).disabled=disabled}
 function summaryResolveHandoffV33(s={}){return `${s.original_video?'Video originale senza AutoCut · ':''}${s.native_cut?`CUT nativo · ${s.cut_count} tagli · ${s.fps} fps · ${s.width}×${s.height} · `:''}${s.broll_count||0} B-roll · ${s.subtitle_count||0} subs · ${s.title_count||0} frasi${s.generic_broll_count?` · ${s.generic_broll_count} generiche`:''}${s.unavailable_count?` · ${s.unavailable_count} non disponibili`:''}`}
 function setResolveDeliveryProgressV33(value){const percent=Math.max(0,Math.min(100,Number(value)||0)),bar=$('resolveDeliveryProgressV33');bar.style.setProperty('--p',`${percent}%`);bar.setAttribute('role','progressbar');bar.setAttribute('aria-valuemin','0');bar.setAttribute('aria-valuemax','100');bar.setAttribute('aria-valuenow',String(percent));$('resolveDeliveryPercentV37').textContent=`${percent}%`}
+$('reconnectResolveV145').onclick=async()=>{
+ if(!resolveHandoffIdV33)return;
+ const button=$('reconnectResolveV145'),message=$('reconnectResolveMessageV145'),id=resolveHandoffIdV33;
+ button.disabled=true;message.hidden=false;message.textContent='Controllo bridge, Resolve e pacchetto…';
+ try{
+  await api(`/resolve-handoffs/${id}/reconnect`,{method:'POST'});
+  message.textContent='Bridge contattato. Attendo la ricezione del pacchetto…';
+  await new Promise(resolve=>setTimeout(resolve,3000));
+  const row=await api(`/resolve-handoffs/${id}/status`);
+  message.textContent=row.bridge_received_at?'✓ Pacchetto ricevuto: premi APPLICA nel bridge.':'Bridge collegato, ma non ha ancora confermato. Apri il bridge e controlla Diagnostica Resolve.';
+  await pollResolveHandoffV33();
+ }catch(error){message.textContent='Collegamento non riuscito: '+(error.message||String(error));$('resolveDebugV39').hidden=false;try{await loadResolveDebugV39()}catch(_){}$('resolveDebugV39').open=true}
+ finally{button.disabled=false}
+};
 async function pollResolveHandoffV33(){
  if(!resolveHandoffIdV33)return;
  try{
   const row=await api(`/resolve-handoffs/${resolveHandoffIdV33}/status`),received=!!row.bridge_received_at,done=row.status==='completed',applying=row.status==='applying',failed=row.status==='failed';
+  $('reconnectResolveV145').hidden=row.status!=='pending';
   const box=$('resolveDeliveryV33');box.hidden=false;box.classList.toggle('receivedV33',(received||done)&&!failed);$('resolveDeliveryCheckV33').hidden=!(received||done)||failed;
   $('resolveDeliverySummaryV33').textContent=summaryResolveHandoffV33(row.summary);
   setResolveDeliveryProgressV33((applying||failed)?row.progress?.percent:(received||done?100:90));$('resolveDebugV39').hidden=false;
