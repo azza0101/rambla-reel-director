@@ -63,6 +63,16 @@ def test_launcher_ignores_running_instance_from_another_build():
     assert launcher.find_running_instance('project','current',fetch=fetch) is None
 
 
+def test_launcher_prefers_the_server_with_the_live_bridge():
+    def fetch(url):
+        if not any(f':{p}/' in url for p in (8811,8812)): raise OSError('offline')
+        if url.endswith('/health'): return {'status':'ok','build_token':'current'}
+        if '/projects/' in url: return {'project_id':'project'}
+        if url.endswith('/resolve-bridge/session'): return {'connected':':8811/' in url}
+        return {'providers':{'tiktok':{'connection_ready':False}}}
+    assert launcher.find_running_instance('project','current',fetch=fetch) == 'http://127.0.0.1:8811/curation?project=project'
+
+
 def test_launcher_ignores_unrelated_http_services():
     assert launcher.find_running_instance('project','current',fetch=lambda _: {'status':'ok'}) is None
 

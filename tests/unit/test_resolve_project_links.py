@@ -42,6 +42,20 @@ def test_bridge_ignores_newer_port_with_old_build(monkeypatch):
     assert bridge.discover_base() == 'http://127.0.0.1:8812'
 
 
+def test_bridge_rediscovery_prefers_server_with_live_bridge_session(monkeypatch):
+    import io, json
+    import launch_local_v5
+    from tools.resolve_bridge import standalone_bridge as bridge
+    monkeypatch.setattr(launch_local_v5, 'source_build_token', lambda _: 'current')
+    def open_url(url, timeout):
+        if not any(f':{p}/' in url for p in (8811, 8812)): raise OSError('offline')
+        if url.endswith('/health'): row={'status':'ok','build_token':'current'}
+        else: row={'connected':':8811/' in url}
+        return io.BytesIO(json.dumps(row).encode())
+    monkeypatch.setattr(bridge.urllib.request, 'urlopen', open_url)
+    assert bridge.discover_base() == 'http://127.0.0.1:8811'
+
+
 def test_open_saved_falls_back_without_linking_unrelated_timeline(tmp_path):
     from backend.app.resolve_project_links import saved_project_to_open, read
     from backend.app.atomic_io import write_json

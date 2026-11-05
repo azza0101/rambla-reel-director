@@ -332,10 +332,15 @@ def discover_base() -> str:
             with urllib.request.urlopen(url + "/health", timeout=.3) as response:
                 row = json.loads(response.read().decode())
             if row.get("status") == "ok" and row.get('build_token') == expected_build:
-                candidates.append((port, url))
+                try:
+                    with urllib.request.urlopen(url + '/api/curation/resolve-bridge/session', timeout=.3) as response:
+                        connected = bool(json.loads(response.read().decode()).get('connected'))
+                except (OSError, ValueError, TypeError):
+                    connected = False
+                candidates.append((connected, port, url))
         except Exception:
             pass
-    return max(candidates)[1] if candidates else ""
+    return max(candidates)[2] if candidates else ""
 
 
 def http_request(base: str, path: str, method: str = "GET", payload: dict[str, Any] | None = None) -> dict[str, Any]:

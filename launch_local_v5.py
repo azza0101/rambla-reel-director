@@ -131,13 +131,17 @@ def find_running_instance(project_id,build_token,*,fetch=_fetch_local_json):
             if not isinstance(providers, dict) or 'tiktok' not in providers:
                 return None
             connected = sum(bool(providers.get(p, {}).get('connection_ready')) for p in ('tiktok', 'instagram'))
+            try:
+                bridge_connected = bool(fetch(base + '/api/curation/resolve-bridge/session').get('connected'))
+            except (OSError, ValueError, TypeError, AttributeError):
+                bridge_connected = False
             suffix='?project='+quote(project_id,safe='') if project_id else ''
-            return connected, port, base + '/curation' + suffix
+            return bridge_connected, connected, port, base + '/curation' + suffix
         except (OSError, ValueError, TypeError, AttributeError):
             return None
     with ThreadPoolExecutor(max_workers=10) as pool:
         choices = [row for row in pool.map(inspect_port, range(8810, 8820)) if row]
-    return max(choices)[2] if choices else None
+    return max(choices)[3] if choices else None
 
 
 def main(action='start'):
