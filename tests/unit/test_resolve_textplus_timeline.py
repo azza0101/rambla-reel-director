@@ -452,7 +452,7 @@ def test_matching_rate_uses_original_media_with_precise_trim_and_handles(monkeyp
     source = tmp_path / 'original.mp4'
     source.write_bytes(b'original')
     monkeypatch.setattr('backend.app.resolve_textplus_timeline.probe_preview', lambda _: {'duration': 30.0})
-    monkeypatch.setattr('backend.app.resolve_textplus_timeline.direct_broll_compatible', lambda path, fps: True, raising=False)
+    monkeypatch.setattr('backend.app.resolve_textplus_timeline.direct_broll_compatible', lambda *args: True, raising=False)
     def no_encode(*args, **kwargs):
         raise AssertionError('compatible media must not be encoded')
     monkeypatch.setattr('backend.app.resolve_textplus_timeline.subprocess.run', no_encode)
@@ -467,14 +467,17 @@ def test_direct_broll_probe_rejects_mismatched_and_unreliable_rates(monkeypatch,
     import json
     from backend.app.resolve_textplus_timeline import direct_broll_compatible
     source = tmp_path / 'clip.mp4'; source.write_bytes(b'video')
-    def probe(avg, rate, codec='h264', times=(0, 1/30, 2/30)):
+    def probe(avg, rate, codec='h264', times=None, start=0, end=30):
+        from fractions import Fraction
+        if times is None: times = [i / float(Fraction(avg)) for i in range(120)]
         data = {'streams':[{'codec_name':codec, 'avg_frame_rate':avg, 'r_frame_rate':rate}],
                 'frames':[{'best_effort_timestamp_time':str(t)} for t in times]}
         monkeypatch.setattr('backend.app.resolve_textplus_timeline.subprocess.run',
             lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps(data)))
-        return direct_broll_compatible(source, 30)
+        return direct_broll_compatible(source, 30, start, end)
     assert probe('30/1','30/1')
-    assert not probe('25/1','25/1')
+    assert probe('25/1','25/1')
+    assert not probe('25/1','25/1',start=0,end=1)
     assert not probe('30/1','60/1')
     assert not probe('30/1','30/1','hevc')
     assert not probe('30/1','30/1',times=(0, 1/30, 3/30))

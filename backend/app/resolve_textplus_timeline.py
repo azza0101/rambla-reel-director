@@ -1065,8 +1065,8 @@ def _apply_broll_metadata(item: Any, row: dict[str, Any]) -> bool:
         return all(result is not False for result in results)
 
 
-def direct_broll_compatible(source: Path, fps: float) -> bool:
-    """Use original H.264 MP4 only when its reported frame rates match the timeline."""
+def direct_broll_compatible(source: Path, fps: float, start: int, end: int) -> bool:
+    """Use original H.264 MP4 only for frame-aligned source trims."""
     from fractions import Fraction
     if source.suffix.lower() != '.mp4' or fps <= 0:
         return False
@@ -1080,10 +1080,15 @@ def direct_broll_compatible(source: Path, fps: float) -> bool:
         stream = data['streams'][0]
         average = Fraction(stream['avg_frame_rate'])
         nominal = Fraction(stream['r_frame_rate'])
-        if stream['codec_name'] != 'h264' or average != nominal or abs(float(average) - fps) >= .001:
+        if stream['codec_name'] != 'h264' or average != nominal:
             return False
         frames = data.get('frames') or []
         if len(frames) < 2:
+            return False
+        ratio = float(average) / fps
+        source_start, source_end = start * ratio, end * ratio
+        if (source_start < 0 or source_end <= source_start or source_end > len(frames) or
+                abs(source_start - round(source_start)) > .0001 or abs(source_end - round(source_end)) > .0001):
             return False
         # A rate label alone does not establish constant frame timing. Reject
         # gaps, variable-rate frames and nonzero starts; fall back to conform.
@@ -1138,7 +1143,7 @@ def conform_broll_media(clips: list[dict[str, Any]], fps: float, progress=None) 
         total = max(duration, cut_end - cut_start)
         handle_before = start - cut_start
         handle_after = max(0, cut_end - selected_end)
-        if direct_broll_compatible(source, fps):
+        if direct_broll_compatible(source, fps, start, selected_end):
             result.append({**row, 'media_path': str(source), 'source_start_frame': start,
                 'source_end_frame': selected_end, 'handle_before_frames': handle_before,
                 'handle_after_frames': handle_after, 'selected_source_start_frame_absolute': start,
