@@ -2257,6 +2257,7 @@ def create_app(
                 timeline=timeline, generic_rows=generic.get("items") or [],
                 selected_generics=generic.get("selected") or [], selected_images=selected_images,
                 captions_srt=captions, titles=titles,
+                source_video_path=str(project.source_video.path) if project.source_video else '',
             )
             return FileResponse(archive, media_type="application/zip", filename=name + "_MediaPack.zip")
         except (ValueError, OSError, KeyError, TypeError) as exc:

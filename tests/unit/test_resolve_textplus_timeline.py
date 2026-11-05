@@ -662,8 +662,9 @@ def test_broll_media_uses_versioned_project_folder_readable_names_and_source_met
         assert staged.name == "Bathroom_mirror_morning_envato.mp4"
 
         class Item:
-            def __init__(self): self.metadata = None
-            def SetMetadata(self, value): self.metadata = value; return True
+            def __init__(self): self.metadata = {}
+            def GetMetadata(self): return dict(self.metadata)
+            def SetMetadata(self, value): self.metadata.update(value); return True
         class Timeline:
             def GetTrackCount(self, _): return 2
         class Pool:

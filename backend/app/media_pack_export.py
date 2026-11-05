@@ -6,6 +6,7 @@ are represented by metadata, not invented clip assets.
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import zipfile
 from pathlib import Path
@@ -38,6 +39,7 @@ def create_media_pack(
     selected_images: list[dict[str, Any]] | None = None,
     captions_srt: str = "",
     titles: list[dict[str, Any]] | None = None,
+    source_video_path: str = "",
 ) -> dict[str, Any]:
     """Write ZIP grouped by beat/location; report files that were not available.
 
@@ -50,20 +52,35 @@ def create_media_pack(
     rows: list[dict[str, Any]] = []
     missed: list[dict[str, str]] = []
     unique: set[str] = set()
+    archive_sources: dict[str, Path] = {}
     safe_timeline_clips: list[dict[str, Any]] = []
+    path_map: dict[str, str] = {}
+    safe_generics: list[dict[str, Any]] = []
 
-    def add(z: zipfile.ZipFile, source_value: Any, arcname: str, *, label: str, source_page: str = "", beat_id: str = "") -> None:
+    def add(z: zipfile.ZipFile, source_value: Any, arcname: str, *, label: str, source_page: str = "", beat_id: str = "") -> str | None:
         source = Path(str(source_value or ""))
         if not source_value or not _inside(source, project_root):
             missed.append({"label": label, "beat_id": beat_id, "source_page": source_page, "reason": "File non disponibile nella cartella del progetto"})
             return
         if arcname in unique:
-            return
+            if archive_sources[arcname] == source.resolve():
+                path_map[str(source_value)] = arcname
+                return arcname
+            path = Path(arcname)
+            suffix = hashlib.sha256(str(source.resolve()).encode('utf-8')).hexdigest()[:12]
+            arcname = str(path.with_name(path.stem + '_' + suffix + path.suffix)).replace('\\', '/')
         unique.add(arcname)
+        archive_sources[arcname] = source.resolve()
         z.write(source, arcname, compress_type=zipfile.ZIP_STORED)
         rows.append({"path": arcname, "source_path": str(source), "beat_id": beat_id, "title": label, "source_page": source_page})
+        path_map[str(source_value)] = arcname
+        return arcname
 
     with zipfile.ZipFile(target, "w", allowZip64=True) as z:
+        if source_video_path:
+            source_suffix=Path(source_video_path).suffix.lower()
+            add(z, source_video_path, '00_VIDEO_ORIGINALE/video_originale'+source_suffix,
+                label='Video originale')
         for row in timeline.get("clips", []):
             beat = safe_name(row.get("beat_id"), fallback="frase")
             asset = safe_name(row.get("asset_id"), fallback="clip")
@@ -72,9 +89,9 @@ def create_media_pack(
             if suffix not in {".mp4", ".mov", ".mkv", ".webm", ".jpg", ".jpeg", ".png", ".webp"}:
                 suffix = ".mp4"
             destination = f"01_FRASI/{beat}/{asset}{suffix}"
-            add(z, source, destination, label=str(row.get("title") or asset),
+            added = add(z, source, destination, label=str(row.get("title") or asset),
                 beat_id=str(row.get("beat_id") or ""), source_page=str(row.get("source_page") or ""))
-            if destination in unique:
+            if added:
                 safe_timeline_clips.append(row)
 
         # Include selected high-resolution images even if the timeline planner
@@ -96,10 +113,12 @@ def create_media_pack(
             if provider_id not in chosen:
                 continue
             location = safe_name(row.get("place"), fallback="TEMA_GENERALE")
-            arc = f"02_LUOGHI_E_GENERICI/{location}/pexels_{safe_name(provider_id)}.mp4"
-            source = project_root / "run" / "resolve-media" / "pexels" / f"pexels_{provider_id}.mp4"
+            provider = safe_name(row.get('provider'),fallback='pexels')
+            source = Path(str(row.get('media_path') or project_root / 'run' / 'resolve-media' / 'pexels' / f'pexels_{provider_id}.mp4'))
+            arc = f"02_LUOGHI_E_GENERICI/{location}/{provider}_{safe_name(provider_id)}{source.suffix or '.mp4'}"
             add(z, str(source), arc, label=str(row.get("title") or provider_id),
                 beat_id="generic:" + provider_id, source_page=str(row.get("source_page") or ""))
+            safe_generics.append({**row, 'media_path':str(source), 'role':'generic'})
 
         for entry in timeline.get("unavailable", []):
             missed.append({"label": str(entry.get("asset_id") or ""), "beat_id": str(entry.get("beat_id") or ""),
@@ -112,6 +131,14 @@ def create_media_pack(
         z.writestr("03_RESOLVE/timeline.xml", xml)
         z.writestr("03_RESOLVE/sottotitoli.srt", captions_srt)
         z.writestr("03_RESOLVE/titoli_e_testi.json", json.dumps(titles or [], ensure_ascii=False, indent=2))
+        from .omnicut_handoff import build_handoff
+        context = build_handoff({'project_id':project_id,'project_name':project_name,'fps':timeline.get('fps'),
+            'duration_seconds': (float(timeline.get('duration_frames') or 0) / float(timeline.get('fps') or 1)),
+            'broll_clips':safe_timeline_clips,'generic_broll_clips':safe_generics,'titles':titles or [],
+            'unplaced_images':selected_images or [],
+            'broll_unavailable':timeline.get('unavailable') or [],'original_video':{'source_path':source_video_path}},
+            project_root=project_root,path_map=path_map)
+        z.writestr('04_OMNICUT/progetto.json',json.dumps(context,ensure_ascii=False,indent=2))
         manifest = {
             "version": 1, "project_id": project_id, "project_name": project_name,
             "media": rows, "missing": missed, "subtitle_format": "srt",
@@ -125,6 +152,7 @@ def create_media_pack(
             "03_RESOLVE/timeline.xml: timeline FCP7 XML importabile in DaVinci Resolve.\n"
             "03_RESOLVE/sottotitoli.srt: sottotitoli importabili direttamente.\n"
             "03_RESOLVE/titoli_e_testi.json: posizioni e testi delle evidenziazioni,\n"
+            "04_OMNICUT/progetto.json: contesto e tempi selezionati per una futura integrazione OmniCut.\n"
             "non equivalgono a titoli Fusion gia' ricostruiti nella timeline.\n"
             "Se muovi il pacchetto, in Resolve usa RELINK MEDIA verso le cartelle estratte.\n"
             "Il file .DRP non e' generabile indipendentemente dalle API Resolve.\n"

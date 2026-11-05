@@ -998,20 +998,23 @@ def versioned_media_folder_name(project_name: str, timeline_name: str) -> str:
 
 
 def prepare_broll_media_files(
-    clips: list[dict[str, Any]], staging_root: Path, folder_name: str
+    clips: list[dict[str, Any]], staging_root: Path, folder_name: str, *, organize: bool = False
 ) -> list[dict[str, Any]]:
-    destination = Path(staging_root) / folder_name
-    destination.mkdir(parents=True, exist_ok=True)
+    from .omnicut_handoff import media_category
+    base_destination = Path(staging_root) / folder_name
+    base_destination.mkdir(parents=True, exist_ok=True)
     prepared = []
     used: set[str] = set()
     for row in clips:
+        destination = base_destination / media_category(row) if organize else base_destination
+        destination.mkdir(parents=True, exist_ok=True)
         source = Path(str(row.get("media_path") or ""))
         if not source.is_file():
             continue
         provider = _safe_media_name(str(row.get("provider") or "source"), fallback="source")
         stem = _safe_media_name(str(row.get("title") or source.stem), fallback="clip")
         filename = f"{stem}_{provider}{source.suffix.casefold() or '.mp4'}"
-        key = filename.casefold()
+        key = str(destination / filename).casefold()
         target = destination / filename
         # Existing staged files were previously renamed on every retry, which
         # invalidated their cached _handles_ excerpts and repeated CPU encoding.
@@ -1033,7 +1036,7 @@ def prepare_broll_media_files(
             target = destination / filename
             if target.exists() and not same_media(target):
                 raise ValueError(f"Conflitto media nel cache di Resolve: {target.name}")
-        used.add(filename.casefold())
+        used.add(str(target).casefold())
         if not target.exists():
             try:
                 os.link(source, target)
@@ -1044,25 +1047,51 @@ def prepare_broll_media_files(
 
 
 def _apply_broll_metadata(item: Any, row: dict[str, Any]) -> bool:
-    metadata = {
-        "Description": str(row.get("title") or row.get("asset_id") or "RAMBLA B-roll"),
-        "Comments": "\n".join((
-            "Original source: " + str(row.get("source_page") or "unknown"),
-            "RAMBLA project: " + str(row.get("rambla_project") or "unknown"),
-            "Timeline: " + str(row.get("rambla_timeline") or "unknown"),
-        )),
-        "Keywords": ", ".join(filter(None, (
-            "RAMBLA", str(row.get("provider") or ""), str(row.get("beat_id") or "")
-        ))),
-    }
+    from .omnicut_handoff import media_context
+    getter = getattr(item, 'GetMetadata', None)
+    if not callable(getter): return False
+    try: existing = getter()
+    except (TypeError, RuntimeError): return False
+    if not isinstance(existing, dict): return False
+    context = media_context(row, media_path='')
+    context.pop('media_path', None)
+    context['project'] = str(row.get('rambla_project') or '')
+    context['timeline'] = str(row.get('rambla_timeline') or '')
+    context['fps'] = row.get('rambla_fps')
+    # Only replace our own marked block; leave user notes and other tools intact.
+    prior = str(existing.get('Comments') or '')
+    prior = re.sub(r'\n?\[RAMBLA_CONTEXT_V1\]\n.*?\n\[/RAMBLA_CONTEXT_V1\]', '', prior, flags=re.S).rstrip()
+    block = '[RAMBLA_CONTEXT_V1]\n' + json.dumps(context, ensure_ascii=True, sort_keys=True) + '\n[/RAMBLA_CONTEXT_V1]'
+    prior_keywords = [part.strip() for part in str(existing.get('Keywords') or '').split(',') if part.strip()]
+    for word in ('RAMBLA', str(row.get('provider') or ''), str(row.get('beat_id') or '')):
+        if word and word.casefold() not in {item.casefold() for item in prior_keywords}: prior_keywords.append(word)
+    metadata = {}
+    complete = True
+    if not existing.get('Description'):
+        metadata['Description'] = str(row.get('title') or row.get('asset_id') or 'RAMBLA B-roll')
+    # Resolve versions can corrupt existing Unicode metadata when it is rewritten.
+    if str(existing.get('Comments') or '').isascii():
+        metadata['Comments'] = (prior+'\n' if prior else '')+block
+    else:
+        complete = False
+    if str(existing.get('Keywords') or '').isascii() and all(word.isascii() for word in prior_keywords):
+        metadata['Keywords'] = ', '.join(prior_keywords)
+    else:
+        complete = False
     setter = getattr(item, "SetMetadata", None)
     if not setter:
         return False
     try:
-        return setter(metadata) is not False
+        if metadata and setter(metadata) is False: return False
     except TypeError:
-        results = [setter(key, value) for key, value in metadata.items()]
-        return all(result is not False for result in results)
+        try: results = [setter(key, value) for key, value in metadata.items()]
+        except (TypeError, RuntimeError): return False
+        if not all(result is not False for result in results): return False
+    except RuntimeError:
+        return False
+    try: actual = getter()
+    except (TypeError, RuntimeError): return False
+    return complete and isinstance(actual, dict) and all(actual.get(key) == value for key, value in metadata.items())
 
 
 def conform_broll_media(clips: list[dict[str, Any]], fps: float, progress=None) -> list[dict[str, Any]]:
@@ -1118,7 +1147,7 @@ def configure_broll_scaling(item):
         raise RuntimeError('Resolve could not fill the frame with the selected coverage')
 
 
-def append_broll_clips(media_pool: Any, timeline: Any, clips: list[dict[str, Any]], *, base_frame: int, fps: float | None = None, progress=None) -> int:
+def append_broll_clips(media_pool: Any, timeline: Any, clips: list[dict[str, Any]], *, base_frame: int, fps: float | None = None, progress=None, media_folders=None, metadata_warnings=None) -> int:
     """Append local B-roll to V2+; the caller owns a disposable TEMP duplicate."""
     if not clips:
         return 0
@@ -1129,10 +1158,15 @@ def append_broll_clips(media_pool: Any, timeline: Any, clips: list[dict[str, Any
     inserted = 0
     for index, row in enumerate(clips):
         if progress: progress(index, len(clips))
+        if media_folders:
+            from .omnicut_handoff import media_category
+            if media_pool.SetCurrentFolder(media_folders[media_category(row)]) is False:
+                raise RuntimeError('Resolve could not select the B-roll media folder')
         imported = media_pool.ImportMedia([str(row["media_path"])]) or []
         if len(imported) != 1:
             raise RuntimeError(f"Resolve could not import selected clip: {row['media_path']}")
-        _apply_broll_metadata(imported[0], row)
+        if not _apply_broll_metadata(imported[0], row) and metadata_warnings is not None:
+            metadata_warnings.append(str(row.get('asset_id') or row.get('title') or 'B-roll'))
         ratio = 1.0
         if fps is not None:
             source_fps = float(imported[0].GetClipProperty("FPS"))
@@ -1372,10 +1406,10 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
         )
         all_broll_rows = coverage_rows + generic_rows
         prepared_broll_clips = prepare_broll_media_files(
-            [{**row, "rambla_project": str(payload.get("project_name") or "RAMBLA"), "rambla_timeline": name}
+            [{**row, "rambla_project": str(payload.get("project_name") or "RAMBLA"), "rambla_timeline": name, "rambla_fps":fps}
              for row in all_broll_rows if row.get("media_path") and Path(str(row.get("media_path"))).is_file()],
             Path(str(payload.get("media_staging_root") or Path.cwd() / "resolve-media")),
-            media_folder_name,
+            media_folder_name, organize=True,
         )
         prepared_broll_clips = conform_broll_media(prepared_broll_clips, fps,
             progress=lambda index,total: report_handoff_progress(payload,'conform',5+int(12*index/max(1,total)),
@@ -1391,6 +1425,8 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
     backup_folder = None
     target_folder = None
     media_folder = None
+    media_folders = {}
+    metadata_warnings = []
     title_track_index = None
     title_build_timeline = None
     title_layer_item = None
@@ -1414,6 +1450,14 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
                 media_folder = media_pool.AddSubFolder(target_folder, media_folder_name)
             if not media_folder:
                 raise RuntimeError(f"Resolve could not create the Media Pool bin '{media_folder_name}'")
+            from .omnicut_handoff import media_category
+            for category in sorted({media_category(row) for row in prepared_broll_clips}):
+                raw_categories = media_folder.GetSubFolderList() or []
+                categories = list(raw_categories.values()) if isinstance(raw_categories, dict) else list(raw_categories)
+                folder = next((item for item in categories if str(item.GetName()).casefold() == category.casefold()), None)
+                media_folders[category] = folder or media_pool.AddSubFolder(media_folder, category)
+                if not media_folders[category]:
+                    raise RuntimeError(f"Resolve could not create media category '{category}'")
         if destination_mode == "active":
             if payload.get('native_cut_fresh'):
                 generated = original
@@ -1618,6 +1662,7 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
                 unlock_broll_tracks(generated, prepared_broll_clips)
             media_pool.SetCurrentFolder(media_folder)
             broll_count = append_broll_clips(media_pool, generated, prepared_broll_clips, base_frame=base_frame, fps=fps,
+                media_folders=media_folders, metadata_warnings=metadata_warnings,
                 progress=lambda index,total: report_handoff_progress(payload,'broll',78+int(10*index/max(1,total)),f'Inserisco clip: {index}/{total}'))
             report_handoff_progress(payload,"broll",88,"B-roll posizionati")
         else:
@@ -1657,6 +1702,7 @@ def materialize_in_resolve(payload: dict[str, Any]) -> dict[str, Any]:
             "removed_timelines": len(stale_timelines),
             "removed_subtitle_sources": removed_subtitle_sources,
             "broll_count": broll_count,
+            "metadata_warnings": metadata_warnings,
             "generic_broll_count": len(generic_rows),
             "broll_skipped": len(payload.get("broll_unavailable") or []),
             "original_video": bool(active_original_source),

@@ -137,6 +137,9 @@ class ResolveHandoffStore:
                                    "generic_added":len(after_generic-before_generic),"generic_removed":len(before_generic-after_generic)},
                 "payload": deepcopy(payload),
             }
+            from .omnicut_handoff import build_handoff
+            _atomic_json(self._path(project_root, package_id).with_name('omnicut.json'),
+                         build_handoff(payload, project_root=project_root))
             _atomic_json(self._path(project_root, package_id), package)
             return deepcopy(package)
 

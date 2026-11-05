@@ -100,6 +100,9 @@ def build_broll_timeline_plan(
             clips.append({
                 "beat_id": str(beat_id), "asset_id": asset_id,
                 "title": str(asset.get("title") or asset_id),
+                "original_text": str(beat.get("original_text") or beat.get("text") or ""),
+                "editorial_meaning": str(beat.get("core_meaning") or ""),
+                "place": str(asset.get("place") or ""),
                 "source_page": str(asset.get("source_page") or ""),
                 "provider": str(asset.get("provider") or "unknown"),
                 "kind": kind,
