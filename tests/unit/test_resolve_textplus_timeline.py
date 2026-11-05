@@ -559,7 +559,7 @@ def test_broll_frames_are_rescaled_from_package_fps_to_resolve_fps():
         "source_start_frame":0,"source_end_frame":119,"duration_frames":119}]
 
 
-def test_selected_image_is_materialized_as_a_frame_exact_still_video(tmp_path, monkeypatch):
+def test_selected_image_remains_original_without_conversion(tmp_path, monkeypatch):
     from backend.app.resolve_textplus_timeline import conform_broll_media
     import backend.app.resolve_textplus_timeline as module
 
@@ -576,10 +576,30 @@ def test_selected_image_is_materialized_as_a_frame_exact_still_video(tmp_path, m
         "record_end_frame": 60, "source_start_frame": 0, "source_end_frame": 50,
     }], 25)
 
-    assert commands and commands[0][commands[0].index("-loop") + 1] == "1"
-    assert commands[0][commands[0].index("-frames:v") + 1] == "50"
-    assert Path(result[0]["media_path"]).suffix == ".mp4"
+    assert not commands
+    assert result[0]["media_path"] == str(source)
     assert (result[0]["source_start_frame"], result[0]["source_end_frame"]) == (0, 50)
+
+
+def test_native_image_uses_resolve_default_duration_and_no_image_fps():
+    from backend.app.resolve_textplus_timeline import append_broll_clips
+    class Media:
+        def GetClipProperty(self, name): raise AssertionError('Images have no video FPS')
+    class Item:
+        def GetStart(self): return 110
+        def GetEnd(self): return 260
+    class Pool:
+        def __init__(self): self.info=None
+        def ImportMedia(self, paths): return [Media()]
+        def AppendToTimeline(self, items): self.info=items[0]; return [Item()]
+    class Timeline:
+        def GetTrackCount(self, kind): return 2
+    pool=Pool()
+    row={'kind':'image','media_path':'photo.jpg','track_index':2,'asset_id':'image:1',
+         'record_start_frame':10,'record_end_frame':60,'source_start_frame':0,'source_end_frame':50}
+    assert append_broll_clips(pool, Timeline(), [row], base_frame=100, fps=25)==1
+    assert pool.info['recordFrame']==110 and pool.info['trackIndex']==2
+    assert 'startFrame' not in pool.info and 'endFrame' not in pool.info
 
 
 def test_prior_rambla_layers_are_removed_from_duplicate_only():

@@ -1095,7 +1095,7 @@ def _apply_broll_metadata(item: Any, row: dict[str, Any]) -> bool:
 
 
 def conform_broll_media(clips: list[dict[str, Any]], fps: float, progress=None) -> list[dict[str, Any]]:
-    """Keep video originals; generate video only for still-image coverage."""
+    """Keep video and still-image originals without conversion."""
     result = []
     for index, row in enumerate(clips):
         if progress: progress(index, len(clips))
@@ -1104,21 +1104,7 @@ def conform_broll_media(clips: list[dict[str, Any]], fps: float, progress=None) 
         selected_end = start + duration
         source = Path(row['media_path'])
         if str(row.get('kind') or 'video') == 'image':
-            target = source.with_name(f'{source.stem}_still_{duration}_{fps:g}fps.mp4')
-            if not target.is_file():
-                temporary = target.with_name(target.stem + '.working.mp4')
-                try:
-                    subprocess.run(['ffmpeg', '-v', 'error', '-y', '-loop', '1', '-i', str(source),
-                        '-an', '-vf', f'scale=trunc(iw/2)*2:trunc(ih/2)*2,fps={fps:g}',
-                        '-frames:v', str(duration), '-c:v', 'libx264', '-preset', 'fast',
-                        '-crf', '18', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', str(temporary)],
-                        check=True, capture_output=True, timeout=180,
-                        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-                    os.replace(temporary, target)
-                finally:
-                    temporary.unlink(missing_ok=True)
-            result.append({**row, 'media_path': str(target), 'source_start_frame': 0,
-                'source_end_frame': duration, 'handle_before_frames': 0, 'handle_after_frames': 0})
+            result.append(dict(row))
             continue
         available = max(selected_end, int(round(float(probe_preview(str(source)).get('duration') or 0) * fps)))
         cut_start = max(0, start - duration)
@@ -1167,22 +1153,24 @@ def append_broll_clips(media_pool: Any, timeline: Any, clips: list[dict[str, Any
             raise RuntimeError(f"Resolve could not import selected clip: {row['media_path']}")
         if not _apply_broll_metadata(imported[0], row) and metadata_warnings is not None:
             metadata_warnings.append(str(row.get('asset_id') or row.get('title') or 'B-roll'))
+        is_image = str(row.get('kind') or '').casefold() == 'image'
         ratio = 1.0
-        if fps is not None:
+        if fps is not None and not is_image:
             source_fps = float(imported[0].GetClipProperty("FPS"))
             if source_fps <= 0 or fps <= 0:
                 raise ValueError("Invalid source or timeline frame rate")
             ratio = source_fps / fps
         duration = int(row["record_end_frame"]) - int(row["record_start_frame"])
         source_start = float(row["source_start_frame"]) * ratio
-        result = media_pool.AppendToTimeline([{
+        clip_info = {
             "mediaPoolItem": imported[0],
-            "startFrame": source_start,
-            "endFrame": source_start + duration * ratio,
             "mediaType": 1,
             "trackIndex": int(row["track_index"]),
             "recordFrame": int(base_frame) + int(row["record_start_frame"]),
-        }]) or []
+        }
+        if not is_image:
+            clip_info.update(startFrame=source_start, endFrame=source_start + duration * ratio)
+        result = media_pool.AppendToTimeline([clip_info]) or []
         if len(result) != 1:
             raise RuntimeError(f"Resolve could not place selected clip: {row['asset_id']}")
         configure_broll_scaling(result[0])
@@ -1192,7 +1180,9 @@ def append_broll_clips(media_pool: Any, timeline: Any, clips: list[dict[str, Any
         if row.get('track_name'):
             if timeline.SetTrackName('video', int(row['track_index']), str(row['track_name'])) is False:
                 raise RuntimeError('Resolve could not name the alternative image track')
-        if fps is not None:
+        if is_image and fps is not None and int(result[0].GetStart()) != int(base_frame) + int(row['record_start_frame']):
+            raise RuntimeError(f"Resolve non ha posizionato l’immagine {row['asset_id']} al punto previsto")
+        if fps is not None and not is_image:
             expected = (int(base_frame) + int(row["record_start_frame"]),
                         int(base_frame) + int(row["record_end_frame"]))
             actual = (int(result[0].GetStart()), int(result[0].GetEnd()))
