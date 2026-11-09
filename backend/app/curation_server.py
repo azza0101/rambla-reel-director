@@ -1820,9 +1820,9 @@ def create_app(
         source=PexelsSource(os.environ.get("PEXELS_API_KEY"))
         if scope == 'custom':
             if not manual_query: raise HTTPException(status_code=422, detail='Inserisci una ricerca')
-            from .envato_source import EnvatoSource
-            envato = EnvatoSource()
-            params = dict(orientation='landscape', min_duration=2, max_duration=180, limit=24)
+            from .envato_source import EnvatoSource, app_search_with_mcp_fallback
+            envato = EnvatoSource(discover=app_search_with_mcp_fallback)
+            params = dict(orientation='landscape', min_duration=2, max_duration=180, limit=48)
             results = await asyncio.gather(source.search(manual_query, **params), envato.search(manual_query, **params), return_exceptions=True)
             custom = []; errors = []
             for provider, result in zip(('pexels', 'envato'), results):

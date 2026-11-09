@@ -56,6 +56,7 @@ async def _mcp_discover(query: str, limit: int) -> list[dict[str, Any]]:
         response.raise_for_status()
     return parse_mcp_result(response.text)
 _ITEM_PATH = re.compile(r"/[^?#]+-[A-Z0-9]{6,12}/?$", re.I)
+_APP_ITEM_PATH = re.compile(r"/search/stock-video/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/?$", re.I)
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,11 +95,65 @@ def _clean_item_url(value: str) -> str | None:
     except ValueError:
         return None
     host = (parsed.hostname or "").casefold()
+    if parsed.scheme == "https" and host == "app.envato.com" and _APP_ITEM_PATH.fullmatch(parsed.path or ""):
+        return f"https://app.envato.com{parsed.path.rstrip('/')}"
     if parsed.scheme not in {"http", "https"} or host != "elements.envato.com":
         return None
     if not _ITEM_PATH.fullmatch(parsed.path or ""):
         return None
     return f"https://elements.envato.com{parsed.path.rstrip('/')}"
+
+
+class _AppSearchParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.current = None
+        self.rows = []
+
+    def handle_starttag(self, tag, attrs):
+        values = dict(attrs)
+        if tag == 'a' and values.get('data-analytics-context-detail') == 'search-results':
+            source = _clean_item_url(urljoin('https://app.envato.com', values.get('href', '')))
+            self.current = {'source_page': source, 'title': values.get('data-analytics-item_title', '').strip(), 'preview_url': ''} if source else None
+        elif tag == 'img' and self.current is not None and not self.current['preview_url']:
+            self.current['preview_url'] = _image_from_attrs(values)
+
+    def handle_endtag(self, tag):
+        if tag == 'a' and self.current is not None:
+            if self.current['title'] and self.current['preview_url']:
+                self.rows.append(self.current)
+            self.current = None
+
+
+def parse_app_search_html(html, *, limit):
+    parser = _AppSearchParser()
+    parser.feed(html or '')
+    seen = set()
+    rows = []
+    for row in parser.rows:
+        if row['source_page'] not in seen:
+            seen.add(row['source_page'])
+            rows.append(row)
+            if len(rows) >= limit:
+                break
+    return rows
+
+
+async def app_search_discover(query, limit):
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+        response = await client.get('https://app.envato.com/search', params={'itemType': 'stock-video', 'term': query})
+        response.raise_for_status()
+    rows = parse_app_search_html(response.text, limit=limit)
+    if not rows:
+        raise ValueError('Envato site search returned no recognizable cards')
+    return rows
+
+
+async def app_search_with_mcp_fallback(query, limit):
+    try:
+        return await app_search_discover(query, limit)
+    except (httpx.HTTPError, ValueError):
+        return await _mcp_discover(query, limit)
 
 
 def _image_from_attrs(values: dict[str, str | None]) -> str:
@@ -301,7 +356,7 @@ class EnvatoSource:
             variation_round = max(0, int(json.loads(os.environ.get("RAMBLA_SOCIAL_SEARCH_OPTIONS", "{}") or "{}").get("variation_round") or 0))
         except (TypeError, ValueError, json.JSONDecodeError):
             variation_round = 0
-        discovery_limit = min(20, max(limit * 2, limit)) if not variation_round else 20
+        discovery_limit = max(limit * 2, limit) if self.discover is app_search_with_mcp_fallback else (min(20, max(limit * 2, limit)) if not variation_round else 20)
         try:
             raw = self.discover(clean, discovery_limit)
             rows = await raw if inspect.isawaitable(raw) else raw
