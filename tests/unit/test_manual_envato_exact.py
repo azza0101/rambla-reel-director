@@ -24,3 +24,17 @@ def test_manual_envato_search_keeps_provider_results_without_title_filter(monkey
         min_duration=1,max_duration=180,orientation=None,retrieval_intent='other'))
     assert seen == [query]
     assert any(row['provider_id']=='test' for row in result['discovery_sources'])
+
+
+def test_manual_envato_ignores_old_verified_shot_cache(monkeypatch, tmp_path):
+    from backend.app.funnel_runtime import cached_source_video_beat, JsonCache
+    from backend.app import quality_video
+    async def fresh(engine, **kwargs):
+        return {'candidates': [], 'discovery_sources': [{'id': 'fresh'}], 'timings': {}}
+    monkeypatch.setattr(quality_video, 'source_video_beat', fresh)
+    monkeypatch.setattr(JsonCache, 'get', lambda *args: {'candidates': [], 'discovery_sources': [{'id': 'stale'}]})
+    monkeypatch.setattr(JsonCache, 'put', lambda *args: None)
+    monkeypatch.setenv('RAMBLA_SOCIAL_SEARCH_OPTIONS', json.dumps({'query_overrides': {'*': 'livno bosnia duman'}}))
+    engine=SimpleNamespace(cache=SimpleNamespace(root=tmp_path), sources=[SimpleNamespace(provider_name='envato')], beat_context={})
+    result=asyncio.run(cached_source_video_beat(engine, beat_id='b'))
+    assert result['discovery_sources'][0]['id'] == 'fresh'

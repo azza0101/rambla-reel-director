@@ -75,7 +75,11 @@ async def cached_source_video_beat(engine, **kwargs):
                   [getattr(v,'provider_name','') for v in (getattr(s,'vertical_sources',None) or [])]) for s in engine.sources]]
     started=time.perf_counter()
     social = any(getattr(s,'provider_name','') in {'tiktok','instagram'} for s in engine.sources)
-    old=cache.get(key,300) if cache and not social else None
+    try:
+        manual_envato = any(getattr(s, 'provider_name', '') == 'envato' for s in engine.sources) and bool(__import__('json').loads(os.environ.get('RAMBLA_SOCIAL_SEARCH_OPTIONS','{}') or '{}').get('query_overrides'))
+    except (ValueError, TypeError):
+        manual_envato = False
+    old=cache.get(key,300) if cache and not social and not manual_envato else None
     if old and all(Path(r.get('preview_path') or '').is_file() for r in old.get('candidates',[])):
         old['cache_hit']=True
         old['cached_timings']=old.get('timings',{})
