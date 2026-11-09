@@ -246,6 +246,16 @@ async function prepareResolveHandoffV33(preserveIssues=false){
  renderCurrentMediaV136(null);$('resolveDeliveryTitleV33').textContent='PREPARAZIONE PER RESOLVE';$('resolveDeliverySummaryV33').textContent='Controllo le selezioni salvate';setResolveDeliveryProgressV33(0);$('resolveDeliveryDetailV33').textContent='Avvio…';$('timelineExportStatusV33').textContent='';if(!preserveIssues)box.scrollIntoView({block:'nearest',behavior:'smooth'});
  const projectId=state.pid;
  try{
+  $('resolveDeliverySummaryV33').textContent='Apro il bridge Resolve…';
+  await api('/resolve-bridge/open-window',{method:'POST'});
+  let bridge=null;
+  for(let attempt=0;attempt<24;attempt++){
+   bridge=await api('/resolve-bridge/session');
+   if(bridge.connected)break;
+   await new Promise(resolve=>setTimeout(resolve,500));
+  }
+  if(!bridge?.connected)throw Error('Il bridge non si è collegato a questa finestra di RMBL. Aprilo da Resolve e verifica Diagnostica Resolve, poi riprova.');
+  $('resolveDeliverySummaryV33').textContent='Bridge collegato · preparo le selezioni';
   const params=new URLSearchParams();
    params.set('interactive','true');
    if(ignoredCoverageIdsV123.size)params.set('ignored',[...ignoredCoverageIdsV123].join(','));

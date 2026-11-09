@@ -35,6 +35,19 @@ from .resolve_title_templates import DEFAULT_RESOLVE_TITLE_NAME
 from .export_components import ExportComponents, normalize_components, filter_selected_media
 
 
+def launch_resolve_bridge_window() -> None:
+    root = Path(__file__).resolve().parents[2]
+    launcher = root / 'RMBL_BRIDGE.vbs'
+    if os.name != 'nt' or not launcher.is_file():
+        raise RuntimeError('Avvio automatico del bridge non disponibile: aprilo da Resolve.')
+    try:
+        subprocess.Popen(['wscript.exe', str(launcher)], cwd=str(root), stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    except OSError as exc:
+        raise RuntimeError('Impossibile aprire il bridge: ' + str(exc)) from exc
+
+
 class BeatSplitRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     cut: int = Field(gt=0)
@@ -583,6 +596,19 @@ def create_app(
         age = max(0.0, time.time() - bridge_last_seen) if bridge_last_seen else None
         return {"bridge_session_id": active_bridge_session_id, "connected": age is not None and age <= 6.0,
                 "last_seen": bridge_last_seen or None, "age_seconds": age}
+
+    @app.post('/api/curation/resolve-bridge/open-window')
+    async def open_resolve_bridge_window(request: Request) -> dict[str, str]:
+        if request.client.host not in {'127.0.0.1', '::1', 'testclient'}:
+            raise HTTPException(403, 'Richiesta locale necessaria')
+        origin = request.headers.get('origin')
+        if origin and origin.rstrip('/') != str(request.base_url).rstrip('/'):
+            raise HTTPException(403, 'Origine non valida')
+        try:
+            await asyncio.to_thread(launch_resolve_bridge_window)
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return {'status': 'opening'}
 
     @app.get("/api/curation/desktop-target")
     async def desktop_target() -> dict[str, Any]:
