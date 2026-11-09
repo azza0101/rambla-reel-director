@@ -25,7 +25,11 @@ async def discover_shot(engine, queries, expanded, budgets, minimum, maximum, or
         key = [provider, query, orientation, minimum, maximum, getattr(engine,'max_results_per_query',8),
                [getattr(s,'provider_name','') for s in (getattr(source,'vertical_sources',None) or [])], variation_round]
         social = provider in {'tiktok', 'instagram'}
-        cached = cache.get(key, 3600) if cache and not social else None
+        try:
+            manual_envato = provider == 'envato' and bool(__import__('json').loads(os.environ.get('RAMBLA_SOCIAL_SEARCH_OPTIONS','{}') or '{}').get('query_overrides'))
+        except (ValueError, TypeError):
+            manual_envato = False
+        cached = cache.get(key, 3600) if cache and not social and not manual_envato else None
         if cached is not None:
             detail = {**cached['attempt'], 'cache_hit': True, 'search_seconds': 0.0}
             return (id(source),query), ([SimpleNamespace(**r) for r in cached['rows']], None, detail)
@@ -33,7 +37,14 @@ async def discover_shot(engine, queries, expanded, budgets, minimum, maximum, or
         lock = engine._provider_locks.setdefault(id(source), asyncio.Lock())
         async with engine._discovery_gate, lock:
             started=time.perf_counter()
-            rows,error=await engine._search_one(source,query,orientation=orientation,min_duration=minimum,max_duration=maximum)
+            if manual_envato and hasattr(source, 'search'):
+                try:
+                    rows = await source.search(query, orientation=orientation, min_duration=minimum, max_duration=maximum, limit=48)
+                    error = None
+                except Exception as exc:
+                    rows, error = [], {'code': 'provider_request_failed', 'error_type': type(exc).__name__}
+            else:
+                rows,error=await engine._search_one(source,query,orientation=orientation,min_duration=minimum,max_duration=maximum)
             detail=copy.deepcopy(getattr(source,'last_attempt',{}) or {})
             drain=getattr(source,'drain_vertical_attempts',None)
             if callable(drain):

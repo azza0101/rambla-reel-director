@@ -565,14 +565,14 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
         relevant_pool=[]
         for candidate in pool:
             metadata=candidate.title+' '+candidate.description
-            if conflicting_place(metadata,places) or missing_subject(visual_target,metadata):
+            if not override.strip() and (conflicting_place(metadata,places) or missing_subject(visual_target,metadata)):
                 output['rejected_candidates'].append({'id':f'{candidate.provider}:{candidate.provider_id}',
                     'source':candidate.provider,'source_url':candidate.source_page,'matched_query':candidate.query,
                     'score':0,'quality_reasons':['wrong geography or missing requested subject']})
             else: relevant_pool.append(candidate)
         pool=relevant_pool
         social_shelf = provider_key in {"tiktok", "instagram", "youtube_shorts"}
-        card_limit = 6 if social_shelf or options else 3
+        card_limit = 48 if override.strip() and provider_key == 'envato' else (6 if social_shelf or options else 3)
         if options:
             import os
             from .beat_research import unseen_video_candidates
@@ -580,7 +580,7 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
             previous_count=len(pool)
             pool=unseen_video_candidates(pool,known)
             output['previously_seen_skipped']=output.get('previously_seen_skipped',0)+previous_count-len(pool)
-        pool=_balanced_discovery_pool(pool,intent,limit=12 if social_shelf or options else 4)
+        pool=pool[:48] if override.strip() else _balanced_discovery_pool(pool,intent,limit=12 if social_shelf or options else 4)
         if social_shelf and options.get("visual_verify", False):
             pool=await _rank_social_discovery(engine,[c for c in pool if _discovery_relevant(c,intent)],intent,output,timings,client_id=client_id)
         accepted=[];pending=[]
@@ -589,7 +589,7 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
         for candidate in pool:
             filter_started=time.perf_counter()
             asset_id=f'{candidate.provider}:{candidate.provider_id}';meta,contradictions,missing,generic=metadata_quality(visual_target,candidate.title+' '+candidate.description)
-            discovery_relevant=_discovery_relevant(candidate,intent)
+            discovery_relevant=bool(override.strip()) or _discovery_relevant(candidate,intent)
             timings['metadata_filter_seconds']+=time.perf_counter()-filter_started
             if not discovery_relevant:
                 output['rejected_candidates'].append({'id':asset_id,'source':candidate.provider,'source_url':candidate.source_page,'matched_query':candidate.query,'score':0,'quality_reasons':['metadata/title does not match concrete visual target']})

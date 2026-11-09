@@ -124,7 +124,7 @@ class ResolveHandoffApplyRequest(BaseModel):
 
 class GenericCoverageSelectionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    provider_ids: list[str] = Field(default_factory=list, max_length=12)
+    provider_ids: list[str] = Field(default_factory=list, max_length=1000)
 
 
 ResearchRunner = Callable[[debug.RunState, str, str], Awaitable[Any] | Any]

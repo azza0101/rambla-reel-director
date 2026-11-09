@@ -353,12 +353,16 @@ class EnvatoSource:
         if not clean or limit <= 0:
             return []
         try:
-            variation_round = max(0, int(json.loads(os.environ.get("RAMBLA_SOCIAL_SEARCH_OPTIONS", "{}") or "{}").get("variation_round") or 0))
+            options = json.loads(os.environ.get("RAMBLA_SOCIAL_SEARCH_OPTIONS", "{}") or "{}")
+            variation_round = max(0, int(options.get("variation_round") or 0))
         except (TypeError, ValueError, json.JSONDecodeError):
+            options = {}
             variation_round = 0
-        discovery_limit = max(limit * 2, limit) if self.discover is app_search_with_mcp_fallback else (min(20, max(limit * 2, limit)) if not variation_round else 20)
+        manual = bool(options.get('query_overrides')) and not self._custom_discover
+        discover = app_search_with_mcp_fallback if manual else self.discover
+        discovery_limit = max(limit * 2, limit) if discover is app_search_with_mcp_fallback else (min(20, max(limit * 2, limit)) if not variation_round else 20)
         try:
-            raw = self.discover(clean, discovery_limit)
+            raw = discover(clean, discovery_limit)
             rows = await raw if inspect.isawaitable(raw) else raw
         except Exception as exc:
             self.last_attempt = {
