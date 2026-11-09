@@ -53,6 +53,7 @@ async def source_images(chunks,output,plan,ranker,client_id,*,sources=None,fetch
     except (OSError,ValueError): cached={}
     try: search_options=json.loads(os.environ.get('RAMBLA_SOCIAL_SEARCH_OPTIONS','{}'))
     except (TypeError,ValueError): search_options={}
+    manual_request=bool(search_options.get('query_overrides'))
     signature=hashlib.sha256(json.dumps({'plan':plan,'version':VERSION,'providers':result['active_providers'],'ranking':type(ranker).__name__,'visual':bool(getattr(ranker,'visual',None)),'search_options':search_options},sort_keys=True).encode()).hexdigest()
     result['quality_signature']=signature
     async def fetch(url):
@@ -69,7 +70,7 @@ async def source_images(chunks,output,plan,ranker,client_id,*,sources=None,fetch
         if row['visual_action']!='BROLL':
             row.update(status='not_requested',zero_result_reason=row['visual_action']);continue
         old=cached.get('chunks',{}).get(bid,{})
-        if cached.get('quality_signature')==signature and old.get('candidates') and all(Path(c.get('preview_path','missing')).is_file() for c in old['candidates']):
+        if not manual_request and cached.get('quality_signature')==signature and old.get('candidates') and all(Path(c.get('preview_path','missing')).is_file() for c in old['candidates']):
             row.update(old);row['quality_version']=VERSION;row['candidates'],n=diverse_candidates(old['candidates'],history+cross,limit=4)
             row['accepted_count']=len(row['candidates']);row['cache_status']='reused';history.extend(row['candidates']);result['duplicates_rejected']+=n;result['cache_reused_chunks']+=1;continue
         result['retried_chunks']+=1
@@ -98,13 +99,16 @@ async def source_images(chunks,output,plan,ranker,client_id,*,sources=None,fetch
                     for c in remote:
                         if (c.provider,c.provider_id) in seen:continue
                         seen.add((c.provider,c.provider_id))
-                        if max(c.width,c.height)<1024 or min(c.width,c.height)<480:continue
+                        if not manual_query and (max(c.width,c.height)<1024 or min(c.width,c.height)<480):continue
                         counts['hd']+=1
                         cache=output/'image-cache';cache.mkdir(exist_ok=True)
                         local=cache/(hashlib.sha256((c.provider+':'+c.provider_id).encode()).hexdigest()[:24]+'.jpg')
                         try:
                             if not local.exists():local.write_bytes(await fetch(c.thumbnail_url))
-                            quality=image_quality(local)
+                            try: quality=image_quality(local)
+                            except ValueError:
+                                if not manual_query: raise
+                                quality={}
                             counts['preview']+=1
                             pool.append({**asdict(c),**quality,'id':c.provider+':'+c.provider_id,'client_id':client_id,'path':str(local),'preview_path':str(local),'kind':'image','source':c.provider,'description':c.description or c.title,'shot_id':shot['shot_id'],'shot_description':shot['description'],'matched_query':query,'retrieval_query':query,
                                 'editorial_positive':spec['positive'],'editorial_negatives':spec['negatives'],'generic_shot_demoted':spec['generic_shot_demoted']})
@@ -113,11 +117,13 @@ async def source_images(chunks,output,plan,ranker,client_id,*,sources=None,fetch
                             if dimension_failure:counts['hd']-=1
                             else:counts['preview_failed']+=1
                             row['errors'].append({'provider':c.provider,'code':'no_hd_candidates' if dimension_failure else 'preview_failed','error_type':type(exc).__name__})
-                    ranked=ranker.rank(editorial_intent,pool)
+                    ranked=pool if manual_query else ranker.rank(editorial_intent,pool)
                     # A missing local Qwen model must not turn a successful provider
                     # search into an empty shelf.  In that case retain the best
                     # metadata-ranked results and clearly mark them for review.
-                    if getattr(ranker,'visual',None) is None:
+                    if manual_query:
+                        strong=[{**r,'quality_state':'needs_review'} for r in ranked]
+                    elif getattr(ranker,'visual',None) is None:
                         usable=[r for r in ranked if not any(
                             reason.startswith(('unsupported generic visual:', 'negative visual evidence'))
                             for reason in r.get('quality_reasons',[])
@@ -128,13 +134,19 @@ async def source_images(chunks,output,plan,ranker,client_id,*,sources=None,fetch
                         strong=[r for r in ranked if r.get('quality_state')!='rejected' and r.get('score',0)>=.40]
                     counts['rejected']+=len(ranked)-len(strong)
                     row['rejected_candidates'].extend({k:r.get(k) for k in ('id','provider','title','source_page','matched_query','score','embedding_score','shot_embedding_score','query_embedding_score','negative_embedding_score','condition_counter_score','metadata_score','quality_reasons','editorial_positive','editorial_negatives')} for r in ranked if r not in strong)
-                    accepted,n=diverse_candidates(accepted+strong,history+cross+row['candidates'],limit=2)
+                    if manual_query:
+                        accepted=(accepted+strong)[:48];n=0
+                    else:
+                        accepted,n=diverse_candidates(accepted+strong,history+cross+row['candidates'],limit=2)
                     result['duplicates_rejected']+=n;attempt['accepted']=len(accepted)
                     counts['duplicates']+=n
-                    if len(accepted)>=2:break
-                if len(accepted)>=2:break
+                    if not manual_query and len(accepted)>=2:break
+                if not manual_query and len(accepted)>=2:break
             row['candidates'].extend(accepted)
-        row['candidates'],n=diverse_candidates(balance_shots(row['candidates']),history+cross,limit=4)
+        if manual_request:
+            row['candidates']=row['candidates'][:48];n=0
+        else:
+            row['candidates'],n=diverse_candidates(balance_shots(row['candidates']),history+cross,limit=4)
         result['duplicates_rejected']+=n;history.extend(row['candidates']);row['accepted_count']=len(row['candidates'])
         from .retrieval_diagnostics import empty_reason
         counts['ranker_unavailable']=bool(getattr(ranker,'warning',None)) or getattr(ranker,'visual',None) is None

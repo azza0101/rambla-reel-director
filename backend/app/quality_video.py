@@ -572,7 +572,7 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
             else: relevant_pool.append(candidate)
         pool=relevant_pool
         social_shelf = provider_key in {"tiktok", "instagram", "youtube_shorts"}
-        card_limit = 48 if override.strip() and provider_key == 'envato' else (6 if social_shelf or options else 3)
+        card_limit = 48 if override.strip() else (6 if social_shelf or options else 3)
         if options:
             import os
             from .beat_research import unseen_video_candidates
@@ -581,7 +581,7 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
             pool=unseen_video_candidates(pool,known)
             output['previously_seen_skipped']=output.get('previously_seen_skipped',0)+previous_count-len(pool)
         pool=pool[:48] if override.strip() else _balanced_discovery_pool(pool,intent,limit=12 if social_shelf or options else 4)
-        if social_shelf and options.get("visual_verify", False):
+        if social_shelf and not override.strip() and options.get("visual_verify", False):
             pool=await _rank_social_discovery(engine,[c for c in pool if _discovery_relevant(c,intent)],intent,output,timings,client_id=client_id)
         accepted=[];pending=[]
         counters=provider_counts.setdefault(provider_key,{'requests':sum(not a.get('cache_hit',False) for a in output['search_attempts'] if a['provider']==provider_label),'raw_hits':sum(a.get('hits',0) for a in output['search_attempts'] if a['provider']==provider_label),'filtered_hits':0,'previews_downloaded':0,'clips_downloaded':0})
@@ -591,6 +591,10 @@ async def source_video_beat(engine,*,beat_id,client_id,queries,min_duration,max_
             asset_id=f'{candidate.provider}:{candidate.provider_id}';meta,contradictions,missing,generic=metadata_quality(visual_target,candidate.title+' '+candidate.description)
             discovery_relevant=bool(override.strip()) or _discovery_relevant(candidate,intent)
             timings['metadata_filter_seconds']+=time.perf_counter()-filter_started
+            if override.strip():
+                pending.append(_manual_discovery_base(candidate,asset_id,client_id,meta,reason='Manual provider search; review manually'))
+                counters['filtered_hits']+=1
+                continue
             if not discovery_relevant:
                 output['rejected_candidates'].append({'id':asset_id,'source':candidate.provider,'source_url':candidate.source_page,'matched_query':candidate.query,'score':0,'quality_reasons':['metadata/title does not match concrete visual target']})
                 # Provider searches can return useful footage whose short title
