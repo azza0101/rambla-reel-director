@@ -56,6 +56,16 @@ def test_stale_transcript_fails_closed(tmp_path):
     with pytest.raises(ValueError): retrieval_bundle(tmp_path)
 
 
+def test_highlight_only_edits_keep_previously_imported_broll_plan(tmp_path):
+    package, plan = fixture(tmp_path)
+    import_plan(tmp_path, plan, package)
+    signature = digest([{'id':str(r['id']),'start':float(r['start']),'end':float(r['end']),'text':str(r['text'])} for r in package['chunks']])
+    phrases={row['id']:{'coverage':False,'coverage_word_indices':[], 'highlight':row['id']=='c1', 'highlighted_word_indices':[0] if row['id']=='c1' else [], 'animation':False} for row in package['chunks']}
+    (tmp_path/'phrase-intents.json').write_text(json.dumps({'schema_version':'rambla-phrase-intents-1','transcript_signature':signature,'phrases':phrases}),encoding='utf8')
+    _root, chunks, _, _ = retrieval_bundle(tmp_path)
+    assert [row['id'] for row in chunks] == ['vb-1','vb-2']
+
+
 def test_editorial_input_includes_explicit_coverage_selection(tmp_path):
     package, _plan = fixture(tmp_path)
     intent_signature = digest([

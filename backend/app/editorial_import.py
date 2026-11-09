@@ -230,7 +230,15 @@ def load_import(run):
     if plan.get('schema_version')!=VERSION: raise ValueError('Import an editorial visual-plan.json before sourcing')
     chunks=normalized_chunks(run)
     duration=max((c['end'] for c in chunks),default=0)
-    return validate_import(plan,transcript_package(run,plan['project_id'],duration))
+    package=transcript_package(run,plan['project_id'],duration)
+    if package.get('coverage_selected_chunk_ids') == []:
+        from .transcript_intents import load_phrase_intents
+        phrases=load_phrase_intents(run).get('phrases', {})
+        if any(row.get('highlight') or row.get('highlighted_word_indices') for row in phrases.values() if isinstance(row, dict)):
+            # Highlight-only edits must not invalidate a previously imported plan.
+            # Importing a new plan remains subject to the explicit Coverage rules.
+            package.pop('coverage_selected_chunk_ids', None)
+    return validate_import(plan,package)
 
 
 def plan_retrieval_root(run, plan):
