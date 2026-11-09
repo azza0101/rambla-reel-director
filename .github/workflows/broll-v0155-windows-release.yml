@@ -82,15 +82,6 @@ jobs:
           & $exe -c "from backend.app.curation_server import create_app; from fastapi.testclient import TestClient; from pathlib import Path; app=create_app(project_root=Path('test-projects')); c=TestClient(app); r=c.get('/curation'); assert r.status_code == 200 and 'rmblStopAnalysis' in r.text and 'rmblSettings' in r.text and 'exportMediaPackV125' in r.text; h=c.get('/api/curation/desktop-controls'); assert h.status_code == 200; print('INSTALLED_APP_SMOKE_OK')"
           if ($LASTEXITCODE -ne 0) { throw 'Installed UI and API smoke failed' }
           if ((Get-Item 'dist/RMBL-B-ROLL-Setup-v0155.exe').Length -lt 1MB) { throw 'Empty installer' }
-      - name: Upload diagnostic package
-        uses: actions/upload-artifact@v4
-        with:
-          name: rmbl-broll-v0155-windows-validation
-          path: |
-            dist/RMBL-B-ROLL-Windows-v0155.zip
-            dist/RMBL-B-ROLL-Setup-v0155.exe
-            dist/update.json
-          retention-days: 15
       - name: Publish v0155 to GitHub release for SEARCH UPDATE
         shell: pwsh
         env:
