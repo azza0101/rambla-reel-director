@@ -73,3 +73,33 @@ def test_windows_installer_installs_effect_without_changing_original_title(tmp_p
     effect=root/'Edit'/'Effects'/'KURA_Paper_Text_Optimized'/'KURA_Paper_Text_Optimized.setting'
     assert effect.is_file()
     assert old.read_bytes()==b'existing-original'
+
+
+def test_optimized_title_keeps_original_font_and_all_exposed_controls(tmp_path):
+    import re
+    from backend.app.kura_text_effect import source_title_setting, convert_optimized_title, build_optimized_title_package
+    source=source_title_setting()
+    result=convert_optimized_title(source)
+    ids=lambda s:set(re.findall(r'(\w+)\s*=\s*InstanceInput\s*\{',s))
+    assert ids(source)==ids(result)
+    assert 'Template = TextPlus' in result
+    assert 'Font = Input { Value = "Montserrat"' in result
+    assert 'Style = Input { Value = "Black"' in result
+    assert 'KURA_Input_AutoDomain = AutoDomain' in result
+    assert 'SourceOp = "KURA_Input_AutoDomain"' in result
+    package=build_optimized_title_package(tmp_path/'title.drfx')
+    with zipfile.ZipFile(package) as z:
+        assert 'Edit/Titles/KURA_Paper_Title_Optimized/KURA_Paper_Title_Optimized.setting' in z.namelist()
+        assert 'Edit/Titles/KURA_Paper_Title_Optimized/paper.jpg' in z.namelist()
+
+
+def test_optimized_title_bundle_installs_the_new_title_only(tmp_path):
+    from backend.app.kura_text_effect import build_optimized_title_install_bundle
+    output=build_optimized_title_install_bundle(tmp_path/'title_bundle.zip')
+    with zipfile.ZipFile(output) as z:
+        assert 'KURA_Paper_Title_Optimized.drfx' in z.namelist()
+        assert 'Installa KURA Mac.command' in z.namelist()
+        assert 'Installa KURA Windows.cmd' in z.namelist()
+        text=z.read('Installa KURA Windows.ps1').decode('utf8')
+        assert 'Edit\\Titles\\KURA_Paper_Title_Optimized' in text
+        assert 'KURA_paper_title_v9_STANDALONE_FIXED.drfx' not in text

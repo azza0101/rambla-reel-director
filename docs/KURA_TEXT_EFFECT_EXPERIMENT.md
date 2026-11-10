@@ -19,3 +19,13 @@ FPS. They do not establish a reliable speedup or real-time playback. More tests
 are needed with other fonts, shadows, colors, nonstandard frame sizes, user
 settings and complete animations. The effect is experimental, not a substitute
 for the full-fidelity KURA title until those checks pass.
+
+The separate experimental `KURA_Paper_Title_Optimized` title retains the v9
+TextPlus and every v9 exposed input, including Montserrat Black by default. Its
+AutoDomain node is placed immediately after that TextPlus. Three sampled frames
+on a gray background were RGB-identical with the node connected and bypassed.
+The title macro loaded successfully in Resolve 21.1; its installer was applied
+on the development Windows machine. Restarting Resolve and inserting this title
+from the Edit library, its Inspector behavior, playback speed, macOS and the
+complete animation have not yet been verified. The title is a separate option:
+the drag-on effect receives the source Text+ as pixels and cannot set its font.
