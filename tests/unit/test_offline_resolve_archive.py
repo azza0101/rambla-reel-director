@@ -7,6 +7,33 @@ import pytest
 from backend.app.offline_resolve_archive import create_offline_resolve_archive
 
 
+def test_offline_title_preserves_kura_preset_and_includes_its_resources(tmp_path):
+    import io
+    import struct
+    import zlib
+    source=tmp_path/'source.mp4';source.write_bytes(b'video')
+    payload={'project_name':'Kura','fps':30,'original_video':{'source_path':str(source),'width':320,'height':180,'duration_frames':90},
+             'titles':[{'text':'National\nGeographic','start_frame':5,'end_frame':50}]}
+    probe=lambda _: {'fps':30,'width':320,'height':180,'duration_frames':90,'has_audio':False}
+    out=tmp_path/'kura.zip';create_offline_resolve_archive(payload,out,probe_media=probe)
+    with zipfile.ZipFile(out) as archive:
+        assert 'KURA_paper_title_v9_STANDALONE_FIXED.drfx' in archive.namelist()
+        with zipfile.ZipFile(io.BytesIO(archive.read('Kura.dra/project.drp'))) as project:
+            name=next(n for n in project.namelist() if n.startswith('SeqContainer/'))
+            tree=ET.fromstring(project.read(name))
+            clip=next(x for x in tree.findall('.//Sm2TiVideoClip') if x.findtext('PrettyType')=='Fusion Title')
+            raw=bytes.fromhex(clip.findtext('.//CompositionBA'))
+            outer=zlib.decompress(raw[4:]);mark=outer.rfind(b'Compressed = true, }');offset=outer.find(b'\0',mark)+1
+            composition_start=outer.index(b'Composition {')
+            assert struct.unpack('>I',outer[composition_start-4:composition_start])[0] == len(outer)-composition_start
+            comp=zlib.decompress(outer[offset+4:]).decode('utf8')
+            assert 'KURA_paper_title_v9 = GroupOperator' in comp
+            assert 'StyledText = Input { Value = "National\\nGeographic"' in comp
+            assert 'setting:/paper.jpg' in comp
+        with zipfile.ZipFile(io.BytesIO(archive.read('KURA_paper_title_v9_STANDALONE_FIXED.drfx'))) as preset:
+            assert any(n.endswith('/paper.jpg') for n in preset.namelist())
+
+
 def test_archive_contains_native_timed_tracks_and_relink_index(tmp_path):
     source=tmp_path/'source.mp4';source.write_bytes(b'original-video')
     cover=tmp_path/'cover.mp4';cover.write_bytes(b'coverage')

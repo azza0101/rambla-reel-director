@@ -22,7 +22,7 @@ PANEL = r'''
   <p id="resolveOriginalInfoV129" class="muted" style="margin:8px 0 0" hidden>Video originale con audio, senza AutoCut. Nel bridge puoi scegliere se applicare alla timeline attiva oppure creare una nuova timeline.</p>
   <button id="sendResolvePackageV33" class="primary resolvePrimaryV33">INVIA A RESOLVE</button>
   <label><input type="checkbox" id="includeOfflineDra"> Includi progetto Resolve DRA nello ZIP · senza Resolve</label>
-  <small class="muted">I titoli nell'archivio sono Text+ modificabili; lo stile del preset va verificato.</small>
+  <small class="muted">Titoli KURA modificabili: sul computer di destinazione installa il preset incluso nello ZIP e il font Montserrat.</small>
   <button id="exportMediaPackV125" class="ghost" type="button" style="margin-top:8px;width:100%">ESPORTA ZIP · SENZA BRIDGE</button>
   <div id="resolveDeliveryV33" class="resolveDeliveryV33" hidden><div id="resolveDeliveryCheckV33" class="resolveDeliveryCheckV33" hidden>✓</div><strong id="resolveDeliveryTitleV33">Preparazione pacchetto Resolve…</strong><span id="resolveDeliverySummaryV33"></span><div id="resolveDeliveryProgressV33" class="resolveDeliveryProgressBarV34"><i></i></div><b id="resolveDeliveryPercentV37">0%</b><small id="resolveDeliveryDetailV33"></small><div id="resolveCurrentMediaV136" class="resolveCurrentMediaV136" hidden><strong id="resolveCurrentMediaTitleV136"></strong><div id="resolveCurrentMediaBarV136" class="resolveCurrentMediaBarV136"><i></i></div><small id="resolveCurrentMediaDetailV136"></small></div></div>
   <button id="reconnectResolveV145" class="ghost" type="button" hidden>↻ RICOLLEGA BRIDGE</button><small id="reconnectResolveMessageV145" role="status" hidden></small>

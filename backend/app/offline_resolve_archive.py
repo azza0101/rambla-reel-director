@@ -21,7 +21,8 @@ from xml.etree import ElementTree as ET
 
 from ..vendor.pr2resolve.pr2_native import export_native_drp
 
-TITLE_TEMPLATE = Path(__file__).resolve().parents[1] / 'vendor' / 'resolve_offline' / 'fusion-title.xml'
+TITLE_TEMPLATE = Path(__file__).resolve().parents[1] / 'vendor' / 'resolve_offline' / 'fusion-kura-v9.xml'
+KURA_PRESET = Path(__file__).resolve().parents[1] / 'assets' / 'resolve_titles' / 'KURA_paper_title_v9.drfx'
 SOCIAL = {'youtube', 'youtube_shorts', 'tiktok', 'instagram'}
 
 
@@ -87,6 +88,9 @@ def _text_blob(hexvalue, text):
     inner,n=re.subn(pattern,lambda m:m.group(1)+escaped+m.group(3),inner,count=1)
     if n!=1: raise ValueError('Testo Fusion non modificabile')
     raw_inner=inner.encode('utf8'); frame=outer[:offset]+struct.pack('<I',len(raw_inner))+zlib.compress(raw_inner,9)
+    composition_start=frame.find(b'Composition {')
+    if composition_start<4: raise ValueError('Intestazione composizione Fusion non riconosciuta')
+    frame=frame[:composition_start-4]+struct.pack('>I',len(frame)-composition_start)+frame[composition_start:]
     return (struct.pack('>I',len(frame))+zlib.compress(frame)).hex()
 
 
@@ -142,6 +146,8 @@ def _inject_text(drp: bytes, titles: list[dict], subtitles: list[dict], fps: flo
 
 
 def create_offline_resolve_archive(payload: dict, target: Path, *, probe_media=probe_media) -> dict:
+    if payload.get('titles') and not KURA_PRESET.is_file():
+        raise ValueError('Preset KURA non disponibile: impossibile esportare i titoli')
     fps=float(Fraction(str(payload.get('fps') or 30)))
     if not math.isfinite(fps) or fps<=0:raise ValueError('FPS non validi')
     base=payload.get('native_cut') or payload.get('original_video') or {}
@@ -217,5 +223,11 @@ def create_offline_resolve_archive(payload: dict, target: Path, *, probe_media=p
         with zipfile.ZipFile(target,'w',allowZip64=True) as z:
             z.writestr(safe+'.dra/project.drp',out.getvalue())
             for path in paths:z.write(path,safe+'.dra/MediaFiles/'+path.name,compress_type=zipfile.ZIP_STORED)
-            z.writestr('LEGGIMI.txt','Estrai lo ZIP e in Resolve usa Restore Project Archive sulla cartella .dra.\n')
+            instructions='Estrai lo ZIP e in Resolve usa Restore Project Archive sulla cartella .dra.\n'
+            if payload.get('titles'):
+                z.write(KURA_PRESET,'KURA_paper_title_v9_STANDALONE_FIXED.drfx')
+                instructions += ('\nPer i titoli KURA installa sul computer di destinazione il preset DRFX incluso '
+                                 'aprendolo con Resolve, prima di ripristinare il progetto. '
+                                 'Serve anche il font Montserrat.\n')
+            z.writestr('LEGGIMI.txt',instructions)
     return {'media_count':len(paths),'subtitle_count':len(payload.get('subtitles') or []),'title_count':len(payload.get('titles') or [])}
