@@ -13,11 +13,11 @@ def test_offline_title_preserves_kura_preset_and_includes_its_resources(tmp_path
     import zlib
     source=tmp_path/'source.mp4';source.write_bytes(b'video')
     payload={'project_name':'Kura','fps':30,'original_video':{'source_path':str(source),'width':320,'height':180,'duration_frames':90},
-             'titles':[{'text':'National\nGeographic','start_frame':5,'end_frame':50}]}
+             'titles':[{'text':'National Geographic','start_frame':5,'end_frame':50}]}
     probe=lambda _: {'fps':30,'width':320,'height':180,'duration_frames':90,'has_audio':False}
     out=tmp_path/'kura.zip';create_offline_resolve_archive(payload,out,probe_media=probe)
     with zipfile.ZipFile(out) as archive:
-        assert 'KURA_paper_title_v9_STANDALONE_FIXED.drfx' in archive.namelist()
+        assert 'KURA_Paper_Text_Optimized.drfx' in archive.namelist()
         assert 'Installa KURA Windows.cmd' in archive.namelist()
         assert 'Installa KURA Mac.command' in archive.namelist()
         assert 'Installa KURA Windows.ps1' in archive.namelist()
@@ -30,11 +30,58 @@ def test_offline_title_preserves_kura_preset_and_includes_its_resources(tmp_path
             composition_start=outer.index(b'Composition {')
             assert struct.unpack('>I',outer[composition_start-4:composition_start])[0] == len(outer)-composition_start
             comp=zlib.decompress(outer[offset+4:]).decode('utf8')
-            assert 'KURA_paper_title_v9 = GroupOperator' in comp
+            assert 'Template = TextPlus' in comp
+            assert b'KURA_Paper_Text_Optimized' in bytes.fromhex(clip.findtext('.//Sm2TiCompositionTable/FieldsBlob'))
             assert 'StyledText = Input { Value = "National\\nGeographic"' in comp
-            assert 'setting:/paper.jpg' in comp
-        with zipfile.ZipFile(io.BytesIO(archive.read('KURA_paper_title_v9_STANDALONE_FIXED.drfx'))) as preset:
+            assert 'Font = Input { Value = "Montserrat"' in comp
+            assert 'Style = Input { Value = "Black"' in comp
+        with zipfile.ZipFile(io.BytesIO(archive.read('KURA_Paper_Text_Optimized.drfx'))) as preset:
             assert any(n.endswith('/paper.jpg') for n in preset.namelist())
+        with zipfile.ZipFile(io.BytesIO(archive.read('Kura.dra/project.drp'))) as project:
+            seq=next(n for n in project.namelist() if n.startswith('SeqContainer/'))
+            clip=next(x for x in ET.fromstring(project.read(seq)).findall('.//Sm2TiVideoClip') if x.findtext('PrettyType')=='Fusion Title')
+            outer=zlib.decompress(bytes.fromhex(clip.findtext('.//CompositionBA'))[4:])
+            assert b'ResolveCaches:' not in outer and b'LastFile =' not in outer
+
+
+def test_optimized_effect_installer_bundle_installs_the_effect(tmp_path):
+    import os
+    import subprocess
+    from backend.app.kura_text_effect import build_effect_install_bundle
+    if os.name != 'nt': pytest.skip('Windows installer')
+    bundle=build_effect_install_bundle(tmp_path/'effect.zip')
+    with zipfile.ZipFile(bundle) as archive: archive.extractall(tmp_path)
+    env=dict(os.environ,APPDATA=str(tmp_path/'appdata'))
+    run=subprocess.run(['powershell.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',str(tmp_path/'Installa KURA Windows.ps1')],env=env,capture_output=True,text=True,timeout=30)
+    assert run.returncode == 0,run.stderr
+    root=tmp_path/'appdata'/'Blackmagic Design'/'DaVinci Resolve'/'Support'/'Fusion'/'Templates'
+    assert (root/'Edit'/'Effects'/'KURA_Paper_Text_Optimized'/'KURA_Paper_Text_Optimized.setting').is_file()
+
+
+def test_offline_title_composition_covers_the_whole_clip(tmp_path):
+    import io
+    import zlib
+    source=tmp_path/'source.mp4'; source.write_bytes(b'video')
+    payload={'project_name':'Long','fps':30,'original_video':{'source_path':str(source),'width':320,'height':180,'duration_frames':240},
+             'titles':[{'text':'Una frase lunga','start_frame':10,'end_frame':110}]}
+    probe=lambda _: {'fps':30,'width':320,'height':180,'duration_frames':240,'has_audio':False}
+    archive=tmp_path/'long.zip'; create_offline_resolve_archive(payload,archive,probe_media=probe)
+    with zipfile.ZipFile(archive) as z, zipfile.ZipFile(io.BytesIO(z.read('Long.dra/project.drp'))) as p:
+        seq=next(n for n in p.namelist() if n.startswith('SeqContainer/'))
+        clip=next(x for x in ET.fromstring(p.read(seq)).findall('.//Sm2TiVideoClip') if x.findtext('PrettyType')=='Fusion Title')
+        outer=zlib.decompress(bytes.fromhex(clip.findtext('.//CompositionBA'))[4:])
+        assert b'RenderRange = { 0, 99 }' in outer
+        pos=outer.index(b'Compressed = true, }'); offset=outer.index(b'\0',pos)+1
+        assert b'GlobalOut = Input { Value = 99' in zlib.decompress(outer[offset+4:])
+
+
+def test_unverified_long_effect_is_rejected(tmp_path):
+    source=tmp_path/'source.mp4';source.write_bytes(b'video')
+    payload={'project_name':'Long','fps':30,'original_video':{'source_path':str(source),'width':320,'height':180,'duration_frames':240},
+             'titles':[{'text':'Una frase lunga','start_frame':10,'end_frame':190}]}
+    probe=lambda _: {'fps':30,'width':320,'height':180,'duration_frames':240,'has_audio':False}
+    with pytest.raises(ValueError,match='125 fotogrammi'):
+        create_offline_resolve_archive(payload,tmp_path/'long.zip',probe_media=probe)
 
 
 def test_windows_installer_is_idempotent_and_preserves_conflicts(tmp_path):

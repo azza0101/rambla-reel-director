@@ -20,8 +20,10 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from ..vendor.pr2resolve.pr2_native import export_native_drp
+from .kura_text_effect import build_effect_install_bundle
+from .title_typography import wrap_textplus_text
 
-TITLE_TEMPLATE = Path(__file__).resolve().parents[1] / 'vendor' / 'resolve_offline' / 'fusion-kura-v9.xml'
+TITLE_TEMPLATE = Path(__file__).resolve().parents[1] / 'vendor' / 'resolve_offline' / 'fusion-textplus-kura-effect.xml'
 KURA_PRESET = Path(__file__).resolve().parents[1] / 'assets' / 'resolve_titles' / 'KURA_paper_title_v9.drfx'
 KURA_INSTALLER = KURA_PRESET.parent / 'installer'
 SOCIAL = {'youtube', 'youtube_shorts', 'tiktok', 'instagram'}
@@ -78,17 +80,29 @@ def _append_clip(track, row, fps, source, spec, media_id, *, audio=False, channe
         st=ET.SubElement(clip,'sourcetrack');ET.SubElement(st,'mediatype').text='audio';ET.SubElement(st,'trackindex').text=str(channel)
 
 
-def _text_blob(hexvalue, text):
+def _text_blob(hexvalue, text, duration_frames):
     raw=bytes.fromhex(hexvalue); outer=zlib.decompress(raw[4:]); marker=outer.rfind(b'Compressed = true, }')
     if marker<0: raise ValueError('Template Fusion non riconosciuto')
     zero=outer.find(b'\0',marker)
     if zero<0: raise ValueError('Template Fusion incompleto')
     offset=zero+1; inner=zlib.decompress(outer[offset+4:]).decode('utf8')
+    last_frame=int(duration_frames)-1
+    if last_frame<0: raise ValueError('Durata titolo non valida')
+    header=outer[:offset]
+    for key in (b'RenderRange',b'GlobalRange'):
+        header,count=re.subn(key+rb' = \{ 0, \d+ \}',key+b' = { 0, '+str(last_frame).encode()+b' }',header,count=1)
+        if count!=1: raise ValueError('Intervallo composizione Fusion non riconosciuto')
+    header=re.sub(rb'GlobalEnd = \d+',b'GlobalEnd = '+str(last_frame).encode(),header,count=1)
+    inner,count=re.subn(r'(GlobalOut = Input \{ Value = )\d+',lambda m:m.group(1)+str(last_frame),inner,count=1)
+    if count!=1: raise ValueError('Durata Text+ non modificabile')
     escaped=str(text).replace('\\','\\\\').replace('"','\\"').replace('\n','\\n').replace('\r','\\r').replace('\t','\\t')
     pattern=r'(StyledText = Input \{ Value = ")((?:[^"\\]|\\.)*)(")'
     inner,n=re.subn(pattern,lambda m:m.group(1)+escaped+m.group(3),inner,count=1)
     if n!=1: raise ValueError('Testo Fusion non modificabile')
-    raw_inner=inner.encode('utf8'); frame=outer[:offset]+struct.pack('<I',len(raw_inner))+zlib.compress(raw_inner,9)
+    for key,value in (('Font','"Montserrat"'),('Style','"Black"'),('Size','0.1401')):
+        inner,count=re.subn(r'('+key+r' = Input \{ Value = )[^,}]+',lambda m:m.group(1)+value,inner,count=1)
+        if count!=1: raise ValueError(f'Proprieta Text+ non modificabile: {key}')
+    raw_inner=inner.encode('utf8'); frame=header+struct.pack('<I',len(raw_inner))+zlib.compress(raw_inner,9)
     composition_start=frame.find(b'Composition {')
     if composition_start<4: raise ValueError('Intestazione composizione Fusion non riconosciuta')
     frame=frame[:composition_start-4]+struct.pack('>I',len(frame)-composition_start)+frame[composition_start:]
@@ -113,11 +127,12 @@ def _inject_text(drp: bytes, titles: list[dict], subtitles: list[dict], fps: flo
             start=int(row.get('start_frame',round(float(row.get('start_seconds',0))*fps)))
             end=int(row.get('end_frame',round(float(row.get('end_seconds',0))*fps)))
             if end<=start: raise ValueError('Intervallo titolo non valido')
+            if end-start>125: raise ValueError('Titolo KURA oltre 125 fotogrammi: la durata dell’effetto non è ancora verificata')
             element=ET.fromstring(TITLE_TEMPLATE.read_text(encoding='utf8'))
             for node in element.iter():
                 if 'DbId' in node.attrib:node.set('DbId',str(uuid.uuid4()))
             clip=element.find('Sm2TiVideoClip');clip.find('Start').text=str(start);clip.find('Duration').text=str(end-start)
-            blob=clip.find('.//CompositionBA');blob.text=_text_blob(blob.text or '',str(row.get('text') or ''))
+            blob=clip.find('.//CompositionBA');blob.text=_text_blob(blob.text or '',wrap_textplus_text(str(row.get('text') or '')),end-start)
             track.find('Items').append(element)
         wrapper=ET.SubElement(video,'Element');wrapper.append(track)
     if subtitles:
@@ -226,15 +241,13 @@ def create_offline_resolve_archive(payload: dict, target: Path, *, probe_media=p
             for path in paths:z.write(path,safe+'.dra/MediaFiles/'+path.name,compress_type=zipfile.ZIP_STORED)
             instructions='Estrai lo ZIP e in Resolve usa Restore Project Archive sulla cartella .dra.\n'
             if payload.get('titles'):
-                z.write(KURA_PRESET,'KURA_paper_title_v9_STANDALONE_FIXED.drfx')
-                for name in ('Installa KURA Windows.cmd','Installa KURA Windows.ps1','Installa KURA Mac.command'):
-                    info=zipfile.ZipInfo(name)
-                    info.create_system=3
-                    info.external_attr=(0o100755 if name.endswith('.command') else 0o100644)<<16
-                    z.writestr(info,(KURA_INSTALLER/name).read_bytes())
+                bundle=build_effect_install_bundle(Path(temp)/'kura-effect.zip')
+                with zipfile.ZipFile(bundle) as effect_bundle:
+                    for info in effect_bundle.infolist():
+                        if info.filename!='LEGGIMI.txt': z.writestr(info,effect_bundle.read(info))
                 instructions += ('\nPer i titoli KURA: se necessario esegui Installa KURA Windows.cmd oppure '
                                  'Installa KURA Mac.command prima di ripristinare il progetto. '
-                                 'Se il preset identico e gia presente non viene duplicato. '
+                                 'L\'effetto KURA Paper Text Optimized rimane separato dal Text+. '
                                  'Serve anche il font Montserrat. Riavvia Resolve dopo una nuova installazione.\n')
             z.writestr('LEGGIMI.txt',instructions)
     return {'media_count':len(paths),'subtitle_count':len(payload.get('subtitles') or []),'title_count':len(payload.get('titles') or [])}

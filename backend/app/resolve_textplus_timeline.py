@@ -20,6 +20,7 @@ import uuid
 from typing import Any, Callable
 
 from backend.app.video_preview import probe_preview
+from backend.app.title_typography import wrap_textplus_text
 
 from backend.app.resolve_native_subtitles import (
     cleanup_stale_subtitle_media,
@@ -31,26 +32,6 @@ from backend.app.resolve_native_subtitles import (
     subtitle_track_for_items,
     verify_native_subtitles,
 )
-
-
-def wrap_textplus_text(text: str, *, max_chars: int = 11) -> str:
-    """Wrap highlighted Text+ copy at word boundaries for vertical-safe titles."""
-    if max_chars < 1:
-        raise ValueError("max_chars must be positive")
-    words = str(text or "").split()
-    if not words:
-        return ""
-    lines: list[str] = []
-    current = words[0]
-    for word in words[1:]:
-        candidate = current + " " + word
-        if len(candidate) <= max_chars:
-            current = candidate
-        else:
-            lines.append(current)
-            current = word
-    lines.append(current)
-    return "\n".join(lines)
 
 
 def build_textplus_timeline_plan(payload: dict[str, Any], *, target_fps: float) -> dict[str, Any]:
