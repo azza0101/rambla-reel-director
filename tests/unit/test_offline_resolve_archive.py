@@ -18,6 +18,9 @@ def test_offline_title_preserves_kura_preset_and_includes_its_resources(tmp_path
     out=tmp_path/'kura.zip';create_offline_resolve_archive(payload,out,probe_media=probe)
     with zipfile.ZipFile(out) as archive:
         assert 'KURA_paper_title_v9_STANDALONE_FIXED.drfx' in archive.namelist()
+        assert 'Installa KURA Windows.cmd' in archive.namelist()
+        assert 'Installa KURA Mac.command' in archive.namelist()
+        assert 'Installa KURA Windows.ps1' in archive.namelist()
         with zipfile.ZipFile(io.BytesIO(archive.read('Kura.dra/project.drp'))) as project:
             name=next(n for n in project.namelist() if n.startswith('SeqContainer/'))
             tree=ET.fromstring(project.read(name))
@@ -32,6 +35,49 @@ def test_offline_title_preserves_kura_preset_and_includes_its_resources(tmp_path
             assert 'setting:/paper.jpg' in comp
         with zipfile.ZipFile(io.BytesIO(archive.read('KURA_paper_title_v9_STANDALONE_FIXED.drfx'))) as preset:
             assert any(n.endswith('/paper.jpg') for n in preset.namelist())
+
+
+def test_windows_installer_is_idempotent_and_preserves_conflicts(tmp_path):
+    import os
+    import shutil
+    import subprocess
+    from backend.app.offline_resolve_archive import KURA_PRESET, KURA_INSTALLER
+    if os.name != 'nt': pytest.skip('Windows installer')
+    package=tmp_path/'KURA_paper_title_v9_STANDALONE_FIXED.drfx'
+    shutil.copyfile(KURA_PRESET,package)
+    script=tmp_path/'Installa KURA Windows.ps1'
+    shutil.copyfile(KURA_INSTALLER/script.name,script)
+    env=dict(os.environ,APPDATA=str(tmp_path/'appdata'))
+    command=['powershell.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',str(script)]
+    first=subprocess.run(command,env=env,capture_output=True,text=True,timeout=30)
+    assert first.returncode==0,first.stderr
+    second=subprocess.run(command,env=env,capture_output=True,text=True,timeout=30)
+    assert second.returncode==0 and 'gia presente' in second.stdout,second.stderr
+    root=tmp_path/'appdata'/'Blackmagic Design'/'DaVinci Resolve'/'Support'/'Fusion'/'Templates'
+    installed=root/'Edit'/'Titles'/'KURA_paper_title_v9'/'paper.jpg'
+    installed.write_bytes(b'personalized')
+    (root/package.name).unlink()
+    third=subprocess.run(command,env=env,capture_output=True,text=True,timeout=30)
+    assert third.returncode!=0
+    assert installed.read_bytes()==b'personalized'
+
+
+def test_windows_installer_accepts_existing_package_and_title_without_overwriting(tmp_path):
+    import os
+    import shutil
+    import subprocess
+    from backend.app.offline_resolve_archive import KURA_PRESET, KURA_INSTALLER
+    if os.name != 'nt': pytest.skip('Windows installer')
+    package=tmp_path/'KURA_paper_title_v9_STANDALONE_FIXED.drfx';shutil.copyfile(KURA_PRESET,package)
+    script=tmp_path/'Installa KURA Windows.ps1';shutil.copyfile(KURA_INSTALLER/script.name,script)
+    root=tmp_path/'appdata'/'Blackmagic Design'/'DaVinci Resolve'/'Support'/'Fusion'/'Templates'
+    root.mkdir(parents=True);shutil.copyfile(package,root/package.name)
+    setting=root/'Edit'/'Titles'/'KURA_paper_title_v9'/'KURA_paper_title_v9.setting'
+    setting.parent.mkdir(parents=True);setting.write_bytes(b'existing-custom-title')
+    env=dict(os.environ,APPDATA=str(tmp_path/'appdata'))
+    run=subprocess.run(['powershell.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',str(script)],env=env,capture_output=True,text=True,timeout=30)
+    assert run.returncode==0,run.stderr
+    assert setting.read_bytes()==b'existing-custom-title'
 
 
 def test_archive_contains_native_timed_tracks_and_relink_index(tmp_path):

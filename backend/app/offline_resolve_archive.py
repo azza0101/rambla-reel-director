@@ -23,6 +23,7 @@ from ..vendor.pr2resolve.pr2_native import export_native_drp
 
 TITLE_TEMPLATE = Path(__file__).resolve().parents[1] / 'vendor' / 'resolve_offline' / 'fusion-kura-v9.xml'
 KURA_PRESET = Path(__file__).resolve().parents[1] / 'assets' / 'resolve_titles' / 'KURA_paper_title_v9.drfx'
+KURA_INSTALLER = KURA_PRESET.parent / 'installer'
 SOCIAL = {'youtube', 'youtube_shorts', 'tiktok', 'instagram'}
 
 
@@ -226,8 +227,14 @@ def create_offline_resolve_archive(payload: dict, target: Path, *, probe_media=p
             instructions='Estrai lo ZIP e in Resolve usa Restore Project Archive sulla cartella .dra.\n'
             if payload.get('titles'):
                 z.write(KURA_PRESET,'KURA_paper_title_v9_STANDALONE_FIXED.drfx')
-                instructions += ('\nPer i titoli KURA installa sul computer di destinazione il preset DRFX incluso '
-                                 'aprendolo con Resolve, prima di ripristinare il progetto. '
-                                 'Serve anche il font Montserrat.\n')
+                for name in ('Installa KURA Windows.cmd','Installa KURA Windows.ps1','Installa KURA Mac.command'):
+                    info=zipfile.ZipInfo(name)
+                    info.create_system=3
+                    info.external_attr=(0o100755 if name.endswith('.command') else 0o100644)<<16
+                    z.writestr(info,(KURA_INSTALLER/name).read_bytes())
+                instructions += ('\nPer i titoli KURA: se necessario esegui Installa KURA Windows.cmd oppure '
+                                 'Installa KURA Mac.command prima di ripristinare il progetto. '
+                                 'Se il preset identico e gia presente non viene duplicato. '
+                                 'Serve anche il font Montserrat. Riavvia Resolve dopo una nuova installazione.\n')
             z.writestr('LEGGIMI.txt',instructions)
     return {'media_count':len(paths),'subtitle_count':len(payload.get('subtitles') or []),'title_count':len(payload.get('titles') or [])}
