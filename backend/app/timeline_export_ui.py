@@ -20,7 +20,10 @@ PANEL = r'''
     <p id="resolveComponentsReasonV71" class="muted"></p>
   </div>
   <p id="resolveOriginalInfoV129" class="muted" style="margin:8px 0 0" hidden>Video originale con audio, senza AutoCut. Nel bridge puoi scegliere se applicare alla timeline attiva oppure creare una nuova timeline.</p>
-  <button id="sendResolvePackageV33" class="primary resolvePrimaryV33">INVIA A RESOLVE</button><button id="exportMediaPackV125" class="ghost" type="button" style="margin-top:8px;width:100%">ESPORTA MEDIA IN CARTELLE (ZIP) · SENZA BRIDGE</button>
+  <button id="sendResolvePackageV33" class="primary resolvePrimaryV33">INVIA A RESOLVE</button>
+  <label><input type="checkbox" id="includeOfflineDra"> Includi progetto Resolve DRA nello ZIP · senza Resolve</label>
+  <small class="muted">I titoli nell'archivio sono Text+ modificabili; lo stile del preset va verificato.</small>
+  <button id="exportMediaPackV125" class="ghost" type="button" style="margin-top:8px;width:100%">ESPORTA ZIP · SENZA BRIDGE</button>
   <div id="resolveDeliveryV33" class="resolveDeliveryV33" hidden><div id="resolveDeliveryCheckV33" class="resolveDeliveryCheckV33" hidden>✓</div><strong id="resolveDeliveryTitleV33">Preparazione pacchetto Resolve…</strong><span id="resolveDeliverySummaryV33"></span><div id="resolveDeliveryProgressV33" class="resolveDeliveryProgressBarV34"><i></i></div><b id="resolveDeliveryPercentV37">0%</b><small id="resolveDeliveryDetailV33"></small><div id="resolveCurrentMediaV136" class="resolveCurrentMediaV136" hidden><strong id="resolveCurrentMediaTitleV136"></strong><div id="resolveCurrentMediaBarV136" class="resolveCurrentMediaBarV136"><i></i></div><small id="resolveCurrentMediaDetailV136"></small></div></div>
   <button id="reconnectResolveV145" class="ghost" type="button" hidden>↻ RICOLLEGA BRIDGE</button><small id="reconnectResolveMessageV145" role="status" hidden></small>
   <button id="stopResolvePrepareV139" type="button" hidden>■ STOP INVIO</button>
@@ -276,14 +279,17 @@ async function prepareResolveHandoffV33(preserveIssues=false){
 async function exportMediaPackV125(){
  if(!state.pid||state.run)return;
  const button=$('exportMediaPackV125');button.disabled=true;
- $('timelineExportStatusV33').textContent='Preparo ZIP con le clip già disponibili, SRT, XML e titoli. Resolve non è necessario.';
+ const dra=$('includeOfflineDra').checked;
+ $('timelineExportStatusV33').textContent=dra?'Preparo l’archivio DRA e i media selezionati. Resolve non è necessario.':'Preparo ZIP con le clip già disponibili, SRT, XML e titoli. Resolve non è necessario.';
  try{
-   const response=await fetch('/api/curation/projects/'+encodeURIComponent(state.pid)+'/exports/media-pack.zip');
+   const response=await fetch('/api/curation/projects/'+encodeURIComponent(state.pid)+'/exports/media-pack.zip?include_dra='+dra,{
+     method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(resolveComponentsV71)
+   });
    if(!response.ok){const error=await response.json().catch(()=>({}));throw Error(error.detail||'Media Pack HTTP '+response.status)}
    const blob=await response.blob(),url=URL.createObjectURL(blob);
-   const a=document.createElement('a');a.href=url;a.download='RMBL_MediaPack.zip';document.body.append(a);a.click();a.remove();
+   const a=document.createElement('a');a.href=url;a.download=dra?'RMBL_DRA.zip':'RMBL_MediaPack.zip';document.body.append(a);a.click();a.remove();
    setTimeout(()=>URL.revokeObjectURL(url),60000);
-   $('timelineExportStatusV33').textContent='Media Pack esportato. Estrai lo ZIP; i file mancanti sono indicati in manifest.json. XML e SRT sono in 03_RESOLVE.';
+   $('timelineExportStatusV33').textContent=dra?'Archivio pronto. Estrai lo ZIP e in Resolve scegli Restore Project Archive sulla cartella .dra.':'Media Pack esportato. Estrai lo ZIP; i file mancanti sono indicati in manifest.json. XML e SRT sono in 03_RESOLVE.';
  }catch(e){$('timelineExportStatusV33').textContent='Media Pack non riuscito: '+(e.message||e)}
  finally{button.disabled=false}
 }

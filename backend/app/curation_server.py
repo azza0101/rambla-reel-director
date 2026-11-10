@@ -2233,8 +2233,8 @@ def create_app(
         latest = max(rows, key=lambda row:row.get('created_at',''), default={})
         return {k:v for k,v in latest.items() if k != 'payload'}
 
-    @app.get("/api/curation/projects/{project_id}/exports/media-pack.zip")
-    async def export_media_pack(project_id: str):
+    @app.api_route("/api/curation/projects/{project_id}/exports/media-pack.zip", methods=['GET', 'POST'])
+    async def export_media_pack(project_id: str, components: ExportComponents | None = None, include_dra: bool = False):
         """Exports already ready selected assets; never needs a Resolve bridge."""
         from .media_pack_export import create_media_pack, safe_name
         from .editorial_import import normalized_chunks
@@ -2242,6 +2242,29 @@ def create_app(
         from .transcript_intents import build_combined_resolve_export
         project = load_project(project_id)
         run = run_root(project_id)
+        if include_dra:
+            if components is None:
+                raise HTTPException(status_code=422, detail='Seleziona le componenti da esportare')
+            archive = run / 'exports' / (safe_name(project.name, fallback='RMBL_Reel') + '_DRA_' + uuid.uuid4().hex[:8] + '.zip')
+            try:
+                archive.parent.mkdir(parents=True, exist_ok=True)
+                flags = normalize_components(components)
+                issues = []
+                if flags['broll'] or flags['social']:
+                    issues.extend(await prepare_selected_timeline_media(project_id, components=flags))
+                if flags['generic']:
+                    issues.extend(await prepare_generic_media(project_id))
+                if issues:
+                    raise ValueError('Alcuni media non sono disponibili: ' + ', '.join(str(x.get('title') or x.get('asset_id') or '') for x in issues[:6]))
+                payload = await asyncio.to_thread(editing_resolve_payload, project_id, flags)
+                if payload.get('broll_unavailable'):
+                    raise ValueError('Alcune coperture selezionate non sono disponibili: verifica o rimuovi la selezione')
+                from .offline_resolve_archive import create_offline_resolve_archive
+                await asyncio.to_thread(create_offline_resolve_archive, payload, archive)
+                return FileResponse(archive, media_type='application/zip', filename=safe_name(project.name, fallback='RMBL_Reel') + '_DRA.zip')
+            except (ValueError, OSError, KeyError, TypeError, subprocess.SubprocessError) as exc:
+                archive.unlink(missing_ok=True)
+                raise HTTPException(status_code=422, detail='DRA non creato: ' + str(exc)) from exc
         try:
             timeline = broll_timeline_payload(project_id, allow_unavailable=True)
         except (ValueError, FileNotFoundError):
@@ -2270,7 +2293,7 @@ def create_app(
                         selected_images.append({
                             "beat_id": beat_id, "asset_id": candidate.asset_id,
                             "title": candidate.title, "source_page": candidate.source_page,
-                            "media_path": candidate.local_asset_path,
+                            "media_path": candidate.local_asset_path, "provider": candidate.provider,
                         })
         except (OSError, ValueError, KeyError):
             pass
@@ -2284,6 +2307,7 @@ def create_app(
                 selected_generics=generic.get("selected") or [], selected_images=selected_images,
                 captions_srt=captions, titles=titles,
                 source_video_path=str(project.source_video.path) if project.source_video else '',
+                components=components.model_dump() if components is not None else None,
             )
             return FileResponse(archive, media_type="application/zip", filename=name + "_MediaPack.zip")
         except (ValueError, OSError, KeyError, TypeError) as exc:

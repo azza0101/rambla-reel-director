@@ -41,6 +41,7 @@ def create_media_pack(
     captions_srt: str = "",
     titles: list[dict[str, Any]] | None = None,
     source_video_path: str = "",
+    components: dict[str, bool] | None = None,
 ) -> dict[str, Any]:
     """Write ZIP grouped by beat/location; report files that were not available.
 
@@ -50,6 +51,26 @@ def create_media_pack(
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     project_root = Path(project_root).resolve()
+    # Keep the historical GET behavior when no component selection is supplied.
+    if components is None:
+        flags = {'source_video': True, 'subtitles': True, 'highlights': True,
+                 'broll': True, 'social': True, 'generic': True, 'video': False}
+    else:
+        from .export_components import normalize_components
+        flags = normalize_components(components)
+    if flags['video']:
+        raise ValueError('Il Media Pack non supporta ancora la timeline CUT nativa: usa INVIA A RESOLVE.')
+    from .export_components import filter_selected_media
+    unavailable = []
+    for item in timeline.get('unavailable') or []:
+        provider = str(item.get('asset_id') or '').split(':', 1)[0].split('--')[-1]
+        if filter_selected_media([{'provider': provider}], flags):
+            unavailable.append(item)
+    timeline = {**timeline, 'clips': filter_selected_media(timeline.get('clips') or [], flags),
+                'unavailable': unavailable}
+    selected_images = filter_selected_media(selected_images or [], flags)
+    if not flags['generic']:
+        selected_generics = []
     rows: list[dict[str, Any]] = []
     missed: list[dict[str, str]] = []
     unique: set[str] = set()
@@ -58,9 +79,9 @@ def create_media_pack(
     path_map: dict[str, str] = {}
     safe_generics: list[dict[str, Any]] = []
 
-    def add(z: zipfile.ZipFile, source_value: Any, arcname: str, *, label: str, source_page: str = "", beat_id: str = "") -> str | None:
+    def add(z: zipfile.ZipFile, source_value: Any, arcname: str, *, label: str, source_page: str = "", beat_id: str = "", registered_original: bool = False) -> str | None:
         source = Path(str(source_value or ""))
-        if not source_value or not _inside(source, project_root):
+        if not source_value or (not (registered_original and source.is_file()) and not _inside(source, project_root)):
             missed.append({"label": label, "beat_id": beat_id, "source_page": source_page, "reason": "File non disponibile nella cartella del progetto"})
             return
         if arcname in unique:
@@ -104,9 +125,9 @@ def create_media_pack(
                         add(z, str(still), '05_RESOLVE_RELINK/' + still.relative_to(staging_root).as_posix(), label=str(row.get('title') or still.name))
 
     with zipfile.ZipFile(target, "w", allowZip64=True) as z:
-        if source_video_path:
+        if flags['source_video'] and source_video_path:
             add(z, source_video_path, '00_VIDEO_ORIGINALE/'+Path(source_video_path).name,
-                label='Video originale')
+                label='Video originale', registered_original=True)
         for row in timeline.get("clips", []):
             beat = safe_name(row.get("beat_id"), fallback="frase")
             asset = safe_name(row.get("asset_id"), fallback="clip")
@@ -158,20 +179,22 @@ def create_media_pack(
         xml_plan = {**timeline, "clips": safe_timeline_clips}
         xml = render_fcp7_xml(xml_plan, sequence_name=project_name + " - BROLL")
         z.writestr("03_RESOLVE/timeline.xml", xml)
-        z.writestr("03_RESOLVE/sottotitoli.srt", captions_srt)
-        z.writestr("03_RESOLVE/titoli_e_testi.json", json.dumps(titles or [], ensure_ascii=False, indent=2))
+        if flags['subtitles']:
+            z.writestr("03_RESOLVE/sottotitoli.srt", captions_srt)
+        if flags['highlights']:
+            z.writestr("03_RESOLVE/titoli_e_testi.json", json.dumps(titles or [], ensure_ascii=False, indent=2))
         from .omnicut_handoff import build_handoff
         context = build_handoff({'project_id':project_id,'project_name':project_name,'fps':timeline.get('fps'),
             'duration_seconds': (float(timeline.get('duration_frames') or 0) / float(timeline.get('fps') or 1)),
-            'broll_clips':safe_timeline_clips,'generic_broll_clips':safe_generics,'titles':titles or [],
+            'broll_clips':safe_timeline_clips,'generic_broll_clips':safe_generics,'titles':(titles or []) if flags['highlights'] else [],
             'unplaced_images':selected_images or [],
-            'broll_unavailable':timeline.get('unavailable') or [],'original_video':{'source_path':source_video_path}},
+            'broll_unavailable':timeline.get('unavailable') or [],'original_video':{'source_path':source_video_path if flags['source_video'] else ''}},
             project_root=project_root,path_map=path_map)
         z.writestr('04_OMNICUT/progetto.json',json.dumps(context,ensure_ascii=False,indent=2))
         manifest = {
             "version": 1, "project_id": project_id, "project_name": project_name,
             "media": rows, "missing": missed, "subtitle_format": "srt",
-            "timeline_format": "fcpxml-v5", "resolve_drp_included": False,
+            "timeline_format": "fcpxml-v5", "resolve_drp_included": False, "components": flags,
         }
         z.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
         readme = (
