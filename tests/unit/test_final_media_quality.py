@@ -133,8 +133,10 @@ def test_zip_endpoint_reports_how_many_clips_are_missing(tmp_path, monkeypatch):
         'fps':25,'duration_frames':25,'clips':[],
         'unavailable':[{'asset_id':'pexels:1','title':'Cavalli','beat_id':'b1','reason':'Video 640x360: richiesti almeno 720 pixel'}]}
     client=TestClient(app)
-    response=client.post(f'/api/curation/projects/{project.project_id}/exports/media-pack.zip',
-                         json={'source_video':False,'video':False,'subtitles':False,'highlights':False,'broll':True,'social':False,'generic':False})
+    flags={'source_video':False,'video':False,'subtitles':False,'highlights':False,'broll':True,'social':False,'generic':False}
+    path=f'/api/curation/projects/{project.project_id}/exports/media-pack.zip'
+    warning=client.post(path,json=flags)
+    response=client.post(path+'?accept_missing=true&accepted_signature='+warning.json()['detail']['signature'],json=flags)
     assert response.status_code==200
     assert response.headers['X-Rambla-Missing-Count']=='1'
     import io,zipfile

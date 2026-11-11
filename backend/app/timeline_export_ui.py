@@ -29,6 +29,7 @@ PANEL = r'''
   <button id="stopResolvePrepareV139" type="button" hidden>■ STOP INVIO</button>
   <dialog id="resolveStopDialogV139" class="resolveDialogV139"><h3>Interrompere l’invio?</h3><p>Scegli cosa fare con i file scaricati durante questo invio. I file già presenti e il progetto restano al sicuro.</p><div class="row"><button id="resolveStopKeepV139" type="button">STOP · MANTIENI I FILE</button><button id="resolveStopDiscardV139" type="button">STOP · ELIMINA I NUOVI FILE</button><button id="resolveStopBackV139" type="button">ANNULLA</button></div></dialog>
   <dialog id="resolveIssueDialogV139" class="resolveDialogV139"><h3>Problema con una copertura</h3><p id="resolveIssueTitleV139"></p><p id="resolveIssueDetailV139"></p><p>Apri la pagina, risolvi il problema e premi Riprova; oppure ignora questa clip.</p><p id="resolveIssueMessageV139" role="status"></p><div class="row"><button id="resolveIssueOpenV139" type="button">APRI PAGINA</button><button id="resolveIssueRetryV139" type="button">RIPROVA</button><button id="resolveIssueIgnoreV139" type="button">IGNORA QUESTA CLIP</button><button id="resolveIssueIgnoreAllV139" type="button">IGNORA TUTTI GLI ERRORI</button><button id="resolveIssueStopV139" type="button">STOP INVIO</button></div></dialog>
+  <dialog id="zipIssueDialogV164" class="resolveDialogV139"><h3>Alcune coperture non sono disponibili</h3><p>I video sotto 720p non vengono inclusi. Controlla le clip, riprova oppure crea lo ZIP senza quelle indicate.</p><ul id="zipIssueListV164" style="max-height:35vh;overflow:auto"></ul><div class="row"><button id="zipIssueRetryV164" type="button">RIPROVA</button><button id="zipIssueContinueV164" type="button">CONTINUA SENZA QUESTE CLIP</button><button id="zipIssueCancelV164" type="button">ANNULLA ESPORTAZIONE</button></div></dialog>
   <div id="resolveMediaIssuesV48" class="resolveMediaIssuesV48" hidden></div>
   <details id="resolveDebugV39" hidden><summary>Diagnostica Resolve</summary><button id="copyResolveDebugV39">COPIA DIAGNOSTICA</button><textarea id="resolveDebugTextV39" readonly aria-label="Diagnostica Resolve" style="width:100%;min-height:150px;margin-top:8px"></textarea></details><details class="legacyExportsV33"><summary>Export file e strumenti precedenti</summary><div class="timelineExportActionsV33"><button id="exportTimelineXmlV33">ESPORTA XML</button><button id="exportTimelineDraV33">ESPORTA DRA</button><button id="openTimelineResolveV33">CREA SUBITO IN RESOLVE · TEMP</button></div></details>
   <p id="timelineExportStatusV33" class="muted" role="status">Puoi inviare anche soltanto subs o parole evidenziate.</p>
@@ -276,21 +277,41 @@ async function prepareResolveHandoffV33(preserveIssues=false){
  }catch(error){panel.classList.add('errorV33');$('resolveDeliveryTitleV33').textContent='INVIO NON RIUSCITO';$('resolveDeliveryDetailV33').textContent=error.message||String(error)}
  finally{resolvePrepareJobV139=null;$('stopResolvePrepareV139').hidden=true;if($('resolveIssueDialogV139').open)$('resolveIssueDialogV139').close();if($('resolveStopDialogV139').open)$('resolveStopDialogV139').close();renderCurrentMediaV136(null);resolvePreparingV37=false;panel.classList.remove('busyV33');syncTimelineExportV33()}
 }
+function showZipIssuesV164(issues){
+ return new Promise(resolve=>{
+  const dialog=$('zipIssueDialogV164'), list=$('zipIssueListV164');list.replaceChildren();
+  for(const issue of issues){const li=document.createElement('li');li.textContent=(issue.title||issue.label||issue.asset_id||'Copertura')+' · '+(issue.message||issue.reason||'Non disponibile');list.append(li)}
+  const finish=choice=>{if(dialog.open)dialog.close();resolve(choice)};
+  $('zipIssueRetryV164').onclick=()=>finish('retry');$('zipIssueContinueV164').onclick=()=>finish('continue');$('zipIssueCancelV164').onclick=()=>finish('cancel');
+  dialog.oncancel=event=>{event.preventDefault();finish('cancel')};dialog.showModal();
+ });
+}
 async function exportMediaPackV125(){
  if(!state.pid||state.run)return;
  const button=$('exportMediaPackV125');button.disabled=true;
  const dra=$('includeOfflineDra').checked;
- $('timelineExportStatusV33').textContent=dra?'Preparo l’archivio DRA e i media selezionati. Resolve non è necessario.':'Preparo ZIP con le clip già disponibili, SRT, XML e titoli. Resolve non è necessario.';
+ $('timelineExportStatusV33').textContent=dra?'Preparo l’archivio DRA e i media selezionati. Resolve non è necessario.':'Controllo i media e preparo lo ZIP. Resolve non è necessario.';
  try{
-   const response=await fetch('/api/curation/projects/'+encodeURIComponent(state.pid)+'/exports/media-pack.zip?include_dra='+dra,{
-     method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(resolveComponentsV71)
-   });
-   if(!response.ok){const error=await response.json().catch(()=>({}));throw Error(error.detail||'Media Pack HTTP '+response.status)}
+   let acceptMissing=false,acceptedSignature='',response;
+   for(;;){
+     response=await fetch('/api/curation/projects/'+encodeURIComponent(state.pid)+'/exports/media-pack.zip?include_dra='+dra+'&accept_missing='+acceptMissing+'&accepted_signature='+encodeURIComponent(acceptedSignature),{
+       method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(resolveComponentsV71)
+     });
+     if(response.status===409){
+       const error=await response.json().catch(()=>({})),detail=error.detail||{};
+       if(detail.code!=='media_issues')throw Error(typeof detail==='string'?detail:'Media Pack HTTP 409');
+       const choice=await showZipIssuesV164(detail.issues||[]);
+       if(choice==='cancel'){$('timelineExportStatusV33').textContent='Esportazione annullata. Le selezioni sono conservate.';return}
+       acceptMissing=choice==='continue';acceptedSignature=acceptMissing?(detail.signature||''):'';$('timelineExportStatusV33').textContent='Preparo lo ZIP…';continue;
+     }
+     if(!response.ok){const error=await response.json().catch(()=>({}));throw Error(error.detail||'Media Pack HTTP '+response.status)}
+     break;
+   }
    const blob=await response.blob(),url=URL.createObjectURL(blob);
    const a=document.createElement('a');a.href=url;a.download=dra?'RMBL_DRA.zip':'RMBL_MediaPack.zip';document.body.append(a);a.click();a.remove();
    setTimeout(()=>URL.revokeObjectURL(url),60000);
    const missing=Number(response.headers.get('X-Rambla-Missing-Count')||0);
-   $('timelineExportStatusV33').textContent=dra?'Archivio pronto. Estrai lo ZIP e in Resolve scegli Restore Project Archive sulla cartella .dra.':missing?`ZIP esportato con ${missing} coperture mancanti. Apri 00_AVVISO_MEDIA_MANCANTI.txt per capire quali e perché.`:'Media Pack esportato. XML e SRT sono in 03_RESOLVE.';
+   $('timelineExportStatusV33').textContent=missing?`ZIP esportato senza ${missing} coperture. Apri 00_AVVISO_MEDIA_MANCANTI.txt per i dettagli.`:dra?'Archivio pronto. Estrai lo ZIP e in Resolve scegli Restore Project Archive sulla cartella .dra.':'Media Pack esportato. XML e SRT sono in 03_RESOLVE.';
  }catch(e){$('timelineExportStatusV33').textContent='Media Pack non riuscito: '+(e.message||e)}
  finally{button.disabled=false}
 }

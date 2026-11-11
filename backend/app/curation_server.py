@@ -1558,7 +1558,7 @@ def create_app(
         async def record_failure(candidate, exc):
             issue=download_issue(candidate, exc)
             if candidate.provider=='envato' and ('entro 50 secondi' in str(exc) or 'entro 25 secondi' in str(exc) or 'fermo da troppo tempo' in str(exc) or 'ha cambiato pagina' in str(exc) or 'continua a cambiare pagina' in str(exc)): issue['message']=str(exc)
-            if candidate.provider not in {'youtube','youtube_shorts'} and report and getattr(report, 'interactive', False) and hasattr(report, 'issue'):
+            if (candidate.provider not in {'youtube','youtube_shorts'} or issue['reason'] == 'low_resolution') and report and getattr(report, 'interactive', False) and hasattr(report, 'issue'):
                 if await report.issue(issue) == 'retry':
                     return await prepare_selected_timeline_media(project_id, report, components, asset_ids=[candidate.asset_id], ignored_assets=ignored_assets)
             return [issue]
@@ -2269,7 +2269,7 @@ def create_app(
         return {k:v for k,v in latest.items() if k != 'payload'}
 
     @app.api_route("/api/curation/projects/{project_id}/exports/media-pack.zip", methods=['GET', 'POST'])
-    async def export_media_pack(project_id: str, components: ExportComponents | None = None, include_dra: bool = False):
+    async def export_media_pack(project_id: str, components: ExportComponents | None = None, include_dra: bool = False, accept_missing: bool = False, accepted_signature: str = ""):
         """Exports already ready selected assets; never needs a Resolve bridge."""
         from .media_pack_export import create_media_pack, safe_name
         from .editorial_import import normalized_chunks
@@ -2277,6 +2277,10 @@ def create_app(
         from .transcript_intents import build_combined_resolve_export
         project = load_project(project_id)
         run = run_root(project_id)
+        def check_media_issues(issues):
+            signature = hashlib.sha256(json.dumps(issues, sort_keys=True, ensure_ascii=False, default=str).encode('utf8')).hexdigest()
+            if issues and (not accept_missing or accepted_signature != signature):
+                raise HTTPException(status_code=409, detail={'code':'media_issues', 'issues':issues, 'signature':signature})
         if include_dra:
             if components is None:
                 raise HTTPException(status_code=422, detail='Seleziona le componenti da esportare')
@@ -2289,16 +2293,26 @@ def create_app(
                     issues.extend(await prepare_selected_timeline_media(project_id, components=flags))
                 if flags['generic']:
                     issues.extend(await prepare_generic_media(project_id))
-                if issues:
-                    raise ValueError('Alcuni media non sono disponibili: ' + '; '.join(
-                        str(x.get('title') or x.get('asset_id') or '') + ': ' + str(x.get('message') or 'download non disponibile')
-                        for x in issues[:6]))
-                payload = await asyncio.to_thread(editing_resolve_payload, project_id, flags)
-                if payload.get('broll_unavailable'):
-                    raise ValueError('Alcune coperture selezionate non sono disponibili: verifica o rimuovi la selezione')
+                excluded = {str(row.get('asset_id')) for row in issues if row.get('asset_id')}
+                payload = await asyncio.to_thread(editing_resolve_payload, project_id, flags, excluded)
+                unavailable = payload.get('broll_unavailable') or []
+                issues.extend(unavailable)
+                check_media_issues(issues)
+                if unavailable:
+                    excluded.update(str(row.get('asset_id')) for row in unavailable if row.get('asset_id'))
+                    payload = await asyncio.to_thread(editing_resolve_payload, project_id, flags, excluded)
+                    if payload.get('broll_unavailable'):
+                        raise ValueError('Alcune coperture non possono essere escluse automaticamente: verifica le selezioni')
                 from .offline_resolve_archive import create_offline_resolve_archive
                 await asyncio.to_thread(create_offline_resolve_archive, payload, archive)
-                return FileResponse(archive, media_type='application/zip', filename=safe_name(project.name, fallback='RMBL_Reel') + '_DRA.zip')
+                if issues:
+                    import zipfile
+                    lines=['ATTENZIONE: COPERTURE NON INCLUSE', '']
+                    for row in issues:
+                        lines.append('- ' + ' '.join(str(row.get('title') or row.get('asset_id') or '').split()) + ': ' + ' '.join(str(row.get('message') or row.get('reason') or '').split()))
+                    with zipfile.ZipFile(archive, 'a') as z:
+                        z.writestr('00_AVVISO_MEDIA_MANCANTI.txt', '\n'.join(lines) + '\n')
+                return FileResponse(archive, media_type='application/zip', filename=safe_name(project.name, fallback='RMBL_Reel') + '_DRA.zip', headers={'X-Rambla-Missing-Count':str(len(issues))})
             except (ValueError, OSError, KeyError, TypeError, subprocess.SubprocessError) as exc:
                 archive.unlink(missing_ok=True)
                 raise HTTPException(status_code=422, detail='DRA non creato: ' + str(exc)) from exc
@@ -2346,6 +2360,15 @@ def create_app(
                 source_video_path=str(project.source_video.path) if project.source_video else '',
                 components=components.model_dump() if components is not None else None,
             )
+            if pack_result['missing_count'] and components is not None:
+                import zipfile
+                with zipfile.ZipFile(archive) as z:
+                    missing = json.loads(z.read('manifest.json'))['missing']
+                try:
+                    check_media_issues(missing)
+                except HTTPException:
+                    archive.unlink(missing_ok=True)
+                    raise
             return FileResponse(archive, media_type="application/zip", filename=name + "_MediaPack.zip",
                                 headers={'X-Rambla-Missing-Count': str(pack_result['missing_count'])})
         except (ValueError, OSError, KeyError, TypeError) as exc:
