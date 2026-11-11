@@ -1517,6 +1517,10 @@ def create_app(
             if magic.get('plan_signature') != fingerprint(visual_plan) or abs(float(magic.get('fps') or 0)-fps) > .001:
                 raise ValueError('Il piano MAGICO è cambiato: rigenera le coperture prima di esportare')
         plan = build_broll_timeline_plan(visual_plan, selection, assets, fps=fps, magic_decisions=decisions)
+        for missing in plan['unavailable']:
+            asset = assets.get(missing.get('asset_id')) or {}
+            missing['title'] = str(asset.get('title') or missing.get('asset_id') or '')
+            missing['source_page'] = str(asset.get('source_page') or '')
         if plan["selected_beat_count"] == 0:
             raise ValueError("Select at least one B-roll clip before exporting the timeline")
         if plan["unavailable"] and not plan["clips"] and not allow_unavailable:
@@ -2333,7 +2337,7 @@ def create_app(
         name = safe_name(project.name, fallback="RMBL_Reel")
         archive = run / "exports" / (name + "_MediaPack_" + uuid.uuid4().hex[:8] + ".zip")
         try:
-            await asyncio.to_thread(
+            pack_result = await asyncio.to_thread(
                 create_media_pack, archive,
                 project_id=project_id, project_name=project.name, project_root=root / project_id,
                 timeline=timeline, generic_rows=generic.get("items") or [],
@@ -2342,7 +2346,8 @@ def create_app(
                 source_video_path=str(project.source_video.path) if project.source_video else '',
                 components=components.model_dump() if components is not None else None,
             )
-            return FileResponse(archive, media_type="application/zip", filename=name + "_MediaPack.zip")
+            return FileResponse(archive, media_type="application/zip", filename=name + "_MediaPack.zip",
+                                headers={'X-Rambla-Missing-Count': str(pack_result['missing_count'])})
         except (ValueError, OSError, KeyError, TypeError) as exc:
             archive.unlink(missing_ok=True)
             raise HTTPException(status_code=422, detail="Media Pack non creato: " + str(exc)) from exc

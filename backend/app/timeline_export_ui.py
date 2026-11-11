@@ -289,7 +289,8 @@ async function exportMediaPackV125(){
    const blob=await response.blob(),url=URL.createObjectURL(blob);
    const a=document.createElement('a');a.href=url;a.download=dra?'RMBL_DRA.zip':'RMBL_MediaPack.zip';document.body.append(a);a.click();a.remove();
    setTimeout(()=>URL.revokeObjectURL(url),60000);
-   $('timelineExportStatusV33').textContent=dra?'Archivio pronto. Estrai lo ZIP e in Resolve scegli Restore Project Archive sulla cartella .dra.':'Media Pack esportato. Estrai lo ZIP; i file mancanti sono indicati in manifest.json. XML e SRT sono in 03_RESOLVE.';
+   const missing=Number(response.headers.get('X-Rambla-Missing-Count')||0);
+   $('timelineExportStatusV33').textContent=dra?'Archivio pronto. Estrai lo ZIP e in Resolve scegli Restore Project Archive sulla cartella .dra.':missing?`ZIP esportato con ${missing} coperture mancanti. Apri 00_AVVISO_MEDIA_MANCANTI.txt per capire quali e perché.`:'Media Pack esportato. XML e SRT sono in 03_RESOLVE.';
  }catch(e){$('timelineExportStatusV33').textContent='Media Pack non riuscito: '+(e.message||e)}
  finally{button.disabled=false}
 }

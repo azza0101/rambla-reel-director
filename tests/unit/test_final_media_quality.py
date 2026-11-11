@@ -104,6 +104,43 @@ def test_plain_zip_reports_and_excludes_low_quality_instead_of_packing_it(videos
         assert any(row['label']=='low' and '720' in row['reason'] for row in manifest['missing'])
         assert any(row['title']=='high' for row in manifest['media'])
         assert not any(name.endswith('/low.mp4') for name in z.namelist())
+        warning = z.read('00_AVVISO_MEDIA_MANCANTI.txt').decode('utf-8')
+        assert 'low' in warning and '640x360' in warning and '720' in warning
+
+
+def test_no_warning_file_when_no_media_is_missing(tmp_path):
+    import zipfile
+    from backend.app.media_pack_export import create_media_pack
+    root=tmp_path/'project'; root.mkdir()
+    out=tmp_path/'clean.zip'
+    create_media_pack(out,project_id='p',project_name='clean',project_root=root,
+                      timeline={'fps':25,'duration_frames':1,'clips':[]})
+    with zipfile.ZipFile(out) as z:
+        assert '00_AVVISO_MEDIA_MANCANTI.txt' not in z.namelist()
+
+
+def test_zip_endpoint_reports_how_many_clips_are_missing(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from backend.app.curation_project import ProjectStore
+    from backend.app.curation_server import create_app
+    probe=lambda _: {'duration':1,'fps':25,'width':1280,'height':720,'has_audio':False}
+    root=tmp_path/'projects'
+    project=ProjectStore(root,probe_runner=probe).create('Zip')
+    app=create_app(project_root=root,probe_runner=probe)
+    route=next(r for r in app.routes if r.path.endswith('/exports/media-pack.zip'))
+    env=dict(zip(route.endpoint.__code__.co_freevars,route.endpoint.__closure__))
+    env['broll_timeline_payload'].cell_contents=lambda *a,**k: {
+        'fps':25,'duration_frames':25,'clips':[],
+        'unavailable':[{'asset_id':'pexels:1','title':'Cavalli','beat_id':'b1','reason':'Video 640x360: richiesti almeno 720 pixel'}]}
+    client=TestClient(app)
+    response=client.post(f'/api/curation/projects/{project.project_id}/exports/media-pack.zip',
+                         json={'source_video':False,'video':False,'subtitles':False,'highlights':False,'broll':True,'social':False,'generic':False})
+    assert response.status_code==200
+    assert response.headers['X-Rambla-Missing-Count']=='1'
+    import io,zipfile
+    with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+        text=z.read('00_AVVISO_MEDIA_MANCANTI.txt').decode('utf-8')
+        assert 'Cavalli' in text and '640x360' in text
 
 
 def test_timeline_export_never_uses_preview_as_final_even_if_hd(videos, tmp_path, monkeypatch):

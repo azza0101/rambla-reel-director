@@ -180,8 +180,8 @@ def create_media_pack(
                 safe_generics.append({**row, 'media_path':str(source), 'role':'generic'})
 
         for entry in timeline.get("unavailable", []):
-            missed.append({"label": str(entry.get("asset_id") or ""), "beat_id": str(entry.get("beat_id") or ""),
-                           "source_page": "", "reason": str(entry.get("reason") or "Media non disponibile")})
+            missed.append({"label": str(entry.get("title") or entry.get("asset_id") or ""), "beat_id": str(entry.get("beat_id") or ""),
+                           "source_page": str(entry.get("source_page") or ""), "reason": str(entry.get("reason") or "Media non disponibile")})
 
         # The XML is generated using the authoritative time ranges; it may
         # require Resolve's Relink Media after moving this ZIP to another PC.
@@ -206,6 +206,20 @@ def create_media_pack(
             "timeline_format": "fcpxml-v5", "resolve_drp_included": False, "components": flags,
         }
         z.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+        if missed:
+            warning = [
+                'ATTENZIONE: ALCUNE COPERTURE NON SONO INCLUSE', '',
+                'Le clip elencate sotto non sono state inserite nel pacchetto.',
+                'Se la risoluzione è troppo bassa, cerca una versione HD (almeno 720 pixel sul lato corto) o scegli un’altra clip.',
+                '',
+            ]
+            for item in missed:
+                clean = lambda value: ' '.join(str(value or '').split())
+                warning.append('- ' + clean(item.get('label')) + ' · ' + clean(item.get('beat_id')))
+                warning.append('  Motivo: ' + clean(item.get('reason')))
+                if item.get('source_page'):
+                    warning.append('  Fonte: ' + clean(item['source_page']))
+            z.writestr('00_AVVISO_MEDIA_MANCANTI.txt', '\n'.join(warning) + '\n')
         readme = (
             "RMBL B ROLL - Media Pack\n\n"
             "01_FRASI: B-roll e immagini disponibili suddivisi per frase.\n"
