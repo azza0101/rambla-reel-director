@@ -1,6 +1,13 @@
 from backend.app.curation_selection import SelectionStore
 
 
+def test_export_recognizes_selected_visual_beats_and_respects_no_broll():
+    from backend.app.curation_selection import has_selected_assets
+    assert has_selected_assets({'chunks':{'beat':{'selected_assets':[{'asset_id':'pexels:1'}]}}})
+    assert not has_selected_assets({'chunks':{'beat':{'no_broll':True,'selected_assets':[{'asset_id':'pexels:1'}]}}})
+    assert not has_selected_assets({'chunks':{'beat':{'selected_assets':[]}}})
+
+
 def test_ordered_mixed_assets_get_deterministic_tracks(tmp_path):
     store = SelectionStore(tmp_path, {"video-a": {"chunk_id": "chunk-1"}, "image-c": {"chunk_id": "chunk-1"}, "video-b": {"chunk_id": "chunk-1"}}, ["chunk-1"])
     row = store.set_chunk_selection("chunk-1", ["video-a", "image-c", "video-b"], no_broll=False)

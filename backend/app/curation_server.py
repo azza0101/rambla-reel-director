@@ -1525,14 +1525,17 @@ def create_app(
         from .resolve_media_issues import download_issue
         from .social_media import media_path, prepare_media
         from .transcript_intents import has_selected_intent
+        from .curation_selection import has_selected_assets
         run = run_root(project_id)
-        if not has_selected_intent(run, "coverage"):
+        selection = _read_json(active_retrieval_root(run) / "selection-plan.json", {"chunks": {}})
+        if not has_selected_intent(run, "coverage") and not has_selected_assets(selection) and not asset_ids:
             if report:
                 report(60, "Nessun B-roll selezionato · salto download media")
             return []
         view = load_curation_run(run)
-        selection = _read_json(active_retrieval_root(run) / "selection-plan.json", {"chunks": {}})
-        wanted = [str(row.get("asset_id")) for choice in (selection.get("chunks") or {}).values() for row in (choice.get("selected_assets") or [])]
+        wanted = [str(row.get("asset_id")) for choice in (selection.get("chunks") or {}).values()
+                  if isinstance(choice,dict) and not choice.get('no_broll')
+                  for row in (choice.get("selected_assets") or []) if isinstance(row,dict) and row.get('asset_id')]
         if asset_ids is not None:
             wanted = list(dict.fromkeys(asset_ids))
         ignored_assets = set(ignored_assets or ())
@@ -1648,6 +1651,7 @@ def create_app(
     def editing_resolve_payload(project_id: str, components=None, ignored_assets=None) -> dict[str, Any]:
         from fractions import Fraction
         from .transcript_intents import has_selected_intent
+        from .curation_selection import has_selected_assets
         components = normalize_components(components)
         ignored_assets = set(ignored_assets or ())
         from .native_cut_export import assert_current_cut
@@ -1687,7 +1691,8 @@ def create_app(
             payload = {'project_id': project_id, 'project_name': project.name,
                        'fps': project_export_fps(project_id, project), 'titles': [], 'subtitles': [],
                        'title_count': 0, 'subtitle_count': 0}
-        if (components['broll'] or components['social']) and has_selected_intent(run_root(project_id), "coverage"):
+        selected_coverage = _read_json(active_retrieval_root(run_root(project_id)) / 'selection-plan.json', {'chunks': {}})
+        if (components['broll'] or components['social']) and (has_selected_intent(run_root(project_id), "coverage") or has_selected_assets(selected_coverage)):
             broll = broll_timeline_payload(project_id, allow_unavailable=True,
                 fps_override=target_fps, components=components)
             broll['clips'] = [clip for clip in filter_selected_media(broll['clips'], components)
