@@ -161,7 +161,50 @@ def _inject_text(drp: bytes, titles: list[dict], subtitles: list[dict], fps: flo
     return output.getvalue()
 
 
+def _make_mono_copy(source: Path, output: Path) -> None:
+    """Keep the video stream intact and downmix only the exported audio."""
+    subprocess.run(['ffmpeg','-nostdin','-v','error','-y','-i',str(source),
+                    '-map','0:v:0','-map','0:a:0','-map_metadata','0',
+                    '-c:v','copy','-c:a','aac','-b:a','192k','-ac','1',str(output)],
+                   capture_output=True,check=True,timeout=1800)
+
+
 def create_offline_resolve_archive(payload: dict, target: Path, *, probe_media=probe_media) -> dict:
+    import tempfile
+    key='native_cut' if payload.get('native_cut') else 'original_video'
+    base=payload.get(key) or {}
+    value=str(base.get('source_path') or '')
+    source=Path(value).resolve() if value else None
+    if not source or not source.is_file() or base.get('resolve_source'):
+        return _create_offline_archive(payload,target,probe_media=probe_media)
+    original=probe_media(source)
+    uses_audio=bool(base.get('source_has_audio',base.get('has_audio',original.get('has_audio'))))
+    channels=int(original.get('channels') or 1)
+    if not uses_audio or not original.get('has_audio') or channels==1:
+        return _create_offline_archive(payload,target,probe_media=probe_media)
+    if channels!=2:
+        raise ValueError('DRA offline: la conversione mono è supportata solo per audio stereo')
+    if original.get('codec') not in (None,'h264'):
+        raise ValueError('DRA offline: codec video non supportato per la conversione mono')
+    target=Path(target);target.parent.mkdir(parents=True,exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='rmbl-mono-',dir=target.parent) as directory:
+        copy_path=Path(directory)/source.name
+        _make_mono_copy(source,copy_path)
+        converted=probe_media(copy_path)
+        if (not converted.get('has_audio') or int(converted.get('channels') or 0)!=1 or
+            converted.get('width')!=original.get('width') or converted.get('height')!=original.get('height') or
+            abs(float(converted.get('fps') or 0)-float(original.get('fps') or 0))>0.001 or
+            int(converted.get('duration_frames') or 0)!=int(original.get('duration_frames') or 0)):
+            raise ValueError('Copia mono non valida: durata o caratteristiche video cambiate')
+        prepared=copy.deepcopy(payload)
+        prepared[key]['source_path']=str(copy_path)
+        for row in (prepared.get('broll_clips') or [])+(prepared.get('generic_broll_clips') or []):
+            if row.get('media_path') and Path(row['media_path']).resolve()==source:
+                row['media_path']=str(copy_path)
+        return _create_offline_archive(prepared,target,probe_media=probe_media,converted_audio=True)
+
+
+def _create_offline_archive(payload: dict, target: Path, *, probe_media=probe_media, converted_audio=False) -> dict:
     if payload.get('titles') and not KURA_PRESET.is_file():
         raise ValueError('Preset KURA non disponibile: impossibile esportare i titoli')
     fps=float(Fraction(str(payload.get('fps') or 30)))
@@ -240,6 +283,8 @@ def create_offline_resolve_archive(payload: dict, target: Path, *, probe_media=p
             z.writestr(safe+'.dra/project.drp',out.getvalue())
             for path in paths:z.write(path,safe+'.dra/MediaFiles/'+path.name,compress_type=zipfile.ZIP_STORED)
             instructions='Estrai lo ZIP e in Resolve usa Restore Project Archive sulla cartella .dra.\n'
+            if converted_audio:
+                instructions+='\nL\'audio stereo del video originale e stato convertito in mono nella copia inclusa. Il file originale non e stato modificato.\n'
             if payload.get('titles'):
                 bundle=build_effect_install_bundle(Path(temp)/'kura-effect.zip')
                 with zipfile.ZipFile(bundle) as effect_bundle:
