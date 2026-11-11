@@ -255,14 +255,15 @@ class EnvatoSession:
                 notify('Verifica del video scaricato')
                 target=_materialize(source,scratch / "verified")
                 if not target or not await asyncio.to_thread(valid_video,target):raise RuntimeError('Il file Envato non contiene un video utilizzabile')
-                final=scratch.parent / target.name
-                target.replace(final)
-                target=final
-                try:source.unlink(missing_ok=True)
-                except OSError:pass
-                registry=load_registry(Path(run_root));registry['assets'][str(asset_id)]={'media_path':str(target.resolve()),'license_project':str(project_name).strip()}
+                from .envato_light_media import prepare_light_media
+                notify('Preparo copia leggera fino a 1080p')
+                final=await asyncio.to_thread(prepare_light_media,target,scratch.parent)
+                registry=load_registry(Path(run_root));registry['assets'][str(asset_id)]={'media_path':str(final.resolve()),'license_project':str(project_name).strip()}
                 write_json(Path(run_root)/'envato-downloads.json',registry)
-                return {'status':'ready','asset_id':asset_id,'media_path':str(target.resolve())}
+                for temporary in (source,target):
+                    try:temporary.unlink(missing_ok=True)
+                    except OSError:pass
+                return {'status':'ready','asset_id':asset_id,'media_path':str(final.resolve())}
             finally:
                 try: await bounded_step(page.close(),5)
                 except Exception: pass

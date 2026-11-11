@@ -1,0 +1,101 @@
+name: Publish RMBL B ROLL v0161 Windows package
+on:
+  push:
+    branches:
+      - release/broll-v0161-envato-light
+  workflow_dispatch:
+concurrency:
+  group: broll-v0161-windows-publish
+  cancel-in-progress: true
+permissions:
+  contents: write
+jobs:
+  windows-build-smoke-publish:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Unit and product tests
+        shell: pwsh
+        run: |
+          python -m pip install -e '.[dev]' 'pytest>=8,<9'
+          if ($LASTEXITCODE -ne 0) { throw 'pip install failed' }
+          python -m pytest -q tests/unit/test_offline_resolve_archive.py tests/unit/test_curation_selection.py tests/unit/test_offline_pack_selection.py tests/unit/test_resolve_title_drt.py tests/unit/test_kura_text_effect.py tests/unit/test_resolve_reconnect_v0145.py tests/unit/test_original_video_broll_v0147.py tests/unit/test_resolve_project_links.py tests/unit/test_timeline_share_package.py tests/unit/test_omnicut_preparation_v0151.py tests/unit/test_highlight_export_availability_v0150.py tests/unit/test_launcher_reuse.py tests/unit/test_broll_active_original_and_export_ui_v0133.py tests/unit/test_resolve_textplus_timeline.py tests/unit/test_resolve_handoff_jobs.py tests/unit/test_envato_export_v0135.py tests/unit/test_youtube_persistent_session_v0137.py tests/unit/test_resolve_media_issues.py tests/unit/test_envato_light_media.py tests/unit/test_envato_auto_download.py tests/unit/test_envato_download_bridge.py tests/unit/test_social_login_api.py tests/unit/test_browser_profiles.py tests/unit/test_social_media_prepare.py tests/unit/test_social_session_bridge.py tests/unit/test_original_video_no_autocut_v0129.py tests/unit/test_export_components.py tests/unit/test_resolve_native_cut.py tests/unit/test_resolve_textplus_timeline.py tests/unit/test_resolve_native_subtitles.py tests/unit/test_resolve_title_templates.py tests/unit/test_resolve_handoff.py tests/unit/test_resolve_handoff_jobs.py tests/unit/test_resolve_handoff_ui.py tests/unit/test_standalone_resolve_bridge.py tests/unit/test_resolve_bridge.py tests/unit/test_resolve_prepare_jobs.py tests/unit/test_resolve_combined_timeline_api.py tests/unit/test_broll_media_pack_v0125.py tests/unit/test_broll_ignore_coverages.py tests/unit/test_generic_selection_limit.py tests/unit/test_bridge_auto_open.py tests/unit/test_highlight_existing_plan.py tests/unit/test_manual_search_unfiltered.py tests/unit/test_manual_envato_exact.py tests/unit/test_envato_app_search.py tests/unit/test_envato_source.py tests/unit/test_broll_custom_coverage_v0138.py tests/unit/test_broll_manual_coverage.py tests/unit/test_broll_scroll_preservation.py tests/unit/test_broll_desktop_controls.py tests/unit/test_api_first_director.py tests/unit/test_api_director_curation.py tests/unit/test_debug_run_cli.py tests/unit/test_broll_update_retention_v0132.py tests/unit/test_software_update.py tests/unit/test_windows_distribution.py
+          if ($LASTEXITCODE -ne 0) { throw 'unit tests failed' }
+          python -m compileall -q backend/app
+          if ($LASTEXITCODE -ne 0) { throw 'Python compilation failed' }
+      - name: Validate Windows updater syntax and release discovery
+        shell: pwsh
+        run: |
+          $tokens=$null; $errors=$null
+          $ast=[System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path './SEARCH_UPDATE.ps1'),[ref]$tokens,[ref]$errors)
+          if ($errors.Count) { $errors | Format-List | Out-String | Write-Error; throw 'SEARCH_UPDATE.ps1 parse failed' }
+          $source=Get-Content './SEARCH_UPDATE.ps1' -Raw
+          foreach ($must in @('release list', 'release download $latestTag', '--pattern update.json', 'verify_update_archive.py')) {
+            if (-not $source.Contains($must)) { throw "Missing updater operation: $must" }
+          }
+          Write-Host 'SEARCH_UPDATE_PARSE_OK'
+      - name: Prepare offline Windows wheels
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path '.runtime-temp/release-wheels' | Out-Null
+          python -m pip wheel . setuptools wheel --wheel-dir '.runtime-temp/release-wheels'
+          if ($LASTEXITCODE -ne 0) { throw 'Windows wheel packaging failed' }
+      - name: Build update ZIP and EXE
+        shell: pwsh
+        run: |
+          if (-not (Get-Command ffmpeg.exe -ErrorAction SilentlyContinue)) {
+            choco install ffmpeg -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'FFmpeg unavailable' }
+            $env:PATH = [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH','Process')
+          }
+          # Chocolatey exposes a tiny shim at C:\\ProgramData\\chocolatey\\bin.
+          # The release must bundle the real standalone FFmpeg binaries instead.
+          $ffRoot = Join-Path $env:ChocolateyInstall 'lib/ffmpeg'
+          if (Test-Path $ffRoot) {
+            $actual = Get-ChildItem -LiteralPath $ffRoot -Recurse -File -Filter 'ffmpeg.exe' |
+              Where-Object { Test-Path (Join-Path $_.DirectoryName 'ffprobe.exe') } |
+              Select-Object -First 1
+            if (-not $actual) { throw 'Real FFmpeg binaries missing from Chocolatey package' }
+            $env:PATH = $actual.DirectoryName + ';' + $env:PATH
+          }
+          if (-not (Get-Command gh.exe -ErrorAction SilentlyContinue)) { throw 'gh CLI unavailable' }
+          ./BUILD_WINDOWS_INSTALLER.ps1 -OutputDirectory (Join-Path $PWD 'dist')
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw 'installer builder failed' }
+          foreach ($name in @('RMBL-B-ROLL-Windows-v0161.zip','RMBL-B-ROLL-Setup-v0161.exe','update.json')) {
+            if (-not (Test-Path (Join-Path 'dist' $name))) { throw "Missing release asset: $name" }
+          }
+          python tools/verify_update_archive.py 'dist/RMBL-B-ROLL-Windows-v0161.zip' 'dist/update.json'
+          if ($LASTEXITCODE -ne 0) { throw 'Archive signature/paths invalid' }
+      - name: Installed app smoke in temporary Windows directory
+        shell: pwsh
+        run: |
+          $stage = Join-Path $env:RUNNER_TEMP 'rmbl-v0161-stage'
+          $installed = Join-Path $env:RUNNER_TEMP 'rmbl-v0161-app'
+          Expand-Archive -LiteralPath 'dist/RMBL-B-ROLL-Windows-v0161.zip' -DestinationPath $stage
+          & (Join-Path $stage 'INSTALL_RMBL_B_ROLL.ps1') -InstallRoot $installed -SkipDesktopIntegration -PythonExecutable (Get-Command python.exe).Source
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw 'Installed smoke failed' }
+          $exe = Join-Path $installed '.venv/Scripts/python.exe'
+          & $exe -c "from backend.app.curation_server import create_app; from fastapi.testclient import TestClient; from pathlib import Path; app=create_app(project_root=Path('test-projects')); c=TestClient(app); r=c.get('/curation'); assert r.status_code == 200 and 'rmblStopAnalysis' in r.text and 'rmblSettings' in r.text and 'exportMediaPackV125' in r.text; h=c.get('/api/curation/desktop-controls'); assert h.status_code == 200; print('INSTALLED_APP_SMOKE_OK')"
+          if ($LASTEXITCODE -ne 0) { throw 'Installed UI and API smoke failed' }
+          if ((Get-Item 'dist/RMBL-B-ROLL-Setup-v0161.exe').Length -lt 1MB) { throw 'Empty installer' }
+      - name: Publish v0161 to GitHub release for SEARCH UPDATE
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ((Get-Content RAMBLA_VERSION -Raw).Trim() -ne 'v0161') { throw 'Unexpected version' }
+          $existingJson = & gh release view v0161 --repo "${{ github.repository }}" --json assets,isDraft 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host 'Existing v0161 draft/release detected: refreshing verified Windows assets.'
+            gh release upload v0161 'dist/RMBL-B-ROLL-Windows-v0161.zip' 'dist/RMBL-B-ROLL-Setup-v0161.exe' 'dist/update.json' --repo "${{ github.repository }}" --clobber
+            if ($LASTEXITCODE -ne 0) { throw 'Release asset refresh failed' }
+            gh release edit v0161 --repo "${{ github.repository }}" --draft=false --latest
+            if ($LASTEXITCODE -ne 0) { throw 'Release finalization failed' }
+          } else {
+          gh release create v0161 'dist/RMBL-B-ROLL-Windows-v0161.zip' 'dist/RMBL-B-ROLL-Setup-v0161.exe' 'dist/update.json' --repo "${{ github.repository }}" --target "${{ github.sha }}" --title 'RMBL B ROLL v0161 - Envato 1080 leggero' --notes 'DRA offline sperimentale: video H.264, audio stereo convertito in copia mono e titoli fino a 125 fotogrammi. Per formati non supportati usare il bridge. Effetto KURA separato nel bridge non ancora disponibile.' --latest
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Release publish failed' }

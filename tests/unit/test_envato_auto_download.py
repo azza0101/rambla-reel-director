@@ -16,6 +16,10 @@ def test_only_envato_https_item_urls_are_allowed():
 def test_download_uses_exact_event_and_attaches_asset(tmp_path,monkeypatch):
     import backend.app.social_page_evidence as evidence
     import backend.app.envato_auto_download as auto
+    import backend.app.envato_light_media as light
+    def copy_light(source, directory):
+        result=directory/'light.mp4'; result.write_bytes(source.read_bytes()); return result
+    monkeypatch.setattr(light,'prepare_light_media',copy_light)
     monkeypatch.setattr(evidence,'challenge_required',lambda html:False)
     monkeypatch.setattr(auto,'valid_video',lambda path:True)
     class Download:
@@ -41,7 +45,7 @@ def test_download_uses_exact_event_and_attaches_asset(tmp_path,monkeypatch):
     session._context=context
     phases=[]
     result=asyncio.run(session.download(page.url,'My project',tmp_path/'run','beat-1',progress=phases.append))
-    assert phases == ['Apertura pagina Envato', 'Attendo apertura della pagina Envato', 'Scelta formato video', 'Registrazione licenza Envato', 'Attendo avvio download da Envato', 'Download del file in corso', 'Verifica del video scaricato']
+    assert phases == ['Apertura pagina Envato', 'Attendo apertura della pagina Envato', 'Scelta formato video', 'Registrazione licenza Envato', 'Attendo avvio download da Envato', 'Download del file in corso', 'Verifica del video scaricato', 'Preparo copia leggera fino a 1080p']
     assert result['status']=='ready'
     assert Path(result['media_path']).read_bytes()==b'valid video'
     assert not list((tmp_path/'run').rglob('download.mp4'))
@@ -69,6 +73,40 @@ def test_failed_licensing_never_creates_registry(tmp_path,monkeypatch):
     session._context=context
     with pytest.raises(RuntimeError,match='accesso richiesto'):
         asyncio.run(session.download('https://elements.envato.com/item','Project',tmp_path/'run','beat-1'))
+    assert not (tmp_path/'run/envato-downloads.json').exists()
+
+
+def test_conversion_failure_keeps_download_in_cache_without_registry(tmp_path,monkeypatch):
+    import backend.app.envato_auto_download as auto
+    import backend.app.envato_light_media as light
+    import backend.app.social_page_evidence as evidence
+    monkeypatch.setattr(evidence, 'challenge_required', lambda html: False)
+    monkeypatch.setattr(auto, 'valid_video', lambda path: True)
+    def fail(*args):
+        raise RuntimeError('conversion failed')
+    monkeypatch.setattr(light, 'prepare_light_media', fail)
+    class Download:
+        suggested_filename='file.mov'
+        async def save_as(self,path): Path(path).write_bytes(b'original')
+        async def failure(self): return None
+    class Page:
+        url='https://elements.envato.com/item'
+        async def goto(self,*a,**k): pass
+        async def wait_for_selector(self,*a,**k): pass
+        async def content(self): return ''
+        def on(self,event,cb): self.cb=cb
+        async def evaluate(self,script,*args):
+            if args: self.cb(Download())
+            return {'ok':True}
+        async def close(self): pass
+    class Context:
+        async def new_page(self): return Page()
+    session=EnvatoSession(tmp_path/'profile')
+    async def context(**kwargs): return Context()
+    session._context=context
+    with pytest.raises(RuntimeError, match='conversion failed'):
+        asyncio.run(session.download('https://elements.envato.com/item','Test',tmp_path/'run','asset'))
+    assert next((tmp_path/'run').rglob('download.mov')).read_bytes()==b'original'
     assert not (tmp_path/'run/envato-downloads.json').exists()
 def test_full_length_mov_is_valid_media_and_missing_video_is_rejected(tmp_path):
     import shutil,subprocess
@@ -134,6 +172,10 @@ def test_unreadable_resolution_menu_stops_before_download_and_registration(tmp_p
 def test_envato_download_reports_waiting_for_browser_event(tmp_path,monkeypatch):
     import backend.app.social_page_evidence as evidence
     import backend.app.envato_auto_download as auto
+    import backend.app.envato_light_media as light
+    def copy_light(source, directory):
+        result=directory/'light.mp4'; result.write_bytes(source.read_bytes()); return result
+    monkeypatch.setattr(light,'prepare_light_media',copy_light)
     monkeypatch.setattr(evidence,'challenge_required',lambda html:False)
     monkeypatch.setattr(auto,'valid_video',lambda path:True)
     class Download:

@@ -102,13 +102,21 @@ def adopt_new_download(
             continue
         if target is None or not target.is_file() or target.stat().st_size <= 0:
             continue
+        from .envato_light_media import prepare_light_media
+        from .atomic_io import write_json
+        try:
+            light = prepare_light_media(target, Path(run_root) / "envato-media" / token)
+        except Exception as exc:
+            return {"status": "error", "asset_id": asset_id, "detail": "Impossibile creare la copia leggera Envato: " + str(exc)[:250]}
         registry = load_registry(run_root)
         registry["assets"][str(asset_id)] = {
-            "media_path": str(target.resolve()),
+            "media_path": str(light.resolve()),
             "download_source": str(source.resolve()),
         }
-        (Path(run_root) / "envato-downloads.json").write_text(
-            json.dumps(registry, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        return {"status": "ready", "asset_id": asset_id, "media_path": str(target.resolve())}
+        write_json(Path(run_root) / "envato-downloads.json", registry)
+        try:
+            target.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return {"status": "ready", "asset_id": asset_id, "media_path": str(light.resolve())}
     return {"status": "waiting", "asset_id": asset_id}
