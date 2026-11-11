@@ -96,6 +96,6 @@ jobs:
             gh release edit v0160 --repo "${{ github.repository }}" --draft=false --latest
             if ($LASTEXITCODE -ne 0) { throw 'Release finalization failed' }
           } else {
-          gh release create v0160 'dist/RMBL-B-ROLL-Windows-v0160.zip' 'dist/RMBL-B-ROLL-Setup-v0160.exe' 'dist/update.json' --repo "${{ github.repository }}" --target "${{ github.sha }}" --title 'RMBL B ROLL v0160 - DRA offline sperimentale' --notes 'DRA offline sperimentale: video H.264, audio mono e titoli fino a 125 fotogrammi. Per stereo e formati non supportati usare il bridge. Effetto KURA separato nel bridge non ancora disponibile.' --latest
+          gh release create v0160 'dist/RMBL-B-ROLL-Windows-v0160.zip' 'dist/RMBL-B-ROLL-Setup-v0160.exe' 'dist/update.json' --repo "${{ github.repository }}" --target "${{ github.sha }}" --title 'RMBL B ROLL v0160 - DRA offline sperimentale' --notes 'DRA offline sperimentale: video H.264, audio stereo convertito in copia mono e titoli fino a 125 fotogrammi. Per formati non supportati usare il bridge. Effetto KURA separato nel bridge non ancora disponibile.' --latest
           }
           if ($LASTEXITCODE -ne 0) { throw 'Release publish failed' }

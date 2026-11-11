@@ -221,9 +221,32 @@ def test_unverified_video_codec_is_rejected(tmp_path):
         create_offline_resolve_archive(payload,tmp_path/'out.zip',probe_media=probe)
 
 
-def test_unverified_stereo_is_rejected(tmp_path):
+def test_stereo_source_is_converted_to_mono_without_changing_original(tmp_path,monkeypatch):
+    import backend.app.offline_resolve_archive as archive
     source=tmp_path/'stereo.mp4';source.write_bytes(b'video')
     payload={'project_name':'Stereo','fps':25,'original_video':{'source_path':str(source),'width':320,'height':180,'duration_frames':25,'has_audio':True}}
-    probe=lambda _: {'fps':25,'width':320,'height':180,'duration_frames':25,'has_audio':True,'channels':2,'sample_rate':48000}
-    with pytest.raises(ValueError,match='audio stereo'):
-        create_offline_resolve_archive(payload,tmp_path/'out.zip',probe_media=probe)
+    probe=lambda p: {'fps':25,'width':320,'height':180,'duration_frames':25,'has_audio':True,'channels':2 if Path(p).resolve()==source.resolve() else 1,'sample_rate':48000}
+    def convert(original,output):
+        assert original==source.resolve()
+        output.write_bytes(b'mono-copy')
+    from pathlib import Path
+    monkeypatch.setattr(archive,'_make_mono_copy',convert)
+    out=tmp_path/'out.zip';create_offline_resolve_archive(payload,out,probe_media=probe)
+    assert source.read_bytes()==b'video'
+    assert payload['original_video']['source_path']==str(source)
+    with zipfile.ZipFile(out) as z:
+        assert z.read('Stereo.dra/MediaFiles/stereo.mp4')==b'mono-copy'
+        assert 'mono' in z.read('LEGGIMI.txt').decode().lower()
+
+
+def test_mono_conversion_rejects_changed_video_timing(tmp_path,monkeypatch):
+    from pathlib import Path
+    import backend.app.offline_resolve_archive as archive
+    source=tmp_path/'stereo.mp4';source.write_bytes(b'original')
+    payload={'project_name':'Stereo','fps':25,'original_video':{'source_path':str(source),'width':320,'height':180,'duration_frames':25,'has_audio':True}}
+    probe=lambda p: {'fps':25,'width':320,'height':180,'duration_frames':25 if Path(p).resolve()==source.resolve() else 24,'has_audio':True,'channels':2 if Path(p).resolve()==source.resolve() else 1}
+    monkeypatch.setattr(archive,'_make_mono_copy',lambda original,output:output.write_bytes(b'bad-copy'))
+    out=tmp_path/'out.zip'
+    with pytest.raises(ValueError,match='durata'):
+        create_offline_resolve_archive(payload,out,probe_media=probe)
+    assert not out.exists() and source.read_bytes()==b'original'
