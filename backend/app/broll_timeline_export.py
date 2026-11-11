@@ -78,7 +78,7 @@ def build_broll_timeline_plan(
             raw_path = str(asset.get("media_path") or "").strip()
             path = Path(raw_path) if raw_path else None
             if path is None or not path.is_file():
-                unavailable.append({"beat_id": str(beat_id), "asset_id": asset_id, "reason": "clip file is not available locally"})
+                unavailable.append({"beat_id": str(beat_id), "asset_id": asset_id, "reason": str(asset.get('unavailable_reason') or "clip file is not available locally")})
                 continue
             available = required if kind == "image" else _frame(float(asset.get("duration_seconds") or 0), fps)
             source_start_seconds = float(

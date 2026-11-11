@@ -79,11 +79,18 @@ def create_media_pack(
     path_map: dict[str, str] = {}
     safe_generics: list[dict[str, Any]] = []
 
-    def add(z: zipfile.ZipFile, source_value: Any, arcname: str, *, label: str, source_page: str = "", beat_id: str = "", registered_original: bool = False) -> str | None:
+    def add(z: zipfile.ZipFile, source_value: Any, arcname: str, *, label: str, source_page: str = "", beat_id: str = "", registered_original: bool = False, video_final: bool = False) -> str | None:
         source = Path(str(source_value or ""))
         if not source_value or (not (registered_original and source.is_file()) and not _inside(source, project_root)):
             missed.append({"label": label, "beat_id": beat_id, "source_page": source_page, "reason": "File non disponibile nella cartella del progetto"})
             return
+        if video_final:
+            from .media_export_quality import MediaQualityError, require_editing_quality
+            try:
+                require_editing_quality(source)
+            except MediaQualityError as exc:
+                missed.append({'label': label, 'beat_id': beat_id, 'source_page': source_page, 'reason': str(exc)})
+                return None
         if arcname in unique:
             if archive_sources[arcname] == source.resolve():
                 path_map[str(source_value)] = arcname
@@ -137,7 +144,8 @@ def create_media_pack(
                 suffix = ".mp4"
             destination = f"01_FRASI/{beat}/{Path(source).name}"
             added = add(z, source, destination, label=str(row.get("title") or asset),
-                beat_id=str(row.get("beat_id") or ""), source_page=str(row.get("source_page") or ""))
+                beat_id=str(row.get("beat_id") or ""), source_page=str(row.get("source_page") or ""),
+                video_final=str(row.get('kind') or ('image' if suffix in {'.jpg', '.jpeg', '.png', '.webp'} else 'video')) == 'video')
             if added:
                 safe_timeline_clips.append(row)
                 add_resolve_aliases(z, row, source)
@@ -165,10 +173,11 @@ def create_media_pack(
             provider = safe_name(row.get('provider'),fallback='pexels')
             source = Path(str(row.get('media_path') or project_root / 'run' / 'resolve-media' / 'pexels' / f'pexels_{provider_id}.mp4'))
             arc = f"02_LUOGHI_E_GENERICI/{location}/{source.name}"
-            add(z, str(source), arc, label=str(row.get("title") or provider_id),
-                beat_id="generic:" + provider_id, source_page=str(row.get("source_page") or ""))
-            add_resolve_aliases(z, row, str(source))
-            safe_generics.append({**row, 'media_path':str(source), 'role':'generic'})
+            added = add(z, str(source), arc, label=str(row.get("title") or provider_id),
+                beat_id="generic:" + provider_id, source_page=str(row.get("source_page") or ""), video_final=True)
+            if added:
+                add_resolve_aliases(z, row, str(source))
+                safe_generics.append({**row, 'media_path':str(source), 'role':'generic'})
 
         for entry in timeline.get("unavailable", []):
             missed.append({"label": str(entry.get("asset_id") or ""), "beat_id": str(entry.get("beat_id") or ""),

@@ -124,6 +124,8 @@ def _best_rendition(files: Iterable[dict[str, Any]], orientation: str) -> dict[s
         file_type = str(row.get("file_type") or "").lower()
         if not width or not height or not link or "mp4" not in file_type:
             continue
+        if min(width, height) < 720:
+            continue
         valid.append({**row, "width": width, "height": height, "link": link})
     if not valid:
         return None

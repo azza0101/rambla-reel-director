@@ -27,13 +27,13 @@ def test_creates_light_1080_copy_with_audio_and_keeps_input_until_registered(tmp
 
 
 @pytest.mark.skipif(not shutil.which('ffmpeg') or not shutil.which('ffprobe'), reason='ffmpeg non disponibile')
-def test_small_video_is_not_upscaled_and_invalid_input_is_not_deleted(tmp_path):
+def test_small_video_is_rejected_and_invalid_input_is_not_deleted(tmp_path):
     from backend.app.envato_light_media import prepare_light_media
     source = tmp_path / 'small.mp4'
     subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'color=black:size=320x240:rate=5', '-t', '1', '-c:v', 'mpeg4', str(source)], check=True, capture_output=True)
-    output = prepare_light_media(source, tmp_path / 'cache')
-    video = next(s for s in probe(output)['streams'] if s['codec_type'] == 'video')
-    assert (video['width'], video['height']) == (320, 240)
+    with pytest.raises(ValueError, match='720'):
+        prepare_light_media(source, tmp_path / 'cache')
+    assert source.exists()
     bad = tmp_path / 'bad.mov'
     bad.write_bytes(b'not a video')
     with pytest.raises(Exception):

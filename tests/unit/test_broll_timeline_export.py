@@ -95,6 +95,7 @@ def test_selected_image_covers_the_exact_phrase_on_its_ordered_track():
     assert result["unavailable"] == []
     assert result["clips"] == [{
         "beat_id": "b1", "asset_id": "still-1", "title": "Egypt archive",
+        "original_text": "", "editorial_meaning": "", "place": "",
         "source_page": "", "provider": "wikimedia", "kind": "image",
         "media_path": str(image.resolve()), "track_index": 3,
         "record_start_frame": 25, "record_end_frame": 75,

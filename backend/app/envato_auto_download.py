@@ -79,11 +79,9 @@ RESOLUTION_SCRIPT = r"""async () => {
     const text=(e.innerText||e.textContent||'').toLowerCase();
     const dimensions=text.match(/(\d{3,5})\s*[x×]\s*(\d{3,5})/);
     const label=text.match(/(\d{3,4})\s*p/);
-    const height=dimensions?Math.min(+dimensions[1],+dimensions[2]):label?+label[1]:/\b4k\b/.test(text)?2160:/\bhd\b/.test(text)?720:0;
-    if(height===1080)return 0;
-    if(height>0&&height<1080)return 10000-height;
-    if(height>1080)return 20000+height;
-    return 99999;
+    const height=dimensions?Math.min(+dimensions[1],+dimensions[2]):label?+label[1]:/\b8k\b/.test(text)?4320:/\b4k\b/.test(text)?2160:/\bfull\s*hd\b/.test(text)?1080:/\bhd\b/.test(text)?720:0;
+    // Download the best available source; the editing copy is capped later.
+    return height>0 ? -height : 99999;
   };
   const sorted=options.map((el,i)=>({el,i,score:score(el)})).sort((a,b)=>a.score-b.score||a.i-b.i);
   const chosen=sorted[0];const name=(chosen.el.innerText||chosen.el.textContent||'').trim();
@@ -248,7 +246,7 @@ class EnvatoSession:
                 scratch=Path(run_root)/'envato-media'/token/'incoming'
                 scratch.mkdir(parents=True,exist_ok=True);source=scratch/('download'+suffix)
                 notify('Download del file in corso')
-                try: await bounded_step(item.save_as(str(source)),180)
+                try: await bounded_step(item.save_as(str(source)),900)
                 except TimeoutError: raise RuntimeError('Download Envato fermo da troppo tempo: apri la pagina o ignora questa clip') from None
                 failure=await item.failure()
                 if failure:raise RuntimeError('Download Envato interrotto: '+str(failure))

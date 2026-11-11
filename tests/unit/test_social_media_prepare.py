@@ -2,8 +2,10 @@ from types import SimpleNamespace
 from pathlib import Path
 import pytest
 
-def test_preview_is_bounded_full_is_explicit_and_cookie_file_removed(tmp_path):
+def test_preview_is_bounded_full_is_explicit_and_cookie_file_removed(tmp_path, monkeypatch):
     from backend.app.social_media import prepare_media
+    from backend.app import media_export_quality
+    monkeypatch.setattr(media_export_quality, 'require_editing_quality', lambda _: {'duration': 8, 'width': 1280, 'height': 720})
     calls=[]
     def run(command, **kwargs):
         calls.append(command)
@@ -34,8 +36,10 @@ def test_rejects_non_provider_url(tmp_path):
         prepare_media('http://127.0.0.1/private','tiktok',tmp_path,'full')
 
 
-def test_normal_youtube_is_supported_for_explicit_full_selected_download(tmp_path):
+def test_normal_youtube_is_supported_for_explicit_full_selected_download(tmp_path, monkeypatch):
     from backend.app.social_media import prepare_media
+    from backend.app import media_export_quality
+    monkeypatch.setattr(media_export_quality, 'require_editing_quality', lambda _: {'duration': 8, 'width': 1280, 'height': 720})
     calls=[]
     def run(command, **kwargs):
         calls.append(command)

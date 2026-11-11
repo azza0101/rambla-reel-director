@@ -15,6 +15,8 @@ def test_download_reports_bytes_and_reuses_completed_file(monkeypatch):
     monkeypatch.setattr(stock,'pexels_metadata',metadata)
     monkeypatch.setattr(stock.httpx,'AsyncClient',lambda **kw:original(transport=transport,**kw))
     monkeypatch.setattr(stock,'probe_preview',lambda _: {'duration':2,'width':1920})
+    from backend.app import media_export_quality
+    monkeypatch.setattr(media_export_quality, 'require_editing_quality', lambda _: {'duration':2,'width':1920,'height':1080})
     try:
         asyncio.run(stock.prepare_pexels_video(root,'123',progress=lambda n,total:calls.append((n,total))))
         assert calls[-1]==(10,10)

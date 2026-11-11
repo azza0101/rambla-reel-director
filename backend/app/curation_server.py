@@ -1443,6 +1443,7 @@ def create_app(
         from .broll_timeline_export import build_broll_timeline_plan
         from .curation_artifacts import load_curation_run
         from .video_preview import probe_preview
+        from .media_export_quality import require_editing_quality, MediaQualityError
         project = load_project(project_id)
         run = run_root(project_id)
         fps = fps_override or project_export_fps(project_id, project)
@@ -1480,11 +1481,17 @@ def create_app(
                 if social_path.is_file():
                     path = str(social_path)
                     full_source = True
+            quality_error = ''
             if path and kind == "video" and full_source:
-                from .video_preview import probe_full_video
-                facts = probe_full_video(path)
+                try:
+                    facts = require_editing_quality(path)
+                except MediaQualityError as exc:
+                    facts = {'duration': 0}
+                    quality_error = str(exc)
             else:
-                facts = probe_preview(path) if path and kind == "video" else {"playable": bool(path), "duration": 0}
+                facts = {"playable": bool(path), "duration": 0}
+                if kind == 'video':
+                    quality_error = 'Solo anteprima disponibile: scarica il video completo almeno 720p.'
             selected_start = float(candidate.source_start_seconds or 0) if full_source else 0.0
             selected_end = (
                 float(candidate.source_end_seconds)
@@ -1493,6 +1500,7 @@ def create_app(
             )
             assets[asset_id] = {
                 "media_path": path if path and Path(path).is_file() and (kind == "image" or float(facts.get("duration") or 0) > 0) else None,
+                "unavailable_reason": quality_error,
                 "duration_seconds": facts.get("duration", 0),
                 "kind": kind,
                 "source_start_seconds": selected_start,
@@ -1571,7 +1579,12 @@ def create_app(
                 retrieval = active_retrieval_root(run)
                 existing = load_registry(retrieval)['assets'].get(asset_id) or {}
                 if valid_video(existing.get('media_path') or ''):
-                    continue
+                    from .media_export_quality import MediaQualityError, require_editing_quality
+                    try:
+                        require_editing_quality(existing['media_path'])
+                        continue
+                    except MediaQualityError:
+                        pass
                 if report:
                     report(5 + int(60 * index / max(1, len(wanted))),
                            f'Scarico Envato {index + 1}/{len(wanted)} · {candidate.title}')
@@ -1613,8 +1626,14 @@ def create_app(
                 continue
             if not candidate or candidate.provider not in {"tiktok", "instagram", "youtube", "youtube_shorts"}:
                 continue
-            if media_path(candidate.source_page, candidate.provider, run, "full").is_file():
-                continue
+            cached = media_path(candidate.source_page, candidate.provider, run, 'full')
+            if cached.is_file():
+                from .media_export_quality import MediaQualityError, require_editing_quality
+                try:
+                    require_editing_quality(cached)
+                    continue
+                except MediaQualityError:
+                    pass
             cookies = []
             try:
                 if candidate.provider == 'tiktok' and isinstance(social_profiles, BrowserProfileManager):
@@ -1777,7 +1796,13 @@ def create_app(
                     from .video_preview import probe_full_video
                     registry=load_registry(run_root(project_id))['assets'].get(asset_id) or {}
                     ready=registry.get('media_path')
-                    if not valid_video(ready or ''):
+                    from .media_export_quality import MediaQualityError, require_editing_quality
+                    try:
+                        require_editing_quality(ready or '')
+                        ready_hd = valid_video(ready or '')
+                    except MediaQualityError:
+                        ready_hd = False
+                    if not ready_hd:
                         if report: report(65 + int(15*index/max(1,len(selected))), f'Scarico Envato {index+1}/{len(selected)} · {row.get("title") or "video"}')
                         if report and hasattr(report, 'track_envato_cache'):
                             token=hashlib.sha256(str(asset_id).encode()).hexdigest()[:20]
@@ -1785,7 +1810,7 @@ def create_app(
                             report.track_envato_cache(tracked_run/'envato-media'/token, tracked_run/'envato-downloads.json', asset_id)
                         result=await envato_auto.download(row.get('source_page',''), load_project(project_id).name, run_root(project_id), asset_id, progress=notify_envato)
                         ready=result['media_path']
-                    facts=probe_full_video(ready)
+                    facts=require_editing_quality(ready)
                     by_id[provider_id]={**row,'media_path':str(ready),'duration':facts.get('duration') or row.get('duration')}
                 except Exception as exc:
                     from types import SimpleNamespace
@@ -1814,12 +1839,13 @@ def create_app(
                     report.track_cache_file(tracked);report.track_cache_file(tracked.with_suffix('.json'))
                 by_id[provider_id] = {**by_id.get(provider_id, {}), **await prepare_pexels_video(run_root(project_id), provider_id, progress=download_progress if report else None)}
             except Exception as exc:
+                from .media_export_quality import MediaQualityError
                 errors.extend(await record_generic_failure({'asset_id': 'generic:' + provider_id,
                                'beat_id': 'COPERTURE GENERICHE', 'provider': 'pexels',
                                'title': str(by_id.get(provider_id, {}).get('title') or f'Pexels {provider_id}'),
                                'source_page': str(by_id.get(provider_id, {}).get('source_page') or ''),
-                               'reason': 'download_failed',
-                               'message': f'Download Pexels non riuscito ({type(exc).__name__}). Puoi ignorare solo questa clip.'}))
+                               'reason': 'low_resolution' if isinstance(exc, MediaQualityError) else 'download_failed',
+                               'message': str(exc) if isinstance(exc, MediaQualityError) else f'Download Pexels non riuscito ({type(exc).__name__}). Puoi ignorare solo questa clip.'}))
         if report and hasattr(report, 'media'): report.media(None)
         data['items'] = list(by_id.values())
         write_json(path, data)
@@ -2260,7 +2286,9 @@ def create_app(
                 if flags['generic']:
                     issues.extend(await prepare_generic_media(project_id))
                 if issues:
-                    raise ValueError('Alcuni media non sono disponibili: ' + ', '.join(str(x.get('title') or x.get('asset_id') or '') for x in issues[:6]))
+                    raise ValueError('Alcuni media non sono disponibili: ' + '; '.join(
+                        str(x.get('title') or x.get('asset_id') or '') + ': ' + str(x.get('message') or 'download non disponibile')
+                        for x in issues[:6]))
                 payload = await asyncio.to_thread(editing_resolve_payload, project_id, flags)
                 if payload.get('broll_unavailable'):
                     raise ValueError('Alcune coperture selezionate non sono disponibili: verifica o rimuovi la selezione')

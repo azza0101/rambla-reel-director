@@ -65,19 +65,27 @@ def media_path(source, provider, root, mode):
 
 
 def prepare_media(source, provider, root, mode, *, cookies=(), runner=subprocess.run, python=None):
+    from .media_export_quality import MediaQualityError, require_editing_quality, normalize_new_download
     output = media_path(source, provider, root, mode)
     if mode == 'poster':
         raise ValueError('Prepare preview first')
     if output.is_file() and output.stat().st_size:
-        return output
+        if mode != 'full':
+            return output
+        try:
+            require_editing_quality(output)
+            return output
+        except MediaQualityError:
+            pass  # Keep the existing file until a verified replacement exists.
     output.parent.mkdir(parents=True, exist_ok=True)
     runtime = python or os.environ.get('RAMBLA_PIPELINE_PYTHON') or str(Path(__file__).resolve().parents[3]/'venv/Scripts/python.exe')
     temporary = output.with_name(mode+'-pending.mp4')
+    normalized = None
     cookie_path = None
     try:
         command = [runtime, '-m', 'yt_dlp', '--no-playlist', '--no-warnings', '--socket-timeout', '10',
-                   '--retries', '0', '--max-filesize', '250M', '-f',
-                   'bv*[ext=mp4][width<=1080][height<=1920]+ba[ext=m4a]/bv*[ext=mp4][width<=1920][height<=1080]+ba[ext=m4a]/b[width<=1080][height<=1920]/b[width<=1920][height<=1080]/best',
+                   '--retries', '0', '-f',
+                   'bv*+ba/bv*/b',
                    '--merge-output-format', 'mp4', '-o', str(temporary)]
         if mode == 'preview':
             command += ['--download-sections', '*0-3.5', '--force-keyframes-at-cuts']
@@ -103,16 +111,20 @@ def prepare_media(source, provider, root, mode, *, cookies=(), runner=subprocess
             runner(command,check=True,capture_output=True,timeout=110)
             if not output.is_file():raise RuntimeError('Animated preview unavailable')
             return output
-        runner(command, check=True, capture_output=True, timeout=65 if mode == 'preview' else 150)
+        runner(command, check=True, capture_output=True, timeout=65 if mode == 'preview' else 900)
         if not temporary.is_file() or not temporary.stat().st_size:
             raise RuntimeError('Provider did not return a downloadable video')
-        temporary.replace(output)
+        if mode == 'full':
+            normalized = normalize_new_download(temporary, output.parent)
+        (normalized or temporary).replace(output)
         if mode == 'preview':
             try:
                 runner(['ffmpeg','-v','error','-y','-ss','0.4','-i',str(output),'-frames:v','1',str(media_path(source,provider,root,'poster'))], check=True,capture_output=True,timeout=15)
             except Exception:
                 pass
         return output
+    except MediaQualityError:
+        raise
     except subprocess.CalledProcessError as exc:
         detail=exc.stderr.decode('utf-8',errors='replace') if isinstance(exc.stderr,bytes) else str(exc.stderr or '')
         if provider in {'youtube', 'youtube_shorts'} and any(word in detail.lower() for word in ('sign in','not a bot','confirm you','requiring login')) and 'captcha' not in detail.lower():
@@ -125,4 +137,6 @@ def prepare_media(source, provider, root, mode, *, cookies=(), runner=subprocess
     finally:
         if cookie_path:
             cookie_path.unlink(missing_ok=True)
+        if normalized and normalized != temporary:
+            normalized.unlink(missing_ok=True)
         temporary.unlink(missing_ok=True)

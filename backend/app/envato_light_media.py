@@ -28,6 +28,8 @@ def prepare_light_media(source: Path, destination: Path) -> Path:
     """Return a verified H.264 MP4; never remove or change source."""
     source = Path(source)
     destination = Path(destination)
+    from .media_export_quality import require_editing_quality
+    require_editing_quality(source)
     before = _probe(source)
     destination.mkdir(parents=True, exist_ok=True)
     token = uuid.uuid4().hex
@@ -45,6 +47,7 @@ def prepare_light_media(source: Path, destination: Path) -> Path:
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
         )
         after = _probe(temporary)
+        require_editing_quality(temporary)
         src_video, dst_video = before['video'], after['video']
         width, height = int(dst_video['width']), int(dst_video['height'])
         if (dst_video.get('codec_name') != 'h264' or max(width, height) > 1920 or min(width, height) > 1080

@@ -23,7 +23,8 @@ def test_ignore_rejects_actual_control_characters_and_long_ids(bad):
     assert err.value.status_code == 422
 
 
-def test_media_pack_zip_groups_selected_media_and_reports_missing(tmp_path):
+def test_media_pack_zip_groups_selected_media_and_reports_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr('backend.app.media_export_quality.require_editing_quality', lambda _: {'duration':1,'width':1280,'height':720})
     root = tmp_path / "project"
     local = root / "run" / "assets"
     local.mkdir(parents=True)
@@ -86,7 +87,8 @@ def test_media_pack_does_not_exfiltrate_external_file(tmp_path):
         assert b"PRIVATE SECRET" not in z.read("manifest.json")
 
 
-def test_media_pack_keeps_original_names_and_includes_matching_resolve_names(tmp_path):
+def test_media_pack_keeps_original_names_and_includes_matching_resolve_names(tmp_path, monkeypatch):
+    monkeypatch.setattr('backend.app.media_export_quality.require_editing_quality', lambda _: {'duration':1,'width':1280,'height':720})
     root=tmp_path/'project'; assets=root/'run'/'assets'; assets.mkdir(parents=True)
     source=assets/'original-video.mp4'; source.write_bytes(b'video')
     staging=root/'run'/'resolve-media'/'Test_media_v1'/'VIDEO'; staging.mkdir(parents=True)

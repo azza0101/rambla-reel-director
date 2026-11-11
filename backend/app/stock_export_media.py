@@ -42,13 +42,19 @@ async def pexels_metadata(provider_id: str) -> dict:
 
 
 async def prepare_pexels_video(run: Path, provider_id: str, progress=None) -> dict:
+    from .media_export_quality import MediaQualityError, require_editing_quality, normalize_new_download
     target = stock_media_path(run, provider_id)
     metadata_path = target.with_suffix('.json')
-    if target.is_file() and metadata_path.is_file() and probe_preview(str(target)).get('duration', 0) > 0:
-        return json.loads(metadata_path.read_text(encoding='utf-8'))
+    if target.is_file() and metadata_path.is_file():
+        try:
+            require_editing_quality(target)
+            return json.loads(metadata_path.read_text(encoding='utf-8'))
+        except MediaQualityError:
+            pass
     row = await pexels_metadata(provider_id)
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(f'{target.stem}.{uuid.uuid4().hex}.mp4')
+    normalized = None
     try:
         for attempt in range(2):
             try:
@@ -68,12 +74,13 @@ async def prepare_pexels_video(run: Path, provider_id: str, progress=None) -> di
                 if attempt:
                     raise ValueError(f'Pexels {provider_id}: trasferimento interrotto o senza dati per 30 secondi. Riprova INVIA; i video già pronti restano salvati.') from exc
                 await asyncio.sleep(.5)
-        facts = probe_preview(str(temporary))
-        if float(facts.get('duration') or 0) <= 0 or not facts.get('width'):
-            raise ValueError(f'Pexels {provider_id}: download non decodificabile')
-        os.replace(temporary, target)
+        normalized = normalize_new_download(temporary, target.parent)
+        facts = require_editing_quality(normalized)
+        os.replace(normalized, target)
         row.update(media_path=str(target.resolve()), duration=facts['duration'])
         write_json(metadata_path, row)
         return row
     finally:
+        if normalized and normalized != temporary:
+            normalized.unlink(missing_ok=True)
         temporary.unlink(missing_ok=True)
