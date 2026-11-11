@@ -59,11 +59,15 @@ def test_export_passes_youtube_session_cookies(tmp_path, monkeypatch):
     from backend.app.envato_auto_download import EnvatoSession
     root=tmp_path/'projects'; project=ProjectStore(root,probe_runner=lambda _:{}).create('Example')
     run=root/project.project_id/'run'; run.mkdir(exist_ok=True)
-    (run/'selection-plan.json').write_text(json.dumps({'chunks':{'beat':{'selected_assets':[{'asset_id':'one'}]}}}))
+    (run/'selection-plan.json').write_text(json.dumps({'chunks':{
+        'beat':{'selected_assets':[{'asset_id':'one'}]},
+        'discarded':{'no_broll':True,'selected_assets':[{'asset_id':'discarded'}]}}}))
     (tmp_path/'browser-profiles'/'youtube').mkdir(parents=True)
     candidate=SimpleNamespace(asset_id='one',chunk_id='beat',provider='youtube_shorts',kind='video',title='Video',source_page='https://www.youtube.com/shorts/abc',local_asset_path=None,preview_path=None)
     monkeypatch.setattr(artifacts,'load_curation_run',lambda _:SimpleNamespace(candidate_index={'one':candidate}))
-    monkeypatch.setattr(intents,'has_selected_intent',lambda *a:True)
+    # A confirmed B-roll choice must be downloadable even if phrase-intent
+    # flags were never set (e.g. selections made in the visual-beat editor).
+    monkeypatch.setattr(intents,'has_selected_intent',lambda *a:False)
     class Context:
         async def cookies(self,urls):return [{'domain':'.youtube.com','name':'SID','value':'private'}]
     async def getcontext(self,**kw):return Context()

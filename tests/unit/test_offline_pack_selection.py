@@ -70,3 +70,25 @@ def test_dra_endpoint_uses_selected_components_without_resolve(tmp_path,monkeypa
     assert seen['original_video']['source_path']==str(source.resolve())
     assert seen['titles']==[] and seen['subtitles']==[]
     with zipfile.ZipFile(io.BytesIO(r.content)) as z:assert 'Dra.dra/project.drp' in z.namelist()
+
+
+def test_confirmed_visual_beat_choices_reach_export_without_phrase_flags(tmp_path,monkeypatch):
+    import backend.app.transcript_intents as intents
+    projects=tmp_path/'projects';source=tmp_path/'source.mp4';source.write_bytes(b'video')
+    probe=lambda _: {'duration':1,'fps':25,'width':320,'height':180,'has_audio':True}
+    store=ProjectStore(projects,probe_runner=probe);project=store.create('Choices');store.register_local_video(project.project_id,source)
+    run=projects/project.project_id/'run';run.mkdir(exist_ok=True)
+    (run/'selection-plan.json').write_text(json.dumps({'chunks':{'beat':{'selected_assets':[{'asset_id':'pexels:1'}]}}}))
+    monkeypatch.setattr(intents,'has_selected_intent',lambda *args:False)
+    app=create_app(project_root=projects,probe_runner=probe)
+    route=next(r for r in app.routes if r.path.endswith('/exports/media-pack.zip'))
+    env=dict(zip(route.endpoint.__code__.co_freevars,route.endpoint.__closure__))
+    build=env['editing_resolve_payload'].cell_contents
+    inner=dict(zip(build.__code__.co_freevars,build.__closure__))
+    called=[]
+    def broll(*args,**kwargs):
+        called.append(True)
+        return {'clips':[{'asset_id':'pexels:1','provider':'pexels','record_start_frame':0,'record_end_frame':25}], 'unavailable':[]}
+    inner['broll_timeline_payload'].cell_contents=broll
+    payload=build(project.project_id,{'source_video':False,'video':False,'subtitles':False,'highlights':False,'broll':True,'social':False,'generic':False})
+    assert called and payload['broll_count']==1

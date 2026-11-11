@@ -5,6 +5,15 @@ from pathlib import Path
 from typing import Iterable
 
 
+def has_selected_assets(selection: dict) -> bool:
+    """A saved visual-beat choice is an explicit request to export media."""
+    chunks=selection.get('chunks') or {}
+    if not isinstance(chunks,dict): return False
+    return any(isinstance(choice,dict) and not choice.get('no_broll') and
+               any(isinstance(row,dict) and row.get('asset_id') for row in choice.get('selected_assets') or [])
+               for choice in chunks.values())
+
+
 class SelectionStore:
     def __init__(self, output_dir: Path, candidate_index: dict[str, dict], chunk_ranges: Iterable[str]) -> None:
         self.output_dir, self.candidate_index, self.chunk_ids = output_dir, candidate_index, set(chunk_ranges)
