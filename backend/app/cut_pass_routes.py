@@ -139,20 +139,50 @@ CONTESTO INTEGRALE:\n'''+context+'\nGRUPPI:\n'+json.dumps(candidates,ensure_asci
 
 def verify_cut_render(target, plan):
     probe = subprocess.run(['ffprobe', '-v', 'error', '-show_entries',
-        'stream=codec_type,nb_frames', '-of', 'json', str(target)],
+        'stream=codec_type,nb_frames,r_frame_rate', '-of', 'json', str(target)],
         check=True, capture_output=True, text=True, timeout=30)
     streams = json.loads(probe.stdout).get('streams') or []
     video = next((s for s in streams if s.get('codec_type') == 'video'), {})
     if int(video.get('nb_frames') or 0) != plan['duration_frames'] or not any(s.get('codec_type') == 'audio' for s in streams):
         raise ValueError('MP4 CUT incompleto o di una revisione diversa: rigenera il download')
+    from fractions import Fraction
+    try:
+        if Fraction(str(video.get('r_frame_rate') or '0')) != Fraction(str(plan['fps'])):
+            raise ValueError('Il CUT non conserva gli FPS originali: export interrotto')
+    except ZeroDivisionError as exc:
+        raise ValueError('FPS del CUT non verificabili') from exc
+
+
+def assert_constant_source_fps(source, expected_fps):
+    """Do not create a CFR render from a VFR source or change its frame rate."""
+    from fractions import Fraction
+    expected = Fraction(str(expected_fps))
+    result = subprocess.run(['ffprobe','-v','error','-select_streams','v:0',
+        '-show_entries','stream=r_frame_rate:packet=pts_time','-show_packets',
+        '-of','json',str(source)],check=True,capture_output=True,text=True,timeout=120)
+    data=json.loads(result.stdout)
+    try:
+        native=Fraction(data['streams'][0]['r_frame_rate'])
+        times=sorted(float(p['pts_time']) for p in data['packets'] if p.get('pts_time') not in (None,'N/A'))
+    except (KeyError,IndexError,ValueError,ZeroDivisionError,TypeError) as exc:
+        raise ValueError('FPS originali non verificabili: impossibile creare il video CUT') from exc
+    if native <= 0 or abs(float(native/expected)-1)>0.0001:
+        raise ValueError('Gli FPS del CUT non corrispondono agli FPS originali del video')
+    if len(times)<2:
+        raise ValueError('FPS originali non verificabili: impossibile creare il video CUT')
+    step=1/float(native); tolerance=max(.0015,step*.04)
+    if any(abs((b-a)-step)>tolerance for a,b in zip(times,times[1:])):
+        raise ValueError('Video con FPS variabili: usa il CUT nativo in Resolve per conservare i tempi originali')
 
 
 def render_cut(source, target, plan, *, preview=False):
     from fractions import Fraction
-    rate=float(Fraction(plan['fps']))
+    source_rate=Fraction(plan['fps'])
+    rate=float(source_rate)
+    assert_constant_source_fps(source, source_rate)
     selected='+'.join(f"gte(n,{s['source_in_frame']})*lt(n,{s['source_out_frame']})" for s in plan['segments'])
-    # fps establishes a 1/fps timebase: integer N avoids floating point losing a tick.
-    video=f"[0:v]fps={plan['fps']},select='{selected}',setpts=N"
+    # Keep source frames; set the edited timebase to the verified source rate.
+    video=f"[0:v]select='{selected}',settb=expr={source_rate.denominator}/{source_rate.numerator},setpts=N"
     if preview:video+=",scale=w='min(iw,640)':h='min(ih,640)':force_original_aspect_ratio=decrease:force_divisible_by=2"
     filters=[video+'[v]']; inputs=[]
     for i,s in enumerate(plan['segments']):
@@ -164,7 +194,7 @@ def render_cut(source, target, plan, *, preview=False):
     temporary = target.with_name(target.stem + '-' + uuid.uuid4().hex + '.partial.mp4')
     try:
         subprocess.run(['ffmpeg','-v','error','-y','-i',str(source),'-filter_complex_script',str(graph),
-            '-map','[v]','-map','[a]','-r',plan['fps'],'-fps_mode','cfr','-c:v','libx264','-preset','ultrafast' if preview else 'veryfast','-crf','28' if preview else '18',
+            '-map','[v]','-map','[a]','-r',str(source_rate),'-fps_mode','cfr','-c:v','libx264','-preset','ultrafast' if preview else 'veryfast','-crf','28' if preview else '18',
             '-pix_fmt','yuv420p','-c:a','aac','-movflags','+faststart',str(temporary)],
             check=True,capture_output=True,timeout=900)
         verify_cut_render(temporary, plan)

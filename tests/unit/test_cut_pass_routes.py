@@ -86,6 +86,7 @@ def test_cut_preview_renders_exact_source_ranges_with_original_audio(tmp_path,mo
         Path(command[-1]).write_bytes(b'mp4')
     monkeypatch.setattr(module.subprocess,'run', render)
     monkeypatch.setattr(module, 'verify_cut_render', lambda *args: None)
+    monkeypatch.setattr(module, 'assert_constant_source_fps', lambda *args: None)
     render_cut(tmp_path/'original.mp4',tmp_path/'preview.mp4',plan,preview=True)
     graph=(tmp_path/'preview.fffilter').read_text()
     assert 'gte(n,24)*lt(n,66)' in graph

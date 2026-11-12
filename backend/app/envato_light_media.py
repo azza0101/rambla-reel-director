@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from fractions import Fraction
 import uuid
 from pathlib import Path
 
@@ -22,6 +23,26 @@ def _probe(path: Path) -> dict:
         raise ValueError('Durata del video Envato non valida')
     return {'video': video, 'duration': duration,
             'audio': any(s.get('codec_type') == 'audio' for s in data.get('streams', []))}
+
+
+def assert_unchanged_frame_timing(source: Path, output: Path) -> None:
+    """Compare presentation timestamps without decoding or changing the media."""
+    def timestamps(path):
+        data=subprocess.run(['ffprobe','-v','error','-select_streams','v:0',
+            '-show_entries','packet=pts_time','-show_packets','-of','json',str(path)],
+            capture_output=True,text=True,check=True,timeout=180)
+        try:
+            packets=json.loads(data.stdout)['packets']
+            if any(p.get('pts_time') in (None,'N/A') for p in packets): raise ValueError()
+            return sorted(float(p['pts_time']) for p in packets)
+        except (KeyError,ValueError,TypeError) as exc:
+            raise ValueError('Tempi dei fotogrammi non verificabili') from exc
+    before,after=timestamps(source),timestamps(output)
+    if not before or len(before)!=len(after):
+        raise ValueError('Numero o tempi dei fotogrammi non verificabili')
+    origin_before,origin_after=before[0],after[0]
+    if any(abs((a-origin_before)-(b-origin_after)) > .002 for a,b in zip(before,after)):
+        raise ValueError('Copia non valida: i tempi dei fotogrammi sono cambiati')
 
 
 def prepare_light_media(source: Path, destination: Path) -> Path:
@@ -55,9 +76,29 @@ def prepare_light_media(source: Path, destination: Path) -> Path:
                 or before['audio'] != after['audio']
                 or abs(before['duration'] - after['duration']) > max(.1, before['duration'] * .001)):
             raise ValueError('Copia Envato non valida: durata, audio o dimensioni non corrispondono')
-        src_frames, dst_frames = src_video.get('nb_frames'), dst_video.get('nb_frames')
-        if src_frames not in (None, 'N/A') and dst_frames not in (None, 'N/A') and int(src_frames) != int(dst_frames):
+        def frame_rate(video, key):
+            try:
+                value=Fraction(str(video.get(key) or '0'))
+                return value if value > 0 else None
+            except (ValueError, ZeroDivisionError):
+                return None
+        for key in ('r_frame_rate', 'avg_frame_rate'):
+            source_rate, output_rate = frame_rate(src_video, key), frame_rate(dst_video, key)
+            if source_rate is None or output_rate is None or abs(float(source_rate/output_rate)-1) > 0.0005:
+                raise ValueError('Copia non valida: gli FPS originali sono cambiati o non verificabili')
+        def frame_count(path, video):
+            value=video.get('nb_frames')
+            if value not in (None, 'N/A'):
+                return int(value)
+            measured=subprocess.run(['ffprobe','-v','error','-select_streams','v:0','-count_frames',
+                '-show_entries','stream=nb_read_frames','-of','json',str(path)],capture_output=True,
+                text=True,check=True,timeout=3600)
+            try: return int(json.loads(measured.stdout)['streams'][0]['nb_read_frames'])
+            except (KeyError,ValueError,IndexError,TypeError) as exc:
+                raise ValueError('Numero di fotogrammi originali non verificabile') from exc
+        if frame_count(source, src_video) != frame_count(temporary, dst_video):
             raise ValueError('Copia Envato non valida: numero di fotogrammi diverso')
+        assert_unchanged_frame_timing(source, temporary)
         temporary.replace(final)
         return final
     finally:

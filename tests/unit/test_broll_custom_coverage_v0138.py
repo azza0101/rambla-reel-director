@@ -54,7 +54,7 @@ def test_selected_envato_custom_download_is_added_to_export_media(tmp_path, monk
         assert name=='Test' and asset_id=='generic:envato:abc'
         video=folder/'envato-ready.mp4';video.write_bytes(b'fixture');return {'media_path':str(video)}
     monkeypatch.setattr(EnvatoSession,'download',download)
-    monkeypatch.setattr(video_preview,'probe_full_video',lambda path:{'duration':9})
+    monkeypatch.setattr('backend.app.media_export_quality.require_editing_quality',lambda path:{'duration':9,'playable':True,'width':1920,'height':1080})
     app=create_app(project_root=root)
     assert asyncio.run(app.state.prepare_generic_media(p.project_id))==[]
     row=json.loads(path.read_text())['items'][0]
@@ -91,7 +91,7 @@ def test_selected_custom_envato_reaches_resolve_handoff(tmp_path, monkeypatch):
     async def download(self,url,name,folder,asset_id,progress=None):
         video=folder/'envato-ready.mp4';video.write_bytes(b'fixture');return {'media_path':str(video)}
     monkeypatch.setattr(EnvatoSession,'download',download)
-    monkeypatch.setattr(video_preview,'probe_full_video',lambda path:{'duration':9})
+    monkeypatch.setattr('backend.app.media_export_quality.require_editing_quality',lambda path:{'duration':9,'playable':True,'width':1920,'height':1080})
     flags={'video':False,'source_video':False,'subtitles':False,'highlights':False,'broll':False,'social':False,'generic':True}
     with TestClient(create_app(project_root=root)) as c:
         r=c.post(f'/api/curation/projects/{p.project_id}/resolve-preparation',json=flags)
@@ -124,7 +124,7 @@ def test_interactive_envato_error_opens_page_and_retry_completes(tmp_path, monke
         video=run/'envato-ready.mp4';video.write_bytes(b'fixture');return {'media_path':str(video)}
     async def login(self,source):opened.append(source);return {'status':'opened'}
     monkeypatch.setattr(EnvatoSession,'download',download);monkeypatch.setattr(EnvatoSession,'login',login)
-    monkeypatch.setattr(video_preview,'probe_full_video',lambda path:{'duration':9})
+    monkeypatch.setattr('backend.app.media_export_quality.require_editing_quality',lambda path:{'duration':9,'playable':True,'width':1920,'height':1080})
     flags={'video':False,'source_video':False,'subtitles':False,'highlights':False,'broll':False,'social':False,'generic':True}
     with TestClient(create_app(project_root=root)) as c:
         r=c.post(f'/api/curation/projects/{p.project_id}/resolve-preparation?interactive=true',json=flags);assert r.status_code==200
@@ -162,7 +162,7 @@ def test_cancel_from_api_discards_only_downloaded_this_run(tmp_path, monkeypatch
         token=hashlib.sha256(asset_id.encode()).hexdigest()[:20];dest=folder/'envato-media'/token/'original.mp4';dest.parent.mkdir(parents=True);dest.write_bytes(b'new')
         (folder/'envato-downloads.json').write_text(json.dumps({'assets':{asset_id:{'media_path':str(dest)}}}))
         return {'media_path':str(dest)}
-    monkeypatch.setattr(EnvatoSession,'download',download);monkeypatch.setattr(video_preview,'probe_full_video',lambda path:{'duration':9})
+    monkeypatch.setattr(EnvatoSession,'download',download);monkeypatch.setattr('backend.app.media_export_quality.require_editing_quality',lambda path:{'duration':9,'playable':True,'width':1920,'height':1080})
     flags={'video':False,'source_video':False,'subtitles':False,'highlights':False,'broll':False,'social':False,'generic':True}
     with TestClient(create_app(project_root=root)) as c:
         r=c.post(f'/api/curation/projects/{p.project_id}/resolve-preparation?interactive=true',json=flags);assert r.status_code==200
@@ -197,7 +197,7 @@ def test_cancel_keep_then_resume_reuses_envato_completed_files(tmp_path, monkeyp
         token=hashlib.sha256(asset_id.encode()).hexdigest()[:20];dest=folder/'envato-media'/token/'original.mp4';dest.parent.mkdir(parents=True,exist_ok=True);dest.write_bytes(b'new')
         reg=folder/'envato-downloads.json';data=json.loads(reg.read_text()) if reg.exists() else {'assets':{}}
         data['assets'][asset_id]={'media_path':str(dest)};reg.write_text(json.dumps(data));return {'media_path':str(dest)}
-    monkeypatch.setattr(EnvatoSession,'download',download);monkeypatch.setattr(video_preview,'probe_full_video',lambda path:{'duration':9})
+    monkeypatch.setattr(EnvatoSession,'download',download);monkeypatch.setattr('backend.app.media_export_quality.require_editing_quality',lambda path:{'duration':9,'playable':True,'width':1920,'height':1080})
     monkeypatch.setattr(auto,'valid_video',lambda path:bool(path) and __import__('pathlib').Path(path).is_file())
     flags={'video':False,'source_video':False,'subtitles':False,'highlights':False,'broll':False,'social':False,'generic':True}
     with TestClient(create_app(project_root=root)) as c:

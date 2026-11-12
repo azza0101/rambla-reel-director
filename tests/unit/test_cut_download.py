@@ -49,6 +49,7 @@ def test_failed_render_never_leaves_a_downloadable_partial_file(tmp_path, monkey
         Path(command[-1]).write_bytes(b'partial')
         raise subprocess.CalledProcessError(1, command)
     monkeypatch.setattr(module.subprocess, 'run', fail)
+    monkeypatch.setattr(module, 'assert_constant_source_fps', lambda *args: None)
     with pytest.raises(subprocess.CalledProcessError):
         module.render_cut(tmp_path / 'original.mp4', target, plan)
     assert not target.exists()

@@ -36,7 +36,11 @@ def probe_media(path: Path) -> dict:
     video=next((s for s in data.get('streams',[]) if s.get('codec_type')=='video'),None)
     if not video:
         raise ValueError(f'File video non riconosciuto: {path.name}')
-    rate=Fraction(video.get('avg_frame_rate') or video.get('r_frame_rate') or '0')
+    rate=Fraction(0)
+    for key in ('r_frame_rate','avg_frame_rate'):
+        try: rate=Fraction(video.get(key) or '0')
+        except (ValueError,ZeroDivisionError): continue
+        if rate>0: break
     if rate<=0:
         raise ValueError(f'FPS non validi: {path.name}')
     still=path.suffix.casefold() in {'.png','.jpg','.jpeg','.webp','.tif','.tiff'}
@@ -54,7 +58,9 @@ def probe_media(path: Path) -> dict:
 
 def _rate(parent, value):
     rate=ET.SubElement(parent,'rate'); fraction=Fraction(str(value)).limit_denominator(1001)
-    ntsc=fraction.denominator==1001
+    ntsc=fraction.denominator==1001 and fraction.numerator % 1000 == 0
+    if not ntsc and fraction.denominator != 1:
+        raise ValueError(f'FPS originali {value} non rappresentabili nel DRA offline; usa il bridge Resolve')
     ET.SubElement(rate,'timebase').text=str(round(float(fraction)) if ntsc else int(fraction))
     ET.SubElement(rate,'ntsc').text='TRUE' if ntsc else 'FALSE'
 
