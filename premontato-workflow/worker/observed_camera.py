@@ -53,7 +53,16 @@ def audit_edit(decisions,covers,event_ids,fps):
    if a['field']==d['field'] and not(a['media_id']==d['media_id'] and a['end_frame']==d['start_frame']):joins.append(d['record_frame'])
  uncovered=[join for join in joins if not any(jump_cover(join,clock,c,fps) and c.get('audio')=='base_unchanged' for c in covers)]
  short_covers=[i for i,c in enumerate(covers) if c.get('end_frame',0)-c.get('start_frame',0)<math.ceil(1.5*fps)]
- short_shots=[i for i,d in enumerate(decisions) if d['end_frame']-d['start_frame']<math.ceil(1.5*fps)]
+ # Turn boundaries are metadata. Contiguous source video is a single physical
+ # hold even if the voice changes or a short interjection starts a new turn.
+ holds=[]
+ for i,d in enumerate(decisions):
+  previous=decisions[i-1] if i else None
+  continuous=previous and previous['media_id']==d['media_id'] and previous['field']==d['field'] and previous['end_frame']==d['start_frame'] and previous['record_frame']+previous['end_frame']-previous['start_frame']==d['record_frame']
+  length=d['end_frame']-d['start_frame']
+  if continuous:holds[-1][1]+=length
+  else:holds.append([i,length])
+ short_shots=[i for i,length in holds if length<math.ceil(1.5*fps)]
  overlaps=[(i,j) for i,a in enumerate(decisions) for j,b in enumerate(decisions[i+1:],i+1) if a['media_id']==b['media_id'] and max(a['start_frame'],b['start_frame'])<min(a['end_frame'],b['end_frame'])]
  missing=sorted((expected-actual).elements());duplicate=sorted(k for k,n in actual.items() if n>expected[k]);unexpected=sorted(set(actual)-set(expected))
  return {'ready':not any([invalid,uncovered,short_covers,short_shots,overlaps,missing,duplicate,unexpected]),'missing_events':missing,'duplicate_events':duplicate,'unexpected_events':unexpected,'exposed_same_field_joins':uncovered,'invalid_intervals':invalid,'short_reactions':short_covers,'short_shots':short_shots,'reused_source_intervals':overlaps,'duration_frames':clock,'visual_actions_verified':False,'content_equivalence_verified':False}
@@ -101,7 +110,26 @@ def verified_alignment(turns,candidates,similarities,verify,minimum=.65,max_roun
   for i,j in enumerate(mapping):
    if j is None:continue
    if j not in checked:checked[j]=bool(verify(j))
-   if not checked[j]:scores[i][j]=-1.;rejected=True
+   if not checked[j]:
+    # Verification is source-window evidence, independent of the query turn.
+    # Do not spend another search round proposing the same rejected window
+    # for a different occurrence of a repeated question or gag answer.
+    for row in scores:row[j]=-1.
+    rejected=True
   if not rejected:return mapping
  mapping=align_windows(turns,candidates,scores,minimum)
  return [j if j is not None and checked.get(j) else None for j in mapping]
+
+
+def verified_alignment_options(turns,candidates,similarities,verifiers,minimum=.65,max_rounds=3):
+ """Keep positively verified paths until the global sequence search.
+
+ A source file can contain multiple performances. A new visible candidate in
+ one performance must not erase a previously verified option in another.
+ These are alternatives, not an instruction to concatenate the local paths.
+ """
+ options=[[] for _ in turns]
+ for verify in verifiers:
+  for i,j in enumerate(verified_alignment(turns,candidates,similarities,verify,minimum,max_rounds)):
+   if j is not None and j not in options[i]:options[i].append(j)
+ return options

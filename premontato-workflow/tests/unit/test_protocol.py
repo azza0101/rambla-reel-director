@@ -8,6 +8,15 @@ ROOT = Path(__file__).parents[2]
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_malformed_json_does_not_reuse_previous_request_id_and_next_request_still_works(self):
+        first = json.dumps({"protocol": 1, "request_id": "first", "action": "ping", "payload": {}})
+        last = json.dumps({"protocol": 1, "request_id": "last", "action": "ping", "payload": {}})
+        run = subprocess.run([sys.executable, str(ROOT / "worker" / "protocol.py")],
+                             input=first + "\n{malformed\n" + last + "\n", text=True, capture_output=True, check=True)
+        rows = [json.loads(line) for line in run.stdout.splitlines()]
+        self.assertEqual([row["request_id"] for row in rows], ["first", None, "last"])
+        self.assertEqual([row["status"] for row in rows], ["ok", "error", "ok"])
+
     def test_worker_answers_ping_and_reports_unknown_actions_as_jsonl(self):
         requests = [
             {"protocol": 1, "request_id": "one", "action": "ping", "payload": {}},
