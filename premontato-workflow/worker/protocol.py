@@ -280,11 +280,12 @@ def dispatch(request):
 
 def main():
     for line in sys.stdin:
+        request = None
         try:
             request = json.loads(line)
             response = dispatch(request)
         except Exception as error:
-            response = {"protocol": PROTOCOL, "request_id": request.get("request_id") if isinstance(locals().get("request"), dict) else None,
+            response = {"protocol": PROTOCOL, "request_id": request.get("request_id") if isinstance(request, dict) else None,
                         "status": "error", "error": {"code": "INVALID_REQUEST", "message": str(error)}}
         sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
         sys.stdout.flush()
