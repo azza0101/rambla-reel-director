@@ -10,7 +10,7 @@
 2. [Architettura e flussi](#architettura-e-flussi)
 3. [RMBL B ROLL](#rmbl-b-roll)
 4. [Auto-Cut per Resolve](#auto-cut-per-resolve)
-5. [Premontato e Omni-Cut](#premontato-e-omni-cut)
+5. [Omni-Cut](#omni-cut)
 6. [Stile KURA e Editing Brain](#stile-kura-e-editing-brain)
 7. [Installazione e aggiornamenti](#installazione-e-aggiornamenti)
 8. [Diagnosi e test](#diagnosi-e-test)
@@ -23,12 +23,11 @@
 |---|---|---|---|
 | RMBL B ROLL + bridge | [v0165](https://github.com/azza0101/rambla-reel-director/releases/tag/v0165), 12 novembre | [sorgente v0165](https://github.com/azza0101/rambla-reel-director/tree/v0165), commit `3d8555c5a0ef1fcd8482e67e5ee2c230ec82fe03` | Release non prerelease. ZIP di aggiornamento; l'EXE più recente verificato è nella [v0161](https://github.com/azza0101/rambla-reel-director/releases/tag/v0161). |
 | Auto-Cut workflow | [autocut-v0.1.11](https://github.com/azza0101/rambla-reel-director/releases/tag/autocut-v0.1.11) | [sorgente Auto-Cut](https://github.com/azza0101/rambla-reel-director/tree/autocut-v0.1.11), commit `3e949278c3f1a92b906ed2c34eeb3f3e8f123fd5` | Prerelease; ZIP di aggiornamento, non un EXE in questa release. |
-| Premontato | [premontato-v0.11.11](https://github.com/azza0101/rambla-reel-director/releases/tag/premontato-v0.11.11) | [sorgente Premontato](https://github.com/azza0101/rambla-reel-director/tree/premontato-v0.11.11/premontato-workflow), commit `a136cb9ca1d3937d2215cc6f977b22407346fb55` | Release non prerelease con EXE e ZIP propri; esiste anche la prova successiva [0.12.1 catalog-test](https://github.com/azza0101/rambla-reel-director/releases/tag/premontato-v0.12.1-catalog-test.1), prerelease. |
 | Omni-Cut test | [omnicut-test-v0.2.30](https://github.com/azza0101/rambla-reel-director/releases/tag/omnicut-test-v0.2.30) | [sorgente Omni-Cut](https://github.com/azza0101/rambla-reel-director/tree/omnicut-test-v0.2.30/premontato-workflow), commit `6779f912542f3f57d7fbaca14f28bf4298b8edf7` | Prerelease sperimentale; questa release contiene ZIP e manifest, non EXE. |
 
 I tag e gli hash identificano ciò che è stato pubblicato, non la versione effettivamente installata su ogni computer. Leggere la versione nella finestra e verificare la release. Il ramo `main`, al commit `cff30a4cdce3b03e50a821122b51e66ea33e0561` al momento della rilevazione, contiene soprattutto la documentazione iniziale; è divergente dal ramo della release RMBL. **Non sostituire una release con main e non presumere che un merge sia già stato fatto.**
 
-I canali di aggiornamento rimangono separati: `vNNNN` per RMBL, `autocut-v…`, `premontato-v…` e `omnicut-test-v…`. In particolare le release Premontato non devono diventare automaticamente la release latest dell'intero repository. L'updater di un prodotto non deve installare un pacchetto di un altro.
+I canali di aggiornamento rimangono separati: `vNNNN` per RMBL, `autocut-v…` e `omnicut-test-v…`. Il canale storico `premontato-v…` non è un prodotto di riferimento per il lavoro corrente e non deve diventare la release latest dell'intero repository. L'updater di un prodotto non deve installare un pacchetto di un altro.
 
 ## Architettura e flussi
 
@@ -42,12 +41,12 @@ Video/file o timeline Resolve
           |
           +--> Auto-Cut workflow: revisione testuale e pause -> applicazione esplicita
           |
-          +--> Premontato / Omni-Cut: copione + girato + analisi -> proposta
+          +--> Omni-Cut: copione + girato + analisi -> proposta
                   -> revisione -> creazione timeline / organizzazione Media Pool
 ```
 
 - **RMBL** è un'app Python con backend locale e interfaccia web; il **bridge** è il componente Resolve separato che riceve un pacchetto e opera solo dopo conferma. Il prodotto non richiede Codex o un server MCP per funzionare.
-- **Auto-Cut**, **Premontato** e **Omni-Cut test** sono integrazioni Workflow di Resolve; non sono filtri OFX/DFRX generici. Condividono alcune idee e componenti, ma sono prodotti/versioni indipendenti.
+- **Auto-Cut** e **Omni-Cut test** sono integrazioni Workflow di Resolve; non sono filtri OFX/DFRX generici. Hanno installazioni e canali di aggiornamento indipendenti.
 - Elaborazione locale non significa sempre gratuita o offline: RMBL può inviare audio/testo e query ai servizi configurati; le funzioni visive cloud eventualmente abilitate inviano immagini o fotogrammi. I servizi impongono quote e condizioni proprie. L'uso di Codex per lo sviluppo è distinto dal costo del prodotto in esecuzione.
 - Le operazioni di Resolve dipendono dall'API ufficiale disponibile nella specifica installazione. I test storici citano Resolve Studio 21.1. Non assumere che ogni funzione funzioni su Free o macOS: verificare versione, edizione, sistema, scripting e un progetto di prova. Nessuna modifica a un progetto cliente durante un collaudo.
 
@@ -88,15 +87,17 @@ La preferenza dell'utente è preservare sorgenti modificabili e non accumulare t
 
 L'analisi di take/note di regia e la stima dei tempi sono euristiche, anche quando usa Groq. Volume più basso può essere un indizio, non la prova di una nota di regia. Revisionare l'ultima take completa, parole tronche e timestamp anomali. Il pulsante di aggiornamento ha un canale proprio. Riferimenti: [moduli backend](https://github.com/azza0101/rambla-reel-director/tree/autocut-v0.1.11/backend/app), [integrazione Resolve](https://github.com/azza0101/rambla-reel-director/tree/autocut-v0.1.11/tools/autocut_integration), [test Auto-Cut](https://github.com/azza0101/rambla-reel-director/tree/autocut-v0.1.11/tests/unit).
 
-## Premontato e Omni-Cut
+## Omni-Cut
 
-**Premontato** parte da copione, girato, trascrizioni di Resolve e analisi locali per proporre corrispondenze, take, inquadrature e un montaggio da revisionare. Nella v0.10.x sono documentati OpenCV, gruppi volti SFace e rilevamento parlante Light-ASD locale; l'identità/persona e le decisioni incerte richiedono revisione. I risultati automatici possono confondere speaker, volti, reazioni, direzioni e battute. La prima destinazione documentata è Windows x64 / Resolve Studio; non presentare macOS o multicamera come pienamente supportati senza test mirato.
+**Omni-Cut test è il prodotto di riferimento per il premontaggio:** parte da copione, girato e trascrizioni, propone take, inquadrature e reazioni, e prepara una timeline da revisionare. Può catalogare clip intere per scena o come dettagli/B-roll, usando trascrizioni e, se configurato, confronto visivo locale Qwen; lo spostamento nel Media Pool richiede un'azione esplicita. Catalogare clip intere e montare intervalli in timeline sono operazioni diverse.
 
-**Omni-Cut test** è una variante sperimentale costruita dal codice Premontato con identità e dati separati. Può catalogare clip intere per scene e dettagli/B-roll, usando trascrizioni e, dove configurato, confronto visivo locale Qwen; lo spostamento nel Media Pool richiede applicazione esplicita. Il flusso di montaggio può proporre tagli e una timeline: si revisiona prima della creazione. Non sono la stessa cosa catalogare clip intere e montare porzioni in timeline. Alcuni ambienti/modelli opzionali non sono inclusi nell'installer e vanno predisposti separatamente.
+Il motore comprende analisi locali di volti, inquadrature e parlante; l'identità e le decisioni incerte vanno revisionate. Per il piano può usare provider configurati come Groq oppure Gemma locale opzionale: controllare le impostazioni e l'eventuale invio dei dati. Alcuni modelli e ambienti opzionali non sono inclusi nel pacchetto e vanno predisposti separatamente. La destinazione documentata è Windows x64 / Resolve Studio; non presentare macOS o multicamera come pienamente supportati senza test mirato.
 
-La release Premontato v0.11.11 documenta anche un passaggio editoriale Groq; non è corretto descrivere come interamente offline tutti i suoi flussi. La v0.12.1 catalog-test è una prerelease successiva. Entrambe sono antenati del commit Omni-Cut v0.2.30, che aggiunge catalogazione, montaggio e correzioni; la presenza storica dei commit non dimostra parità funzionale dopo le modifiche. Distinguere sempre tag, commit, configurazione e test effettivi. L'integrazione RMBL/Omni-Cut comprende preparazione di metadati; non presumere che un montaggio completo venga creato automaticamente senza verificare il contratto di entrambe le versioni.
+**Limiti noti:** la v0.2.30 non monta ancora automaticamente le scene mute catalogate e non riconosce in modo generale lo stato degli oggetti. La prova documentata di questa versione non comprende una nuova timeline nativa; occorre verificare su Resolve con una scena di prova prima dell'uso produttivo. L'integrazione RMBL/Omni-Cut comprende preparazione di metadati; non presumere che sia già un montaggio completo senza verificare il contratto di entrambe le versioni.
 
-Leggere: [Premontato README](https://github.com/azza0101/rambla-reel-director/blob/premontato-v0.11.11/premontato-workflow/README.md), [uso](https://github.com/azza0101/rambla-reel-director/blob/premontato-v0.11.11/premontato-workflow/USAGE.md), [release 0.11.11](https://github.com/azza0101/rambla-reel-director/blob/premontato-v0.11.11/premontato-workflow/docs/releases/0.11.11.md), [Omni-Cut: installazione e limiti](https://github.com/azza0101/rambla-reel-director/blob/omnicut-test-v0.2.30/premontato-workflow/docs/OMNICUT_TEST.md), [catalogazione visiva](https://github.com/azza0101/rambla-reel-director/blob/omnicut-test-v0.2.30/premontato-workflow/docs/OMNICUT_VISUAL_CATALOG.md), [montaggio automatico](https://github.com/azza0101/rambla-reel-director/blob/omnicut-test-v0.2.30/premontato-workflow/docs/AUTOMATIC_EDIT_FLOW.md).
+**Nota sul codice storico:** Omni-Cut deriva dal progetto Premontato e il suo sorgente è tuttora nella cartella `premontato-workflow`. I vecchi tag e installer restano come storico, non come prodotto da installare per il flusso corrente. La discendenza dei commit non dimostra da sola che tutte le funzioni precedenti siano rimaste identiche: eventuale migrazione di lavori esistenti va testata, perché progetti e autosave sono separati.
+
+Leggere: [Omni-Cut: installazione e limiti](https://github.com/azza0101/rambla-reel-director/blob/omnicut-test-v0.2.30/premontato-workflow/docs/OMNICUT_TEST.md), [catalogazione visiva](https://github.com/azza0101/rambla-reel-director/blob/omnicut-test-v0.2.30/premontato-workflow/docs/OMNICUT_VISUAL_CATALOG.md), [montaggio automatico](https://github.com/azza0101/rambla-reel-director/blob/omnicut-test-v0.2.30/premontato-workflow/docs/AUTOMATIC_EDIT_FLOW.md), [release 0.2.30](https://github.com/azza0101/rambla-reel-director/releases/tag/omnicut-test-v0.2.30).
 
 ## Stile KURA e Editing Brain
 
@@ -121,8 +122,7 @@ L'aggiornamento è progettato per conservare progetti, cache, configurazioni e p
 ### Pannelli Workflow
 
 - **Auto-Cut:** installatori e sorgente nel [tag dedicato](https://github.com/azza0101/rambla-reel-director/tree/autocut-v0.1.11), inclusi script Windows/macOS; il pacchetto della release v0.1.11 è un update ZIP. Il supporto macOS va verificato su un Mac reale.
-- **Premontato:** [release v0.11.11](https://github.com/azza0101/rambla-reel-director/releases/tag/premontato-v0.11.11), `Install-Premontato.exe`; il setup richiede il `WorkflowIntegration.node` ufficiale della propria installazione/SDK Resolve, non incluso nel pacchetto. Può richiedere riavvio di Resolve per registrare il pannello.
-- **Omni-Cut test:** [release v0.2.30](https://github.com/azza0101/rambla-reel-director/releases/tag/omnicut-test-v0.2.30) contiene ZIP e manifest; la documentazione descrive anche la costruzione di un EXE, ma non dichiararlo presente in questa release. Verificare il procedimento di prima installazione sul computer target prima di promettere un setup a un clic. Il pannello e il canale update sono distinti da Premontato.
+- **Omni-Cut test:** [release v0.2.30](https://github.com/azza0101/rambla-reel-director/releases/tag/omnicut-test-v0.2.30) contiene ZIP e manifest; la documentazione descrive anche la costruzione di un EXE, ma non dichiararlo presente in questa release. Verificare il procedimento di prima installazione sul computer target prima di promettere un setup a un clic. Il `WorkflowIntegration.node` ufficiale deve provenire dalla propria installazione/SDK Resolve.
 
 ## Diagnosi e test
 
@@ -152,7 +152,7 @@ Da una copia del tag RMBL con dipendenze di sviluppo installate, ad esempio:
 python -m pytest tests/unit/test_original_fps_export.py tests/unit/test_final_media_quality.py tests/unit/test_export_quality_popup.py tests/unit/test_offline_resolve_archive.py tests/unit/test_offline_pack_selection.py -q
 ```
 
-I test unitari non sostituiscono un vero import Resolve. Su Windows scegliere una directory temporanea scrivibile se `pytest` non riesce a creare `tmp_path`; non cancellare cache o progetti dell'utente per farlo. Per cambi a testi, tracce o ponte servono anche test mirati e una timeline dedicata. Per Premontato/Omni-Cut consultare i test e i documenti del **tag** specifico; i conteggi di test storici in handoff precedenti non certificano la suite attuale.
+I test unitari non sostituiscono un vero import Resolve. Su Windows scegliere una directory temporanea scrivibile se `pytest` non riesce a creare `tmp_path`; non cancellare cache o progetti dell'utente per farlo. Per cambi a testi, tracce o ponte servono anche test mirati e una timeline dedicata. Per Omni-Cut consultare i test e i documenti del **tag** specifico; i conteggi di test storici in handoff precedenti non certificano la suite attuale.
 
 **Verifica della presente guida, 16 novembre 2026:** sul codice locale corrispondente ai file chiave della release v0165, gli 11 test di `test_original_fps_export.py` sono passati, inclusi 25, 30000/1001 e 60000/1001 fps, rifiuto VFR e controllo della cadenza. Il primo avvio della suite più ampia ha incontrato un errore di creazione della directory temporanea del sandbox; riprovata con temporanei nel workspace, l'esecuzione complessiva è stata interrotta e non viene dichiarata superata. Nessun test live in Resolve è stato eseguito per questo handoff.
 
