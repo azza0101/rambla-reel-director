@@ -154,6 +154,8 @@ python -m pytest tests/unit/test_original_fps_export.py tests/unit/test_final_me
 
 I test unitari non sostituiscono un vero import Resolve. Su Windows scegliere una directory temporanea scrivibile se `pytest` non riesce a creare `tmp_path`; non cancellare cache o progetti dell'utente per farlo. Per cambi a testi, tracce o ponte servono anche test mirati e una timeline dedicata. Per Premontato/Omni-Cut consultare i test e i documenti del **tag** specifico; i conteggi di test storici in handoff precedenti non certificano la suite attuale.
 
+**Verifica della presente guida, 16 novembre 2026:** sul codice locale corrispondente ai file chiave della release v0165, gli 11 test di `test_original_fps_export.py` sono passati, inclusi 25, 30000/1001 e 60000/1001 fps, rifiuto VFR e controllo della cadenza. Il primo avvio della suite più ampia ha incontrato un errore di creazione della directory temporanea del sandbox; riprovata con temporanei nel workspace, l'esecuzione complessiva è stata interrotta e non viene dichiarata superata. Nessun test live in Resolve è stato eseguito per questo handoff.
+
 ## Questioni aperte e prossimi passi
 
 1. **Installazione pulita:** collaudare ogni prodotto separatamente sul PC del collaboratore, con versione Resolve, SDK, accessi, aggiornamento, rollback e media reali. Nessuna affermazione di compatibilità universale Windows/macOS/Free.
